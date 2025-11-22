@@ -1,0 +1,53 @@
+# Data directory
+data/
+test_data/
+qdrant_data/
+barou/
+
+# Binaries
+/cmd/agent-runner/agent-runner
+/coderag-mcp
+test-*
+bin/
+
+# Test programs
+cmd/test-*/
+
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go dependencies (use go.mod instead)
+vendor/
+
+# Go workspace
+go.work
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+.venv/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+
+# Temporary files
+tmp/
+temp/

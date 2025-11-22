@@ -1,0 +1,64 @@
+# CodeRAG MCP Server Configuration
+# Multi-workspace mode: auto-creates collections per workspace+language
+
+llm:
+  provider: ollama
+  ollama_base_url: http://localhost:11434
+  ollama_model: phi3:medium
+  ollama_embed: nomic-embed-text
+  temperature: 0.7
+  max_tokens: 1024
+  timeout: 60s
+  max_retries: 3
+
+storage:
+  vector_db:
+    url: http://localhost:6333
+    api_key: ""
+
+# Multi-workspace configuration
+# Collections are auto-created with format: coderag-{workspaceID}-{language}
+workspace:
+  # Enable multi-workspace mode
+  enabled: true
+
+  # Automatic indexing when new workspace is detected
+  auto_index: true
+
+  # Max workspaces (0 = unlimited)
+  max_workspaces: 10
+
+  # Workspace detection markers
+  detection_markers:
+    - .git
+    - go.mod              # Go
+    - package.json        # JavaScript/TypeScript/Node.js
+    - Cargo.toml          # Rust
+    - pyproject.toml      # Python (modern)
+    - setup.py            # Python (legacy)
+    - requirements.txt    # Python (dependencies)
+    - composer.json       # PHP
+    - pom.xml             # Java (Maven)
+    - build.gradle        # Java/Kotlin (Gradle)
+    - Gemfile             # Ruby
+    - Package.swift       # Swift
+
+  # Patterns to exclude from workspace detection
+  exclude_patterns:
+    - node_modules
+    - .git
+    - vendor
+    - target
+    - build
+    - dist
+    - .venv
+
+  # Prefix for workspace collection names
+  # Format: {collection_prefix}-{workspaceID}
+  # Example: coderag-a1b2c3d4e5f6
+  collection_prefix: coderag
+
+  # Override for indexing patterns per workspace
+  # If empty, uses code_rag.include and code_rag.exclude
+  index_include: []
+  index_exclude: []

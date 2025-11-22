@@ -1,0 +1,43 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    profiles:
+      - with-ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    environment:
+      OLLAMA_KEEP_ALIVE: "24h"
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"   # REST API
+      - "6334:6334"   # gRPC API
+    volumes:
+      - /home/razvan/.local/share/qdrant:/qdrant/storage
+    environment:
+      QDRANT__STORAGE__STORAGE_PATH: "/qdrant/storage"
+      QDRANT__LOG_LEVEL: "INFO"
+      QDRANT__SERVICE__GRPC_PORT: "6334"
+      # Note: API_KEY not set = authentication disabled (for local development)
+      QDRANT__CLUSTER__ENABLED: "false" # single-node mode
+
+      # Optional optimizations:
+      QDRANT__STORAGE__WAL_PATH: "/qdrant/storage/wal"
+      QDRANT__STORAGE__SNAPSHOT_PATH: "/qdrant/storage/snapshots"
+      QDRANT__STORAGE__ON_DISK_PAYLOAD: "true"
+      QDRANT__STORAGE__USE_MEMORY_LOCK: "false"
+
+volumes:
+  ollama_data:

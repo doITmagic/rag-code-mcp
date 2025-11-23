@@ -29,6 +29,8 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+    dns:
+      - 8.8.8.8
     restart: unless-stopped
 
   # 3. RagCode MCP Server (Optional - if you want to run the binary in docker too)

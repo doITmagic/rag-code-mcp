@@ -186,9 +186,62 @@ ollama list
 
 ---
 
-## 🎯 Using RagCode in Windsurf / Cursor
+## 🎯 Using RagCode in Your IDE
 
 After installation, RagCode is automatically available in supported IDEs. No additional configuration is required.
+
+### Supported IDEs
+
+- **Windsurf** - Full MCP support
+- **Cursor** - Full MCP support  
+- **Antigravity** - Full MCP support
+- **Claude Desktop** - Full MCP support
+- **VS Code + GitHub Copilot** - Agent mode integration (requires VS Code 1.95+)
+
+### VS Code + GitHub Copilot Integration
+
+RagCode integrates with **GitHub Copilot's Agent Mode** through MCP, enabling semantic code search as part of Copilot's autonomous workflow.
+
+**Quick Setup:**
+1. Install RagCode using the quick-install script (automatically configures VS Code)
+2. Open VS Code in your project
+3. Open Copilot Chat (Ctrl+Shift+I / Cmd+Shift+I)
+4. Enable **Agent Mode** (click "Agent" button or type `/agent`)
+5. Ask questions - Copilot will automatically use RagCode tools
+
+**Example Prompts:**
+```
+Find all authentication middleware functions in this codebase
+Show me the User model definition and all its methods
+Search for functions that handle database connections
+```
+
+**Manual Configuration:**  
+Edit `~/.config/Code/User/globalStorage/mcp-servers.json`:
+```json
+{
+  "mcpServers": {
+    "ragcode": {
+      "command": "/home/YOUR_USERNAME/.local/share/ragcode/bin/rag-code-mcp",
+      "args": [],
+      "env": {
+        "OLLAMA_BASE_URL": "http://localhost:11434",
+        "OLLAMA_MODEL": "phi3:medium",
+        "OLLAMA_EMBED": "nomic-embed-text",
+        "QDRANT_URL": "http://localhost:6333"
+      }
+    }
+  }
+}
+```
+
+**Verify Integration:**
+- Command Palette → `MCP: Show MCP Servers`
+- Check that `ragcode` appears with "Connected" status
+
+**📖 Detailed Guide:** See [docs/vscode-copilot-integration.md](./docs/vscode-copilot-integration.md) for complete setup, troubleshooting, and advanced features.
+
+See [QUICKSTART.md](./QUICKSTART.md) for detailed VS Code setup and troubleshooting.
 
 ### Available Tools
 1. **`search_code`** – semantic code search
@@ -199,6 +252,7 @@ After installation, RagCode is automatically available in supported IDEs. No add
 6. **`list_package_exports`** – list all exported symbols in a package
 7. **`search_docs`** – search markdown documentation
 8. **`index_workspace`** – manually trigger indexing of a workspace (usually not needed)
+9. **`get_code_context`** – read code from specific file locations with context
 
 **All tools require a `file_path` parameter** so that RagCode can determine the correct workspace.
 

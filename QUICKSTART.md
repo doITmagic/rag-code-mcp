@@ -217,6 +217,116 @@ Each project gets its own collection in Qdrant, and RagCode automatically switch
 
 After installation, RagCode is automatically available in the IDE. **No manual action required!**
 
+### In VS Code with GitHub Copilot
+
+RagCode integrates with **GitHub Copilot's Agent Mode** in VS Code through the Model Context Protocol (MCP). This allows Copilot to use RagCode's semantic search capabilities as part of its autonomous coding workflow.
+
+#### Prerequisites
+- **VS Code** with **GitHub Copilot** subscription
+- RagCode installed (via quick-install script above)
+- VS Code version **1.95+** (for MCP support)
+
+#### Setup
+
+The quick-install script automatically configures RagCode for VS Code by creating:
+```
+~/.config/Code/User/globalStorage/mcp-servers.json
+```
+
+**Manual Configuration (if needed):**
+
+Create or edit `~/.config/Code/User/globalStorage/mcp-servers.json`:
+
+```json
+{
+  "mcpServers": {
+    "ragcode": {
+      "command": "/home/YOUR_USERNAME/.local/share/ragcode/bin/rag-code-mcp",
+      "args": [],
+      "env": {
+        "OLLAMA_BASE_URL": "http://localhost:11434",
+        "OLLAMA_MODEL": "phi3:medium",
+        "OLLAMA_EMBED": "nomic-embed-text",
+        "QDRANT_URL": "http://localhost:6333"
+      }
+    }
+  }
+}
+```
+
+**Note:** Replace `YOUR_USERNAME` with your actual username.
+
+#### Using RagCode with Copilot Agent Mode
+
+1. **Open VS Code** in your project directory
+2. **Open Copilot Chat** (Ctrl+Shift+I or Cmd+Shift+I)
+3. **Enable Agent Mode** by clicking the "Agent" button or typing `/agent`
+4. **Use RagCode tools** - Copilot will automatically invoke them based on your prompts
+
+**Example Prompts:**
+
+```
+Find all authentication middleware functions in this codebase
+```
+
+```
+Show me the User model definition and all its methods
+```
+
+```
+Search for functions that handle database connections
+```
+
+```
+Find all API endpoints related to user management
+```
+
+Copilot will automatically use RagCode's `search_code`, `get_function_details`, `find_type_definition`, and other tools to answer your questions.
+
+#### Explicit Tool Usage
+
+You can also explicitly reference RagCode tools using the `#` symbol:
+
+```
+#ragcode search for payment processing functions
+```
+
+```
+#ragcode find the UserController type definition
+```
+
+#### Verifying MCP Integration
+
+1. Open **Command Palette** (Ctrl+Shift+P / Cmd+Shift+P)
+2. Type: `MCP: Show MCP Servers`
+3. Verify that `ragcode` appears in the list
+4. Check status shows "Connected"
+
+#### Troubleshooting VS Code Integration
+
+**MCP server not showing:**
+- Verify config file exists: `~/.config/Code/User/globalStorage/mcp-servers.json`
+- Restart VS Code
+- Check VS Code version (requires 1.95+)
+
+**Tools not working:**
+- Ensure Qdrant and Ollama are running: `docker ps | grep qdrant`
+- Check MCP server logs in VS Code Output panel (select "MCP" from dropdown)
+- Verify binary path is correct in config
+
+**Copilot not using tools:**
+- Make sure you're in **Agent Mode** (not regular chat)
+- Try explicitly mentioning `#ragcode` in your prompt
+- Ensure workspace is indexed (ask Copilot to index first)
+
+**📖 For more details:** See [docs/vscode-copilot-integration.md](../docs/vscode-copilot-integration.md) for:
+- Advanced configuration options
+- Custom Ollama models
+- Remote Ollama/Qdrant setup
+- Detailed troubleshooting
+- Multi-workspace workflows
+- Performance optimization tips
+
 #### Available Tools:
 
 1. **`search_code`** - Semantic code search

@@ -170,44 +170,52 @@ Without RagCode, AI assistants must:
 
 ---
 
-## ⚡ Quick Start (One‑Command Installer)
+## ⚡ Quick Start
 
+### One-Command Installation
+
+**Linux / macOS:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | bash
+curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/ragcode-installer-$(uname -s | tr '[:upper:]' '[:lower:]') -o ragcode-installer && chmod +x ragcode-installer && ./ragcode-installer
 ```
 
-The installer will:
-1. ✅ Download the latest release from GitHub (or build locally if the download fails)
-2. ✅ Install binaries into `~/.local/share/ragcode/bin`
-3. ✅ Add `rag-code-mcp` to your `PATH`
-4. ✅ Configure Windsurf, Cursor, and Antigravity automatically (writes `mcp_config.json`)
-5. ✅ **Start Docker** if it is not already running
-6. ✅ **Start the Qdrant container** (vector database)
-7. ✅ **Start Ollama** with `ollama serve` if it is not already running
-8. ✅ **Download required AI models** (`nomic-embed-text` and `phi3:medium`)
-9. ✅ Launch the MCP server in the background
-
-### Customization Options
-
-You can customize the installation using environment variables:
-
-```bash
-# Use development branch
-curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/develop/quick-install.sh | BRANCH=develop bash
-
-# Custom Ollama model
-curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | OLLAMA_MODEL=llama3.1:8b bash
-
-# Combine multiple options
-curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/develop/quick-install.sh | BRANCH=develop OLLAMA_MODEL=phi3:mini bash
+**Windows (PowerShell):**
+```powershell
+Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/latest/download/ragcode-installer-windows.exe" -OutFile "ragcode-installer.exe"
+.\ragcode-installer.exe
 ```
 
-**Available environment variables:**
-- `BRANCH` – Git branch to install from (default: `main`)
-- `OLLAMA_MODEL` – LLM model name (default: `phi3:medium`)
-- `OLLAMA_EMBED` – Embedding model (default: `nomic-embed-text`)
-- `OLLAMA_BASE_URL` – Ollama server URL (default: `http://localhost:11434`)
-- `QDRANT_URL` – Qdrant server URL (default: `http://localhost:6333`)
+### What the installer does:
+1. ✅ Downloads and installs the `rag-code-mcp` binary
+2. ✅ Sets up Ollama and Qdrant (Docker or local, your choice)
+3. ✅ Downloads required AI models (`phi3:medium`, `nomic-embed-text`)
+4. ✅ Configures your IDE (VS Code, Claude, Cursor, Windsurf)
+5. ✅ Adds binaries to your PATH
+
+### Installation Options
+
+The installer supports flexible configuration via flags:
+
+```bash
+# Use Docker for both Ollama and Qdrant (recommended for isolation)
+./ragcode-installer -ollama=docker -qdrant=docker
+
+# Use local Ollama with Docker Qdrant (if you already have Ollama installed)
+./ragcode-installer -ollama=local -qdrant=docker
+
+# Enable GPU support in Docker containers
+./ragcode-installer -ollama=docker -gpu
+
+# Custom models directory for Docker volume mapping
+./ragcode-installer -ollama=docker -models-dir=/path/to/models
+```
+
+**Available Flags:**
+- `-ollama`: `local` (default) or `docker`
+- `-qdrant`: `docker` (default) or `remote`
+- `-models-dir`: Custom path for Ollama models (for Docker mapping)
+- `-gpu`: Enable NVIDIA GPU support in containers
+- `-skip-build`: Skip binary installation (use existing)
 
 See [QUICKSTART.md](./QUICKSTART.md) for detailed installation and usage instructions.
 

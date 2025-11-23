@@ -458,9 +458,31 @@ func pullModel(name string) {
 	}
 	defer resp.Body.Close()
 
-	// Read stream to keep connection open, but we won't parse every line for progress to keep it simple
-	io.Copy(io.Discard, resp.Body)
+	decoder := json.NewDecoder(resp.Body)
+	for decoder.More() {
+		var chunk map[string]interface{}
+		if err := decoder.Decode(&chunk); err != nil {
+			break
+		}
 
+		if status, ok := chunk["status"].(string); ok {
+			switch status {
+			case "pulling":
+				if detail, ok := chunk["detail"].(map[string]interface{}); ok {
+					percent := ""
+					if pct, ok := detail["completed_percentage"].(float64); ok {
+						percent = fmt.Sprintf(" %.0f%%", pct)
+					}
+					fmt.Printf("\r   ↳ %s%s", detail["current"], percent)
+				}
+
+			case "success":
+				fmt.Print("\r")
+			}
+		}
+	}
+
+	fmt.Println()
 	success(fmt.Sprintf("Model %s downloaded", name))
 }
 
@@ -683,5 +705,17 @@ func printSummary() {
 	fmt.Println("  - VS Code: Open Copilot Chat and type '@ragcode'")
 	fmt.Println("  - Claude:  Enable MCP in settings")
 	fmt.Println("  - Cursor:  Check MCP settings")
+	fmt.Println("\n💡 First Time Setup - Index Your Workspace:")
+	fmt.Println("   After opening your IDE, ask the AI to index your project:")
+	fmt.Println("")
+	fmt.Println("   Suggested AI Prompt:")
+	fmt.Println("   Please use the RagCode MCP tool 'index_workspace' to index this project for semantic code search.")
+	fmt.Println("   Provide the file_path parameter pointing to any file in this workspace. Once indexing completes, I'll be")
+	fmt.Println("   able to use search_code, get_function_details, and other tools to help you navigate and understand the codebase.")
+	fmt.Println("")
+	fmt.Println("   Note: Indexing runs in the background and may take a few minutes depending on project size.")
+	fmt.Println("   You can start using search immediately - results will improve as indexing progresses.")
+	fmt.Println("")
+	fmt.Println("   Repeat this for each project you want to work with.")
 	fmt.Println("\nTo troubleshoot, run: rag-code-mcp")
 }

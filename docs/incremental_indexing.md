@@ -82,3 +82,57 @@ Finally, the in-memory state is updated with the new file information, and `stat
 - **Speed**: Re-indexing a project with thousands of files takes seconds if only a few files changed.
 - **Efficiency**: Reduces LLM embedding costs by not re-embedding unchanged code.
 - **Consistency**: Ensures the search index accurately reflects the current code, including deletions.
+
+## Usage
+
+### Using the MCP Tool
+When using the `index_workspace` tool through the MCP server, incremental indexing is automatically enabled:
+
+```bash
+# First run - indexes all files
+index_workspace --file_path /path/to/project
+
+# Subsequent runs - only indexes changed files
+index_workspace --file_path /path/to/project
+```
+
+### Using the CLI
+The `index-all` command-line utility also supports incremental indexing:
+
+```bash
+# First run
+./bin/index-all -paths /path/to/project
+
+# Output: "📝 Indexing 77 new/modified files..."
+
+# Second run (no changes)
+./bin/index-all -paths /path/to/project
+
+# Output: "✨ No code changes detected for language 'go'"
+```
+
+## Current Limitations
+
+### Markdown Documentation
+Currently, **markdown files are re-indexed on every run**. The incremental logic applies only to source code files (Go, PHP, etc.). Future versions will extend incremental indexing to documentation files as well.
+
+### State File Location
+The `.ragcode/state.json` file is stored in the workspace root. This directory should be added to `.gitignore` as it contains local indexing state that should not be shared between developers.
+
+## Testing and Validation
+
+To verify incremental indexing is working:
+
+1. **Initial Index**: Run indexing on a project and note the number of files indexed.
+2. **No-Change Run**: Run indexing again without modifying any files. You should see "No code changes detected".
+3. **Single File Modification**: Modify one file and run indexing. You should see "Indexing 1 new/modified files...".
+4. **New File Addition**: Add a new file and run indexing. The new file should be detected and indexed.
+
+Example output showing successful incremental operation:
+```
+🔎 Indexing Go files in '.' (incremental)...
+2025/11/23 22:40:56 🚀 Starting indexing for workspace: .
+2025/11/23 22:40:56    Collection: do-ai-code
+2025/11/23 22:40:56    Language: go
+2025/11/23 22:40:56 ✨ No code changes detected for language 'go'
+```

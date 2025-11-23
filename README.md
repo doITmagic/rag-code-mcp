@@ -135,6 +135,7 @@ Without RagCode, AI assistants must:
 - **Multi-Workspace Detection** - Automatically detects project boundaries (git, go.mod, composer.json, package.json)
 - **Per-Language Collections** - Separate vector databases for each language (`ragcode-{workspace}-go`, `ragcode-{workspace}-php`)
 - **Automatic Indexing** - Background indexing on first use, no manual intervention needed
+- **Incremental Indexing** - Smart re-indexing that only processes changed files, saving time and resources
 - **Vector Embeddings** - Uses Ollama's `nomic-embed-text` for high-quality semantic embeddings
 - **Hybrid Search Engine** - Combines vector similarity with BM25 lexical matching
 - **Direct File Access** - Read code without indexing for quick lookups
@@ -358,6 +359,40 @@ When a tool is invoked for the first time in a workspace, RagCode will:
 4. Return results immediately (even if indexing is still in progress)
 
 You never need to run `index_workspace` manually.
+
+### ⚡ Incremental Indexing
+
+RagCode features **smart incremental indexing** that dramatically reduces re-indexing time by only processing files that have changed.
+
+**How it works:**
+- Tracks file modification times and sizes in `.ragcode/state.json`
+- On subsequent indexing runs, compares current state with saved state
+- Only indexes new or modified files
+- Automatically removes outdated chunks from deleted/modified files
+
+**Performance Benefits:**
+- **First run:** Indexes all files (e.g., 77 files in ~20 seconds)
+- **No changes:** Completes instantly with "No code changes detected"
+- **Single file change:** Re-indexes only that file (e.g., 1 file in ~1 second)
+
+**Example:**
+```bash
+# First run
+./bin/index-all -paths /path/to/project
+# Output: "📝 Indexing 77 new/modified files..."
+
+# Second run (no changes)
+./bin/index-all -paths /path/to/project
+# Output: "✨ No code changes detected for language 'go'"
+
+# After modifying one file
+./bin/index-all -paths /path/to/project
+# Output: "📝 Indexing 1 new/modified files..."
+```
+
+**Note:** Incremental indexing applies to source code files. Markdown documentation is currently re-indexed on every run.
+
+For technical details, see [docs/incremental_indexing.md](./docs/incremental_indexing.md).
 
 ---
 

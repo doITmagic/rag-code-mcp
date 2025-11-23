@@ -34,6 +34,7 @@ const (
 	defaultEmbed    = "nomic-embed-text"
 	ollamaPort      = "11434"
 	qdrantPort      = "6333"
+	installDirName  = ".local/share/ragcode"
 )
 
 // Colors for output
@@ -52,6 +53,85 @@ func init() {
 	}
 }
 
+func installRuntimeBinaries() {
+	home, _ := os.UserHomeDir()
+	installDir := filepath.Join(home, installDirName)
+	binDir := filepath.Join(installDir, "bin")
+
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		fail(fmt.Sprintf("Could not create install dir %s: %v", binDir, err))
+	}
+
+	binaries := []struct {
+		name string
+		pkg  string
+	}{
+		{"rag-code-mcp", "./cmd/rag-code-mcp"},
+		{"index-all", "./cmd/index-all"},
+	}
+
+	missing := false
+	for _, bin := range binaries {
+		if _, err := os.Stat(filepath.Join(binDir, bin.name)); os.IsNotExist(err) {
+			missing = true
+			break
+		}
+	}
+
+	if !missing {
+		success(fmt.Sprintf("Runtime binaries already installed in %s", binDir))
+		return
+	}
+
+	if _, err := exec.LookPath("go"); err != nil {
+		fail("Go toolchain is required to build RagCode binaries. Install Go from https://go.dev/doc/install or rerun without --skip-build once binaries exist.")
+	}
+
+	log(fmt.Sprintf("Building RagCode binaries into %s...", binDir))
+	for _, bin := range binaries {
+		log(fmt.Sprintf(" - Building %s", bin.name))
+		output := filepath.Join(binDir, bin.name)
+		cmd := exec.Command("go", "build", "-o", output, bin.pkg)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			fail(fmt.Sprintf("Failed to build %s: %v", bin.name, err))
+		}
+		if err := os.Chmod(output, 0755); err != nil {
+			fail(fmt.Sprintf("Failed to set executable bit on %s: %v", output, err))
+		}
+		success(fmt.Sprintf("Installed %s", output))
+	}
+}
+
+func runHealthCheck() {
+	log("Running RagCode health check...")
+
+	home, _ := os.UserHomeDir()
+	installDir := filepath.Join(home, installDirName)
+	binPath := filepath.Join(installDir, "bin", "rag-code-mcp")
+
+	if runtime.GOOS == "windows" {
+		binPath += ".exe"
+	}
+
+	if _, err := os.Stat(binPath); err != nil {
+		warn(fmt.Sprintf("Health check skipped – binary not found at %s", binPath))
+		return
+	}
+
+	cmd := exec.Command(binPath, "--health")
+	cmd.Dir = installDir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		warn(fmt.Sprintf("Health check reported issues. Run '%s --health' manually for details.", binPath))
+	} else {
+		success("Health check passed – all services are reachable")
+	}
+}
+
 func log(msg string)     { fmt.Printf("%s==> %s%s\n", blue, msg, reset) }
 func success(msg string) { fmt.Printf("%s✓ %s%s\n", green, msg, reset) }
 func warn(msg string)    { fmt.Printf("%s! %s%s\n", yellow, msg, reset) }
@@ -65,7 +145,10 @@ func main() {
 	// 1. Build and Install Binary
 	if !*skipBuild {
 		installBinary()
+	} else {
+		log("Skipping rag-code-mcp binary install (--skip-build)")
 	}
+	installRuntimeBinaries()
 
 	// 2. Setup Services (Docker or Local)
 	setupServices()
@@ -75,6 +158,9 @@ func main() {
 
 	// 4. Configure IDEs
 	configureIDEs()
+
+	// 5. Run health validation
+	runHealthCheck()
 
 	printSummary()
 }

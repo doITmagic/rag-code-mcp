@@ -10,6 +10,7 @@ import (
 
 // FileState represents the state of a single file
 type FileState struct {
+	// Test comment for incremental indexing
 	ModTime time.Time `json:"mod_time"`
 	Size    int64     `json:"size"`
 	// Hash    string    `json:"hash,omitempty"` // Optional: content hash for better accuracy

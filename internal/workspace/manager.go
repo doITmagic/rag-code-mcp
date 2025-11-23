@@ -360,7 +360,11 @@ func (m *Manager) GetMemoryForWorkspaceLanguage(ctx context.Context, info *Info,
 		if m.config != nil && m.config.Workspace.AutoIndex {
 			// Pass a long-lived context for background indexing
 			indexCtx := context.Background()
-			go m.indexWorkspaceLanguage(indexCtx, info, language, collectionName)
+			go func() {
+				if err := m.IndexLanguage(indexCtx, info, language, collectionName); err != nil {
+					log.Printf("❌ Background indexing failed: %v", err)
+				}
+			}()
 		} else {
 			log.Printf("⏸️  Auto-indexing disabled for workspace '%s' language '%s'. Run manual indexing.", info.Root, language)
 		}
@@ -410,15 +414,15 @@ func (m *Manager) GetMemoriesForAllLanguages(ctx context.Context, info *Info) (m
 	return memories, nil
 }
 
-// indexWorkspaceLanguage indexes a specific language in a workspace in the background
-func (m *Manager) indexWorkspaceLanguage(ctx context.Context, info *Info, language string, collectionName string) {
+// IndexLanguage indexes a specific language in a workspace
+// It runs synchronously. Use StartIndexing for background execution.
+func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string, collectionName string) error {
 	// Check if already indexing
 	indexKey := info.ID + "-" + language
 	m.indexingMu.Lock()
 	if m.indexing[indexKey] {
 		m.indexingMu.Unlock()
-		log.Printf("⚠️  Workspace '%s' language '%s' is already being indexed", info.Root, language)
-		return
+		return fmt.Errorf("workspace '%s' language '%s' is already being indexed", info.Root, language)
 	}
 	m.indexing[indexKey] = true
 	m.indexingMu.Unlock()
@@ -430,7 +434,7 @@ func (m *Manager) indexWorkspaceLanguage(ctx context.Context, info *Info, langua
 		m.indexingMu.Unlock()
 	}()
 
-	log.Printf("🚀 Starting background indexing for workspace: %s", info.Root)
+	log.Printf("🚀 Starting indexing for workspace: %s", info.Root)
 	log.Printf("   Collection: %s", collectionName)
 	log.Printf("   Language: %s", language)
 	log.Printf("   Project type: %s", info.ProjectType)
@@ -444,9 +448,14 @@ func (m *Manager) indexWorkspaceLanguage(ctx context.Context, info *Info, langua
 
 	collectionClient, err := storage.NewQdrantClient(collectionConfig)
 	if err != nil {
-		log.Printf("❌ Failed to create collection client: %v", err)
-		return
+		return fmt.Errorf("failed to create collection client: %w", err)
 	}
+	// We should close the client, but LongTermMemory might need it?
+	// QdrantLongTermMemory takes *QdrantClient.
+	// If we close it here, LTM might fail if it uses it later?
+	// But LTM is used within this function scope mostly.
+	// Actually, NewQdrantLongTermMemory just stores the reference.
+	defer collectionClient.Close()
 
 	ltm := storage.NewQdrantLongTermMemory(collectionClient)
 
@@ -454,21 +463,18 @@ func (m *Manager) indexWorkspaceLanguage(ctx context.Context, info *Info, langua
 	analyzerManager := ragcode.NewAnalyzerManager()
 	analyzer := analyzerManager.CodeAnalyzerForProjectType(language)
 	if analyzer == nil {
-		log.Printf("⚠️ No code analyzer available for language '%s', skipping indexing", language)
-		return
+		return fmt.Errorf("no code analyzer available for language '%s'", language)
 	}
 
 	// Scan workspace once to determine relevant paths per language
 	scan, err := m.scanWorkspace(info)
 	if err != nil {
-		log.Printf("❌ Failed to scan workspace '%s': %v", info.Root, err)
-		return
+		return fmt.Errorf("failed to scan workspace '%s': %w", info.Root, err)
 	}
 
 	languageDirs := scan.LanguageDirs[strings.ToLower(language)]
 	if len(languageDirs) == 0 {
-		log.Printf("⚠️ No %s source files detected in workspace '%s'", language, info.Root)
-		return
+		return fmt.Errorf("no %s source files detected in workspace '%s'", language, info.Root)
 	}
 
 	// Load previous state
@@ -496,8 +502,6 @@ func (m *Manager) indexWorkspaceLanguage(ctx context.Context, info *Info, langua
 		if !exists || info.ModTime().After(fileState.ModTime) || info.Size() != fileState.Size {
 			filesToIndex = append(filesToIndex, path)
 			if exists {
-				// If modified, we should delete old chunks first
-				// But since we don't know the exact chunks, we delete by file metadata
 				filesToDelete = append(filesToDelete, path)
 			}
 		}
@@ -506,9 +510,7 @@ func (m *Manager) indexWorkspaceLanguage(ctx context.Context, info *Info, langua
 		state.UpdateFile(path, info)
 	}
 
-	// Check for deleted files (present in state but not in current scan)
-	// Note: This is a bit expensive if state is huge, but for now it's fine.
-	// A better way would be to mark all current files as "seen" and check state.
+	// Check for deleted files
 	currentFileMap := make(map[string]bool)
 	for _, p := range currentFiles {
 		currentFileMap[p] = true
@@ -516,20 +518,8 @@ func (m *Manager) indexWorkspaceLanguage(ctx context.Context, info *Info, langua
 
 	state.mu.RLock()
 	for path := range state.Files {
-		// Only check files that belong to this language (heuristic: extension)
-		// Or we can just check if it's in the current scan.
-		// If it's not in current scan, it might be deleted OR it might belong to another language.
-		// We should probably store language in FileState.
-		// For now, let's assume if it's not in currentFileMap AND it has the right extension, it's deleted.
-		// Actually, simpler: we only care about files we *would* have indexed.
-		// But wait, state contains ALL files from ALL languages?
-		// Yes, if we use a single state file.
-
-		// Let's check if the file still exists on disk.
 		if _, err := os.Stat(path); os.IsNotExist(err) {
-			// File deleted
 			filesToDelete = append(filesToDelete, path)
-			// We will remove from state later
 		}
 	}
 	state.mu.RUnlock()
@@ -549,33 +539,21 @@ func (m *Manager) indexWorkspaceLanguage(ctx context.Context, info *Info, langua
 	if len(filesToIndex) > 0 {
 		log.Printf("📝 Indexing %d new/modified files...", len(filesToIndex))
 
-		// Create indexer
 		indexer := ragcode.NewIndexer(analyzer, m.llm, ltm)
-
-		// Index specific files
-		// Note: Indexer.IndexPaths expects directories or files.
-		// If we pass files, it should work if AnalyzePaths supports it.
-		// Let's assume AnalyzePaths supports file paths (it usually does or we can check).
-		// If IndexPaths expects dirs, we might need to adjust.
-		// Looking at indexer.go: analyzer.AnalyzePaths(paths)
-		// Looking at analyzer: usually supports both.
 
 		startTime := time.Now()
 		numChunks, err := indexer.IndexPaths(ctx, filesToIndex, collectionName)
 		duration := time.Since(startTime)
 
 		if err != nil {
-			log.Printf("❌ Indexing failed for workspace '%s' language '%s': %v", info.Root, language, err)
-		} else {
-			log.Printf("✅ Indexed %d chunks in %v", numChunks, duration)
+			return fmt.Errorf("indexing failed: %w", err)
 		}
+		log.Printf("✅ Indexed %d chunks in %v", numChunks, duration)
 	} else {
 		log.Printf("✨ No code changes detected for language '%s'", language)
 	}
 
 	// Index markdown documentation files automatically using scan result
-	// We should also do incremental for docs, but for now let's leave it as is or apply similar logic.
-	// For simplicity, let's re-index docs for now (usually few).
 	numDocs := m.indexMarkdownFiles(ctx, scan.DocFiles, collectionName, ltm)
 	if numDocs > 0 {
 		log.Printf("   Docs chunks indexed: %d", numDocs)
@@ -587,6 +565,7 @@ func (m *Manager) indexWorkspaceLanguage(ctx context.Context, info *Info, langua
 	}
 
 	m.recordFingerprint(info, language, scan)
+	return nil
 }
 
 // indexMarkdownFiles indexes provided markdown files (already discovered during scan)
@@ -697,19 +676,13 @@ func (m *Manager) IsIndexing(workspaceID string) bool {
 // This is used by the index_workspace tool to manually trigger indexing
 func (m *Manager) StartIndexing(ctx context.Context, info *Info, language string) error {
 	collectionName := info.CollectionNameForLanguage(language)
-	indexKey := info.ID + "-" + language
-
-	// Check if already indexing
-	m.indexingMu.RLock()
-	if m.indexing[indexKey] {
-		m.indexingMu.RUnlock()
-		return fmt.Errorf("indexing already in progress for workspace %s language %s", info.Root, language)
-	}
-	m.indexingMu.RUnlock()
 
 	// Start background indexing
-	indexCtx := context.Background()
-	go m.indexWorkspaceLanguage(indexCtx, info, language, collectionName)
+	go func() {
+		if err := m.IndexLanguage(context.Background(), info, language, collectionName); err != nil {
+			log.Printf("❌ Background indexing failed: %v", err)
+		}
+	}()
 
 	return nil
 }

@@ -22,6 +22,7 @@ var (
 	modelsDir  = flag.String("models-dir", "", "Path to local Ollama models directory (for Docker mapping). Defaults to ~/.ollama")
 	gpu        = flag.Bool("gpu", false, "Enable GPU support for Docker containers (requires nvidia-container-toolkit)")
 	skipBuild  = flag.Bool("skip-build", false, "Skip building the binary (use existing if available)")
+	idesFlag   = flag.String("ides", "auto", "Comma-separated IDE list to configure (auto, vs-code, claude, cursor, windsurf, antigravity)")
 )
 
 // Constants
@@ -32,8 +33,6 @@ const (
 	qdrantContainer = "ragcode-qdrant"
 	defaultModel    = "phi3:medium"
 	defaultEmbed    = "nomic-embed-text"
-	ollamaPort      = "11434"
-	qdrantPort      = "6333"
 	installDirName  = ".local/share/ragcode"
 )
 
@@ -157,7 +156,7 @@ func main() {
 	provisionModels()
 
 	// 4. Configure IDEs
-	configureIDEs()
+	configureIDEs(parseIDESelections(*idesFlag))
 
 	// 5. Run health validation
 	runHealthCheck()
@@ -467,29 +466,16 @@ func pullModel(name string) {
 
 // --- Step 4: IDE Configuration ---
 
-func configureIDEs() {
+func configureIDEs(selected []string) {
 	log("Configuring IDEs...")
 
 	home, _ := os.UserHomeDir()
-
-	// Define paths for various IDEs
-	configs := map[string]string{
-		"VS Code":        filepath.Join(home, ".config", "Code", "User", "globalStorage", "mcp-servers.json"),
-		"Claude Desktop": filepath.Join(home, ".config", "Claude", "mcp-servers.json"), // Linux path
-		"Windsurf":       filepath.Join(home, ".codeium", "windsurf", "mcp_config.json"),
-		"Cursor":         filepath.Join(home, ".cursor", "mcp.config.json"),
+	paths := resolveIDEPaths(home)
+	if len(paths) == 0 {
+		warn("No known IDE paths detected")
+		return
 	}
 
-	if runtime.GOOS == "darwin" {
-		configs["Claude Desktop"] = filepath.Join(home, "Library", "Application Support", "Claude", "mcp-servers.json")
-		configs["VS Code"] = filepath.Join(home, "Library", "Application Support", "Code", "User", "globalStorage", "mcp-servers.json")
-	} else if runtime.GOOS == "windows" {
-		appData := os.Getenv("APPDATA")
-		configs["Claude Desktop"] = filepath.Join(appData, "Claude", "mcp-servers.json")
-		configs["VS Code"] = filepath.Join(appData, "Code", "User", "globalStorage", "mcp-servers.json")
-	}
-
-	// Determine binary path
 	var binPath string
 	if runtime.GOOS == "windows" {
 		binPath = filepath.Join(home, "go", "bin", "rag-code-mcp.exe")
@@ -497,11 +483,130 @@ func configureIDEs() {
 		binPath = filepath.Join(home, ".local", "bin", "rag-code-mcp")
 	}
 
-	for ide, path := range configs {
-		if _, err := os.Stat(filepath.Dir(path)); err == nil {
-			updateMCPConfig(ide, path, binPath)
+	selection := normalizeIdeSelection(selected)
+	for key, cfg := range paths {
+		shouldEnsure := selection.explicit[key]
+		if !selection.auto && !shouldEnsure {
+			continue
+		}
+		dir := filepath.Dir(cfg.path)
+		if !shouldEnsure {
+			if _, err := os.Stat(dir); err != nil {
+				continue
+			}
+		} else {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				warn(fmt.Sprintf("Failed to create %s: %v", dir, err))
+				continue
+			}
+		}
+		updateMCPConfig(cfg.displayName, cfg.path, binPath)
+	}
+}
+
+type idePath struct {
+	path        string
+	displayName string
+}
+
+func resolveIDEPaths(home string) map[string]idePath {
+	paths := map[string]idePath{
+		"windsurf": {
+			path:        filepath.Join(home, ".codeium", "windsurf", "mcp_config.json"),
+			displayName: "Windsurf",
+		},
+		"cursor": {
+			path:        filepath.Join(home, ".cursor", "mcp.config.json"),
+			displayName: "Cursor",
+		},
+		"antigravity": {
+			path:        filepath.Join(home, ".gemini", "antigravity", "mcp_config.json"),
+			displayName: "Antigravity",
+		},
+	}
+
+	switch runtime.GOOS {
+	case "darwin":
+		paths["claude"] = idePath{filepath.Join(home, "Library", "Application Support", "Claude", "mcp-servers.json"), "Claude Desktop"}
+	case "windows":
+		appData := os.Getenv("APPDATA")
+		if appData != "" {
+			paths["claude"] = idePath{filepath.Join(appData, "Claude", "mcp-servers.json"), "Claude Desktop"}
+		}
+	default: // Linux / others
+		paths["claude"] = idePath{filepath.Join(home, ".config", "Claude", "mcp-servers.json"), "Claude Desktop"}
+	}
+
+	if vsPath, ok := determineVSCodePath(home); ok {
+		paths["vs-code"] = vsPath
+	}
+
+	return paths
+}
+
+type ideSelection struct {
+	auto     bool
+	explicit map[string]bool
+}
+
+func determineVSCodePath(home string) (idePath, bool) {
+	var userDir string
+	switch runtime.GOOS {
+	case "windows":
+		appData := os.Getenv("APPDATA")
+		if appData == "" {
+			return idePath{}, false
+		}
+		userDir = filepath.Join(appData, "Code", "User")
+	case "darwin":
+		userDir = filepath.Join(home, "Library", "Application Support", "Code", "User")
+	default:
+		userDir = filepath.Join(home, ".config", "Code", "User")
+	}
+
+	newPath := filepath.Join(userDir, "mcp.json")
+	legacyPath := filepath.Join(userDir, "globalStorage", "mcp-servers.json")
+	chosen := newPath
+	if _, err := os.Stat(newPath); os.IsNotExist(err) {
+		if _, legacyErr := os.Stat(legacyPath); legacyErr == nil {
+			chosen = legacyPath
 		}
 	}
+
+	return idePath{path: chosen, displayName: "VS Code"}, true
+}
+
+func parseIDESelections(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.ToLower(strings.TrimSpace(part))
+		if part != "" {
+			result = append(result, part)
+		}
+	}
+	return result
+}
+
+func normalizeIdeSelection(selected []string) ideSelection {
+	if len(selected) == 0 {
+		return ideSelection{auto: true, explicit: map[string]bool{}}
+	}
+	sel := ideSelection{explicit: map[string]bool{}}
+	for _, item := range selected {
+		if item == "auto" {
+			sel.auto = true
+			continue
+		}
+		sel.explicit[item] = true
+	}
+	if len(sel.explicit) == 0 {
+		sel.auto = true
+	}
+	return sel
 }
 
 func updateMCPConfig(ide, path, binPath string) {

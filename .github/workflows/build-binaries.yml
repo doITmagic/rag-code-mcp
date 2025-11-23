@@ -4,10 +4,23 @@ permissions:
   contents: write
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
       - develop
+      - 'feat/**'
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'cmd/**'
+      - 'internal/**'
+  pull_request:
+    branches:
+      - main
+      - develop
+      - 'feat/**'
     paths:
       - '**.go'
       - 'go.mod'
@@ -30,6 +43,9 @@ jobs:
         with:
           go-version: '1.23'  # Use stable version compatible with 1.25.1
           cache: true
+
+      - name: Run tests
+        run: go test ./...
           
       - name: Build binaries
         run: |
@@ -55,7 +71,7 @@ jobs:
           fi
           
       - name: Commit and push binaries
-        if: steps.check_changes.outputs.changed == 'true'
+        if: github.event_name == 'push' && steps.check_changes.outputs.changed == 'true'
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"

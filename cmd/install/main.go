@@ -224,7 +224,18 @@ func setupServices() {
 
 	// Setup Qdrant
 	if *qdrantMode == "docker" {
-		startDockerContainer(qdrantContainer, qdrantImage, []string{"-p", "6333:6333"}, nil)
+		home, _ := os.UserHomeDir()
+		dataDir := filepath.Join(home, ".local", "share", "qdrant")
+		if err := os.MkdirAll(dataDir, 0755); err != nil {
+			fail(fmt.Sprintf("Could not create Qdrant data dir: %v", err))
+		}
+
+		qdrantArgs := []string{
+			"-p", "6333:6333",
+			"-p", "6334:6334",
+			"-v", fmt.Sprintf("%s:/qdrant/storage", dataDir),
+		}
+		startDockerContainer(qdrantContainer, qdrantImage, qdrantArgs, nil)
 	} else {
 		log("Using remote/local Qdrant (skipping Docker setup)")
 	}
@@ -257,7 +268,7 @@ func setupServices() {
 
 	// Wait for healthchecks
 	waitForService("Ollama", "http://localhost:11434")
-	waitForService("Qdrant", "http://localhost:6333")
+	waitForService("Qdrant", "http://localhost:6333/readyz")
 }
 
 func startDockerContainer(name, image string, args []string, env []string) {

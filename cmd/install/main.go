@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"flag"
@@ -458,30 +459,56 @@ func pullModel(name string) {
 	}
 	defer resp.Body.Close()
 
-	decoder := json.NewDecoder(resp.Body)
-	for decoder.More() {
+	scanner := bufio.NewScanner(resp.Body)
+	buffer := make([]byte, 0, 1024)
+	scanner.Buffer(buffer, 1024*1024)
+	var lastLine string
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		lastLine = line
+
 		var chunk map[string]interface{}
-		if err := decoder.Decode(&chunk); err != nil {
-			break
+		if err := json.Unmarshal([]byte(line), &chunk); err != nil {
+			continue
 		}
 
-		if status, ok := chunk["status"].(string); ok {
-			switch status {
-			case "pulling":
-				if detail, ok := chunk["detail"].(map[string]interface{}); ok {
-					percent := ""
-					if pct, ok := detail["completed_percentage"].(float64); ok {
-						percent = fmt.Sprintf(" %.0f%%", pct)
-					}
-					fmt.Printf("\r   ↳ %s%s", detail["current"], percent)
-				}
+		status, _ := chunk["status"].(string)
+		message := status
 
-			case "success":
-				fmt.Print("\r")
+		if detail, ok := chunk["detail"].(map[string]interface{}); ok {
+			if current, ok := detail["current"].(string); ok && current != "" {
+				message = current
 			}
+		} else if digest, ok := chunk["digest"].(string); ok && digest != "" && status != "" {
+			message = fmt.Sprintf("%s %s", status, digest)
+		}
+
+		percent := ""
+		if completed, ok := chunk["completed"].(float64); ok {
+			if total, ok := chunk["total"].(float64); ok && total > 0 {
+				pct := (completed / total) * 100
+				percent = fmt.Sprintf(" %.0f%%", pct)
+			}
+		}
+
+		fmt.Printf("\r   ↳ %s%s", message, percent)
+
+		if status == "success" {
+			break
 		}
 	}
 
+	if err := scanner.Err(); err != nil {
+		warn(fmt.Sprintf("Model download stream ended with error: %v", err))
+	}
+
+	if lastLine != "" {
+		fmt.Print("\r")
+	}
 	fmt.Println()
 	success(fmt.Sprintf("Model %s downloaded", name))
 }

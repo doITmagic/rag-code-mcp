@@ -104,7 +104,6 @@ func installBinary() {
 	} else {
 		binDir = filepath.Join(home, ".local", "bin")
 	}
-
 	if err := os.MkdirAll(binDir, 0755); err != nil {
 		fail(fmt.Sprintf("Could not create bin directory: %v", err))
 	}
@@ -114,73 +113,69 @@ func installBinary() {
 		outputBin += ".exe"
 	}
 
-	// Try downloading pre-built binary first
+	// Try downloading pre‑built binary first
 	if downloadBinary(outputBin) {
 		success("Binary downloaded successfully")
 		addToPath(binDir)
 		return
 	}
 
-	// Fallback to local build if download fails
-	warn("Could not download binary, attempting local build...")
-
-	// Check if we're in the repo directory
+	// Fallback: build locally if source is present
+	warn("Download failed – attempting local build from source.")
+	// Verify source exists
 	if _, err := os.Stat("./cmd/rag-code-mcp"); err != nil {
-		fail("Cannot build locally: not in repository directory and download failed.\nPlease run this installer from the rag-code-mcp repository or ensure GitHub releases are available.")
+		fail("Release not found and source code not available. Run installer from repository or create a GitHub release.")
 	}
-
 	cmd := exec.Command("go", "build", "-o", outputBin, "./cmd/rag-code-mcp")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-
 	log(fmt.Sprintf("Compiling to %s...", outputBin))
 	if err := cmd.Run(); err != nil {
-		fail(fmt.Sprintf("Build failed: %v", err))
+		fail(fmt.Sprintf("Local build failed: %v", err))
 	}
-
 	success("Binary built successfully")
 	addToPath(binDir)
 }
 
+// downloadBinary fetches the installer binary from the latest GitHub release.
 func downloadBinary(dest string) bool {
-	// Determine platform-specific binary name
 	var binaryName string
 	switch runtime.GOOS {
 	case "linux":
-		binaryName = "rag-code-mcp-linux"
+		binaryName = "ragcode-installer-linux"
 	case "darwin":
-		binaryName = "rag-code-mcp-darwin"
+		binaryName = "ragcode-installer-darwin"
 	case "windows":
-		binaryName = "rag-code-mcp-windows.exe"
+		binaryName = "ragcode-installer-windows.exe"
 	default:
 		return false
 	}
-
 	url := fmt.Sprintf("https://github.com/doITmagic/rag-code-mcp/releases/latest/download/%s", binaryName)
-
 	log(fmt.Sprintf("Downloading from %s...", url))
-
 	resp, err := http.Get(url)
 	if err != nil || resp.StatusCode != 200 {
+		if resp != nil && resp.StatusCode == 404 {
+			warn("Release not found (404). Skipping download.")
+		} else {
+			warn(fmt.Sprintf("Failed to download binary: %v (status %d)", err, resp.StatusCode))
+		}
 		return false
 	}
 	defer resp.Body.Close()
-
 	out, err := os.Create(dest)
 	if err != nil {
+		warn(fmt.Sprintf("Could not create file %s: %v", dest, err))
 		return false
 	}
 	defer out.Close()
-
 	if _, err := io.Copy(out, resp.Body); err != nil {
+		warn(fmt.Sprintf("Error writing binary: %v", err))
 		return false
 	}
-
-	// Make executable
 	if err := os.Chmod(dest, 0755); err != nil {
+		warn(fmt.Sprintf("Could not set executable flag: %v", err))
 		return false
 	}
-
 	return true
 }
 

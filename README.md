@@ -7,6 +7,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.25%2B-blue)](https://go.dev/)
 [![MCP](https://img.shields.io/badge/MCP-Compatible-green)](https://modelcontextprotocol.io)
+![Privacy](https://img.shields.io/badge/Privacy-100%25%20Local-brightgreen)
+![No Cloud](https://img.shields.io/badge/Cloud-Not%20Required-orange)
+![Zero Cost](https://img.shields.io/badge/API%20Costs-$0-success)
 [![GitHub Stars](https://img.shields.io/github/stars/doITmagic/rag-code-mcp?style=social)](https://github.com/doITmagic/rag-code-mcp)
 
 </div>
@@ -19,6 +22,20 @@ RagCode is a **Model Context Protocol (MCP) server** that enables AI assistants 
 
 Built with the official [Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk), RagCode provides **9 powerful tools** for intelligent code search, function analysis, type definitions, and documentation retrieval across **multi-language projects**.
 
+## 🔒 Privacy-First: 100% Local AI
+
+**Your code never leaves your machine.** RagCode runs entirely on your local infrastructure:
+
+- ✅ **Local AI Models** - Uses Ollama for LLM and embeddings (runs on your hardware)
+- ✅ **Local Vector Database** - Qdrant runs in Docker on your machine
+- ✅ **Zero Cloud Dependencies** - No external API calls, no data transmission
+- ✅ **No API Costs** - Free forever, no usage limits or subscriptions
+- ✅ **Complete Privacy** - Your proprietary code stays private and secure
+- ✅ **Offline Capable** - Works without internet connection (after initial model download)
+- ✅ **Full Control** - You own the data, models, and infrastructure
+
+**Perfect for:** Enterprise codebases, proprietary projects, security-conscious teams, and developers who value privacy.
+
 ### 🎯 Key Features
 
 - 🔍 **Semantic Code Search** - Find code by meaning, not just keywords
@@ -30,7 +47,7 @@ Built with the official [Model Context Protocol Go SDK](https://github.com/model
 
 ### 🛠️ Technology Stack
 
-**Ollama** (LLM + embeddings) + **Qdrant** (vector database) + **Docker** + **MCP Protocol**
+**100% Local Stack:** Ollama (local LLM + embeddings) + Qdrant (local vector database) + Docker + MCP Protocol
 
 ### 💻 Compatible IDEs & AI Assistants
 
@@ -70,6 +87,21 @@ Without RagCode, AI assistants must:
 - **Without RagCode:** AI reads 5-10 files (~15,000 tokens) to find the function
 - **With RagCode:** AI gets exact function + context (~200 tokens)
 - **Savings:** **98% fewer tokens** = faster responses + lower costs
+
+### 🆚 RagCode vs Cloud-Based Solutions
+
+| Feature | RagCode (Local) | Cloud-Based AI Code Search |
+|---------|-----------------|---------------------------|
+| **Privacy** | ✅ 100% local, code never leaves machine | ❌ Code sent to cloud servers |
+| **Cost** | ✅ $0 - Free forever | ❌ $20-100+/month subscriptions |
+| **API Limits** | ✅ Unlimited usage | ❌ Rate limits, token caps |
+| **Offline** | ✅ Works without internet | ❌ Requires constant connection |
+| **Data Control** | ✅ You own everything | ❌ Vendor controls your data |
+| **Enterprise Ready** | ✅ No compliance issues | ⚠️ May violate security policies |
+| **Setup** | ⚠️ Requires local resources | ✅ Instant cloud access |
+| **Performance** | ✅ Fast (local hardware) | ⚠️ Depends on network latency |
+
+**Bottom Line:** RagCode gives you enterprise-grade AI code search with zero privacy concerns and zero ongoing costs.
 
 ---
 
@@ -452,7 +484,7 @@ See the [LICENSE](./LICENSE) file for full details.
 
 ## 🏷️ Keywords & Topics
 
-`semantic-code-search` `rag` `retrieval-augmented-generation` `mcp-server` `model-context-protocol` `ai-code-assistant` `vector-search` `code-navigation` `ollama` `qdrant` `github-copilot` `cursor-ai` `windsurf` `go` `php` `laravel` `code-intelligence` `ast-analysis` `embeddings` `llm-tools`
+`semantic-code-search` `rag` `retrieval-augmented-generation` `mcp-server` `model-context-protocol` `ai-code-assistant` `vector-search` `code-navigation` `ollama` `qdrant` `github-copilot` `cursor-ai` `windsurf` `go` `php` `laravel` `code-intelligence` `ast-analysis` `embeddings` `llm-tools` `local-ai` `privacy-first` `offline-ai` `self-hosted` `on-premise` `zero-cost` `no-cloud` `private-code-search` `enterprise-ai` `secure-coding-assistant`
 
 ---
 

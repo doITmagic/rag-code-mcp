@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/doITmagic/coderag-mcp/internal/config"
+	"github.com/doITmagic/rag-code-mcp/internal/config"
 )
 
 func TestGenerateOptionsHelpers(t *testing.T) {

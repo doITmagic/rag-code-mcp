@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/doITmagic/coderag-mcp/internal/codetypes"
-	"github.com/doITmagic/coderag-mcp/internal/memory"
+	"github.com/doITmagic/rag-code-mcp/internal/codetypes"
+	"github.com/doITmagic/rag-code-mcp/internal/memory"
 )
 
 // readFileLines reads specific lines from a file

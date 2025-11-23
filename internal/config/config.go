@@ -21,8 +21,8 @@ type Config struct {
 	// Logging configuration
 	Logging LoggingConfig `yaml:"logging"`
 
-	// CodeRAG configuration
-	CodeRAG CodeRAGConfig `yaml:"code_rag"`
+	// RagCode configuration
+	RagCode RagCodeConfig `yaml:"rag_code"`
 
 	// Docs configuration (Markdown documentation indexing)
 	Docs DocsConfig `yaml:"docs"`
@@ -124,8 +124,8 @@ type LoggingConfig struct {
 	Path   string `yaml:"path"`
 }
 
-// CodeRAGConfig contains configuration for codebase indexing at startup
-type CodeRAGConfig struct {
+// RagCodeConfig contains configuration for codebase indexing at startup
+type RagCodeConfig struct {
 	Enabled        bool     `yaml:"enabled"`          // enable Code RAG features
 	IndexOnStartup bool     `yaml:"index_on_startup"` // run indexer when server starts
 	Paths          []string `yaml:"paths"`            // directories to index
@@ -176,11 +176,11 @@ type WorkspaceConfig struct {
 
 	// CollectionPrefix is prepended to all workspace collection names
 	// Format: {prefix}-{workspaceID}
-	// Default: "coderag"
+	// Default: "ragcode"
 	CollectionPrefix string `yaml:"collection_prefix"`
 
-	// IndexPatterns override code_rag include/exclude patterns per workspace
-	// If empty, uses global code_rag patterns
+	// IndexPatterns override rag_code include/exclude patterns per workspace
+	// If empty, uses global rag_code patterns
 	IndexInclude []string `yaml:"index_include"`
 	IndexExclude []string `yaml:"index_exclude"`
 }

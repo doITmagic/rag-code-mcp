@@ -26,13 +26,13 @@
 - [ ] **internal/workspace/language_detection.go** - Translate comments
 - [ ] **internal/workspace/cache.go** - Translate comments
 
-#### CodeRAG Package
+#### RagCode Package
 
-- [ ] **internal/coderag/indexer.go** - Translate comments
-- [ ] **internal/coderag/language_manager.go** - Translate comments
-- [ ] **internal/coderag/analyzers/golang/analyzer.go** - Translate comments
-- [ ] **internal/coderag/analyzers/golang/api_analyzer.go** - Translate comments
-- [ ] **internal/coderag/analyzers/golang/types.go** - Translate comments
+- [ ] **internal/ragcode/indexer.go** - Translate comments
+- [ ] **internal/ragcode/language_manager.go** - Translate comments
+- [ ] **internal/ragcode/analyzers/golang/analyzer.go** - Translate comments
+- [ ] **internal/ragcode/analyzers/golang/api_analyzer.go** - Translate comments
+- [ ] **internal/ragcode/analyzers/golang/types.go** - Translate comments
 
 #### Tools Package
 
@@ -59,7 +59,7 @@
 
 #### Command Line Tools
 
-- [ ] **cmd/coderag-mcp/main.go** - Translate comments
+- [ ] **cmd/rag-code-mcp/main.go** - Translate comments
 - [ ] **cmd/index-all/main.go** - Translate comments
 
 ### Priority 3: Test Files
@@ -69,9 +69,9 @@
 - [ ] **internal/workspace/detector_test.go** - Translate test names & comments
 - [ ] **internal/workspace/markdown_test.go** - Translate test names & comments
 - [ ] **internal/workspace/example_test.go** - Translate test names & comments
-- [ ] **internal/coderag/coderag_test.go** - Translate test names & comments
-- [ ] **internal/coderag/analyzers/golang/analyzer_test.go** - Translate test names & comments
-- [ ] **internal/coderag/analyzers/golang/api_analyzer_test.go** - Translate test names & comments
+- [ ] **internal/ragcode/ragcode_test.go** - Translate test names & comments
+- [ ] **internal/ragcode/analyzers/golang/analyzer_test.go** - Translate test names & comments
+- [ ] **internal/ragcode/analyzers/golang/api_analyzer_test.go** - Translate test names & comments
 - [ ] **internal/config/config_test.go** - Translate test names & comments
 - [ ] **internal/llm/provider_test.go** - Translate test names & comments
 - [ ] **internal/storage/qdrant_memory_test.go** - Translate test names & comments

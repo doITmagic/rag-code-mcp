@@ -3,10 +3,11 @@ data/
 test_data/
 qdrant_data/
 barou/
+.agent/
 
 # Binaries
 /cmd/agent-runner/agent-runner
-/coderag-mcp
+/rag-code-mcp
 test-*
 bin/
 

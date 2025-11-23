@@ -1,4 +1,4 @@
-# Multi-stage Dockerfile for CodeRAG MCP Server
+# Multi-stage Dockerfile for RagCode MCP Server
 # Optimized for small image size and security
 
 FROM golang:1.22-alpine AS builder
@@ -24,8 +24,8 @@ ARG DATE=unknown
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -ldflags="-s -w -X main.Version=${VERSION} -X main.Commit=${COMMIT} -X main.Date=${DATE}" \
-    -o /coderag-mcp \
-    ./cmd/coderag-mcp
+    -o /rag-code-mcp \
+    ./cmd/rag-code-mcp
 
 # Final stage - minimal image
 FROM alpine:latest
@@ -38,10 +38,10 @@ RUN addgroup -g 1000 mcp && \
     adduser -D -u 1000 -G mcp mcp
 
 # Copy binary from builder
-COPY --from=builder /coderag-mcp /usr/local/bin/coderag-mcp
+COPY --from=builder /rag-code-mcp /usr/local/bin/rag-code-mcp
 
 # Copy example config
-COPY config.yaml /etc/coderag/config.yaml.example
+COPY config.yaml /etc/ragcode/config.yaml.example
 
 # Default environment variables
 ENV OLLAMA_BASE_URL="http://host.docker.internal:11434" \
@@ -56,6 +56,6 @@ USER mcp
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD ["/usr/local/bin/coderag-mcp", "--version"] || exit 1
+    CMD ["/usr/local/bin/rag-code-mcp", "--version"] || exit 1
 
-ENTRYPOINT ["/usr/local/bin/coderag-mcp"]
+ENTRYPOINT ["/usr/local/bin/rag-code-mcp"]

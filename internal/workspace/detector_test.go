@@ -180,7 +180,7 @@ func TestInfo_CollectionName(t *testing.T) {
 				Root: "/home/user/project",
 				ID:   "a3f4b8c9d2e1",
 			},
-			expected: "coderag-a3f4b8c9d2e1",
+			expected: "ragcode-a3f4b8c9d2e1",
 		},
 		{
 			name: "custom prefix",
@@ -198,7 +198,7 @@ func TestInfo_CollectionName(t *testing.T) {
 				ID:               "abc123",
 				CollectionPrefix: "",
 			},
-			expected: "coderag-abc123",
+			expected: "ragcode-abc123",
 		},
 	}
 

@@ -1,30 +1,44 @@
 # Architecture
 
-This document describes the internal architecture of CodeRAG MCP Server after the multi-language restructuring.
+This document describes the internal architecture of RagCode MCP Server after the multi-language restructuring.
 
 ## Overview
 
-CodeRAG MCP is structured to support multiple programming languages through a pluggable analyzer architecture. The codebase is organized to separate language-agnostic components from language-specific analyzers.
+RagCode MCP is structured to support multiple programming languages through a pluggable analyzer architecture. The codebase is organized to separate language-agnostic components from language-specific analyzers.
 
 ## Directory Structure
 
 ```
 internal/
 ├── codetypes/              # Universal types and interfaces (language-agnostic)
-│   └── types.go           # CodeChunk (canonical), PathAnalyzer (legacy APIChunk/APIAnalyzer kept only for compatibility)
+│   ├── types.go           # CodeChunk (canonical), PathAnalyzer (legacy APIChunk/APIAnalyzer kept only for compatibility)
+│   └── symbol_schema.go   # Symbol schema definitions
 │
-├── coderag/               # Core indexing and language management
+├── ragcode/               # Core indexing and language management
 │   ├── indexer.go         # Indexing logic using PathAnalyzer (CodeChunk-only)
 │   ├── language_manager.go # Factory for selecting language analyzers (by project type)
-│   ├── coderag_test.go    # Integration tests
+│   ├── ragcode_test.go    # Integration tests
+│   ├── laravel_integration_test.go # Laravel integration tests
 │   └── analyzers/         # Language-specific analyzers
 │       ├── golang/        # Go language analyzer (fully implemented)
 │       │   ├── analyzer.go           # PathAnalyzer implementation → CodeChunk
+│       │   ├── api_analyzer.go       # API documentation analyzer
 │       │   ├── types.go              # Go-specific types (FunctionInfo, TypeInfo, etc.)
 │       │   └── analyzer_test.go      # Unit tests
 │       ├── php/           # PHP analyzer (including Laravel support)
-│       │   ├── analyzer.go
-│       │   └── laravel/   # Laravel-specific analyzers (Eloquent, controllers, routes)
+│       │   ├── analyzer.go           # Main PHP analyzer
+│       │   ├── api_analyzer.go       # PHP API analyzer
+│       │   ├── phpdoc.go             # PHPDoc parsing
+│       │   ├── types.go              # PHP-specific types
+│       │   └── laravel/   # Laravel-specific analyzers
+│       │       ├── analyzer.go       # Laravel analyzer coordinator
+│       │       ├── eloquent.go       # Eloquent model analyzer
+│       │       ├── controller.go     # Controller analyzer
+│       │       ├── routes.go         # Route analyzer
+│       │       ├── adapter.go        # Adapter for integration
+│       │       └── ast_helper.go     # AST utilities
+│       ├── html/          # HTML analyzer
+│       │   └── analyzer.go
 │       └── python/        # Python analyzer (placeholder)
 │           └── README.md
 │
@@ -32,12 +46,13 @@ internal/
 │   ├── manager.go         # Workspace manager (per-language collections)
 │   ├── detector.go        # Workspace root detection
 │   ├── language_detection.go # Language detection from markers
+│   ├── multi_search.go    # Cross-workspace search logic
 │   ├── cache.go           # Workspace cache
 │   ├── types.go           # Workspace types and structs
 │   ├── README.md          # Workspace documentation
-│   └── *_test.go          # Comprehensive test suite (15+ tests)
+│   └── *_test.go          # Comprehensive test suite (manager_multilang_test.go, etc.)
 │
-├── tools/                 # MCP tool implementations (8 tools)
+├── tools/                 # MCP tool implementations (9 tools)
 │   ├── search_local_index.go
 │   ├── hybrid_search.go
 │   ├── get_function_details.go
@@ -46,8 +61,10 @@ internal/
 │   ├── list_package_exports.go
 │   ├── find_implementations.go
 │   ├── search_docs.go
+│   ├── index_workspace.go    # Manual indexing tool
+│   ├── workspace_helpers.go  # Helper functions for tools
 │   ├── utils.go
-│   └── tools_test.go
+│   └── *_test.go             # Tool tests
 │
 ├── storage/               # Vector database (Qdrant) integration
 │   ├── qdrant.go          # Qdrant client wrapper
@@ -84,7 +101,7 @@ internal/
 
 ### Overview
 
-CodeRAG MCP supports **polyglot workspaces** (containing multiple programming languages) by creating **separate Qdrant collections per language per workspace**. This ensures clean separation of code by language, better search quality, and improved scalability.
+RagCode MCP supports **polyglot workspaces** (containing multiple programming languages) by creating **separate Qdrant collections per language per workspace**. This ensures clean separation of code by language, better search quality, and improved scalability.
 
 ### Collection Naming Strategy
 
@@ -95,13 +112,13 @@ CodeRAG MCP supports **polyglot workspaces** (containing multiple programming la
 
 **Examples:**
 ```
-coderag-a1b2c3d4e5f6-go
-coderag-a1b2c3d4e5f6-python
-coderag-a1b2c3d4e5f6-javascript
-coderag-a1b2c3d4e5f6-php
+ragcode-a1b2c3d4e5f6-go
+ragcode-a1b2c3d4e5f6-python
+ragcode-a1b2c3d4e5f6-javascript
+ragcode-a1b2c3d4e5f6-php
 ```
 
-**Default Prefix:** `coderag` (configurable via `workspace.collection_prefix` in `config.yaml`)
+**Default Prefix:** `ragcode` (configurable via `workspace.collection_prefix` in `config.yaml`)
 
 ### Language Detection Strategy
 
@@ -130,22 +147,22 @@ Consider a monorepo with multiple languages:
 myproject/
 ├── .git
 ├── go.mod                  # Triggers Go detection
-├── main.go                 # → Indexed into coderag-xxx-go
+├── main.go                 # → Indexed into ragcode-xxx-go
 ├── api_server.go
 ├── scripts/
 │   ├── pyproject.toml      # Triggers Python detection
-│   ├── train.py            # → Indexed into coderag-xxx-python
+│   ├── train.py            # → Indexed into ragcode-xxx-python
 │   └── ml_utils.py
 └── web/
     ├── package.json        # Triggers JavaScript detection
-    ├── app.js              # → Indexed into coderag-xxx-javascript
+    ├── app.js              # → Indexed into ragcode-xxx-javascript
     └── utils.ts
 ```
 
 **Results in 3 collections:**
-- `coderag-{workspaceID}-go` - Contains all Go code
-- `coderag-{workspaceID}-python` - Contains all Python code
-- `coderag-{workspaceID}-javascript` - Contains all JavaScript/TypeScript code
+- `ragcode-{workspaceID}-go` - Contains all Go code
+- `ragcode-{workspaceID}-python` - Contains all Python code
+- `ragcode-{workspaceID}-javascript` - Contains all JavaScript/TypeScript code
 
 ### Indexing Strategy
 
@@ -185,7 +202,7 @@ When a query is received via MCP tools with file context:
   "query": "handler function"
 }
 ```
-→ Automatically searches in `coderag-{workspaceID}-go`
+→ Automatically searches in `ragcode-{workspaceID}-go`
 
 #### Cross-Language Search
 
@@ -203,9 +220,9 @@ For semantic searches across all code:
 }
 ```
 → Searches in:
-- `coderag-backend-go`
-- `coderag-backend-python`
-- `coderag-backend-javascript`
+- `ragcode-backend-go`
+- `ragcode-backend-python`
+- `ragcode-backend-javascript`
 → Returns combined results with language labels
 
 ### Workspace Info API
@@ -233,18 +250,18 @@ func (w *Info) CollectionNameForLanguage(language string) string {
 
 **Legacy Format (Deprecated):**
 ```
-coderag-{workspaceID}  →  [Mixed Go + Python + JavaScript code]
+ragcode-{workspaceID}  →  [Mixed Go + Python + JavaScript code]
 ```
 
 **New Format:**
 ```
-coderag-{workspaceID}-go          →  [Go code only]
-coderag-{workspaceID}-python      →  [Python code only]
-coderag-{workspaceID}-javascript  →  [JavaScript code only]
+ragcode-{workspaceID}-go          →  [Go code only]
+ragcode-{workspaceID}-python      →  [Python code only]
+ragcode-{workspaceID}-javascript  →  [JavaScript code only]
 ```
 
 To migrate:
-1. **Delete old collection** (optional): `coderag-{workspaceID}`
+1. **Delete old collection** (optional): `ragcode-{workspaceID}`
 2. **Re-run indexing**: Automatically creates language-specific collections
 3. **Update queries**: Use `CollectionNameForLanguage(language)` instead of single collection
 
@@ -272,7 +289,7 @@ To migrate:
 
 **Design Principle:** These types are enhanced with LSP-inspired fields (Language, URI, SelectionRange, Detail, AccessModifier, Tags, Children) to support rich code navigation.
 
-### 2. Language Manager (`internal/coderag/language_manager.go`)
+### 2. Language Manager (`internal/ragcode/language_manager.go`)
 
 **Purpose:** Factory pattern for selecting the appropriate analyzer based on project type or language.
 
@@ -311,13 +328,13 @@ For a monorepo with Go + Python code:
 ├── backend/                      → workspace "backend"
 │   ├── .git/
 │   ├── go.mod                   → language: "go"
-│   └── Collections: coderag-backend-go
+│   └── Collections: ragcode-backend-go
 ├── frontend/                     → workspace "frontend"
 │   ├── package.json             → language: "javascript"
-│   └── Collections: coderag-frontend-javascript
+│   └── Collections: ragcode-frontend-javascript
 └── scripts/                      → workspace "scripts"
     ├── requirements.txt         → language: "python"
-    └── Collections: coderag-scripts-python
+    └── Collections: ragcode-scripts-python
 ```
 
 ### 5. Workspace Detector (`internal/workspace/detector.go`)
@@ -345,7 +362,7 @@ For a monorepo with Go + Python code:
 - C#: `*.csproj`
 - Others: `.git` alone indicates workspace root
 
-### 5. Indexer (`internal/coderag/indexer.go`)
+### 5. Indexer (`internal/ragcode/indexer.go`)
 
 **Purpose:** Indexes code chunks into vector database using embeddings.
 
@@ -359,7 +376,7 @@ For a monorepo with Go + Python code:
 paths → analyzer.AnalyzePaths() → []CodeChunk → embeddings → Qdrant
 ```
 
-### 6. Go Analyzer (`internal/coderag/analyzers/golang`)
+### 6. Go Analyzer (`internal/ragcode/analyzers/golang`)
 
 **Purpose:** Implements PathAnalyzer and APIAnalyzer for Go language using `go/ast`, `go/doc`, and `go/parser`.
 
@@ -416,7 +433,7 @@ To add support for a new language (e.g., PHP, Python):
 ### Step 1: Create Analyzer Package
 
 ```bash
-mkdir -p internal/coderag/analyzers/<language>
+mkdir -p internal/ragcode/analyzers/<language>
 ```
 
 ### Step 2: Implement PathAnalyzer
@@ -426,7 +443,7 @@ Create `analyzer.go`:
 ```go
 package <language>
 
-import "github.com/doITmagic/coderag-mcp/internal/codetypes"
+import "github.com/doITmagic/rag-code-mcp/internal/codetypes"
 
 type CodeAnalyzer struct {
     // language-specific fields
@@ -450,7 +467,7 @@ Create `api_analyzer.go`:
 ```go
 package <language>
 
-import "github.com/doITmagic/coderag-mcp/internal/codetypes"
+import "github.com/doITmagic/rag-code-mcp/internal/codetypes"
 
 type APIAnalyzerImpl struct {
     analyzer *CodeAnalyzer
@@ -469,10 +486,10 @@ func (a *APIAnalyzerImpl) AnalyzeAPIPaths(paths []string) ([]codetypes.APIChunk,
 
 ### Step 4: Register in Language Manager
 
-Update `internal/coderag/language_manager.go`:
+Update `internal/ragcode/language_manager.go`:
 
 ```go
-import "github.com/doITmagic/coderag-mcp/internal/coderag/analyzers/<language>"
+import "github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/<language>"
 
 const (
     Language<Name> Language = "<language>"
@@ -500,10 +517,10 @@ Update this file and main README.md to list the new language as supported.
 
 ### 1. Separate `codetypes` Package
 
-**Rationale:** Prevents import cycles. Analyzers import `codetypes`, not `coderag`.
+**Rationale:** Prevents import cycles. Analyzers import `codetypes`, not `ragcode`.
 
 **Benefits:**
-- Clean dependency graph: `golang` → `codetypes`, `coderag` → `codetypes`, `coderag` → `golang`
+- Clean dependency graph: `golang` → `codetypes`, `ragcode` → `codetypes`, `ragcode` → `golang`
 - Shared types accessible from all packages
 - Easy to add new languages without circular dependencies
 
@@ -572,7 +589,7 @@ Update this file and main README.md to list the new language as supported.
 workspace:
   enabled: true                    # Enable multi-workspace mode
   auto_index: true                 # Auto-index detected workspaces
-  collection_prefix: coderag       # Collection naming prefix
+  collection_prefix: ragcode       # Collection naming prefix
   
   # Language detection markers - file presence indicates language
   detection_markers:
@@ -596,7 +613,7 @@ For advanced users (not recommended for typical use):
 
 - `WORKSPACE_ENABLED` - Enable/disable multi-workspace mode (default: true)
 - `WORKSPACE_AUTO_INDEX` - Auto-index detected workspaces (default: true)
-- `WORKSPACE_COLLECTION_PREFIX` - Collection naming prefix (default: "coderag")
+- `WORKSPACE_COLLECTION_PREFIX` - Collection naming prefix (default: "ragcode")
 - `WORKSPACE_MAX_WORKSPACES` - Maximum concurrent workspaces to index (default: 10)
 
 **Note:** These variables are auto-managed by the system. Use defaults unless you have specific requirements.

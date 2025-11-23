@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/doITmagic/coderag-mcp/internal/codetypes"
-	"github.com/doITmagic/coderag-mcp/internal/memory"
+	"github.com/doITmagic/rag-code-mcp/internal/codetypes"
+	"github.com/doITmagic/rag-code-mcp/internal/memory"
 )
 
 func TestSearchLocalIndexTool_JSONOutput(t *testing.T) {

@@ -1,10 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-REPO_SLUG="doITmagic/coderag-mcp"
-DEFAULT_RELEASE_URL="https://github.com/${REPO_SLUG}/releases/latest/download/coderag-linux.tar.gz"
-RELEASE_URL="${CODERAG_RELEASE_URL:-$DEFAULT_RELEASE_URL}"
-INSTALL_DIR="${HOME}/.local/share/coderag"
+REPO_SLUG="doITmagic/rag-code-mcp"
+DEFAULT_RELEASE_URL="https://github.com/${REPO_SLUG}/releases/latest/download/ragcode-linux.tar.gz"
+RELEASE_URL="${RAGCODE_RELEASE_URL:-$DEFAULT_RELEASE_URL}"
+INSTALL_DIR="${HOME}/.local/share/ragcode"
 BIN_DIR="${INSTALL_DIR}/bin"
 TMP_DIR="$(mktemp -d)"
 COLOR_BLUE='\033[0;34m'
@@ -45,7 +45,7 @@ require_commands() {
 
 fetch_release_archive() {
     local archive_path="$TMP_DIR/release.tar.gz"
-    log "Downloading CodeRAG release (may take a while)..."
+    log "Downloading RagCode release (may take a while)..."
     curl -fsSL "$RELEASE_URL" -o "$archive_path" || fail "Could not download release from $RELEASE_URL"
     echo "$archive_path"
 }
@@ -66,7 +66,7 @@ install_payload() {
     local src="$1"
     mkdir -p "$BIN_DIR"
     log "Copying binaries to ${BIN_DIR}"
-    install -m 755 "$src/bin/coderag-mcp" "$BIN_DIR/coderag-mcp" || fail "Missing coderag-mcp binary in release"
+    install -m 755 "$src/bin/rag-code-mcp" "$BIN_DIR/rag-code-mcp" || fail "Missing rag-code-mcp binary in release"
     install -m 755 "$src/bin/index-all" "$BIN_DIR/index-all" || fail "Missing index-all binary in release"
 
     mkdir -p "$INSTALL_DIR"
@@ -113,8 +113,8 @@ if path.exists():
         config = json.loads(path.read_text())
     except Exception:
         pass
-config["coderag"] = {
-    "command": "$BIN_DIR/coderag-mcp",
+config["ragcode"] = {
+    "command": "$BIN_DIR/rag-code-mcp",
     "args": [],
     "env": {
         "OLLAMA_BASE_URL": "http://localhost:11434",
@@ -130,7 +130,7 @@ PY
 
 run_setup_once() {
     log "Running start.sh to check services (without starting MCP)..."
-    CODERAG_SKIP_SERVER_START=1 "$INSTALL_DIR/start.sh"
+    RAGCODE_SKIP_SERVER_START=1 "$INSTALL_DIR/start.sh"
 }
 
 main() {
@@ -151,7 +151,7 @@ main() {
     success "Installation complete!"
     cat <<INFO
 ${COLOR_BLUE}────────────────────────────────────────────${COLOR_RESET}
-Binary:       ${BIN_DIR}/coderag-mcp
+Binary:       ${BIN_DIR}/rag-code-mcp
 Start script: ${INSTALL_DIR}/start.sh
 MCP Config:   ~/.codeium/windsurf/mcp_config.json, ~/.cursor/mcp.config.json
 

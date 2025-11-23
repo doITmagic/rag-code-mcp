@@ -1,13 +1,13 @@
 #!/bin/bash
 #
-# CodeRAG MCP - One-Line Installer
+# RagCode MCP - One-Line Installer
 # 
 # Usage:
 #   Production (main branch):
-#     curl -fsSL https://raw.githubusercontent.com/doITmagic/coderag-mcp/main/quick-install.sh | bash
+#     curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | bash
 #   
 #   Development (develop branch):
-#     curl -fsSL https://raw.githubusercontent.com/doITmagic/coderag-mcp/develop/quick-install.sh | BRANCH=develop bash
+#     curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/develop/quick-install.sh | BRANCH=develop bash
 #
 #   Or specify branch explicitly when running locally:
 #     BRANCH=develop bash quick-install.sh
@@ -25,9 +25,9 @@ RED='\033[0;31m'
 RESET='\033[0m'
 
 # Configuration
-REPO_SLUG="doITmagic/coderag-mcp"
+REPO_SLUG="doITmagic/rag-code-mcp"
 BRANCH="${BRANCH:-main}"  # Default to 'main' branch, can be overridden with BRANCH env var
-INSTALL_DIR="${HOME}/.local/share/coderag"
+INSTALL_DIR="${HOME}/.local/share/ragcode"
 BIN_DIR="${INSTALL_DIR}/bin"
 
 log() { printf "${BLUE}==>${RESET} %s\n" "$1"; }
@@ -85,15 +85,15 @@ check_prerequisites() {
 }
 
 # Step 2: Download and install
-install_coderag() {
-    log "Installing CodeRAG MCP..."
+install_ragcode() {
+    log "Installing RagCode MCP..."
     
     # Create temp directory
     local tmp_dir=$(mktemp -d)
     trap "rm -rf $tmp_dir" EXIT
     
     # Try to download release
-    local release_url="https://github.com/${REPO_SLUG}/releases/latest/download/coderag-linux.tar.gz"
+    local release_url="https://github.com/${REPO_SLUG}/releases/latest/download/ragcode-linux.tar.gz"
     
     if curl -fsSL "$release_url" -o "$tmp_dir/release.tar.gz" 2>/dev/null; then
         log "Downloading official release..."
@@ -108,7 +108,7 @@ install_coderag() {
         
         # Install binaries
         mkdir -p "$BIN_DIR"
-        install -m 755 "$extracted/bin/coderag-mcp" "$BIN_DIR/coderag-mcp"
+        install -m 755 "$extracted/bin/rag-code-mcp" "$BIN_DIR/rag-code-mcp"
         install -m 755 "$extracted/bin/index-all" "$BIN_DIR/index-all"
         
         # Install scripts and config
@@ -129,7 +129,7 @@ install_coderag() {
         base_repo_url="https://raw.githubusercontent.com/${REPO_SLUG}/${BRANCH}"
 
         # Download prebuilt binaries
-        for f in coderag-mcp index-all; do
+        for f in rag-code-mcp index-all; do
             # Remove existing binary if present
             if [ -f "$BIN_DIR/$f" ]; then
                 log "Removing existing $f for upgrade..."
@@ -182,7 +182,7 @@ setup_path() {
     
     # Add to PATH
     echo "" >> "$shell_rc"
-    echo "# CodeRAG MCP" >> "$shell_rc"
+    echo "# RagCode MCP" >> "$shell_rc"
     echo "export PATH=\"$BIN_DIR:\$PATH\"" >> "$shell_rc"
     
     success "PATH updated in $shell_rc (reload shell to apply)"
@@ -240,9 +240,9 @@ try:
     if "mcpServers" not in config:
         config["mcpServers"] = {}
 
-    # Add coderag to mcpServers
-    config["mcpServers"]["coderag"] = {
-        "command": "$BIN_DIR/coderag-mcp",
+    # Add ragcode to mcpServers
+    config["mcpServers"]["ragcode"] = {
+        "command": "$BIN_DIR/rag-code-mcp",
         "args": [],
         "env": {
             "OLLAMA_BASE_URL": "http://localhost:11434",
@@ -252,9 +252,9 @@ try:
         }
     }
 
-    # Remove top-level coderag if exists (old format)
-    if "coderag" in config and "mcpServers" in config:
-        del config["coderag"]
+    # Remove top-level ragcode if exists (old format)
+    if "ragcode" in config and "mcpServers" in config:
+        del config["ragcode"]
 
     # Write config
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -287,11 +287,11 @@ start_services() {
     log "Setting up Qdrant and Ollama..."
     
     if [ -f "$INSTALL_DIR/start.sh" ]; then
-        # Run start.sh with CODERAG_SKIP_SERVER_START=1 to only setup services
-        if CODERAG_SKIP_SERVER_START=1 bash "$INSTALL_DIR/start.sh"; then
+        # Run start.sh with RAGCODE_SKIP_SERVER_START=1 to only setup services
+        if RAGCODE_SKIP_SERVER_START=1 bash "$INSTALL_DIR/start.sh"; then
             success "Services started successfully"
         else
-            warn "Some services may not have started. Check with: coderag-mcp -health"
+            warn "Some services may not have started. Check with: rag-code-mcp -health"
         fi
     else
         warn "start.sh not found at $INSTALL_DIR/start.sh"
@@ -306,7 +306,7 @@ show_summary() {
     echo ""
     echo -e "${BLUE}────────────────────────────────────────────${RESET}"
     echo "📦 Installation:"
-    echo "   Binary:       $BIN_DIR/coderag-mcp"
+    echo "   Binary:       $BIN_DIR/rag-code-mcp"
     echo "   Start script: $INSTALL_DIR/start.sh"
     echo "   Config:       $INSTALL_DIR/config.yaml"
     echo ""
@@ -320,7 +320,7 @@ show_summary() {
     echo "   1. Reload shell: source ~/.bashrc"
     echo "   2. Verify services: docker ps | grep qdrant"
     echo "   3. Verify Ollama: ollama list"
-    echo "   4. Open Windsurf/Cursor and use CodeRAG!"
+    echo "   4. Open Windsurf/Cursor and use RagCode!"
     echo ""
     echo -e "${GREEN}💡 First Time Setup - Index Your Workspace:${RESET}"
     echo ""
@@ -329,7 +329,7 @@ show_summary() {
     echo -e "${YELLOW}   ┌─────────────────────────────────────────────────────────────┐${RESET}"
     echo -e "${YELLOW}   │ ${BLUE}Suggested AI Prompt:${YELLOW}                                     │${RESET}"
     echo -e "${YELLOW}   ├─────────────────────────────────────────────────────────────┤${RESET}"
-    echo -e "${YELLOW}   │${RESET} Please use the CodeRAG MCP tool 'index_workspace' to      ${YELLOW}│${RESET}"
+    echo -e "${YELLOW}   │${RESET} Please use the RagCode MCP tool 'index_workspace' to      ${YELLOW}│${RESET}"
     echo -e "${YELLOW}   │${RESET} index this project for semantic code search. Provide      ${YELLOW}│${RESET}"
     echo -e "${YELLOW}   │${RESET} the file_path parameter pointing to any file in this      ${YELLOW}│${RESET}"
     echo -e "${YELLOW}   │${RESET} workspace. Once indexing completes, I'll be able to use   ${YELLOW}│${RESET}"
@@ -355,14 +355,14 @@ show_summary() {
 main() {
     echo ""
     echo -e "${GREEN}╔════════════════════════════════════════╗${RESET}"
-    echo -e "${GREEN}║   CodeRAG MCP - Quick Installer       ║${RESET}"
+    echo -e "${GREEN}║   RagCode MCP - Quick Installer       ║${RESET}"
     echo -e "${GREEN}╚════════════════════════════════════════╝${RESET}"
     echo ""
     log "Installing from branch: ${BLUE}${BRANCH}${RESET}"
     echo ""
     
     check_prerequisites
-    install_coderag
+    install_ragcode
     setup_path
     configure_mcp
     start_services

@@ -1,11 +1,11 @@
 {
-  "name": "coderag",
+  "name": "ragcode",
   "version": "1.0.0",
   "description": "Semantic code navigation using RAG (Retrieval-Augmented Generation) with multi-language support (Go, PHP, Python, JavaScript)",
-  "homepage": "https://github.com/doITmagic/coderag-mcp",
+  "homepage": "https://github.com/doITmagic/rag-code-mcp",
   "license": "MIT",
   "runtime": "binary",
-  "command": "coderag-mcp",
+  "command": "rag-code-mcp",
   "capabilities": {
     "tools": true,
     "resources": true,
@@ -68,8 +68,8 @@
       "description": "Project README file"
     },
     {
-      "name": "coderag-readme",
-      "description": "MCP CodeRAG guide"
+      "name": "ragcode-readme",
+      "description": "MCP RagCode guide"
     },
     {
       "name": "config",

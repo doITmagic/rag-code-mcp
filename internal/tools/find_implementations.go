@@ -7,10 +7,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/doITmagic/coderag-mcp/internal/codetypes"
-	"github.com/doITmagic/coderag-mcp/internal/llm"
-	"github.com/doITmagic/coderag-mcp/internal/memory"
-	"github.com/doITmagic/coderag-mcp/internal/workspace"
+	"github.com/doITmagic/rag-code-mcp/internal/codetypes"
+	"github.com/doITmagic/rag-code-mcp/internal/llm"
+	"github.com/doITmagic/rag-code-mcp/internal/memory"
+	"github.com/doITmagic/rag-code-mcp/internal/workspace"
 )
 
 // FindImplementationsTool finds where a function/interface is used or implemented

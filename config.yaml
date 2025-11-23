@@ -1,4 +1,4 @@
-# CodeRAG MCP Server Configuration
+# RagCode MCP Server Configuration
 # Multi-workspace mode: auto-creates collections per workspace+language
 
 llm:
@@ -17,7 +17,7 @@ storage:
     api_key: ""
 
 # Multi-workspace configuration
-# Collections are auto-created with format: coderag-{workspaceID}-{language}
+# Collections are auto-created with format: ragcode-{workspaceID}-{language}
 workspace:
   # Enable multi-workspace mode
   enabled: true
@@ -55,10 +55,10 @@ workspace:
 
   # Prefix for workspace collection names
   # Format: {collection_prefix}-{workspaceID}
-  # Example: coderag-a1b2c3d4e5f6
-  collection_prefix: coderag
+  # Example: ragcode-a1b2c3d4e5f6
+  collection_prefix: ragcode
 
   # Override for indexing patterns per workspace
-  # If empty, uses code_rag.include and code_rag.exclude
+  # If empty, uses rag_code.include and rag_code.exclude
   index_include: []
   index_exclude: []

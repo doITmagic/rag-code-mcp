@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/doITmagic/coderag-mcp/internal/memory"
+	"github.com/doITmagic/rag-code-mcp/internal/memory"
 )
 
 // CheckCollectionStatus verifies if a collection exists and has data.

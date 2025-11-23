@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# CodeRAG MCP Server - Complete Setup and Start Script
+# RagCode MCP Server - Complete Setup and Start Script
 # This script handles installation, dependency setup, and server startup
 
 # Color codes for output
@@ -12,12 +12,12 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INSTALL_DIR="${HOME}/.local/share/coderag"
+INSTALL_DIR="${HOME}/.local/share/ragcode"
 BIN_DIR="${INSTALL_DIR}/bin"
 
 echo ""
 echo -e "${BLUE}═══════════════════════════════════════════════════${NC}"
-echo -e "${BLUE}  CodeRAG MCP Server - Setup & Start${NC}"
+echo -e "${BLUE}  RagCode MCP Server - Setup & Start${NC}"
 echo -e "${BLUE}═══════════════════════════════════════════════════${NC}"
 echo ""
 
@@ -31,7 +31,7 @@ build_binaries() {
     local need_build=false
     
     # Check if binaries exist in global location
-    if [ ! -f "${BIN_DIR}/coderag-mcp" ]; then
+    if [ ! -f "${BIN_DIR}/rag-code-mcp" ]; then
         echo -e "${YELLOW}⚠ MCP server binary not found in ${BIN_DIR}${NC}"
         need_build=true
     fi
@@ -55,11 +55,11 @@ build_binaries() {
         # Build to temporary local bin directory
         mkdir -p bin
         
-        if [ ! -f "${BIN_DIR}/coderag-mcp" ]; then
-            echo -e "${BLUE}  Building coderag-mcp...${NC}"
-            go build -o bin/coderag-mcp ./cmd/coderag-mcp
-            cp bin/coderag-mcp "${BIN_DIR}/"
-            echo -e "${GREEN}  ✓ Installed to ${BIN_DIR}/coderag-mcp${NC}"
+        if [ ! -f "${BIN_DIR}/rag-code-mcp" ]; then
+            echo -e "${BLUE}  Building rag-code-mcp...${NC}"
+            go build -o bin/rag-code-mcp ./cmd/rag-code-mcp
+            cp bin/rag-code-mcp "${BIN_DIR}/"
+            echo -e "${GREEN}  ✓ Installed to ${BIN_DIR}/rag-code-mcp${NC}"
         fi
         
         if [ ! -f "${BIN_DIR}/index-all" ]; then
@@ -232,7 +232,7 @@ start_mcp_server() {
     echo ""
     
     cd "${INSTALL_DIR}"
-    exec "${BIN_DIR}/coderag-mcp" -config config.yaml
+    exec "${BIN_DIR}/rag-code-mcp" -config config.yaml
 }
 
 # Main flow
@@ -263,9 +263,9 @@ main() {
     echo -e "${BLUE}  Workspaces will be auto-indexed on first use${NC}"
     echo -e "${BLUE}  Data location: ~/.local/share/qdrant/${NC}"
 
-    if [ "${CODERAG_SKIP_SERVER_START:-0}" = "1" ]; then
+    if [ "${RAGCODE_SKIP_SERVER_START:-0}" = "1" ]; then
         echo ""
-        echo -e "${YELLOW}Setup complete. CODERAG_SKIP_SERVER_START=1 so the MCP server was not started.${NC}"
+        echo -e "${YELLOW}Setup complete. RAGCODE_SKIP_SERVER_START=1 so the MCP server was not started.${NC}"
         echo -e "${YELLOW}Run ${INSTALL_DIR}/start.sh without this flag to launch the server.${NC}"
         return 0
     fi

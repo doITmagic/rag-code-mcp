@@ -14,18 +14,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/doITmagic/coderag-mcp/internal/coderag"
-	"github.com/doITmagic/coderag-mcp/internal/config"
-	"github.com/doITmagic/coderag-mcp/internal/llm"
-	"github.com/doITmagic/coderag-mcp/internal/memory"
-	"github.com/doITmagic/coderag-mcp/internal/storage"
+	"github.com/doITmagic/rag-code-mcp/internal/ragcode"
+	"github.com/doITmagic/rag-code-mcp/internal/config"
+	"github.com/doITmagic/rag-code-mcp/internal/llm"
+	"github.com/doITmagic/rag-code-mcp/internal/memory"
+	"github.com/doITmagic/rag-code-mcp/internal/storage"
 )
 
 func main() {
 	var (
-		pathsCSV   = flag.String("paths", "", "Comma-separated list of directories to index for code (defaults to code_rag.paths)")
+		pathsCSV   = flag.String("paths", "", "Comma-separated list of directories to index for code (defaults to rag_code.paths)")
 		model      = flag.String("model", "", "Embedding model id (overrides config; empty = use config)")
-		codeColl   = flag.String("code-collection", "", "Qdrant collection name for code (default: code_rag.collection)")
+		codeColl   = flag.String("code-collection", "", "Qdrant collection name for code (default: rag_code.collection)")
 		docsColl   = flag.String("docs-collection", "", "Qdrant collection name for docs (default: docs.collection)")
 		dim        = flag.Int("dim", 768, "Vector dimension for collections (depends on model)")
 		timeoutSec = flag.Int("timeout", 300, "Indexing timeout in seconds")
@@ -44,7 +44,7 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
-	codeCollection := cfg.CodeRAG.Collection
+	codeCollection := cfg.RagCode.Collection
 	if codeCollection == "" {
 		if cfg.Storage.VectorDB.Collection != "" {
 			codeCollection = cfg.Storage.VectorDB.Collection
@@ -61,7 +61,7 @@ func main() {
 		docsCollection = *docsColl
 	}
 
-	paths := cfg.CodeRAG.Paths
+	paths := cfg.RagCode.Paths
 	if len(paths) == 0 {
 		paths = []string{"./internal", "./cmd"}
 	}
@@ -78,8 +78,8 @@ func main() {
 	}
 	if *model != "" {
 		llmCfg.OllamaEmbed = *model
-	} else if cfg.CodeRAG.Model != "" {
-		llmCfg.OllamaEmbed = cfg.CodeRAG.Model
+	} else if cfg.RagCode.Model != "" {
+		llmCfg.OllamaEmbed = cfg.RagCode.Model
 	}
 	if llmCfg.OllamaEmbed == "" {
 		llmCfg.OllamaEmbed = cfg.LLM.OllamaEmbed
@@ -121,7 +121,7 @@ func main() {
 	ltmCode := storage.NewQdrantLongTermMemory(qclientCode)
 	var _ memory.LongTermMemory = ltmCode
 
-	mgr := coderag.NewAnalyzerManager()
+	mgr := ragcode.NewAnalyzerManager()
 
 	// Index files by language (Go and PHP)
 	fmt.Printf("🔎 Indexing %d path(s) into code collection '%s' (model=%s, dim=%d) ...\n", len(paths), codeCollection, llmCfg.OllamaEmbed, *dim)
@@ -131,7 +131,7 @@ func main() {
 	// Index Go files
 	goAnalyzer := mgr.CodeAnalyzerForProjectType("go")
 	if goAnalyzer != nil {
-		goIndexer := coderag.NewIndexer(goAnalyzer, provider, ltmCode)
+		goIndexer := ragcode.NewIndexer(goAnalyzer, provider, ltmCode)
 		nGo, err := goIndexer.IndexPaths(ctx, paths, *sourceCode)
 		if err != nil {
 			log.Fatalf("Go code indexing failed after %d chunks: %v", nGo, err)
@@ -143,7 +143,7 @@ func main() {
 	// Index PHP files
 	phpAnalyzer := mgr.CodeAnalyzerForProjectType("php")
 	if phpAnalyzer != nil {
-		phpIndexer := coderag.NewIndexer(phpAnalyzer, provider, ltmCode)
+		phpIndexer := ragcode.NewIndexer(phpAnalyzer, provider, ltmCode)
 		nPHP, err := phpIndexer.IndexPaths(ctx, paths, *sourceCode)
 		if err != nil {
 			log.Fatalf("PHP code indexing failed after %d chunks: %v", nPHP, err)

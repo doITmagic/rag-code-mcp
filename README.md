@@ -1,4 +1,4 @@
-# CodeRAG MCP Server
+# RagCode MCP Server
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.25%2B-blue)](https://go.dev/)
@@ -6,24 +6,24 @@
 
 **Semantic code navigation server using Retrieval‑Augmented Generation (RAG) with multi‑language support.**
 
-Built with the official [Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk), CodeRAG provides intelligent code search and navigation tools over vector‑indexed codebases.
+Built with the official [Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk), RagCode provides intelligent code search and navigation tools over vector‑indexed codebases.
 
 **Stack:** Ollama (LLM + embeddings) + Qdrant (vector database) + Docker + MCP  
 **Clients:** Windsurf, Cursor, Antigravity, Claude Desktop, VS Code + Copilot, MCP Inspector
 
 ---
 
-## 🚀 Why CodeRAG? Performance Benefits
+## 🚀 Why RagCode? Performance Benefits
 
 ### **5-10x Faster Code Understanding**
 
-Without CodeRAG, AI assistants must:
+Without RagCode, AI assistants must:
 - 📄 Read entire files to find relevant code
 - 🔍 Search through thousands of lines manually
 - 💭 Use precious context window tokens on irrelevant code
 - ⏱️ Wait for multiple file reads and searches
 
-**With CodeRAG:**
+**With RagCode:**
 - ⚡ **Instant semantic search** - finds relevant code in milliseconds
 - 🎯 **Pinpoint accuracy** - returns only the exact functions/types you need
 - 💰 **90% less context usage** - AI sees only relevant code, not entire files
@@ -31,7 +31,7 @@ Without CodeRAG, AI assistants must:
 
 ### Real-World Impact
 
-| Task | Without CodeRAG | With CodeRAG | Speedup |
+| Task | Without RagCode | With RagCode | Speedup |
 |------|----------------|--------------|---------|
 | Find authentication logic | 30-60s (read 10+ files) | 2-3s (semantic search) | **10-20x faster** |
 | Understand function signature | 15-30s (grep + read file) | 1-2s (direct lookup) | **15x faster** |
@@ -42,8 +42,8 @@ Without CodeRAG, AI assistants must:
 
 **Example: Finding a function in a 50,000 line codebase**
 
-- **Without CodeRAG:** AI reads 5-10 files (~15,000 tokens) to find the function
-- **With CodeRAG:** AI gets exact function + context (~200 tokens)
+- **Without RagCode:** AI reads 5-10 files (~15,000 tokens) to find the function
+- **With RagCode:** AI gets exact function + context (~200 tokens)
 - **Savings:** **98% fewer tokens** = faster responses + lower costs
 
 ---
@@ -53,7 +53,7 @@ Without CodeRAG, AI assistants must:
 - **9 MCP Tools** – semantic search, hybrid search, function details, type definitions, workspace indexing, and more
 - **Multi‑Language Support** – Go (≈82% coverage), PHP (≈84% coverage) + Laravel framework, Python (planned)
 - **Multi‑Workspace Detection** – automatic workspace detection and per‑workspace collections
-- **Per‑Language Collections** – separate Qdrant collections for each language (e.g., `coderag-{workspace}-go`)
+- **Per‑Language Collections** – separate Qdrant collections for each language (e.g., `ragcode-{workspace}-go`)
 - **Hybrid Search** – combines semantic (vector) and lexical (keyword) search for better relevance
 - **Direct File Access** – read code context without indexing
 
@@ -90,13 +90,13 @@ Without CodeRAG, AI assistants must:
 ## ⚡ Quick Start (One‑Command Installer)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/doITmagic/coderag-mcp/main/quick-install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | bash
 ```
 
 The installer will:
 1. ✅ Download the latest release from GitHub (or build locally if the download fails)
-2. ✅ Install binaries into `~/.local/share/coderag/bin`
-3. ✅ Add `coderag-mcp` to your `PATH`
+2. ✅ Install binaries into `~/.local/share/ragcode/bin`
+3. ✅ Add `rag-code-mcp` to your `PATH`
 4. ✅ Configure Windsurf, Cursor, and Antigravity automatically (writes `mcp_config.json`)
 5. ✅ **Start Docker** if it is not already running
 6. ✅ **Start the Qdrant container** (vector database)
@@ -110,13 +110,13 @@ You can customize the installation using environment variables:
 
 ```bash
 # Use development branch
-curl -fsSL https://raw.githubusercontent.com/doITmagic/coderag-mcp/develop/quick-install.sh | BRANCH=develop bash
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/develop/quick-install.sh | BRANCH=develop bash
 
 # Custom Ollama model
-curl -fsSL https://raw.githubusercontent.com/doITmagic/coderag-mcp/main/quick-install.sh | OLLAMA_MODEL=llama3.1:8b bash
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | OLLAMA_MODEL=llama3.1:8b bash
 
 # Combine multiple options
-curl -fsSL https://raw.githubusercontent.com/doITmagic/coderag-mcp/develop/quick-install.sh | BRANCH=develop OLLAMA_MODEL=phi3:mini bash
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/develop/quick-install.sh | BRANCH=develop OLLAMA_MODEL=phi3:mini bash
 ```
 
 **Available environment variables:**
@@ -131,8 +131,8 @@ See [QUICKSTART.md](./QUICKSTART.md) for detailed installation and usage instruc
 ### Manual Build (for developers)
 
 ```bash
-git clone https://github.com/doITmagic/coderag-mcp.git
-cd coderag-mcp
+git clone https://github.com/doITmagic/rag-code-mcp.git
+cd rag-code-mcp
 go run ./cmd/install
 ```
 
@@ -164,7 +164,7 @@ brew install ollama
 
 ### 2. Run the Installer
 ```bash
-curl -fsSL https://raw.githubusercontent.com/doITmagic/coderag-mcp/main/quick-install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | bash
 ```
 
 Installation typically takes 5‑10 minutes (downloading the AI models can be the longest part).
@@ -172,7 +172,7 @@ Installation typically takes 5‑10 minutes (downloading the AI models can be 
 ### 3. Verify Installation
 ```bash
 # Check the binary
-~/.local/share/coderag/bin/coderag-mcp --version
+~/.local/share/ragcode/bin/rag-code-mcp --version
 
 # Verify services are running
 docker ps | grep qdrant
@@ -181,14 +181,14 @@ ollama list
 
 ### 4. Start the Server (optional – the installer already starts it)
 ```bash
-~/.local/share/coderag/start.sh
+~/.local/share/ragcode/start.sh
 ```
 
 ---
 
-## 🎯 Using CodeRAG in Windsurf / Cursor
+## 🎯 Using RagCode in Windsurf / Cursor
 
-After installation, CodeRAG is automatically available in supported IDEs. No additional configuration is required.
+After installation, RagCode is automatically available in supported IDEs. No additional configuration is required.
 
 ### Available Tools
 1. **`search_code`** – semantic code search
@@ -200,13 +200,13 @@ After installation, CodeRAG is automatically available in supported IDEs. No add
 7. **`search_docs`** – search markdown documentation
 8. **`index_workspace`** – manually trigger indexing of a workspace (usually not needed)
 
-**All tools require a `file_path` parameter** so that CodeRAG can determine the correct workspace.
+**All tools require a `file_path` parameter** so that RagCode can determine the correct workspace.
 
 ---
 
 ## 🔄 Automatic Indexing
 
-When a tool is invoked for the first time in a workspace, CodeRAG will:
+When a tool is invoked for the first time in a workspace, RagCode will:
 1. Detect the workspace from `file_path`
 2. Create a Qdrant collection for that workspace and language
 3. Index the code in the background
@@ -219,7 +219,7 @@ You never need to run `index_workspace` manually.
 ## 🛠 Advanced Configuration
 
 ### Changing AI Models
-Edit `~/.local/share/coderag/config.yaml`:
+Edit `~/.local/share/ragcode/config.yaml`:
 ```yaml
 llm:
   provider: "ollama"
@@ -235,7 +235,7 @@ Recommended models:
 ```yaml
 qdrant:
   url: "http://localhost:6333"
-  collection_prefix: "coderag"
+  collection_prefix: "ragcode"
 ```
 
 ### Excluding Directories
@@ -266,7 +266,7 @@ workspace:
 ```bash
 sudo systemctl start docker   # Linux
 # Then start Qdrant (the installer does this automatically)
-~/.local/share/coderag/start.sh
+~/.local/share/ragcode/start.sh
 ```
 
 ### "Ollama model not found"
@@ -300,8 +300,8 @@ ollama pull phi3:medium
 ---
 
 ## 🔗 Useful Links
-- **GitHub:** https://github.com/doITmagic/coderag-mcp
-- **Issues:** https://github.com/doITmagic/coderag-mcp/issues
+- **GitHub:** https://github.com/doITmagic/rag-code-mcp
+- **Issues:** https://github.com/doITmagic/rag-code-mcp/issues
 - **Ollama Docs:** https://ollama.com
 - **Qdrant Docs:** https://qdrant.tech
 

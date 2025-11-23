@@ -41,7 +41,7 @@ jobs:
           fail_ci_if_error: false
       
       - name: Build
-        run: go build -v ./cmd/coderag-mcp
+        run: go build -v ./cmd/rag-code-mcp
 
   lint:
     name: Lint

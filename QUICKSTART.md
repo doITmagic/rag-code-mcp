@@ -1,12 +1,12 @@
-# 🚀 CodeRAG MCP - Quick Start Guide
+# 🚀 RagCode MCP - Quick Start Guide
 
 **Semantic code navigation using RAG (Retrieval-Augmented Generation)**
 
 ---
 
-## 📦 What is CodeRAG?
+## 📦 What is RagCode?
 
-CodeRAG is an MCP (Model Context Protocol) server that allows you to navigate and understand code using semantic search. It works with **Windsurf**, **Cursor**, **Antigravity**, **Claude Desktop**, and other MCP-compatible IDEs to provide:
+RagCode is an MCP (Model Context Protocol) server that allows you to navigate and understand code using semantic search. It works with **Windsurf**, **Cursor**, **Antigravity**, **Claude Desktop**, and other MCP-compatible IDEs to provide:
 
 - 🔍 **Semantic Search** in your codebase (not just text matching)
 - 📚 **Contextual Understanding** of code (functions, classes, relationships)
@@ -20,13 +20,13 @@ CodeRAG is an MCP (Model Context Protocol) server that allows you to navigate an
 ### Option 1: Install Script (Recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/doITmagic/coderag-mcp/main/quick-install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | bash
 ```
 
 The installer will:
 1. ✅ Download the latest release from GitHub (or build locally if download fails)
-2. ✅ Install binaries to `~/.local/share/coderag/bin`
-3. ✅ Add `coderag-mcp` to PATH (in `.bashrc` or `.zshrc`)
+2. ✅ Install binaries to `~/.local/share/ragcode/bin`
+3. ✅ Add `rag-code-mcp` to PATH (in `.bashrc` or `.zshrc`)
 4. ✅ Configures Windsurf, Cursor, Antigravity, and VS Code automatically (in `mcp_config.json`)
 5. ✅ **Starts Docker** (if not already running)
 6. ✅ **Starts Qdrant container** (vector database)
@@ -42,22 +42,22 @@ You can customize the installation by setting environment variables before runni
 
 ```bash
 # Use development branch instead of main
-curl -fsSL https://raw.githubusercontent.com/doITmagic/coderag-mcp/develop/quick-install.sh | BRANCH=develop bash
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/develop/quick-install.sh | BRANCH=develop bash
 
 # Custom Ollama model
-curl -fsSL https://raw.githubusercontent.com/doITmagic/coderag-mcp/main/quick-install.sh | OLLAMA_MODEL=llama3.1:8b bash
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | OLLAMA_MODEL=llama3.1:8b bash
 
 # Custom embedding model
-curl -fsSL https://raw.githubusercontent.com/doITmagic/coderag-mcp/main/quick-install.sh | OLLAMA_EMBED=all-minilm bash
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | OLLAMA_EMBED=all-minilm bash
 
 # Custom Ollama URL (if running remotely)
-curl -fsSL https://raw.githubusercontent.com/doITmagic/coderag-mcp/main/quick-install.sh | OLLAMA_BASE_URL=http://192.168.1.100:11434 bash
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | OLLAMA_BASE_URL=http://192.168.1.100:11434 bash
 
 # Custom Qdrant URL
-curl -fsSL https://raw.githubusercontent.com/doITmagic/coderag-mcp/main/quick-install.sh | QDRANT_URL=http://192.168.1.100:6333 bash
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | QDRANT_URL=http://192.168.1.100:6333 bash
 
 # Combine multiple variables
-curl -fsSL https://raw.githubusercontent.com/doITmagic/coderag-mcp/develop/quick-install.sh | BRANCH=develop OLLAMA_MODEL=phi3:mini bash
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/develop/quick-install.sh | BRANCH=develop OLLAMA_MODEL=phi3:mini bash
 ```
 
 **Available Environment Variables:**
@@ -70,8 +70,8 @@ curl -fsSL https://raw.githubusercontent.com/doITmagic/coderag-mcp/develop/quick
 ### Option 2: Local Build (For Developers)
 
 ```bash
-git clone https://github.com/doITmagic/coderag-mcp.git
-cd coderag-mcp
+git clone https://github.com/doITmagic/rag-code-mcp.git
+cd rag-code-mcp
 go run ./cmd/install
 ```
 
@@ -116,7 +116,7 @@ brew install ollama
 ### 2. Run the Installer
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/doITmagic/coderag-mcp/main/quick-install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | bash
 ```
 
 **Installation time:** ~5-10 minutes (downloads ~4GB of AI models)
@@ -125,7 +125,7 @@ curl -fsSL https://raw.githubusercontent.com/doITmagic/coderag-mcp/main/quick-in
 
 ```bash
 # Verify binaries are installed
-~/.local/share/coderag/bin/coderag-mcp --version
+~/.local/share/ragcode/bin/rag-code-mcp --version
 
 # Verify services are running
 docker ps | grep qdrant
@@ -135,7 +135,7 @@ ollama list
 ### 4. Start Server (Optional - starts automatically)
 
 ```bash
-~/.local/share/coderag/start.sh
+~/.local/share/ragcode/start.sh
 ```
 
 ---
@@ -149,7 +149,7 @@ After installation, you need to index each project you want to work with. This i
 Open your project in Windsurf or Cursor and paste this prompt to the AI:
 
 ```
-Please use the CodeRAG MCP tool 'index_workspace' to index this project 
+Please use the RagCode MCP tool 'index_workspace' to index this project 
 for semantic code search. Provide the file_path parameter pointing to any 
 file in this workspace. Once indexing completes, I'll be able to use 
 search_code, get_function_details, and other tools to help you navigate 
@@ -162,9 +162,9 @@ improve as indexing progresses.
 
 ### What Happens During Indexing?
 
-1. 🔍 **Workspace Detection** - CodeRAG detects your project root (looks for `.git`, `go.mod`, `composer.json`, etc.)
+1. 🔍 **Workspace Detection** - RagCode detects your project root (looks for `.git`, `go.mod`, `composer.json`, etc.)
 2. 📊 **Language Detection** - Identifies programming languages in your project
-3. 🗂️ **Collection Creation** - Creates a Qdrant collection: `coderag-{workspace-id}-{language}`
+3. 🗂️ **Collection Creation** - Creates a Qdrant collection: `ragcode-{workspace-id}-{language}`
 4. 📝 **Code Analysis** - Extracts functions, classes, types, and their relationships
 5. 🧠 **Embedding Generation** - Creates semantic embeddings using Ollama
 6. 💾 **Vector Storage** - Stores embeddings in Qdrant for fast retrieval
@@ -181,7 +181,7 @@ cd ~/projects/my-awesome-app
 # 3. Wait for confirmation (usually 1-5 minutes)
 # ✓ Indexing started for workspace '/path/to/my-awesome-app'
 # Languages: go
-# Collections will be created: coderag-abc123-go
+# Collections will be created: ragcode-abc123-go
 
 # 4. Start using semantic search!
 # Ask: "Find all authentication middleware functions"
@@ -207,15 +207,15 @@ cd ~/projects/mobile-app
 # Ask AI to index this workspace
 ```
 
-Each project gets its own collection in Qdrant, and CodeRAG automatically switches between them based on which file you're working with.
+Each project gets its own collection in Qdrant, and RagCode automatically switches between them based on which file you're working with.
 
 ---
 
-## 🎯 How to Use CodeRAG?
+## 🎯 How to Use RagCode?
 
 ### In Your MCP-Compatible IDE (Windsurf, Cursor, Antigravity, etc.)
 
-After installation, CodeRAG is automatically available in the IDE. **No manual action required!**
+After installation, RagCode is automatically available in the IDE. **No manual action required!**
 
 #### Available Tools:
 
@@ -284,13 +284,13 @@ After installation, CodeRAG is automatically available in the IDE. **No manual a
 
 ### 📌 **IMPORTANT:** All tools require `file_path`!
 
-CodeRAG automatically detects the workspace from `file_path`. Ensure you provide a valid path from your project.
+RagCode automatically detects the workspace from `file_path`. Ensure you provide a valid path from your project.
 
 ---
 
 ## 🔄 Automatic Indexing
 
-**CodeRAG automatically indexes the workspace on first use!**
+**RagCode automatically indexes the workspace on first use!**
 
 When you call a tool (e.g., `search_code`) for the first time in a workspace:
 1. ✅ Detects workspace from `file_path`
@@ -306,7 +306,7 @@ When you call a tool (e.g., `search_code`) for the first time in a workspace:
 
 ### Change AI Models
 
-Edit `~/.local/share/coderag/config.yaml`:
+Edit `~/.local/share/ragcode/config.yaml`:
 
 ```yaml
 llm:
@@ -325,7 +325,7 @@ Recommended models:
 ```yaml
 qdrant:
   url: "http://localhost:6333"
-  collection_prefix: "coderag"
+  collection_prefix: "ragcode"
 ```
 
 ### Exclude Directories
@@ -366,7 +366,7 @@ workspace:
 sudo systemctl start docker
 
 # Start Qdrant
-~/.local/share/coderag/start.sh
+~/.local/share/ragcode/start.sh
 ```
 
 ### Error: "Ollama model not found"
@@ -423,8 +423,8 @@ ollama pull nomic-embed-text
 
 ## 🔗 Useful Links
 
-- **GitHub:** https://github.com/doITmagic/coderag-mcp
-- **Issues:** https://github.com/doITmagic/coderag-mcp/issues
+- **GitHub:** https://github.com/doITmagic/rag-code-mcp
+- **Issues:** https://github.com/doITmagic/rag-code-mcp/issues
 - **Ollama Documentation:** https://ollama.com
 - **Qdrant Documentation:** https://qdrant.tech
 

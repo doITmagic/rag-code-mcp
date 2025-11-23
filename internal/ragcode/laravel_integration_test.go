@@ -106,6 +106,17 @@ func (m *mockMemoryStore) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+func (m *mockMemoryStore) DeleteByMetadata(ctx context.Context, key, value string) error {
+	for id, doc := range m.docs {
+		if val, ok := doc.Metadata[key]; ok {
+			if strVal, ok := val.(string); ok && strVal == value {
+				delete(m.docs, id)
+			}
+		}
+	}
+	return nil
+}
+
 // TestAnalyzerManager_WithBarouProject tests analyzer selection with real Barou project
 func TestAnalyzerManager_WithBarouProject(t *testing.T) {
 	barouPath := "/home/razvan/go/src/github.com/doITmagic/rag-code-mcp/barou"

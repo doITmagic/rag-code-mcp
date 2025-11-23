@@ -24,6 +24,9 @@ type LongTermMemory interface {
 	// Delete deletes a document by ID
 	Delete(ctx context.Context, id string) error
 
+	// DeleteByMetadata deletes documents matching a metadata key-value pair
+	DeleteByMetadata(ctx context.Context, key, value string) error
+
 	// Clear clears all documents
 	Clear(ctx context.Context) error
 }
@@ -66,6 +69,18 @@ func (m *InMemoryLongTermMemory) Search(ctx context.Context, query []float64, li
 // Delete deletes a document
 func (m *InMemoryLongTermMemory) Delete(ctx context.Context, id string) error {
 	delete(m.documents, id)
+	return nil
+}
+
+// DeleteByMetadata deletes documents matching a metadata key-value pair
+func (m *InMemoryLongTermMemory) DeleteByMetadata(ctx context.Context, key, value string) error {
+	for id, doc := range m.documents {
+		if val, ok := doc.Metadata[key]; ok {
+			if strVal, ok := val.(string); ok && strVal == value {
+				delete(m.documents, id)
+			}
+		}
+	}
 	return nil
 }
 

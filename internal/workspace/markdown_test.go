@@ -59,6 +59,20 @@ func (m *MockLongTermMemory) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+func (m *MockLongTermMemory) DeleteByMetadata(ctx context.Context, key, value string) error {
+	var newDocs []memory.Document
+	for _, doc := range m.docs {
+		if val, ok := doc.Metadata[key]; ok {
+			if strVal, ok := val.(string); ok && strVal == value {
+				continue
+			}
+		}
+		newDocs = append(newDocs, doc)
+	}
+	m.docs = newDocs
+	return nil
+}
+
 func (m *MockLongTermMemory) Clear(ctx context.Context) error {
 	m.docs = nil
 	return nil

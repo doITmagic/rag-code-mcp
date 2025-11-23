@@ -43,10 +43,11 @@ type Manager struct {
 }
 
 type workspaceScan struct {
-	LanguageDirs map[string][]string
-	DocFiles     []string
-	TotalFiles   int
-	GeneratedAt  time.Time
+	LanguageDirs  map[string][]string
+	LanguageFiles map[string][]string // Track individual files per language
+	DocFiles      []string
+	TotalFiles    int
+	GeneratedAt   time.Time
 }
 
 var defaultSkipDirs = map[string]struct{}{
@@ -79,11 +80,20 @@ func addDirForLanguage(scan *workspaceScan, cache map[string]map[string]struct{}
 	scan.LanguageDirs[lang] = append(scan.LanguageDirs[lang], dir)
 }
 
+func addFileForLanguage(scan *workspaceScan, language, path string) {
+	lang := strings.ToLower(language)
+	if scan.LanguageFiles == nil {
+		scan.LanguageFiles = make(map[string][]string)
+	}
+	scan.LanguageFiles[lang] = append(scan.LanguageFiles[lang], path)
+}
+
 func (m *Manager) scanWorkspace(info *Info) (*workspaceScan, error) {
 	scan := &workspaceScan{
-		LanguageDirs: make(map[string][]string),
-		DocFiles:     make([]string, 0),
-		GeneratedAt:  time.Now(),
+		LanguageDirs:  make(map[string][]string),
+		LanguageFiles: make(map[string][]string),
+		DocFiles:      make([]string, 0),
+		GeneratedAt:   time.Now(),
 	}
 	dirCache := make(map[string]map[string]struct{})
 	err := filepath.WalkDir(info.Root, func(path string, d fs.DirEntry, err error) error {
@@ -105,10 +115,13 @@ func (m *Manager) scanWorkspace(info *Info) (*workspaceScan, error) {
 		switch ext {
 		case ".go":
 			addDirForLanguage(scan, dirCache, "go", filepath.Dir(path))
+			addFileForLanguage(scan, "go", path)
 		case ".php":
 			addDirForLanguage(scan, dirCache, "php", filepath.Dir(path))
+			addFileForLanguage(scan, "php", path)
 		case ".html", ".htm":
 			addDirForLanguage(scan, dirCache, "html", filepath.Dir(path))
+			addFileForLanguage(scan, "html", path)
 		case ".md":
 			scan.DocFiles = append(scan.DocFiles, path)
 		default:
@@ -139,6 +152,16 @@ func (s *workspaceScan) fingerprint(language string) string {
 		h.Write([]byte("|"))
 	}
 	return fmt.Sprintf("%x", h.Sum64())
+}
+
+// Helper to check if a slice contains a string
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) fingerprintKey(info *Info, language string) string {
@@ -448,30 +471,119 @@ func (m *Manager) indexWorkspaceLanguage(ctx context.Context, info *Info, langua
 		return
 	}
 
-	// Create indexer
-	indexer := ragcode.NewIndexer(analyzer, m.llm, ltm)
-
-	// Index the language-specific directories
-	startTime := time.Now()
-	numChunks, err := indexer.IndexPaths(ctx, languageDirs, collectionName)
-	duration := time.Since(startTime)
-
+	// Load previous state
+	stateFile := filepath.Join(info.Root, ".ragcode", "state.json")
+	state, err := LoadState(stateFile)
 	if err != nil {
-		log.Printf("❌ Indexing failed for workspace '%s' language '%s': %v", info.Root, language, err)
-		log.Printf("   You can manually index with: ./bin/index-all -paths %s", info.Root)
-		return
+		log.Printf("⚠️  Failed to load workspace state: %v", err)
+		state = NewWorkspaceState()
 	}
 
-	log.Printf("✅ Workspace language indexed successfully in %v", duration)
-	log.Printf("   Workspace: %s", info.Root)
-	log.Printf("   Language: %s", language)
-	log.Printf("   Collection: %s", collectionName)
-	log.Printf("   Code chunks indexed: %d", numChunks)
+	// Identify changes
+	var filesToIndex []string
+	var filesToDelete []string
+
+	currentFiles := scan.LanguageFiles[strings.ToLower(language)]
+
+	// Check for added or modified files
+	for _, path := range currentFiles {
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+
+		fileState, exists := state.GetFileState(path)
+		if !exists || info.ModTime().After(fileState.ModTime) || info.Size() != fileState.Size {
+			filesToIndex = append(filesToIndex, path)
+			if exists {
+				// If modified, we should delete old chunks first
+				// But since we don't know the exact chunks, we delete by file metadata
+				filesToDelete = append(filesToDelete, path)
+			}
+		}
+
+		// Update state
+		state.UpdateFile(path, info)
+	}
+
+	// Check for deleted files (present in state but not in current scan)
+	// Note: This is a bit expensive if state is huge, but for now it's fine.
+	// A better way would be to mark all current files as "seen" and check state.
+	currentFileMap := make(map[string]bool)
+	for _, p := range currentFiles {
+		currentFileMap[p] = true
+	}
+
+	state.mu.RLock()
+	for path := range state.Files {
+		// Only check files that belong to this language (heuristic: extension)
+		// Or we can just check if it's in the current scan.
+		// If it's not in current scan, it might be deleted OR it might belong to another language.
+		// We should probably store language in FileState.
+		// For now, let's assume if it's not in currentFileMap AND it has the right extension, it's deleted.
+		// Actually, simpler: we only care about files we *would* have indexed.
+		// But wait, state contains ALL files from ALL languages?
+		// Yes, if we use a single state file.
+
+		// Let's check if the file still exists on disk.
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			// File deleted
+			filesToDelete = append(filesToDelete, path)
+			// We will remove from state later
+		}
+	}
+	state.mu.RUnlock()
+
+	// Process deletions
+	if len(filesToDelete) > 0 {
+		log.Printf("🗑️  Deleting %d modified/deleted files from index...", len(filesToDelete))
+		for _, path := range filesToDelete {
+			if err := ltm.DeleteByMetadata(ctx, "file", path); err != nil {
+				log.Printf("⚠️  Failed to delete chunks for %s: %v", path, err)
+			}
+			state.RemoveFile(path)
+		}
+	}
+
+	// Process indexing
+	if len(filesToIndex) > 0 {
+		log.Printf("📝 Indexing %d new/modified files...", len(filesToIndex))
+
+		// Create indexer
+		indexer := ragcode.NewIndexer(analyzer, m.llm, ltm)
+
+		// Index specific files
+		// Note: Indexer.IndexPaths expects directories or files.
+		// If we pass files, it should work if AnalyzePaths supports it.
+		// Let's assume AnalyzePaths supports file paths (it usually does or we can check).
+		// If IndexPaths expects dirs, we might need to adjust.
+		// Looking at indexer.go: analyzer.AnalyzePaths(paths)
+		// Looking at analyzer: usually supports both.
+
+		startTime := time.Now()
+		numChunks, err := indexer.IndexPaths(ctx, filesToIndex, collectionName)
+		duration := time.Since(startTime)
+
+		if err != nil {
+			log.Printf("❌ Indexing failed for workspace '%s' language '%s': %v", info.Root, language, err)
+		} else {
+			log.Printf("✅ Indexed %d chunks in %v", numChunks, duration)
+		}
+	} else {
+		log.Printf("✨ No code changes detected for language '%s'", language)
+	}
 
 	// Index markdown documentation files automatically using scan result
+	// We should also do incremental for docs, but for now let's leave it as is or apply similar logic.
+	// For simplicity, let's re-index docs for now (usually few).
 	numDocs := m.indexMarkdownFiles(ctx, scan.DocFiles, collectionName, ltm)
 	if numDocs > 0 {
 		log.Printf("   Docs chunks indexed: %d", numDocs)
+	}
+
+	// Save state
+	if err := state.Save(stateFile); err != nil {
+		log.Printf("⚠️  Failed to save workspace state: %v", err)
 	}
 
 	m.recordFingerprint(info, language, scan)

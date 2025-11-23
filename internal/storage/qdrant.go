@@ -246,6 +246,38 @@ func (c *QdrantClient) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// DeleteByFilter deletes vectors matching a filter
+func (c *QdrantClient) DeleteByFilter(ctx context.Context, key, value string) error {
+	_, err := c.client.Delete(ctx, &qdrant.DeletePoints{
+		CollectionName: c.config.Collection,
+		Points: &qdrant.PointsSelector{
+			PointsSelectorOneOf: &qdrant.PointsSelector_Filter{
+				Filter: &qdrant.Filter{
+					Must: []*qdrant.Condition{
+						{
+							ConditionOneOf: &qdrant.Condition_Field{
+								Field: &qdrant.FieldCondition{
+									Key: key,
+									Match: &qdrant.Match{
+										MatchValue: &qdrant.Match_Keyword{
+											Keyword: value,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to delete points by filter: %w", err)
+	}
+
+	return nil
+}
+
 // Close closes the Qdrant client connection
 func (c *QdrantClient) Close() error {
 	if c.client != nil {

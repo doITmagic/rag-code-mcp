@@ -368,6 +368,11 @@ func (m *Manager) GetMemoryForWorkspaceLanguage(ctx context.Context, info *Info,
 		} else {
 			log.Printf("⏸️  Auto-indexing disabled for workspace '%s' language '%s'. Run manual indexing.", info.Root, language)
 		}
+	} else {
+		// Collection exists - check if files have changed and trigger incremental re-indexing
+		if m.config != nil && m.config.Workspace.AutoIndex {
+			go m.checkAndReindexIfNeeded(context.Background(), info, language, collectionName)
+		}
 	}
 
 	// Create memory instance with collection-specific client
@@ -566,6 +571,73 @@ func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string
 
 	m.recordFingerprint(info, language, scan)
 	return nil
+}
+
+// checkAndReindexIfNeeded checks if any files have changed and triggers incremental re-indexing if needed
+// This is called automatically when a tool accesses an existing workspace collection
+func (m *Manager) checkAndReindexIfNeeded(ctx context.Context, info *Info, language string, collectionName string) {
+	// Load workspace state
+	stateFile := filepath.Join(info.Root, ".ragcode", "state.json")
+	state, err := LoadState(stateFile)
+	if err != nil {
+		// If state doesn't exist, we can't check for changes
+		// This is normal for first-time indexing
+		return
+	}
+
+	// Quick scan to check if any files have changed
+	scan, err := m.scanWorkspace(info)
+	if err != nil {
+		log.Printf("⚠️  Auto-reindex check failed for workspace '%s': %v", info.Root, err)
+		return
+	}
+
+	currentFiles := scan.LanguageFiles[strings.ToLower(language)]
+	if len(currentFiles) == 0 {
+		return
+	}
+
+	// Check if any files have been modified, added, or deleted
+	hasChanges := false
+
+	// Check for modifications or additions
+	for _, path := range currentFiles {
+		fileInfo, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+
+		fileState, exists := state.GetFileState(path)
+		if !exists || fileInfo.ModTime().After(fileState.ModTime) || fileInfo.Size() != fileState.Size {
+			hasChanges = true
+			break
+		}
+	}
+
+	// Check for deletions (files in state but not in current scan)
+	if !hasChanges {
+		currentFileMap := make(map[string]bool)
+		for _, p := range currentFiles {
+			currentFileMap[p] = true
+		}
+
+		state.mu.RLock()
+		for path := range state.Files {
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				hasChanges = true
+				break
+			}
+		}
+		state.mu.RUnlock()
+	}
+
+	// If changes detected, trigger incremental re-indexing
+	if hasChanges {
+		log.Printf("🔄 Auto-detected file changes in workspace '%s' (language: %s), triggering incremental re-indexing...", info.Root, language)
+		if err := m.IndexLanguage(ctx, info, language, collectionName); err != nil {
+			log.Printf("⚠️  Auto-reindex failed: %v", err)
+		}
+	}
 }
 
 // indexMarkdownFiles indexes provided markdown files (already discovered during scan)

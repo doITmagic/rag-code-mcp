@@ -16,6 +16,12 @@ storage:
     url: http://localhost:6333
     api_key: ""
 
+logging:
+  level: debug          # nivel ridicat pentru a surprinde logurile de reindexare
+  format: text          # sau "json" dacă dorești
+  output: file          # scrie logurile pe disk, nu în stdout
+  path: ~/.local/state/ragcode/mcp.log
+
 # Multi-workspace configuration
 # Collections are auto-created with format: ragcode-{workspaceID}-{language}
 workspace:

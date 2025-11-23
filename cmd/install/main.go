@@ -500,7 +500,7 @@ func configureIDEs(selected []string) {
 				continue
 			}
 		}
-		updateMCPConfig(cfg.displayName, cfg.path, binPath)
+		updateMCPConfig(key, cfg.displayName, cfg.path, binPath)
 	}
 }
 
@@ -609,7 +609,7 @@ func normalizeIdeSelection(selected []string) ideSelection {
 	return sel
 }
 
-func updateMCPConfig(ide, path, binPath string) {
+func updateMCPConfig(ideKey, displayName, path, binPath string) {
 	config := make(map[string]interface{})
 
 	// Read existing
@@ -622,7 +622,21 @@ func updateMCPConfig(ide, path, binPath string) {
 		mcpServers = existing
 	}
 
-	mcpServers["ragcode"] = map[string]interface{}{
+	mcpServers["ragcode"] = buildMCPServerEntry(ideKey, binPath)
+
+	config["mcpServers"] = mcpServers
+
+	data, _ := json.MarshalIndent(config, "", "  ")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err == nil {
+		if err := os.WriteFile(path, data, 0644); err == nil {
+			success(fmt.Sprintf("Configured %s", displayName))
+		}
+	}
+}
+
+func buildMCPServerEntry(ideKey, binPath string) map[string]interface{} {
+	// default json for ide's cursor , antigravity , claude
+	entry := map[string]interface{}{
 		"command": binPath,
 		"args":    []string{},
 		"env": map[string]string{
@@ -633,14 +647,28 @@ func updateMCPConfig(ide, path, binPath string) {
 		},
 	}
 
-	config["mcpServers"] = mcpServers
-
-	data, _ := json.MarshalIndent(config, "", "  ")
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err == nil {
-		if err := os.WriteFile(path, data, 0644); err == nil {
-			success(fmt.Sprintf("Configured %s", ide))
+	// add specific fields for each ide
+	switch ideKey {
+	case "vs-code":
+		entry["alwaysAllow"] = []string{
+			"search_code",
+			"search_local_index",
+			"get_function_details",
+			"find_type_definition",
+			"get_code_context",
+			"list_package_exports",
+			"find_implementations",
+			"search_docs",
+			"hybrid_search",
+			"index_workspace",
 		}
+	case "windsurf":
+		entry["disabled"] = false
+	default:
+		// Other IDEs currently don't need extra fields
 	}
+
+	return entry
 }
 
 func printSummary() {

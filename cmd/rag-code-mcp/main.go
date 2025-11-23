@@ -72,7 +72,7 @@ var logger = &simpleLogger{}
 func initLoggerFromEnv() {
 	// Set default log output to stderr to avoid interfering with MCP stdio protocol
 	log.SetOutput(os.Stderr)
-	
+
 	path := os.Getenv("MCP_LOG_FILE")
 	if path == "" {
 		return

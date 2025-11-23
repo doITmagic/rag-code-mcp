@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/php"
 	"github.com/doITmagic/rag-code-mcp/internal/codetypes"
+	"github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/php"
 )
 
 // Adapter implements codetypes.PathAnalyzer for Laravel projects

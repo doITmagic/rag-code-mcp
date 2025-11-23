@@ -34,6 +34,13 @@ type simpleLogger struct {
 	logFile *os.File
 }
 
+func (l *simpleLogger) Close() {
+	if l.logFile != nil {
+		_ = l.logFile.Close()
+		l.logFile = nil
+	}
+}
+
 func (l *simpleLogger) shouldLog(msgLevel string) bool {
 	levels := map[string]int{"debug": 0, "info": 1, "warn": 2, "error": 3}
 	logLevel := strings.ToLower(os.Getenv("MCP_LOG_LEVEL"))
@@ -73,6 +80,10 @@ func initLoggerFromEnv() {
 	// Set default log output to stderr to avoid interfering with MCP stdio protocol
 	log.SetOutput(os.Stderr)
 
+	if logger.logFile != nil {
+		logger.Close()
+	}
+
 	path := os.Getenv("MCP_LOG_FILE")
 	if path == "" {
 		return
@@ -85,6 +96,52 @@ func initLoggerFromEnv() {
 	}
 
 	logger.logFile = f
+}
+
+func expandPath(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	if path == "~" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return path, err
+		}
+		return home, nil
+	}
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return path, err
+		}
+		return filepath.Join(home, path[2:]), nil
+	}
+	return path, nil
+}
+
+func applyLoggingConfig(logCfg config.LoggingConfig) {
+	if logCfg.Level != "" {
+		if _, ok := os.LookupEnv("MCP_LOG_LEVEL"); !ok {
+			_ = os.Setenv("MCP_LOG_LEVEL", strings.ToLower(logCfg.Level))
+		}
+	}
+
+	if _, ok := os.LookupEnv("MCP_LOG_FILE"); !ok {
+		if strings.EqualFold(logCfg.Output, "file") && logCfg.Path != "" {
+			expanded, err := expandPath(logCfg.Path)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "[WARN] Failed to expand log path %s: %v\n", logCfg.Path, err)
+			} else {
+				dir := filepath.Dir(expanded)
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					fmt.Fprintf(os.Stderr, "[WARN] Failed to create log directory %s: %v\n", dir, err)
+				} else {
+					_ = os.Setenv("MCP_LOG_FILE", expanded)
+				}
+			}
+		}
+	}
+	initLoggerFromEnv()
 }
 
 type MCPTool interface {
@@ -219,6 +276,9 @@ func main() {
 		logger.Warn("Failed to load config file %s, using defaults: %v", *configPath, err)
 		cfg = config.DefaultConfig()
 	}
+
+	// Apply logging settings from config unless env vars already override them
+	applyLoggingConfig(cfg.Logging)
 
 	// Apply CLI overrides (highest precedence)
 	if *ollamaBaseURLFlag != "" {

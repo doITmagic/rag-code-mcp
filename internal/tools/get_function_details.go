@@ -7,11 +7,11 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/php"
-	laravel "github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/php/laravel"
 	"github.com/doITmagic/rag-code-mcp/internal/codetypes"
 	"github.com/doITmagic/rag-code-mcp/internal/llm"
 	"github.com/doITmagic/rag-code-mcp/internal/memory"
+	"github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/php"
+	laravel "github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/php/laravel"
 	"github.com/doITmagic/rag-code-mcp/internal/workspace"
 )
 

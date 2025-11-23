@@ -10,10 +10,10 @@ import (
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 
-	"github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/php"
 	"github.com/doITmagic/rag-code-mcp/internal/codetypes"
 	"github.com/doITmagic/rag-code-mcp/internal/llm"
 	"github.com/doITmagic/rag-code-mcp/internal/memory"
+	"github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/php"
 	"github.com/doITmagic/rag-code-mcp/internal/workspace"
 )
 

@@ -14,10 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/doITmagic/rag-code-mcp/internal/ragcode"
 	"github.com/doITmagic/rag-code-mcp/internal/config"
 	"github.com/doITmagic/rag-code-mcp/internal/llm"
 	"github.com/doITmagic/rag-code-mcp/internal/memory"
+	"github.com/doITmagic/rag-code-mcp/internal/ragcode"
 	"github.com/doITmagic/rag-code-mcp/internal/storage"
 )
 

@@ -617,14 +617,18 @@ func updateMCPConfig(ideKey, displayName, path, binPath string) {
 		json.Unmarshal(data, &config)
 	}
 
-	mcpServers := make(map[string]interface{})
-	if existing, ok := config["mcpServers"].(map[string]interface{}); ok {
-		mcpServers = existing
+	collectionKey := "mcpServers"
+	if ideKey == "vs-code" {
+		collectionKey = "servers"
 	}
 
-	mcpServers["ragcode"] = buildMCPServerEntry(ideKey, binPath)
+	servers := make(map[string]interface{})
+	if existing, ok := config[collectionKey].(map[string]interface{}); ok {
+		servers = existing
+	}
 
-	config["mcpServers"] = mcpServers
+	servers["ragcode"] = buildMCPServerEntry(ideKey, binPath)
+	config[collectionKey] = servers
 
 	data, _ := json.MarshalIndent(config, "", "  ")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err == nil {

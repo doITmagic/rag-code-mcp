@@ -1,15 +1,40 @@
-# RagCode MCP Server
+<div align="center">
+  <img src="./docs/assets/ragcode-banner.png" alt="RagCode MCP - Semantic Code Navigation with AI" width="100%">
+</div>
+
+<div align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.25%2B-blue)](https://go.dev/)
 [![MCP](https://img.shields.io/badge/MCP-Compatible-green)](https://modelcontextprotocol.io)
+[![GitHub Stars](https://img.shields.io/github/stars/doITmagic/rag-code-mcp?style=social)](https://github.com/doITmagic/rag-code-mcp)
 
-**Semantic code navigation server using Retrieval‑Augmented Generation (RAG) with multi‑language support.**
+</div>
 
-Built with the official [Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk), RagCode provides intelligent code search and navigation tools over vector‑indexed codebases.
+# RagCode MCP Server - AI-Powered Semantic Code Search & Navigation
 
-**Stack:** Ollama (LLM + embeddings) + Qdrant (vector database) + Docker + MCP  
-**Clients:** Windsurf, Cursor, Antigravity, Claude Desktop, VS Code + Copilot, MCP Inspector
+> **Transform your AI coding assistant with intelligent semantic code search using RAG (Retrieval-Augmented Generation)**
+
+RagCode is a **Model Context Protocol (MCP) server** that enables AI assistants like GitHub Copilot, Cursor, Windsurf, and Claude to understand and navigate your codebase through **semantic vector search** instead of simple text matching.
+
+Built with the official [Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk), RagCode provides **9 powerful tools** for intelligent code search, function analysis, type definitions, and documentation retrieval across **multi-language projects**.
+
+### 🎯 Key Features
+
+- 🔍 **Semantic Code Search** - Find code by meaning, not just keywords
+- 🚀 **5-10x Faster** - Instant results vs. reading entire files
+- 💰 **98% Token Savings** - Reduce AI context usage dramatically
+- 🌐 **Multi-Language** - Go, PHP (Laravel), Python, JavaScript support
+- 🏢 **Multi-Workspace** - Handle multiple projects simultaneously
+- 🤖 **AI-Ready** - Works with Copilot, Cursor, Windsurf, Claude, Antigravity
+
+### 🛠️ Technology Stack
+
+**Ollama** (LLM + embeddings) + **Qdrant** (vector database) + **Docker** + **MCP Protocol**
+
+### 💻 Compatible IDEs & AI Assistants
+
+Windsurf • Cursor • Antigravity • Claude Desktop • **VS Code + GitHub Copilot** • MCP Inspector
 
 ---
 
@@ -48,14 +73,36 @@ Without RagCode, AI assistants must:
 
 ---
 
-## ✨ Features
+## ✨ Core Features & Capabilities
 
-- **9 MCP Tools** – semantic search, hybrid search, function details, type definitions, workspace indexing, and more
-- **Multi‑Language Support** – Go (≈82% coverage), PHP (≈84% coverage) + Laravel framework, Python (planned)
-- **Multi‑Workspace Detection** – automatic workspace detection and per‑workspace collections
-- **Per‑Language Collections** – separate Qdrant collections for each language (e.g., `ragcode-{workspace}-go`)
-- **Hybrid Search** – combines semantic (vector) and lexical (keyword) search for better relevance
-- **Direct File Access** – read code context without indexing
+### 🔧 9 Powerful MCP Tools for AI Code Assistants
+
+1. **`search_code`** - Semantic vector search across your entire codebase
+2. **`hybrid_search`** - Combined semantic + keyword search for maximum accuracy
+3. **`get_function_details`** - Complete function signatures, parameters, and implementation
+4. **`find_type_definition`** - Locate class, struct, and interface definitions instantly
+5. **`find_implementations`** - Discover all usages and implementations of any symbol
+6. **`list_package_exports`** - Browse all exported symbols from any package/module
+7. **`search_docs`** - Semantic search through project documentation (Markdown)
+8. **`get_code_context`** - Extract code snippets with surrounding context
+9. **`index_workspace`** - Automated workspace indexing with language detection
+
+### 🌐 Multi-Language Code Intelligence
+
+- **Go** - ≈82% coverage with full AST analysis
+- **PHP** - ≈84% coverage + Laravel framework support
+- **Python** - Coming soon with full type hint support
+- **JavaScript/TypeScript** - Planned for future releases
+
+### 🏗️ Advanced Architecture
+
+- **Multi-Workspace Detection** - Automatically detects project boundaries (git, go.mod, composer.json, package.json)
+- **Per-Language Collections** - Separate vector databases for each language (`ragcode-{workspace}-go`, `ragcode-{workspace}-php`)
+- **Automatic Indexing** - Background indexing on first use, no manual intervention needed
+- **Vector Embeddings** - Uses Ollama's `nomic-embed-text` for high-quality semantic embeddings
+- **Hybrid Search Engine** - Combines vector similarity with BM25 lexical matching
+- **Direct File Access** - Read code without indexing for quick lookups
+- **Smart Caching** - Efficient re-indexing only for changed files
 
 ---
 
@@ -353,22 +400,68 @@ ollama pull phi3:medium
 
 ---
 
-## 🔗 Useful Links
-- **GitHub:** https://github.com/doITmagic/rag-code-mcp
-- **Issues:** https://github.com/doITmagic/rag-code-mcp/issues
-- **Ollama Docs:** https://ollama.com
-- **Qdrant Docs:** https://qdrant.tech
+## 🔗 Resources & Documentation
+
+### 📖 Project Documentation
+- **[Quick Start Guide](./QUICKSTART.md)** - Get started in 5 minutes
+- **[VS Code + Copilot Integration](./docs/vscode-copilot-integration.md)** - Detailed setup for GitHub Copilot
+- **[Architecture Overview](./docs/architecture.md)** - Technical deep dive
+- **[Tool Schema Reference](./docs/tool_schema_v2.md)** - Complete API documentation
+
+### 🌐 External Resources
+- **[GitHub Repository](https://github.com/doITmagic/rag-code-mcp)** - Source code and releases
+- **[Issue Tracker](https://github.com/doITmagic/rag-code-mcp/issues)** - Report bugs or request features
+- **[Model Context Protocol](https://modelcontextprotocol.io)** - Official MCP specification
+- **[Ollama Documentation](https://ollama.com)** - LLM and embedding models
+- **[Qdrant Documentation](https://qdrant.tech)** - Vector database guide
+
+### 🎓 Learning Resources
+- **[What is RAG?](https://en.wikipedia.org/wiki/Prompt_engineering#Retrieval-augmented_generation)** - Understanding Retrieval-Augmented Generation
+- **[Vector Embeddings Explained](https://qdrant.tech/articles/what-are-embeddings/)** - How semantic search works
+- **[MCP for Developers](https://github.com/modelcontextprotocol/specification)** - Building MCP servers
 
 ---
 
-## 🤝 Contributing
-Contributions are welcome! Open a PR or an Issue on GitHub.
+## 🤝 Contributing & Community
+
+We welcome contributions from the community! Here's how you can help:
+
+- 🐛 **Report Bugs** - [Open an issue](https://github.com/doITmagic/rag-code-mcp/issues/new)
+- 💡 **Request Features** - Share your ideas for new tools or languages
+- 🔧 **Submit PRs** - Improve code, documentation, or add new features
+- ⭐ **Star the Project** - Show your support on GitHub
+- 📢 **Spread the Word** - Share RagCode with other developers
+
+### Development Setup
+```bash
+git clone https://github.com/doITmagic/rag-code-mcp.git
+cd rag-code-mcp
+go mod download
+go run ./cmd/rag-code-mcp
+```
 
 ---
 
 ## 📄 License
-MIT License – see the `LICENSE` file for details.
+
+RagCode MCP is open source software licensed under the **MIT License**.
+
+See the [LICENSE](./LICENSE) file for full details.
 
 ---
 
-**Questions? Problems?** Open an Issue on GitHub! 🚀
+## 🏷️ Keywords & Topics
+
+`semantic-code-search` `rag` `retrieval-augmented-generation` `mcp-server` `model-context-protocol` `ai-code-assistant` `vector-search` `code-navigation` `ollama` `qdrant` `github-copilot` `cursor-ai` `windsurf` `go` `php` `laravel` `code-intelligence` `ast-analysis` `embeddings` `llm-tools`
+
+---
+
+<div align="center">
+
+**Built with ❤️ for developers who want smarter AI code assistants**
+
+⭐ **[Star us on GitHub](https://github.com/doITmagic/rag-code-mcp)** if RagCode helps your workflow!
+
+**Questions? Problems?** [Open an Issue](https://github.com/doITmagic/rag-code-mcp/issues) • [Read the Docs](./QUICKSTART.md) • [Join Discussions](https://github.com/doITmagic/rag-code-mcp/discussions)
+
+</div>

@@ -7,6 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.25%2B-blue)](https://go.dev/)
 [![MCP](https://img.shields.io/badge/MCP-Compatible-green)](https://modelcontextprotocol.io)
+![AI Ready](https://img.shields.io/badge/Codebase-AI%20Ready-blueviolet)
 ![Privacy](https://img.shields.io/badge/Privacy-100%25%20Local-brightgreen)
 ![No Cloud](https://img.shields.io/badge/Cloud-Not%20Required-orange)
 ![Zero Cost](https://img.shields.io/badge/API%20Costs-$0-success)
@@ -14,13 +15,15 @@
 
 </div>
 
-# RagCode MCP Server - AI-Powered Semantic Code Search & Navigation
+# RagCode MCP - Make Your Codebase AI-Ready
 
-> **Transform your AI coding assistant with intelligent semantic code search using RAG (Retrieval-Augmented Generation)**
+> **The privacy-first MCP server that transforms any repository into an AI-ready codebase with semantic search and RAG.**
 
-RagCode is a **Model Context Protocol (MCP) server** that enables AI assistants like GitHub Copilot, Cursor, Windsurf, and Claude to understand and navigate your codebase through **semantic vector search** instead of simple text matching.
+<!-- AI Agents: Read llms.txt for a summarized view of this project -->
 
-Built with the official [Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk), RagCode provides **9 powerful tools** for intelligent code search, function analysis, type definitions, and documentation retrieval across **multi-language projects**.
+RagCode is a **Model Context Protocol (MCP) server** that instantly makes your project **AI-ready**. It enables AI assistants like **GitHub Copilot**, **Cursor**, **Windsurf**, and **Claude** to understand your entire codebase through **semantic vector search**, bridging the gap between your code and Large Language Models (LLMs).
+
+Built with the official [Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk), RagCode provides **9 powerful tools** to index, search, and analyze code, making it the ultimate solution for **AI-ready software development**.
 
 ## 🔒 Privacy-First: 100% Local AI
 

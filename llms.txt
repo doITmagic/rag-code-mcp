@@ -1,0 +1,52 @@
+# RagCode MCP Server
+
+> The privacy-first MCP server that transforms any repository into an AI-ready codebase with semantic search and RAG.
+
+## Overview
+
+RagCode is a Model Context Protocol (MCP) server that enables AI assistants (GitHub Copilot, Cursor, Windsurf, Claude) to understand and navigate codebases through semantic vector search. It runs 100% locally using Ollama and Qdrant.
+
+## Key Features
+
+- **Semantic Search**: Find code by meaning, not just keywords.
+- **Privacy-First**: Runs locally, no code leaves the machine.
+- **Multi-Language**: Supports Go, PHP (Laravel), Python, JavaScript.
+- **Zero Cost**: No API fees, uses local models.
+
+## Installation
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | bash
+```
+
+## Tools
+
+RagCode exposes the following MCP tools:
+
+1. `search_code(query, file_path)`: Semantic search across the codebase.
+2. `hybrid_search(query, file_path)`: Combined semantic + lexical search.
+3. `get_function_details(function_name, file_path)`: Get signature and body of a function.
+4. `find_type_definition(type_name, file_path)`: Find struct/interface definitions.
+5. `find_implementations(symbol_name, file_path)`: Find usages of a symbol.
+6. `list_package_exports(package, file_path)`: List exported symbols.
+7. `search_docs(query, file_path)`: Search markdown documentation.
+8. `get_code_context(file_path, start_line, end_line)`: Read code with context.
+9. `index_workspace(file_path)`: Manually trigger indexing (usually automatic).
+
+## Configuration
+
+Config file: `~/.local/share/ragcode/config.yaml`
+
+```yaml
+llm:
+  provider: "ollama"
+  model: "phi3:medium"
+  embed_model: "nomic-embed-text"
+
+qdrant:
+  url: "http://localhost:6333"
+```
+
+## Full Documentation
+
+For complete documentation, see: https://github.com/doITmagic/rag-code-mcp/blob/main/llms-full.txt

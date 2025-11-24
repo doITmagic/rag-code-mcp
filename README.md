@@ -193,6 +193,17 @@ Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/lates
 4. ✅ Configures your IDE (VS Code, Claude, Cursor, Windsurf)
 5. ✅ Adds binaries to your PATH
 
+### Zero-Config Usage
+
+Once installed, **you don't need to configure anything**.
+
+1. Open your project in your IDE (VS Code, Cursor, Windsurf).
+2. Ask your AI assistant a question about your code (e.g., *"How does the authentication system work?"*).
+3. **That's it!** RagCode automatically detects your workspace, creates the index in the background, and answers your question.
+   - First query might take a moment while indexing starts.
+   - Subsequent queries are instant.
+   - File changes are automatically detected and re-indexed incrementally.
+
 ### Installation Options
 
 The installer supports flexible configuration via flags:

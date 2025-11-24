@@ -40,6 +40,10 @@ type Manager struct {
 	// Workspace scan fingerprints to detect file changes per language
 	scanMu           sync.RWMutex
 	scanFingerprints map[string]string
+
+	// File watchers
+	watchersMu sync.Mutex
+	watchers   map[string]*FileWatcher
 }
 
 type workspaceScan struct {
@@ -213,6 +217,8 @@ func NewManager(qdrant *storage.QdrantClient, llm llm.Provider, cfg *config.Conf
 		detector = NewDetector()
 	}
 
+	log.Printf("🔧 Workspace Manager initialized (logging verified)")
+
 	return &Manager{
 		detector: detector,
 		cache:    NewCache(5 * time.Minute),
@@ -221,6 +227,7 @@ func NewManager(qdrant *storage.QdrantClient, llm llm.Provider, cfg *config.Conf
 		config:   cfg,
 		indexing: make(map[string]bool),
 		memories: make(map[string]memory.LongTermMemory),
+		watchers: make(map[string]*FileWatcher),
 	}
 }
 
@@ -496,7 +503,14 @@ func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string
 
 	currentFiles := scan.LanguageFiles[strings.ToLower(language)]
 
-	// Check for added or modified files
+	// Add markdown files to the list of files to check if this is the primary language
+	// or if we handle them separately. For simplicity, let's handle docs as part of the language index
+	// but with distinct metadata.
+	// Actually, indexMarkdownFiles handles them separately in collection.
+	// Let's integrate them into the state tracking.
+	currentDocs := scan.DocFiles
+
+	// Check for added or modified files (Code)
 	for _, path := range currentFiles {
 		info, err := os.Stat(path)
 		if err != nil {
@@ -515,23 +529,49 @@ func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string
 		state.UpdateFile(path, info)
 	}
 
-	// Check for deleted files
-	currentFileMap := make(map[string]bool)
-	for _, p := range currentFiles {
-		currentFileMap[p] = true
+	// Check for added or modified files (Docs)
+	var docsToIndex []string
+	var docsToDelete []string
+
+	for _, path := range currentDocs {
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+
+		fileState, exists := state.GetFileState(path)
+		if !exists || info.ModTime().After(fileState.ModTime) || info.Size() != fileState.Size {
+			docsToIndex = append(docsToIndex, path)
+			if exists {
+				docsToDelete = append(docsToDelete, path)
+			}
+		}
+
+		// Update state
+		state.UpdateFile(path, info)
 	}
 
+	// Check for deleted files (both code and docs)
+	// We scan the state and check if files still exist in current scan
+	// But scan only has current files.
+	// Better: iterate state.Files and check if they exist on disk.
 	state.mu.RLock()
 	for path := range state.Files {
 		if _, err := os.Stat(path); os.IsNotExist(err) {
-			filesToDelete = append(filesToDelete, path)
+			// It's deleted. Determine if it was code or doc based on extension
+			ext := strings.ToLower(filepath.Ext(path))
+			if ext == ".md" {
+				docsToDelete = append(docsToDelete, path)
+			} else {
+				filesToDelete = append(filesToDelete, path)
+			}
 		}
 	}
 	state.mu.RUnlock()
 
-	// Process deletions
+	// Process deletions (Code)
 	if len(filesToDelete) > 0 {
-		log.Printf("🗑️  Deleting %d modified/deleted files from index...", len(filesToDelete))
+		log.Printf("🗑️  Deleting %d modified/deleted code files from index...", len(filesToDelete))
 		for _, path := range filesToDelete {
 			if err := ltm.DeleteByMetadata(ctx, "file", path); err != nil {
 				log.Printf("⚠️  Failed to delete chunks for %s: %v", path, err)
@@ -540,9 +580,20 @@ func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string
 		}
 	}
 
-	// Process indexing
+	// Process deletions (Docs)
+	if len(docsToDelete) > 0 {
+		log.Printf("🗑️  Deleting %d modified/deleted doc files from index...", len(docsToDelete))
+		for _, path := range docsToDelete {
+			if err := ltm.DeleteByMetadata(ctx, "file", path); err != nil {
+				log.Printf("⚠️  Failed to delete chunks for %s: %v", path, err)
+			}
+			state.RemoveFile(path)
+		}
+	}
+
+	// Process indexing (Code)
 	if len(filesToIndex) > 0 {
-		log.Printf("📝 Indexing %d new/modified files...", len(filesToIndex))
+		log.Printf("📝 Indexing %d new/modified code files...", len(filesToIndex))
 
 		indexer := ragcode.NewIndexer(analyzer, m.llm, ltm)
 
@@ -558,10 +609,18 @@ func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string
 		log.Printf("✨ No code changes detected for language '%s'", language)
 	}
 
-	// Index markdown documentation files automatically using scan result
-	numDocs := m.indexMarkdownFiles(ctx, scan.DocFiles, collectionName, ltm)
-	if numDocs > 0 {
-		log.Printf("   Docs chunks indexed: %d", numDocs)
+	// Process indexing (Docs)
+	if len(docsToIndex) > 0 {
+		log.Printf("📚 Indexing %d new/modified doc files...", len(docsToIndex))
+		// We use indexMarkdownFiles but only for the changed list
+		numDocs := m.indexMarkdownFiles(ctx, docsToIndex, collectionName, ltm)
+		if numDocs > 0 {
+			log.Printf("   Docs chunks indexed: %d", numDocs)
+		}
+	} else {
+		if len(currentDocs) > 0 {
+			log.Printf("✨ No documentation changes detected")
+		}
 	}
 
 	// Save state
@@ -757,4 +816,61 @@ func (m *Manager) StartIndexing(ctx context.Context, info *Info, language string
 	}()
 
 	return nil
+}
+
+// EnsureWorkspaceIndexed triggers indexing for all detected languages in the workspace
+func (m *Manager) EnsureWorkspaceIndexed(ctx context.Context, rootPath string) error {
+	info, err := m.detector.DetectFromPath(rootPath)
+	if err != nil {
+		return err
+	}
+	// ID is generated by detector
+	if m.config != nil && m.config.Workspace.CollectionPrefix != "" {
+		info.CollectionPrefix = m.config.Workspace.CollectionPrefix
+	}
+
+	var errs []string
+
+	// Helper to index language
+	indexLang := func(lang string) {
+		colName := info.CollectionNameForLanguage(lang)
+		if err := m.IndexLanguage(ctx, info, lang, colName); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", lang, err))
+		}
+	}
+
+	if len(info.Languages) == 0 {
+		lang := info.ProjectType
+		if lang != "" && lang != "unknown" {
+			indexLang(lang)
+		}
+	} else {
+		for _, lang := range info.Languages {
+			indexLang(lang)
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("indexing errors: %s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+// StartWatcher starts the file watcher for a workspace if not already running
+func (m *Manager) StartWatcher(root string) {
+	m.watchersMu.Lock()
+	defer m.watchersMu.Unlock()
+
+	if _, exists := m.watchers[root]; exists {
+		return
+	}
+
+	watcher, err := NewFileWatcher(root, m)
+	if err != nil {
+		log.Printf("⚠️ Failed to create file watcher for %s: %v", root, err)
+		return
+	}
+
+	m.watchers[root] = watcher
+	watcher.Start()
 }

@@ -33,12 +33,12 @@ The state of the workspace is persisted in a JSON file located at `.ragcode/stat
 
 ### 2. The Indexing Workflow
 
-Incremental indexing poate fi declanșat în două moduri:
+Incremental indexing can be triggered in two ways:
 
-1. **Manual:** prin tool-ul `index_workspace` sau utilitarul CLI `index-all`.
-2. **Automat:** de fiecare dată când un tool MCP (ex. `search_code`, `get_function_details`, `find_type_definition`, etc.) accesează un workspace deja indexat. Managerul detectează colecția, rulează `checkAndReindexIfNeeded` într-o gorutină și, dacă găsește schimbări, pornește `IndexLanguage` în fundal fără să blocheze răspunsul către agent.
+1. **Manual:** Via the `index_workspace` tool or the `index-all` CLI utility.
+2. **Automatic:** Whenever any MCP tool (e.g., `search_code`, `get_function_details`, `find_type_definition`, etc.) accesses an already indexed workspace. The Manager detects the collection, runs `checkAndReindexIfNeeded` in a goroutine, and if changes are detected, starts `IndexLanguage` in the background without blocking the agent's response.
 
-Diagrama de mai jos descrie fluxul comun folosit în ambele scenarii:
+The diagram below describes the common flow used in both scenarios:
 
 ```mermaid
 graph TD
@@ -91,10 +91,10 @@ Finally, the in-memory state is updated with the new file information, and `stat
 ## Usage
 
 ### Using MCP Tools
-- **Prima rulare:** orice tool MCP care primește `file_path` va detecta workspace-ul și va declanșa crearea colecției + indexarea completă.
-- **Rulări ulterioare:** aceleași tool-uri verifică `state.json` și pornesc automat reindexarea incrementală atunci când detectează fișiere schimbate. Nu este nevoie să apelezi `index_workspace` manual.
+- **First Run:** Any MCP tool receiving a `file_path` will detect the workspace and trigger collection creation + full indexing.
+- **Subsequent Runs:** The same tools check `state.json` and automatically trigger incremental re-indexing when they detect changed files. There is no need to call `index_workspace` manually.
 
-Poți forța totuși o rulare manuală folosind `index_workspace`:
+You can still force a manual run using `index_workspace`:
 
 ```bash
 # First run - indexes all files
@@ -147,9 +147,9 @@ Example output showing successful incremental operation:
 
 ## Logging & Monitoring
 
-- Logurile serverului sunt scrise implicit în `~/.local/state/ragcode/mcp.log` (configurabil prin `logging.path`).
-- Setează `logging.level: debug` pentru a vedea mesajele `🔄 Auto-detected file changes…`, `📝 Indexing N new/modified files…`, `✨ No code changes detected…` etc.
-- Exemplu de monitorizare:
+- Server logs are written by default to `~/.local/state/ragcode/mcp.log` (configurable via `logging.path`).
+- Set `logging.level: debug` to see messages like `🔄 Auto-detected file changes…`, `📝 Indexing N new/modified files…`, `✨ No code changes detected…`, etc.
+- Example monitoring command:
   ```bash
   tail -f ~/.local/state/ragcode/mcp.log | grep -E "Auto-reindex|Indexing|No code"
   ```

@@ -85,6 +85,8 @@ func main() {
 	}
 	llmCfg.Provider = "ollama"
 
+	fmt.Printf("ℹ️ config: %+v\n", llmCfg)
+
 	provider, err := llm.NewOllamaLLMProvider(llmCfg)
 	if err != nil {
 		log.Fatalf("ollama provider: %v", err)

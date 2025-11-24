@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -78,25 +77,6 @@ func (l *simpleLogger) Warn(format string, args ...interface{}) {
 }
 
 var logger = &simpleLogger{}
-
-func getAppDataDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-
-	if runtime.GOOS == "windows" {
-		return filepath.Join(home, "AppData", "Local", "ragcode"), nil
-	} else if runtime.GOOS == "darwin" {
-		return filepath.Join(home, "Library", "Application Support", "ragcode"), nil
-	}
-
-	// Linux / Unix standard (XDG state home or fallback to local/state)
-	if xdgState := os.Getenv("XDG_STATE_HOME"); xdgState != "" {
-		return filepath.Join(xdgState, "ragcode"), nil
-	}
-	return filepath.Join(home, ".local", "state", "ragcode"), nil
-}
 
 func resolveLogPath(path string) (string, error) {
 	if path == "" {

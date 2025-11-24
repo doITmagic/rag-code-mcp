@@ -335,7 +335,9 @@ func setupServices() {
 		}
 
 		// Ensure local models dir exists
-		os.MkdirAll(localModels, 0755)
+		if err := os.MkdirAll(localModels, 0755); err != nil {
+			fail(fmt.Sprintf("Could not create Ollama models dir: %v", err))
+		}
 
 		args := []string{
 			"-p", "11434:11434",
@@ -367,7 +369,12 @@ func startDockerContainer(name, image string, args []string, env []string) {
 	}
 
 	// Remove if exists but stopped
-	exec.Command("docker", "rm", name).Run()
+	if err := exec.Command("docker", "rm", name).Run(); err != nil {
+		// ignore if container didn't exist, but log other errors
+		if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
+			warn(fmt.Sprintf("Failed to remove existing container %s: %v", name, err))
+		}
+	}
 
 	// Run
 	runArgs := []string{"run", "-d", "--name", name, "--restart", "unless-stopped"}
@@ -663,7 +670,9 @@ func updateMCPConfig(ideKey, displayName, path, binPath string) {
 
 	// Read existing
 	if data, err := os.ReadFile(path); err == nil {
-		json.Unmarshal(data, &config)
+		if err := json.Unmarshal(data, &config); err != nil {
+			warn(fmt.Sprintf("Failed to parse existing MCP config %s: %v", path, err))
+		}
 	}
 
 	collectionKey := "mcpServers"

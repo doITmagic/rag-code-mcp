@@ -136,8 +136,6 @@ func (p *OllamaLLMProvider) Embed(ctx context.Context, text string) ([]float64, 
 		return nil, fmt.Errorf("empty embedding returned")
 	}
 
-	log.Printf("📊 Ollama embedding: dimension=%d", len(embeddings[0]))
-
 	// Convert float32 to float64
 	result := make([]float64, len(embeddings[0]))
 	for i, v := range embeddings[0] {

@@ -11,8 +11,10 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
 	"github.com/doITmagic/rag-code-mcp/internal/healthcheck"
@@ -77,6 +79,69 @@ func (l *simpleLogger) Warn(format string, args ...interface{}) {
 
 var logger = &simpleLogger{}
 
+func getAppDataDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	if runtime.GOOS == "windows" {
+		return filepath.Join(home, "AppData", "Local", "ragcode"), nil
+	} else if runtime.GOOS == "darwin" {
+		return filepath.Join(home, "Library", "Application Support", "ragcode"), nil
+	}
+
+	// Linux / Unix standard (XDG state home or fallback to local/state)
+	if xdgState := os.Getenv("XDG_STATE_HOME"); xdgState != "" {
+		return filepath.Join(xdgState, "ragcode"), nil
+	}
+	return filepath.Join(home, ".local", "state", "ragcode"), nil
+}
+
+func resolveLogPath(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+
+	// If path is just a filename (no separators), put it NEXT TO THE EXECUTABLE
+	if filepath.Base(path) == path {
+		exePath, err := os.Executable()
+		if err != nil {
+			// Fallback to CWD if executable path fails
+			return path, nil
+		}
+		exeDir := filepath.Dir(exePath)
+
+		debugFile := "/tmp/ragcode-path-debug.txt"
+		_ = os.WriteFile(debugFile, []byte(fmt.Sprintf("Exe: %s\nDir: %s\nPath: %s\n", exePath, exeDir, filepath.Join(exeDir, path))), 0666)
+
+		return filepath.Join(exeDir, path), nil
+	}
+
+	// Handle tilde expansion for user convenience in config files
+	if strings.HasPrefix(path, "~/") || path == "~" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return path, err
+		}
+		if path == "~" {
+			return home, nil
+		}
+		return filepath.Join(home, path[2:]), nil
+	}
+
+	// If relative path with separators, make absolute relative to CWD
+	if !filepath.IsAbs(path) {
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return path, err
+		}
+		return abs, nil
+	}
+
+	return path, nil
+}
+
 func initLoggerFromEnv() {
 	// Default to stderr to avoid interfering with MCP stdio protocol when no file is configured
 	log.SetOutput(os.Stderr)
@@ -90,9 +155,11 @@ func initLoggerFromEnv() {
 		return
 	}
 
-	expanded, err := expandPath(path)
+	// Path is already resolved when setting env var in applyLoggingConfig
+	// but we check again just in case env var was set externally
+	expanded, err := resolveLogPath(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[WARN] Failed to expand log path %s: %v\n", path, err)
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to resolve log path %s: %v\n", path, err)
 		return
 	}
 	path = expanded
@@ -110,28 +177,19 @@ func initLoggerFromEnv() {
 	}
 
 	logger.logFile = f
-	log.SetOutput(io.MultiWriter(os.Stderr, logger.logFile))
-}
 
-func expandPath(path string) (string, error) {
-	if path == "" {
-		return "", nil
+	// FORCE DEBUG WRITE DIRECTLY TO FILE
+	timestamp := time.Now().Format(time.RFC3339)
+	if _, err := f.WriteString(fmt.Sprintf("--- STARTING FINAL FIX SESSION %s ---\n", timestamp)); err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to write startup line to log file: %v\n", err)
 	}
-	if path == "~" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return path, err
-		}
-		return home, nil
-	}
-	if strings.HasPrefix(path, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return path, err
-		}
-		return filepath.Join(home, path[2:]), nil
-	}
-	return path, nil
+	_ = f.Sync()
+
+	log.SetOutput(io.MultiWriter(os.Stderr, logger.logFile))
+
+	// Log startup info to verify location
+	fmt.Fprintf(os.Stderr, "[INFO] Logging to file: %s\n", path)
+	log.Printf("Logger initialized successfully writing to %s", path)
 }
 
 func applyLoggingConfig(logCfg config.LoggingConfig) {
@@ -143,16 +201,12 @@ func applyLoggingConfig(logCfg config.LoggingConfig) {
 
 	if _, ok := os.LookupEnv("MCP_LOG_FILE"); !ok {
 		if strings.EqualFold(logCfg.Output, "file") && logCfg.Path != "" {
-			expanded, err := expandPath(logCfg.Path)
+			expanded, err := resolveLogPath(logCfg.Path)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "[WARN] Failed to expand log path %s: %v\n", logCfg.Path, err)
+				fmt.Fprintf(os.Stderr, "[WARN] Failed to resolve log path %s: %v\n", logCfg.Path, err)
 			} else {
-				dir := filepath.Dir(expanded)
-				if err := os.MkdirAll(dir, 0o755); err != nil {
-					fmt.Fprintf(os.Stderr, "[WARN] Failed to create log directory %s: %v\n", dir, err)
-				} else {
-					_ = os.Setenv("MCP_LOG_FILE", expanded)
-				}
+				// Set the fully resolved path in env var for initLoggerFromEnv to use
+				_ = os.Setenv("MCP_LOG_FILE", expanded)
 			}
 		}
 	}
@@ -205,6 +259,12 @@ storage:
     url: http://localhost:6333
     api_key: ""
 
+logging:
+  level: debug
+  format: text
+  output: file
+  path: mcp.log
+
 # Multi-workspace configuration (auto-creates collections per workspace+language)
 workspace:
   enabled: true
@@ -256,6 +316,16 @@ workspace:
 }
 
 func main() {
+	// AGGRESSIVE STARTUP DEBUG
+	f, _ := os.Create("/tmp/ragcode-startup.txt")
+	cwd, _ := os.Getwd()
+	exe, _ := os.Executable()
+	fmt.Fprintf(f, "Time: %s\n", time.Now())
+	fmt.Fprintf(f, "Exe: %s\n", exe)
+	fmt.Fprintf(f, "CWD: %s\n", cwd)
+	fmt.Fprintf(f, "Args: %v\n", os.Args)
+	f.Close()
+
 	// Define flags
 	configPath := flag.String("config", "config.yaml", "Path to configuration file")
 	ollamaBaseURLFlag := flag.String("ollama-base-url", "", "Ollama base URL (overrides config/env)")
@@ -270,6 +340,34 @@ func main() {
 
 	flag.Parse()
 
+	// Resolve config path
+	cfgPath := *configPath
+	if cfgPath == "config.yaml" {
+		// PRIORITY 1: Check executable directory (Best for MCP servers started from random CWD)
+		exePath, err := os.Executable()
+		if err == nil {
+			exeDir := filepath.Dir(exePath)
+			altPath := filepath.Join(exeDir, "config.yaml")
+			// Always prefer the one next to binary if it exists, OR if we are in HOME dir to avoid picking up random configs
+			cwd, _ := os.Getwd()
+			home, _ := os.UserHomeDir()
+
+			if _, err := os.Stat(altPath); err == nil {
+				cfgPath = altPath
+				logger.Info("Found config in executable directory: %s", cfgPath)
+			} else if cwd == home {
+				// If we are in HOME, forcing creation next to binary is safer than creating in HOME
+				cfgPath = altPath
+			} else {
+				// Fallback: check CWD
+				if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
+					// If not in CWD either, default to exe dir for creation
+					cfgPath = altPath
+				}
+			}
+		}
+	}
+
 	initLoggerFromEnv()
 
 	// Handle version flag
@@ -282,13 +380,17 @@ func main() {
 	}
 
 	// Auto-create config.yaml if it doesn't exist
-	if err := ensureConfigExists(*configPath); err != nil {
-		logger.Warn("Failed to create default config: %v", err)
+	// Logic updated: Always check if the RESOLVED cfgPath exists. If not, create it.
+	// This ensures we create the config next to the binary even if we changed cfgPath from the default.
+	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
+		if err := ensureConfigExists(cfgPath); err != nil {
+			logger.Warn("Failed to create default config: %v", err)
+		}
 	}
 
-	cfg, err := config.Load(*configPath)
+	cfg, err := config.Load(cfgPath)
 	if err != nil {
-		logger.Warn("Failed to load config file %s, using defaults: %v", *configPath, err)
+		logger.Warn("Failed to load config file %s, using defaults: %v", cfgPath, err)
 		cfg = config.DefaultConfig()
 	}
 
@@ -471,10 +573,18 @@ func registerSearchCodeToolTyped(server *mcp.Server, tool *tools.SearchLocalInde
 			args["file_path"] = input.FilePath
 		}
 
+		start := time.Now()
+		logger.Info("🛠️ Executing tool '%s' with args: %v", tool.Name(), args)
+
 		result, err := tool.Execute(ctx, args)
+		duration := time.Since(start)
+
 		if err != nil {
+			logger.Error("❌ Tool '%s' failed after %v: %v", tool.Name(), duration, err)
 			return nil, SearchCodeOutput{}, err
 		}
+
+		logger.Info("✅ Tool '%s' completed in %v", tool.Name(), duration)
 
 		return nil, SearchCodeOutput{Results: result}, nil
 	})
@@ -493,8 +603,15 @@ func registerAgentTool(server *mcp.Server, tool MCPTool) {
 				return nil, fmt.Errorf("invalid arguments: %w", err)
 			}
 		}
+
+		start := time.Now()
+		logger.Info("🛠️ Executing tool '%s' with args: %v", tool.Name(), args)
+
 		result, err := tool.Execute(ctx, args)
+		duration := time.Since(start)
+
 		if err != nil {
+			logger.Error("❌ Tool '%s' failed after %v: %v", tool.Name(), duration, err)
 			return &mcp.CallToolResult{
 				IsError: true,
 				Content: []mcp.Content{
@@ -502,6 +619,9 @@ func registerAgentTool(server *mcp.Server, tool MCPTool) {
 				},
 			}, nil
 		}
+
+		logger.Info("✅ Tool '%s' completed in %v", tool.Name(), duration)
+
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				&mcp.TextContent{Text: result},

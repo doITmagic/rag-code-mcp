@@ -287,6 +287,9 @@ func (m *Manager) GetMemoryForWorkspaceLanguage(ctx context.Context, info *Info,
 		)
 	}
 
+	// Ensure filesystem watcher is running so future changes trigger reindex automatically
+	m.StartWatcher(info.Root)
+
 	collectionName := info.CollectionNameForLanguage(language)
 
 	// Check memory cache

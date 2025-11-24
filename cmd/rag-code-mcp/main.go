@@ -89,6 +89,19 @@ func initLoggerFromEnv() {
 		return
 	}
 
+	expanded, err := expandPath(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to expand log path %s: %v\n", path, err)
+		return
+	}
+	path = expanded
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to create log directory %s: %v\n", dir, err)
+		return
+	}
+
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[WARN] Failed to open log file %s: %v\n", path, err)

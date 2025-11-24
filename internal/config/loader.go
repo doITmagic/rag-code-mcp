@@ -82,9 +82,10 @@ func DefaultConfig() *Config {
 			EnableWebSocket: true,
 		},
 		Logging: LoggingConfig{
-			Level:  "info",
-			Format: "text",
-			Output: "stdout",
+			Level:     "info",
+			Format:    "text",
+			Output:    "stdout",
+			MaxSizeMB: 10,
 		},
 		RagCode: RagCodeConfig{
 			Enabled:        false,
@@ -226,6 +227,11 @@ func validate(cfg *Config) error {
 	// Validate ollama model configuration
 	if cfg.LLM.OllamaModel == "" && cfg.LLM.Model == "" {
 		return fmt.Errorf("llm.ollama_model (or legacy llm.model) is required for ollama provider")
+	}
+
+	// Ensure log max size
+	if cfg.Logging.MaxSizeMB <= 0 {
+		cfg.Logging.MaxSizeMB = 10
 	}
 
 	return nil

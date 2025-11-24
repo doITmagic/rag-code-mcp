@@ -118,10 +118,11 @@ type ServerConfig struct {
 
 // LoggingConfig contains logging settings
 type LoggingConfig struct {
-	Level  string `yaml:"level"`  // debug, info, warn, error
-	Format string `yaml:"format"` // json, text
-	Output string `yaml:"output"` // stdout, file
-	Path   string `yaml:"path"`
+	Level     string `yaml:"level"`  // debug, info, warn, error
+	Format    string `yaml:"format"` // json, text
+	Output    string `yaml:"output"` // stdout, file
+	Path      string `yaml:"path"`
+	MaxSizeMB int    `yaml:"max_size_mb"` // Max size in MB before rotation (default: 10)
 }
 
 // RagCodeConfig contains configuration for codebase indexing at startup

@@ -536,7 +536,7 @@ func configureIDEs(selected []string) {
 	if runtime.GOOS == "windows" {
 		binPath = filepath.Join(home, "go", "bin", "rag-code-mcp.exe")
 	} else {
-		binPath = filepath.Join(home, ".local", "bin", "rag-code-mcp")
+		binPath = filepath.Join(home, installDirName, "bin", "rag-code-mcp")
 	}
 
 	selection := normalizeIdeSelection(selected)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/url"
 	"os"
@@ -77,7 +78,7 @@ func (l *simpleLogger) Warn(format string, args ...interface{}) {
 var logger = &simpleLogger{}
 
 func initLoggerFromEnv() {
-	// Set default log output to stderr to avoid interfering with MCP stdio protocol
+	// Default to stderr to avoid interfering with MCP stdio protocol when no file is configured
 	log.SetOutput(os.Stderr)
 
 	if logger.logFile != nil {
@@ -109,6 +110,7 @@ func initLoggerFromEnv() {
 	}
 
 	logger.logFile = f
+	log.SetOutput(io.MultiWriter(os.Stderr, logger.logFile))
 }
 
 func expandPath(path string) (string, error) {

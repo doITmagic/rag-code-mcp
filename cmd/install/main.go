@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -222,6 +223,63 @@ func checkDockerAvailable() {
 	success(fmt.Sprintf("Docker available at %s", dockerPath))
 }
 
+func isPortInUse(port int) bool {
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", port), time.Second)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
+func killProcessOnPort(port int) {
+	if runtime.GOOS == "windows" {
+		// Windows: find PID and kill
+		cmd := exec.Command("cmd", "/c", fmt.Sprintf("for /f \"tokens=5\" %%a in ('netstat -aon ^| findstr :%d ^| findstr LISTENING') do taskkill /PID %%a /F", port))
+		cmd.Run()
+	} else {
+		// Linux/Mac: use fuser
+		exec.Command("fuser", "-k", fmt.Sprintf("%d/tcp", port)).Run()
+	}
+}
+
+func freeRequiredPorts() {
+	ports := map[int]string{}
+
+	if *ollamaMode == "docker" {
+		ports[11434] = "Ollama"
+	}
+	if *qdrantMode == "docker" {
+		ports[6333] = "Qdrant"
+		ports[6334] = "Qdrant gRPC"
+	}
+
+	var blocked []string
+	for port, name := range ports {
+		if isPortInUse(port) {
+			blocked = append(blocked, fmt.Sprintf("%d (%s)", port, name))
+		}
+	}
+
+	if len(blocked) > 0 {
+		warn(fmt.Sprintf("Ports in use: %s", strings.Join(blocked, ", ")))
+		log("Stopping processes on required ports...")
+		for port := range ports {
+			if isPortInUse(port) {
+				killProcessOnPort(port)
+				time.Sleep(500 * time.Millisecond)
+			}
+		}
+		// Verify
+		for port, name := range ports {
+			if isPortInUse(port) {
+				fail(fmt.Sprintf("Could not free port %d (%s). Please stop the process manually.", port, name))
+			}
+		}
+		success("Required ports are now free")
+	}
+}
+
 func main() {
 	flag.Parse()
 
@@ -230,6 +288,7 @@ func main() {
 	// 0. Check Docker availability if needed
 	if *ollamaMode == "docker" || *qdrantMode == "docker" {
 		checkDockerAvailable()
+		freeRequiredPorts()
 	}
 
 	// 1. Build and Install Binary

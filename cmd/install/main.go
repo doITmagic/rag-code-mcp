@@ -186,31 +186,45 @@ func installBinary() {
 	home, _ := os.UserHomeDir()
 	var binDir string
 	if runtime.GOOS == "windows" {
-		binDir = filepath.Join(home, "go", "bin")
+		binDir = filepath.Join(home, ".local", "share", "ragcode", "bin")
 	} else {
-		binDir = filepath.Join(home, ".local", "bin")
+		binDir = filepath.Join(home, ".local", "share", "ragcode", "bin")
 	}
 	if err := os.MkdirAll(binDir, 0755); err != nil {
 		fail(fmt.Sprintf("Could not create bin directory: %v", err))
 	}
 
-	outputBin := filepath.Join(binDir, "rag-code-mcp")
+	binaryName := "rag-code-mcp"
 	if runtime.GOOS == "windows" {
-		outputBin += ".exe"
+		binaryName += ".exe"
 	}
+	outputBin := filepath.Join(binDir, binaryName)
 
-	// Try downloading pre‑built binary first
-	if downloadBinary(outputBin) {
-		success("Binary downloaded successfully")
+	// Option 1: Check if binary exists in current directory (from extracted archive)
+	if _, err := os.Stat(binaryName); err == nil {
+		log(fmt.Sprintf("Found %s in current directory, copying to %s...", binaryName, binDir))
+		if err := copyFile(binaryName, outputBin); err != nil {
+			fail(fmt.Sprintf("Failed to copy binary: %v", err))
+		}
+		if err := os.Chmod(outputBin, 0755); err != nil {
+			warn(fmt.Sprintf("Could not set executable flag: %v", err))
+		}
+		success("Binary installed successfully")
 		addToPath(binDir)
 		return
 	}
 
-	// Fallback: build locally if source is present
+	// Option 2: Try downloading pre-built archive
+	if downloadAndExtractBinary(outputBin) {
+		success("Binary downloaded and installed successfully")
+		addToPath(binDir)
+		return
+	}
+
+	// Option 3: Fallback to local build if source is present
 	warn("Download failed – attempting local build from source.")
-	// Verify source exists
 	if _, err := os.Stat("./cmd/rag-code-mcp"); err != nil {
-		fail("Release not found and source code not available. Run installer from repository or create a GitHub release.")
+		fail("Binary not found. Please download the release archive from:\nhttps://github.com/doITmagic/rag-code-mcp/releases/latest")
 	}
 	cmd := exec.Command("go", "build", "-o", outputBin, "./cmd/rag-code-mcp")
 	cmd.Stdout = os.Stdout
@@ -223,44 +237,101 @@ func installBinary() {
 	addToPath(binDir)
 }
 
-// downloadBinary fetches the installer binary from the latest GitHub release.
-func downloadBinary(dest string) bool {
-	var binaryName string
+// copyFile copies a file from src to dst
+func copyFile(src, dst string) error {
+	sourceFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer sourceFile.Close()
+
+	destFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer destFile.Close()
+
+	_, err = io.Copy(destFile, sourceFile)
+	return err
+}
+
+// downloadAndExtractBinary fetches the release archive and extracts the binary.
+func downloadAndExtractBinary(dest string) bool {
+	var archiveName string
+	arch := runtime.GOARCH
 	switch runtime.GOOS {
 	case "linux":
-		binaryName = "ragcode-installer-linux"
+		archiveName = fmt.Sprintf("rag-code-mcp_linux_%s.tar.gz", arch)
 	case "darwin":
-		binaryName = "ragcode-installer-darwin"
+		archiveName = fmt.Sprintf("rag-code-mcp_darwin_%s.tar.gz", arch)
 	case "windows":
-		binaryName = "ragcode-installer-windows.exe"
+		archiveName = fmt.Sprintf("rag-code-mcp_windows_%s.zip", arch)
 	default:
 		return false
 	}
-	url := fmt.Sprintf("https://github.com/doITmagic/rag-code-mcp/releases/latest/download/%s", binaryName)
+	url := fmt.Sprintf("https://github.com/doITmagic/rag-code-mcp/releases/latest/download/%s", archiveName)
 	log(fmt.Sprintf("Downloading from %s...", url))
+
 	resp, err := http.Get(url)
-	if err != nil || resp.StatusCode != 200 {
-		if resp != nil && resp.StatusCode == 404 {
-			warn("Release not found (404). Skipping download.")
-		} else {
-			warn(fmt.Sprintf("Failed to download binary: %v (status %d)", err, resp.StatusCode))
-		}
+	if err != nil {
+		warn(fmt.Sprintf("Failed to download: %v", err))
 		return false
 	}
 	defer resp.Body.Close()
-	out, err := os.Create(dest)
+
+	if resp.StatusCode != 200 {
+		if resp.StatusCode == 404 {
+			warn("Release not found (404). Skipping download.")
+		} else {
+			warn(fmt.Sprintf("Download failed with status %d", resp.StatusCode))
+		}
+		return false
+	}
+
+	// Create temp file for archive
+	tmpFile, err := os.CreateTemp("", "ragcode-*.tar.gz")
 	if err != nil {
-		warn(fmt.Sprintf("Could not create file %s: %v", dest, err))
+		warn(fmt.Sprintf("Could not create temp file: %v", err))
 		return false
 	}
-	defer out.Close()
-	if _, err := io.Copy(out, resp.Body); err != nil {
-		warn(fmt.Sprintf("Error writing binary: %v", err))
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+		warn(fmt.Sprintf("Error downloading archive: %v", err))
 		return false
 	}
+	tmpFile.Close()
+
+	// Extract binary from archive
+	binaryName := "rag-code-mcp"
+	if runtime.GOOS == "windows" {
+		binaryName += ".exe"
+	}
+
+	if runtime.GOOS == "windows" {
+		// Handle zip for Windows
+		warn("Windows archive extraction not yet implemented")
+		return false
+	}
+
+	// Extract tar.gz
+	cmd := exec.Command("tar", "-xzf", tmpFile.Name(), "-O", binaryName)
+	outFile, err := os.Create(dest)
+	if err != nil {
+		warn(fmt.Sprintf("Could not create destination file: %v", err))
+		return false
+	}
+	defer outFile.Close()
+	cmd.Stdout = outFile
+
+	if err := cmd.Run(); err != nil {
+		warn(fmt.Sprintf("Failed to extract binary: %v", err))
+		return false
+	}
+
 	if err := os.Chmod(dest, 0755); err != nil {
 		warn(fmt.Sprintf("Could not set executable flag: %v", err))
-		return false
 	}
 	return true
 }

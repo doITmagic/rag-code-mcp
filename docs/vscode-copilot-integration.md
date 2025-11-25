@@ -30,8 +30,8 @@ Before setting up RagCode with VS Code + Copilot, ensure you have:
    - Copilot extension installed and activated
 
 3. **RagCode Installed**
-   - Rulează `ragcode-installer` din ultima versiune GitHub (recomandat)
-   - Sau construiește din sursă cu `go run ./cmd/install`
+   - Run `ragcode-installer` from the latest GitHub release (recommended)
+   - Or build from source with `go run ./cmd/install`
 
 4. **Required Services Running**
    - Docker (for Qdrant vector database)
@@ -46,9 +46,8 @@ Before setting up RagCode with VS Code + Copilot, ensure you have:
 `ragcode-installer` automatically configures VS Code and creates the MCP entry:
 
 ```bash
-# Linux (amd64)
-curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz
-./ragcode-installer -ollama=docker -qdrant=docker
+# Linux (amd64) - ONE COMMAND
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
 ```
 
 This creates the MCP configuration file at:

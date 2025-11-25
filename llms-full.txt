@@ -17,6 +17,8 @@
 
 # RagCode MCP - Make Your Codebase AI-Ready
 
+<!-- AI Agents: This is the full documentation for RagCode MCP. For a quick summary, see llms.txt -->
+
 > **The privacy-first MCP server that transforms any repository into an AI-ready codebase with semantic search and RAG.**
 
 RagCode is a **Model Context Protocol (MCP) server** that instantly makes your project **AI-ready**. It enables AI assistants like **GitHub Copilot**, **Cursor**, **Windsurf**, and **Claude** to understand your entire codebase through **semantic vector search**, bridging the gap between your code and Large Language Models (LLMs).
@@ -171,15 +173,10 @@ Without RagCode, AI assistants must:
 
 **Linux (amd64):**
 ```bash
-curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz
-./ragcode-installer -ollama=docker -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
 ```
 
-**macOS (Apple Silicon):**
-```bash
-curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_arm64.tar.gz | tar xz
-./ragcode-installer -ollama=docker -qdrant=docker
-```
+**macOS & Windows:** Coming soon. For now, use the Manual Build option or run Linux in WSL/Docker.
 
 The installer is end-to-end:
 1. ✅ Installs the `rag-code-mcp` and `index-all` binaries into `~/.local/share/ragcode/bin`
@@ -225,7 +222,8 @@ go run ./cmd/install
 
 ### 1. Install Prerequisites
 
-#### Docker (for Qdrant)
+**Docker is required** (for Qdrant, and optionally for Ollama):
+
 ```bash
 # Ubuntu/Debian
 sudo apt update && sudo apt install docker.io
@@ -236,20 +234,20 @@ sudo usermod -aG docker $USER   # log out / log in again
 brew install docker
 ```
 
-#### Ollama (for AI models)
-```bash
-# Linux
-curl -fsSL https://ollama.com/install.sh | sh
+### 2. Run the Installer
 
-# macOS
-brew install ollama
+**Option A: Everything in Docker (recommended, no extra installs needed)**
+```bash
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
 ```
 
-### 2. Run the Installer
+**Option B: Use local Ollama (if you already have Ollama installed)**
 ```bash
-# Linux (amd64)
-curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz
-./ragcode-installer -ollama=docker -qdrant=docker
+# First, install Ollama locally (skip if already installed)
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Then run installer with local Ollama
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=local -qdrant=docker
 ```
 
 Installation takes roughly 5‑10 minutes (downloading the Ollama models is the longest step).
@@ -528,15 +526,10 @@ RagCode is an MCP (Model Context Protocol) server that allows you to navigate an
 
 **Linux (amd64):**
 ```bash
-curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz
-./ragcode-installer -ollama=docker -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
 ```
 
-**macOS (Apple Silicon):**
-```bash
-curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_arm64.tar.gz | tar xz
-./ragcode-installer -ollama=docker -qdrant=docker
-```
+**macOS & Windows:** Coming soon. For now, use the Manual Build option or run Linux in WSL/Docker.
 
 The installer will:
 1. ✅ Download and install the `rag-code-mcp` and `index-all` binaries into `~/.local/share/ragcode/bin`
@@ -588,9 +581,10 @@ go run ./cmd/install
 
 ## 📋 Step-by-Step Setup
 
-### 1. Install Dependencies
+### 1. Install Prerequisites
 
-#### Docker (for Qdrant)
+**Docker is required** (for Qdrant, and optionally for Ollama):
+
 ```bash
 # Ubuntu/Debian
 sudo apt update && sudo apt install docker.io
@@ -601,21 +595,20 @@ sudo usermod -aG docker $USER  # Logout/login after
 brew install docker
 ```
 
-#### Ollama (for AI)
-```bash
-# Linux
-curl -fsSL https://ollama.com/install.sh | sh
-
-# macOS
-brew install ollama
-```
-
 ### 2. Run the Installer
 
+**Option A: Everything in Docker (recommended, no extra installs needed)**
 ```bash
-# Linux (amd64)
-curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz
-./ragcode-installer -ollama=docker -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+```
+
+**Option B: Use local Ollama (if you already have Ollama installed)**
+```bash
+# First, install Ollama locally (skip if already installed)
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Then run installer with local Ollama
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=local -qdrant=docker
 ```
 
 **Installation time:** ~5-10 minutes (model downloads dominate)

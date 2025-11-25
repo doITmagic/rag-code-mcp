@@ -70,37 +70,68 @@ func installRuntimeBinaries() {
 		{"index-all", "./cmd/index-all"},
 	}
 
-	missing := false
+	// Check which binaries are missing from the install directory
+	var missingBinaries []struct {
+		name string
+		pkg  string
+	}
 	for _, bin := range binaries {
-		if _, err := os.Stat(filepath.Join(binDir, bin.name)); os.IsNotExist(err) {
-			missing = true
-			break
+		binName := bin.name
+		if runtime.GOOS == "windows" {
+			binName += ".exe"
+		}
+		if _, err := os.Stat(filepath.Join(binDir, binName)); os.IsNotExist(err) {
+			missingBinaries = append(missingBinaries, bin)
 		}
 	}
 
-	if !missing {
+	if len(missingBinaries) == 0 {
 		success(fmt.Sprintf("Runtime binaries already installed in %s", binDir))
 		return
 	}
 
-	if _, err := exec.LookPath("go"); err != nil {
-		fail("Go toolchain is required to build RagCode binaries. Install Go from https://go.dev/doc/install or rerun without --skip-build once binaries exist.")
-	}
+	log(fmt.Sprintf("Installing runtime binaries into %s...", binDir))
+	for _, bin := range missingBinaries {
+		binName := bin.name
+		if runtime.GOOS == "windows" {
+			binName += ".exe"
+		}
+		output := filepath.Join(binDir, binName)
 
-	log(fmt.Sprintf("Building RagCode binaries into %s...", binDir))
-	for _, bin := range binaries {
-		log(fmt.Sprintf(" - Building %s", bin.name))
-		output := filepath.Join(binDir, bin.name)
-		cmd := exec.Command("go", "build", "-o", output, bin.pkg)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			fail(fmt.Sprintf("Failed to build %s: %v", bin.name, err))
+		// Option 1: Check if pre-built binary exists in current directory (from release archive)
+		if _, err := os.Stat(binName); err == nil {
+			log(fmt.Sprintf(" - Found %s in current directory, copying...", binName))
+			if err := copyFile(binName, output); err != nil {
+				fail(fmt.Sprintf("Failed to copy %s: %v", binName, err))
+			}
+			if err := os.Chmod(output, 0755); err != nil {
+				warn(fmt.Sprintf("Could not set executable flag on %s: %v", binName, err))
+			}
+			success(fmt.Sprintf("Installed %s", output))
+			continue
 		}
-		if err := os.Chmod(output, 0755); err != nil {
-			fail(fmt.Sprintf("Failed to set executable bit on %s: %v", output, err))
+
+		// Option 2: Fallback to building from source if Go is available and source exists
+		if _, err := os.Stat(bin.pkg); err == nil {
+			if _, err := exec.LookPath("go"); err != nil {
+				fail(fmt.Sprintf("Binary %s not found and Go toolchain is not available. Please download the complete release archive from:\nhttps://github.com/doITmagic/rag-code-mcp/releases/latest", binName))
+			}
+			log(fmt.Sprintf(" - Building %s from source...", bin.name))
+			cmd := exec.Command("go", "build", "-o", output, bin.pkg)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				fail(fmt.Sprintf("Failed to build %s: %v", bin.name, err))
+			}
+			if err := os.Chmod(output, 0755); err != nil {
+				fail(fmt.Sprintf("Failed to set executable bit on %s: %v", output, err))
+			}
+			success(fmt.Sprintf("Built and installed %s", output))
+			continue
 		}
-		success(fmt.Sprintf("Installed %s", output))
+
+		// Neither pre-built binary nor source found
+		fail(fmt.Sprintf("Binary %s not found in current directory and source not available. Please download the complete release archive from:\nhttps://github.com/doITmagic/rag-code-mcp/releases/latest", binName))
 	}
 }
 

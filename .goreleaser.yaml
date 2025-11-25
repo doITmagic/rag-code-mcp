@@ -149,44 +149,6 @@ release:
     
     **Full documentation:** https://github.com/doITmagic/rag-code-mcp
 
-# Docker images
-dockers:
-  - image_templates:
-      - "doitmagic/rag-code-mcp:{{ .Version }}-amd64"
-      - "doitmagic/rag-code-mcp:latest-amd64"
-    use: buildx
-    dockerfile: Dockerfile
-    build_flag_templates:
-      - "--platform=linux/amd64"
-      - "--label=org.opencontainers.image.created={{.Date}}"
-      - "--label=org.opencontainers.image.title={{.ProjectName}}"
-      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
-      - "--label=org.opencontainers.image.version={{.Version}}"
-  
-  - image_templates:
-      - "doitmagic/rag-code-mcp:{{ .Version }}-arm64"
-      - "doitmagic/rag-code-mcp:latest-arm64"
-    use: buildx
-    dockerfile: Dockerfile
-    build_flag_templates:
-      - "--platform=linux/arm64"
-      - "--label=org.opencontainers.image.created={{.Date}}"
-      - "--label=org.opencontainers.image.title={{.ProjectName}}"
-      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
-      - "--label=org.opencontainers.image.version={{.Version}}"
-    goarch: arm64
-
-docker_manifests:
-  - name_template: "doitmagic/rag-code-mcp:{{ .Version }}"
-    image_templates:
-      - "doitmagic/rag-code-mcp:{{ .Version }}-amd64"
-      - "doitmagic/rag-code-mcp:{{ .Version }}-arm64"
-  
-  - name_template: "doitmagic/rag-code-mcp:latest"
-    image_templates:
-      - "doitmagic/rag-code-mcp:latest-amd64"
-      - "doitmagic/rag-code-mcp:latest-arm64"
-
 # Homebrew tap (optional, can be enabled later)
 # brews:
 #   - repository:

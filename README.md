@@ -182,7 +182,26 @@ curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/ra
 
 That's it! One command downloads, extracts, and runs the installer.
 
-**macOS & Windows:** Coming soon. For now, use the [Manual Build](#manual-build-for-developers) option or run Linux in WSL/Docker.
+**macOS (Apple Silicon):**
+```bash
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_arm64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+```
+
+**macOS (Intel):**
+```bash
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+```
+
+**Windows (PowerShell):**
+```powershell
+# Download and extract
+Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_windows_amd64.zip" -OutFile "ragcode.zip"
+Expand-Archive ragcode.zip -DestinationPath . -Force
+
+# Run installer (requires Docker Desktop running)
+.\ragcode-installer.exe -ollama=docker -qdrant=docker
+```
+> ⚠️ Windows requires [Docker Desktop](https://www.docker.com/products/docker-desktop/) to be installed and running.
 
 ### What the installer does:
 1. ✅ Downloads and installs the `rag-code-mcp` binary

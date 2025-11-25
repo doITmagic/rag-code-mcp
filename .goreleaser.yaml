@@ -72,7 +72,6 @@ archives:
     format: tar.gz
     name_template: >-
       {{ .ProjectName }}_
-      {{- .Version }}_
       {{- .Os }}_
       {{- .Arch }}
     
@@ -129,16 +128,23 @@ release:
   header: |
     ## RagCode MCP Server v{{.Version}}
     
-    Semantic code navigation for Go codebases using RAG (Retrieval-Augmented Generation).
+    Semantic code navigation using RAG (Retrieval-Augmented Generation).
     
     ### Installation
     
-    **Quick install (Linux/macOS):**
+    **Linux (amd64):**
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/install.sh | bash
+    curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz
+    ./ragcode-installer -ollama=docker -qdrant=docker
     ```
     
-    **Or download the binary for your platform below.**
+    **macOS (Apple Silicon):**
+    ```bash
+    curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_arm64.tar.gz | tar xz
+    ./ragcode-installer -ollama=docker -qdrant=docker
+    ```
+    
+    **Or download the archive for your platform below.**
   
   footer: |
     ### What's Next?

@@ -285,8 +285,8 @@ brew install ollama
 
 ### 2. Run the Installer
 ```bash
-curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/ragcode-installer-$(uname -s | tr '[:upper:]' '[:lower:]') -o ragcode-installer
-chmod +x ragcode-installer
+# Linux (amd64)
+curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz
 ./ragcode-installer -ollama=docker -qdrant=docker
 ```
 

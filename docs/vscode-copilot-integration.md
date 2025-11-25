@@ -43,12 +43,12 @@ Before setting up RagCode with VS Code + Copilot, ensure you have:
 
 ### Automatic Setup (Recommended)
 
-`ragcode-installer` configurează automat VS Code și creează intrarea MCP:
+`ragcode-installer` automatically configures VS Code and creates the MCP entry:
 
 ```bash
-curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/ragcode-installer-$(uname -s | tr '[:upper:]' '[:lower:]') -o ragcode-installer \
-  && chmod +x ragcode-installer \
-  && ./ragcode-installer -ollama=docker -qdrant=docker
+# Linux (amd64)
+curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz
+./ragcode-installer -ollama=docker -qdrant=docker
 ```
 
 This creates the MCP configuration file at:

@@ -175,15 +175,17 @@ Without RagCode, AI assistants must:
 
 ### One-Command Installation
 
-**Linux / macOS:**
+**Linux / macOS (Docker by default for Ollama + Qdrant):**
 ```bash
-curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/ragcode-installer-$(uname -s | tr '[:upper:]' '[:lower:]') -o ragcode-installer && chmod +x ragcode-installer && ./ragcode-installer
+curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/ragcode-installer-$(uname -s | tr '[:upper:]' '[:lower:]') -o ragcode-installer \
+  && chmod +x ragcode-installer \
+  && ./ragcode-installer -ollama=docker -qdrant=docker
 ```
 
 **Windows (PowerShell):**
 ```powershell
 Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/latest/download/ragcode-installer-windows.exe" -OutFile "ragcode-installer.exe"
-.\ragcode-installer.exe
+./ragcode-installer.exe -ollama docker -qdrant docker
 ```
 
 ### What the installer does:
@@ -206,28 +208,31 @@ Once installed, **you don't need to configure anything**.
 
 ### Installation Options
 
-The installer supports flexible configuration via flags:
+The installer runs **both Ollama and Qdrant inside Docker by default**. Popular scenarios:
 
 ```bash
-# Use Docker for both Ollama and Qdrant (recommended for isolation)
+# Recommended (everything inside Docker)
 ./ragcode-installer -ollama=docker -qdrant=docker
 
-# Use local Ollama with Docker Qdrant (if you already have Ollama installed)
+# Use an existing local Ollama but keep Qdrant in Docker
 ./ragcode-installer -ollama=local -qdrant=docker
 
-# Enable GPU support in Docker containers
-./ragcode-installer -ollama=docker -gpu
+# Point to remote services you already manage
+./ragcode-installer -ollama=local -qdrant=remote --skip-build
 
-# Custom models directory for Docker volume mapping
-./ragcode-installer -ollama=docker -models-dir=/path/to/models
+# Enable GPU acceleration for the Ollama container
+./ragcode-installer -ollama=docker -qdrant=docker -gpu
+
+# Mount a custom directory with Ollama models when running in Docker
+./ragcode-installer -ollama=docker -models-dir=$HOME/.ollama
 ```
 
-**Available Flags:**
-- `-ollama`: `local` (default) or `docker`
+**Key flags:**
+- `-ollama`: `docker` (default) or `local`
 - `-qdrant`: `docker` (default) or `remote`
-- `-models-dir`: Custom path for Ollama models (for Docker mapping)
-- `-gpu`: Enable NVIDIA GPU support in containers
-- `-skip-build`: Skip binary installation (use existing)
+- `-models-dir`: host path to mount as `/root/.ollama`
+- `-gpu`: passes `--gpus=all` to the Ollama container
+- `-skip-build`: reuse existing binaries instead of rebuilding
 
 See [QUICKSTART.md](./QUICKSTART.md) for detailed installation and usage instructions.
 
@@ -267,10 +272,12 @@ brew install ollama
 
 ### 2. Run the Installer
 ```bash
-curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | bash
+curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/ragcode-installer-$(uname -s | tr '[:upper:]' '[:lower:]') -o ragcode-installer
+chmod +x ragcode-installer
+./ragcode-installer -ollama=docker -qdrant=docker
 ```
 
-Installation typically takes 5‑10 minutes (downloading the AI models can be the longest part).
+Installation takes 5‑10 minutes (downloading the Ollama models is the long pole).
 
 ### 3. Verify Installation
 ```bash
@@ -282,9 +289,11 @@ docker ps | grep qdrant
 ollama list
 ```
 
-### 4. Start the Server (optional – the installer already starts it)
+### 4. Health check (services start automatically)
 ```bash
-~/.local/share/ragcode/start.sh
+~/.local/share/ragcode/bin/rag-code-mcp --health
+docker ps | grep ragcode-qdrant
+docker ps | grep ragcode-ollama
 ```
 
 ---
@@ -306,7 +315,7 @@ After installation, RagCode is automatically available in supported IDEs. No add
 RagCode integrates with **GitHub Copilot's Agent Mode** through MCP, enabling semantic code search as part of Copilot's autonomous workflow.
 
 **Quick Setup:**
-1. Install RagCode using the quick-install script (automatically configures VS Code)
+1. Install RagCode with `ragcode-installer` (it configures VS Code automatically)
 2. Open VS Code in your project
 3. Open Copilot Chat (Ctrl+Shift+I / Cmd+Shift+I)
 4. Enable **Agent Mode** (click "Agent" button or type `/agent`)

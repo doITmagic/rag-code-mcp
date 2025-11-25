@@ -16,8 +16,15 @@ RagCode is a Model Context Protocol (MCP) server that enables AI assistants (Git
 ## Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | bash
+curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/ragcode-installer-$(uname -s | tr '[:upper:]' '[:lower:]') -o ragcode-installer \
+  && chmod +x ragcode-installer \
+  && ./ragcode-installer -ollama=docker -qdrant=docker
 ```
+
+Useful flags:
+- `-ollama`: `docker` (default) or `local`
+- `-qdrant`: `docker` (default) or `remote`
+- `-gpu`, `-models-dir`, `-skip-build` for custom setups
 
 ## Tools
 

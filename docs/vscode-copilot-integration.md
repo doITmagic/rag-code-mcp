@@ -30,8 +30,8 @@ Before setting up RagCode with VS Code + Copilot, ensure you have:
    - Copilot extension installed and activated
 
 3. **RagCode Installed**
-   - Use the quick-install script (recommended)
-   - Or build from source
+   - Rulează `ragcode-installer` din ultima versiune GitHub (recomandat)
+   - Sau construiește din sursă cu `go run ./cmd/install`
 
 4. **Required Services Running**
    - Docker (for Qdrant vector database)
@@ -43,10 +43,12 @@ Before setting up RagCode with VS Code + Copilot, ensure you have:
 
 ### Automatic Setup (Recommended)
 
-The RagCode quick-install script automatically configures VS Code:
+`ragcode-installer` configurează automat VS Code și creează intrarea MCP:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | bash
+curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/ragcode-installer-$(uname -s | tr '[:upper:]' '[:lower:]') -o ragcode-installer \
+  && chmod +x ragcode-installer \
+  && ./ragcode-installer -ollama=docker -qdrant=docker
 ```
 
 This creates the MCP configuration file at:
@@ -301,11 +303,7 @@ tail -f /tmp/ragcode-mcp.log
 
 2. Check Qdrant is running:
    ```bash
-   docker ps | grep qdrant
-   ```
-   If not running:
-   ```bash
-   ~/.local/share/ragcode/start.sh
+   docker ps | grep ragcode-qdrant || docker start ragcode-qdrant
    ```
 
 3. Check Ollama is running:

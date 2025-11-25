@@ -17,57 +17,54 @@ RagCode is an MCP (Model Context Protocol) server that allows you to navigate an
 
 ## ⚡ Quick Install (1 Command)
 
-### Option 1: Install Script (Recommended)
+### Option 1: `ragcode-installer` (Recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | bash
+curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/ragcode-installer-$(uname -s | tr '[:upper:]' '[:lower:]') -o ragcode-installer \
+  && chmod +x ragcode-installer \
+  && ./ragcode-installer -ollama=docker -qdrant=docker
 ```
 
-The installer will:
-1. ✅ Download the latest release from GitHub (or build locally if download fails)
-2. ✅ Install binaries to `~/.local/share/ragcode/bin`
-3. ✅ Add `rag-code-mcp` to PATH (in `.bashrc` or `.zshrc`)
-4. ✅ Configures Windsurf, Cursor, Antigravity, and VS Code automatically (in `mcp_config.json`)
-5. ✅ **Starts Docker** (if not already running)
-6. ✅ **Starts Qdrant container** (vector database)
-7. ✅ **Starts Ollama** with `ollama serve` (if not already running)
-8. ✅ **Downloads required AI models**:
-   - `nomic-embed-text` (~274 MB) - for embeddings
-   - `phi3:medium` (~7.9 GB) - for LLM
-9. ✅ Starts MCP server in background
+On Windows (PowerShell):
+```powershell
+Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/latest/download/ragcode-installer-windows.exe" -OutFile "ragcode-installer.exe"
+./ragcode-installer.exe -ollama docker -qdrant docker
+```
 
-**Environment Variables (Optional):**
+The installer is end-to-end:
+1. ✅ Installs the `rag-code-mcp` and `index-all` binaries into `~/.local/share/ragcode/bin`
+2. ✅ Configures all MCP-capable IDEs (Windsurf, Cursor, Claude, VS Code, etc.)
+3. ✅ Starts Docker when needed and launches the Ollama + Qdrant containers
+4. ✅ Downloads the required models (`phi3:medium` & `nomic-embed-text`)
+5. ✅ Runs a health-check and starts the MCP server
 
-You can customize the installation by setting environment variables before running the script:
+**Helpful CLI flag combinations:**
 
 ```bash
-# Use development branch instead of main
-curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/develop/quick-install.sh | BRANCH=develop bash
+# Everything in Docker (default)
+./ragcode-installer -ollama=docker -qdrant=docker
 
-# Custom Ollama model
-curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | OLLAMA_MODEL=llama3.1:8b bash
+# Keep Ollama local, run only Qdrant in Docker
+./ragcode-installer -ollama=local -qdrant=docker
 
-# Custom embedding model
-curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | OLLAMA_EMBED=all-minilm bash
+# Use existing remote services
+./ragcode-installer -ollama=local -qdrant=remote --skip-build
 
-# Custom Ollama URL (if running remotely)
-curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | OLLAMA_BASE_URL=http://192.168.1.100:11434 bash
+# Mount a custom Ollama models directory for Docker
+./ragcode-installer -ollama=docker -models-dir=$HOME/.ollama
 
-# Custom Qdrant URL
-curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | QDRANT_URL=http://192.168.1.100:6333 bash
-
-# Combine multiple variables
-curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/develop/quick-install.sh | BRANCH=develop OLLAMA_MODEL=phi3:mini bash
+# Enable GPU support for the Ollama container
+./ragcode-installer -ollama=docker -qdrant=docker -gpu
 ```
 
-**Available Environment Variables:**
-- `BRANCH` - Git branch to install from (default: `main`)
-- `OLLAMA_MODEL` - LLM model name (default: `phi3:medium`)
-- `OLLAMA_EMBED` - Embedding model (default: `nomic-embed-text`)
-- `OLLAMA_BASE_URL` - Ollama server URL (default: `http://localhost:11434`)
-- `QDRANT_URL` - Qdrant server URL (default: `http://localhost:6333`)
+Key flags:
+- `-ollama`: `docker` (default) or `local`
+- `-qdrant`: `docker` (default) or `remote`
+- `-models-dir`: host directory to mount inside the container
+- `-gpu`: passes `--gpus=all`
+- `-skip-build`: reuse existing binaries without rebuilding
 
-### Option 2: Local Build (For Developers)
+### Option 2: Local Build (for developers)
 
 ```bash
 git clone https://github.com/doITmagic/rag-code-mcp.git
@@ -116,10 +113,12 @@ brew install ollama
 ### 2. Run the Installer
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | bash
+curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/ragcode-installer-$(uname -s | tr '[:upper:]' '[:lower:]') -o ragcode-installer
+chmod +x ragcode-installer
+./ragcode-installer -ollama=docker -qdrant=docker
 ```
 
-**Installation time:** ~5-10 minutes (downloads ~4GB of AI models)
+**Installation time:** 5-10 minutes (model downloads dominate)
 
 ### 3. Verify Installation
 
@@ -132,10 +131,12 @@ docker ps | grep qdrant
 ollama list
 ```
 
-### 4. Start Server (Optional - starts automatically)
+### 4. Health Check & Services (installer already starts them)
 
 ```bash
-~/.local/share/ragcode/start.sh
+~/.local/share/ragcode/bin/rag-code-mcp --health
+docker ps | grep ragcode-qdrant
+docker ps | grep ragcode-ollama
 ```
 
 ---
@@ -223,12 +224,12 @@ RagCode integrates with **GitHub Copilot's Agent Mode** in VS Code through the M
 
 #### Prerequisites
 - **VS Code** with **GitHub Copilot** subscription
-- RagCode installed (via quick-install script above)
+- RagCode installed (via `ragcode-installer`)
 - VS Code version **1.95+** (for MCP support)
 
 #### Setup
 
-The quick-install script automatically configures RagCode for VS Code by creating:
+`ragcode-installer` configurează automat RagCode pentru VS Code și creează:
 ```
 ~/.config/Code/User/globalStorage/mcp-servers.json
 ```
@@ -468,15 +469,12 @@ workspace:
 
 ### Error: "Could not connect to Qdrant"
 
-**Cause:** Docker is not running or Qdrant is stopped.
+**Cause:** Docker is not running or Qdrant container is stopped.
 
 **Solution:**
 ```bash
-# Start Docker
 sudo systemctl start docker
-
-# Start Qdrant
-~/.local/share/ragcode/start.sh
+docker ps | grep ragcode-qdrant || docker start ragcode-qdrant
 ```
 
 ### Error: "Ollama model not found"

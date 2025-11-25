@@ -15,19 +15,28 @@
 
 - **IDEs:** Windsurf, Cursor, VS Code + GitHub Copilot, Claude Desktop, Antigravity
 - **Languages:** Go, PHP (Laravel), Python, JavaScript
-- **OS:** Linux (amd64) - macOS/Windows coming soon
+- **OS:** Linux, macOS, Windows (all require Docker)
 
-## Quick Install (Linux)
+## Quick Install
 
-**Option A: Everything in Docker (recommended)**
+**Linux:**
 ```bash
 curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
 ```
 
-**Option B: Local Ollama + Docker Qdrant**
+**macOS (Apple Silicon):**
 ```bash
-curl -fsSL https://ollama.com/install.sh | sh  # Install Ollama first
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=local -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_arm64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+```
+
+**macOS (Intel):**
+```bash
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+```
+
+**Windows (PowerShell):**
+```powershell
+Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_windows_amd64.zip" -OutFile "ragcode.zip"; Expand-Archive ragcode.zip -DestinationPath . -Force; .\ragcode-installer.exe -ollama=docker -qdrant=docker
 ```
 
 Key flags: `-ollama` (docker/local), `-qdrant` (docker/remote), `-gpu`, `-models-dir`, `-skip-build`

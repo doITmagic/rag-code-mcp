@@ -203,6 +203,37 @@ Expand-Archive ragcode.zip -DestinationPath . -Force
 ```
 > ⚠️ Windows requires [Docker Desktop](https://www.docker.com/products/docker-desktop/) to be installed and running.
 
+**Windows with WSL (alternative):**
+
+If you prefer to run RagCode inside WSL while using Windows IDEs (Windsurf, Cursor, VS Code):
+
+```bash
+# Inside WSL terminal
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+```
+
+Then manually configure your Windows IDE to use the WSL binary. Example for Windsurf (`%USERPROFILE%\.codeium\windsurf\mcp_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "ragcode": {
+      "command": "wsl.exe",
+      "args": ["-e", "/home/YOUR_USERNAME/.local/share/ragcode/bin/rag-code-mcp"],
+      "env": {
+        "OLLAMA_BASE_URL": "http://localhost:11434",
+        "OLLAMA_MODEL": "phi3:medium",
+        "OLLAMA_EMBED": "nomic-embed-text",
+        "QDRANT_URL": "http://localhost:6333"
+      },
+      "disabled": false
+    }
+  }
+}
+```
+
+> 💡 Replace `YOUR_USERNAME` with your WSL username. The `localhost` URLs work because WSL2 shares network ports with Windows.
+
 ### What the installer does:
 1. ✅ Downloads and installs the `rag-code-mcp` binary
 2. ✅ Sets up Ollama and Qdrant (Docker or local, your choice)

@@ -39,6 +39,8 @@ curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/ra
 Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_windows_amd64.zip" -OutFile "ragcode.zip"; Expand-Archive ragcode.zip -DestinationPath . -Force; .\ragcode-installer.exe -ollama=docker -qdrant=docker
 ```
 
+**Windows with WSL:** Install Linux version in WSL, then configure Windows IDEs to use `wsl.exe` as command with args `["-e", "/home/USER/.local/share/ragcode/bin/rag-code-mcp"]`.
+
 Key flags: `-ollama` (docker/local), `-qdrant` (docker/remote), `-gpu`, `-models-dir`, `-skip-build`
 
 ## Example Usage

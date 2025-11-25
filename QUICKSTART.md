@@ -30,6 +30,35 @@ Expand-Archive ragcode.zip -DestinationPath . -Force
 .\ragcode-installer.exe -ollama=docker -qdrant=docker
 ```
 
+### Windows with WSL (alternative)
+
+If you run Docker via WSL and have IDEs on Windows:
+
+```bash
+# Inside WSL terminal
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+```
+
+Then configure your Windows IDE manually (e.g., Windsurf at `%USERPROFILE%\.codeium\windsurf\mcp_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "ragcode": {
+      "command": "wsl.exe",
+      "args": ["-e", "/home/YOUR_USERNAME/.local/share/ragcode/bin/rag-code-mcp"],
+      "env": {
+        "OLLAMA_BASE_URL": "http://localhost:11434",
+        "OLLAMA_MODEL": "phi3:medium",
+        "OLLAMA_EMBED": "nomic-embed-text",
+        "QDRANT_URL": "http://localhost:6333"
+      },
+      "disabled": false
+    }
+  }
+}
+```
+
 > **Prerequisite:** Docker must be installed and running.
 
 ---

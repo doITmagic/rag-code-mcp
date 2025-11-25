@@ -91,6 +91,54 @@ If you need to configure manually or customize the setup:
 
 4. **Restart VS Code** to load the new configuration.
 
+### Windows Setup
+
+On Windows, the MCP configuration file is located at:
+```
+%APPDATA%\Code\User\mcp.json
+```
+
+Example configuration:
+```json
+{
+  "servers": {
+    "ragcode": {
+      "command": "C:\\Users\\YOUR_USERNAME\\.local\\share\\ragcode\\bin\\rag-code-mcp.exe",
+      "args": [],
+      "env": {
+        "OLLAMA_BASE_URL": "http://localhost:11434",
+        "OLLAMA_MODEL": "phi3:medium",
+        "OLLAMA_EMBED": "nomic-embed-text",
+        "QDRANT_URL": "http://localhost:6333"
+      }
+    }
+  }
+}
+```
+
+### Windows with WSL Setup
+
+If you installed RagCode in WSL but use VS Code on Windows:
+
+```json
+{
+  "servers": {
+    "ragcode": {
+      "command": "wsl.exe",
+      "args": ["-e", "/home/YOUR_USERNAME/.local/share/ragcode/bin/rag-code-mcp"],
+      "env": {
+        "OLLAMA_BASE_URL": "http://localhost:11434",
+        "OLLAMA_MODEL": "phi3:medium",
+        "OLLAMA_EMBED": "nomic-embed-text",
+        "QDRANT_URL": "http://localhost:6333"
+      }
+    }
+  }
+}
+```
+
+> 💡 The `localhost` URLs work because WSL2 shares network ports with Windows.
+
 ---
 
 ## Verification

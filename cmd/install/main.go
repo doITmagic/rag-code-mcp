@@ -236,10 +236,10 @@ func killProcessOnPort(port int) {
 	if runtime.GOOS == "windows" {
 		// Windows: find PID and kill
 		cmd := exec.Command("cmd", "/c", fmt.Sprintf("for /f \"tokens=5\" %%a in ('netstat -aon ^| findstr :%d ^| findstr LISTENING') do taskkill /PID %%a /F", port))
-		cmd.Run()
+		_ = cmd.Run() // Ignore error - best effort kill
 	} else {
 		// Linux/Mac: use fuser
-		exec.Command("fuser", "-k", fmt.Sprintf("%d/tcp", port)).Run()
+		_ = exec.Command("fuser", "-k", fmt.Sprintf("%d/tcp", port)).Run() // Ignore error - best effort kill
 	}
 }
 

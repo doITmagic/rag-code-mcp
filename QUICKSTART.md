@@ -21,29 +21,12 @@ RagCode is an MCP (Model Context Protocol) server that allows you to navigate an
 
 **Linux (amd64):**
 ```bash
-curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz
-./ragcode-installer -ollama=docker -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
 ```
 
-**macOS (Apple Silicon):**
-```bash
-curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_arm64.tar.gz | tar xz
-./ragcode-installer -ollama=docker -qdrant=docker
-```
+That's it! One command downloads, extracts, and runs the installer.
 
-**macOS (Intel):**
-```bash
-curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_amd64.tar.gz | tar xz
-./ragcode-installer -ollama=docker -qdrant=docker
-```
-
-**Windows (PowerShell – in progress):**
-```powershell
-Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_windows_amd64.zip" -OutFile "rag-code-mcp.zip"
-Expand-Archive rag-code-mcp.zip -DestinationPath .
-.\ragcode-installer.exe -ollama docker -qdrant docker
-```
-> ⚠️ Windows support is still being finalized. Use WSL/Linux/macOS if you hit issues.
+**macOS & Windows:** Coming soon. For now, use the [Local Build](#option-2-local-build-for-developers) option or run Linux in WSL/Docker.
 
 The installer is end-to-end:
 1. ✅ Installs the `rag-code-mcp` and `index-all` binaries into `~/.local/share/ragcode/bin`
@@ -102,9 +85,10 @@ go run ./cmd/install
 
 ## 📋 Step-by-Step Setup
 
-### 1. Install Dependencies
+### 1. Install Prerequisites
 
-#### Docker (for Qdrant)
+**Docker is required** (for Qdrant, and optionally for Ollama):
+
 ```bash
 # Ubuntu/Debian
 sudo apt update && sudo apt install docker.io
@@ -115,21 +99,20 @@ sudo usermod -aG docker $USER  # Logout/login after
 brew install docker
 ```
 
-#### Ollama (for AI)
-```bash
-# Linux
-curl -fsSL https://ollama.com/install.sh | sh
-
-# macOS
-brew install ollama
-```
-
 ### 2. Run the Installer
 
+**Option A: Everything in Docker (recommended, no extra installs needed)**
 ```bash
-# Linux (amd64)
-curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz
-./ragcode-installer -ollama=docker -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+```
+
+**Option B: Use local Ollama (if you already have Ollama installed)**
+```bash
+# First, install Ollama locally (skip if already installed)
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Then run installer with local Ollama
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=local -qdrant=docker
 ```
 
 **Installation time:** 5-10 minutes (model downloads dominate)
@@ -232,6 +215,32 @@ Each project gets its own collection in Qdrant, and RagCode automatically switch
 
 After installation, RagCode is automatically available in the IDE. **No manual action required!**
 
+### Manual IDE Integration
+
+If you install a new IDE **after** running `ragcode-installer`, you'll need to configure it manually. Below are the configuration file paths for each supported IDE.
+
+#### Configuration File Locations
+
+| IDE | Config File Path |
+| --- | --- |
+| **Windsurf** | `~/.codeium/windsurf/mcp_config.json` |
+| **Cursor** | `~/.cursor/mcp.config.json` |
+| **Antigravity** | `~/.gemini/antigravity/mcp_config.json` |
+| **Claude Desktop (Linux)** | `~/.config/Claude/mcp-servers.json` |
+| **Claude Desktop (macOS)** | `~/Library/Application Support/Claude/mcp-servers.json` |
+| **Claude Desktop (Windows)** | `%APPDATA%\Claude\mcp-servers.json` |
+| **VS Code + Copilot** | `~/.config/Code/User/globalStorage/mcp-servers.json` |
+
+#### Re-running the Installer
+
+Alternatively, re-run the installer to auto-configure newly installed IDEs:
+
+```bash
+~/.local/share/ragcode/bin/ragcode-installer -skip-build -ollama=local -qdrant=docker
+```
+
+The `-skip-build` flag skips binary compilation and only updates IDE configurations.
+
 ### In VS Code with GitHub Copilot
 
 RagCode integrates with **GitHub Copilot's Agent Mode** in VS Code through the Model Context Protocol (MCP). This allows Copilot to use RagCode's semantic search capabilities as part of its autonomous coding workflow.
@@ -243,7 +252,7 @@ RagCode integrates with **GitHub Copilot's Agent Mode** in VS Code through the M
 
 #### Setup
 
-`ragcode-installer` configurează automat RagCode pentru VS Code și creează:
+`ragcode-installer` automatically configures RagCode for VS Code and creates:
 ```
 ~/.config/Code/User/globalStorage/mcp-servers.json
 ```

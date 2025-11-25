@@ -168,10 +168,69 @@ func success(msg string) { fmt.Printf("%s✓ %s%s\n", green, msg, reset) }
 func warn(msg string)    { fmt.Printf("%s! %s%s\n", yellow, msg, reset) }
 func fail(msg string)    { fmt.Printf("%s✗ %s%s\n", red, msg, reset); os.Exit(1) }
 
+func checkDockerAvailable() {
+	log("Checking Docker availability...")
+
+	// Check if docker command exists in PATH
+	dockerPath, err := exec.LookPath("docker")
+	if err != nil {
+		if runtime.GOOS == "windows" {
+			fmt.Println()
+			fmt.Println("Docker CLI not found in PATH.")
+			fmt.Println()
+			fmt.Println("If you have Docker Desktop installed with WSL2 backend, you have two options:")
+			fmt.Println()
+			fmt.Println("  Option 1: Enable Docker CLI for Windows")
+			fmt.Println("    1. Open Docker Desktop")
+			fmt.Println("    2. Go to Settings > Resources > WSL Integration")
+			fmt.Println("    3. Enable 'Use the WSL 2 based engine'")
+			fmt.Println("    4. Restart Docker Desktop and try again")
+			fmt.Println()
+			fmt.Println("  Option 2: Run this installer inside WSL")
+			fmt.Println("    1. Open WSL terminal (wsl.exe)")
+			fmt.Println("    2. Download the Linux version of the installer")
+			fmt.Println("    3. Run the installer from within WSL")
+			fmt.Println()
+			fmt.Println("  Option 3: Use local services instead of Docker")
+			fmt.Println("    Run: .\\ragcode-installer.exe -ollama=local -qdrant=remote")
+			fmt.Println("    (Requires Ollama and Qdrant to be installed separately)")
+			fmt.Println()
+			fail("Docker CLI not available. See options above.")
+		} else {
+			fail("Docker not found. Please install Docker: https://docs.docker.com/get-docker/")
+		}
+	}
+
+	// Verify docker daemon is running
+	cmd := exec.Command("docker", "info")
+	if err := cmd.Run(); err != nil {
+		if runtime.GOOS == "windows" {
+			fmt.Println()
+			fmt.Println("Docker daemon is not running or not accessible.")
+			fmt.Println()
+			fmt.Println("Please ensure:")
+			fmt.Println("  1. Docker Desktop is running")
+			fmt.Println("  2. Docker Desktop has finished starting (check system tray)")
+			fmt.Println("  3. If using WSL2 backend, ensure WSL integration is enabled")
+			fmt.Println()
+			fail("Docker daemon not accessible. Start Docker Desktop and try again.")
+		} else {
+			fail("Docker daemon not running. Please start Docker and try again.")
+		}
+	}
+
+	success(fmt.Sprintf("Docker available at %s", dockerPath))
+}
+
 func main() {
 	flag.Parse()
 
 	printBanner()
+
+	// 0. Check Docker availability if needed
+	if *ollamaMode == "docker" || *qdrantMode == "docker" {
+		checkDockerAvailable()
+	}
 
 	// 1. Build and Install Binary
 	if !*skipBuild {

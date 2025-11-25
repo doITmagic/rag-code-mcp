@@ -169,40 +169,44 @@ Without RagCode, AI assistants must:
 
 ## ⚡ Quick Start (One‑Command Installer)
 
+**Linux (amd64):**
 ```bash
-curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/ragcode-installer-$(uname -s | tr '[:upper:]' '[:lower:]') -o ragcode-installer \
-  && chmod +x ragcode-installer \
-  && ./ragcode-installer -ollama=docker -qdrant=docker
+curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz
+./ragcode-installer -ollama=docker -qdrant=docker
 ```
 
-Installerul face totul end-to-end:
-1. ✅ Instalează binarele `rag-code-mcp` și `index-all` în `~/.local/share/ragcode/bin`
-2. ✅ Configurează Windsurf, Cursor, Claude, VS Code etc.
-3. ✅ Pornește Docker și rulează containerele Ollama + Qdrant (implict)
-4. ✅ Descarcă modelele `phi3:medium` și `nomic-embed-text`
-5. ✅ Rulează health-check și pornește MCP serverul
+**macOS (Apple Silicon):**
+```bash
+curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_arm64.tar.gz | tar xz
+./ragcode-installer -ollama=docker -qdrant=docker
+```
+
+The installer is end-to-end:
+1. ✅ Installs the `rag-code-mcp` and `index-all` binaries into `~/.local/share/ragcode/bin`
+2. ✅ Configures Windsurf, Cursor, Claude, VS Code, etc.
+3. ✅ Starts Docker and launches the Ollama + Qdrant containers
+4. ✅ Downloads the required models (`phi3:medium`, `nomic-embed-text`)
+5. ✅ Runs health-check and starts the MCP server
 
 ### Customization Options
 
-Poți personaliza instalarea cu flaguri CLI:
-
 ```bash
-# Totul în Docker (implicit)
+# Everything in Docker (default)
 ./ragcode-installer -ollama=docker -qdrant=docker
 
-# Ollama local + Qdrant Docker
+# Keep Ollama local, run only Qdrant in Docker
 ./ragcode-installer -ollama=local -qdrant=docker
 
-# Servicii existente
+# Use existing remote services
 ./ragcode-installer -ollama=local -qdrant=remote --skip-build
 
-# GPU + mapare modele
+# Enable GPU + mount models directory
 ./ragcode-installer -ollama=docker -qdrant=docker -gpu -models-dir=$HOME/.ollama
 ```
 
-Flaguri cheie:
-- `-ollama`: `docker` (implicit) sau `local`
-- `-qdrant`: `docker` (implicit) sau `remote`
+Key flags:
+- `-ollama`: `docker` (default) or `local`
+- `-qdrant`: `docker` (default) or `remote`
 - `-models-dir`, `-gpu`, `-skip-build`, `-ides`
 
 See [QUICKSTART.md](./QUICKSTART.md) for detailed installation and usage instructions.

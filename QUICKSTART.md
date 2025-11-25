@@ -19,17 +19,31 @@ RagCode is an MCP (Model Context Protocol) server that allows you to navigate an
 
 ### Option 1: `ragcode-installer` (Recommended)
 
+**Linux (amd64):**
 ```bash
-curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/ragcode-installer-$(uname -s | tr '[:upper:]' '[:lower:]') -o ragcode-installer \
-  && chmod +x ragcode-installer \
-  && ./ragcode-installer -ollama=docker -qdrant=docker
+curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz
+./ragcode-installer -ollama=docker -qdrant=docker
 ```
 
-On Windows (PowerShell):
-```powershell
-Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/latest/download/ragcode-installer-windows.exe" -OutFile "ragcode-installer.exe"
-./ragcode-installer.exe -ollama docker -qdrant docker
+**macOS (Apple Silicon):**
+```bash
+curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_arm64.tar.gz | tar xz
+./ragcode-installer -ollama=docker -qdrant=docker
 ```
+
+**macOS (Intel):**
+```bash
+curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_amd64.tar.gz | tar xz
+./ragcode-installer -ollama=docker -qdrant=docker
+```
+
+**Windows (PowerShell – in progress):**
+```powershell
+Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_windows_amd64.zip" -OutFile "rag-code-mcp.zip"
+Expand-Archive rag-code-mcp.zip -DestinationPath .
+.\ragcode-installer.exe -ollama docker -qdrant docker
+```
+> ⚠️ Windows support is still being finalized. Use WSL/Linux/macOS if you hit issues.
 
 The installer is end-to-end:
 1. ✅ Installs the `rag-code-mcp` and `index-all` binaries into `~/.local/share/ragcode/bin`
@@ -113,8 +127,8 @@ brew install ollama
 ### 2. Run the Installer
 
 ```bash
-curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/ragcode-installer-$(uname -s | tr '[:upper:]' '[:lower:]') -o ragcode-installer
-chmod +x ragcode-installer
+# Linux (amd64)
+curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz
 ./ragcode-installer -ollama=docker -qdrant=docker
 ```
 

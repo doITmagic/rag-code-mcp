@@ -11,6 +11,16 @@
 - **Zero cost** - no API fees, runs on local Ollama + Qdrant
 - **Privacy-first** - code never leaves your machine
 
+## RagCode vs Generic RAG
+
+Unlike generic RAG that splits code into arbitrary text chunks, RagCode:
+- **Semantic chunking** - extracts complete functions, classes, methods (not random 512-token splits)
+- **Rich metadata** - name, type, parameters, return type, dependencies, line numbers
+- **Relationships** - knows class inheritance, method calls, imports
+- **AST parsing** - understands Go, PHP, Python syntax (not regex/heuristics)
+- **Exact + semantic search** - find "UserController" exactly, not just similar text
+- **Complete code units** - AI sees runnable code, not fragments
+
 ## Compatibility
 
 - **IDEs:** Windsurf, Cursor, VS Code + GitHub Copilot, Claude Desktop, Antigravity

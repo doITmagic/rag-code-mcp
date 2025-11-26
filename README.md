@@ -107,6 +107,43 @@ Without RagCode, AI assistants must:
 
 **Bottom Line:** RagCode gives you enterprise-grade AI code search with zero privacy concerns and zero ongoing costs.
 
+### 🧠 RagCode vs Generic RAG Systems
+
+Most RAG systems treat code like plain text - they split files into arbitrary chunks of N tokens without understanding the code structure. **RagCode is different.**
+
+| Aspect | Generic RAG | RagCode |
+|--------|-------------|---------|
+| **Chunking** | Arbitrary text splits (512 tokens) | Semantic units (functions, classes, methods) |
+| **Context** | Random text fragments | Complete code entities with full context |
+| **Metadata** | Filename only | Name, type, parameters, return type, dependencies, line numbers |
+| **Relationships** | None | Knows `UserController` uses `UserService`, inheritance chains |
+| **Search** | Semantic similarity only | Exact name match + semantic similarity combined |
+| **Language Awareness** | Treats all text the same | AST parsing per language (Go, PHP, Python) |
+| **Results** | May return partial functions | Always returns complete, runnable code units |
+
+**Why this matters for AI assistants:**
+
+```
+❌ Generic RAG returns:
+"...the user authentication logic checks the token
+and validates against the database. If valid, it..."
+→ AI sees fragment, must guess the rest
+
+✅ RagCode returns:
+func AuthenticateUser(token string) (*User, error) {
+    // Complete function with all context
+    user, err := db.FindByToken(token)
+    if err != nil { return nil, ErrInvalidToken }
+    return user, nil
+}
+File: auth/middleware.go, Lines: 45-52
+Called by: LoginHandler, RefreshToken
+Depends on: db.FindByToken, ErrInvalidToken
+→ AI sees complete picture, responds accurately
+```
+
+**The result:** AI assistants using RagCode give more accurate answers because they see complete, contextual code - not random text fragments.
+
 ---
 
 ## ✨ Core Features & Capabilities

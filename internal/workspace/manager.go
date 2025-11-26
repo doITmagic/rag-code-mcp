@@ -827,8 +827,20 @@ func (m *Manager) EnsureWorkspaceIndexed(ctx context.Context, rootPath string) e
 
 	var errs []string
 
+	// Check which languages have analyzers available
+	analyzerManager := ragcode.NewAnalyzerManager()
+
+	// Helper to check if we have an analyzer for a language
+	hasAnalyzer := func(lang string) bool {
+		return analyzerManager.CodeAnalyzerForProjectType(lang) != nil
+	}
+
 	// Helper to index language
 	indexLang := func(lang string) {
+		if !hasAnalyzer(lang) {
+			log.Printf("⚠️  Skipping language '%s' - no analyzer available", lang)
+			return
+		}
 		colName := info.CollectionNameForLanguage(lang)
 		if err := m.IndexLanguage(ctx, info, lang, colName); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", lang, err))

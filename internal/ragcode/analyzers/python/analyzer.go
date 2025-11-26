@@ -1412,7 +1412,8 @@ func (ca *CodeAnalyzer) extractTypeDependencies(params []codetypes.ParamInfo, re
 }
 
 // extractClassDependencies extracts all dependencies for a class
-func (ca *CodeAnalyzer) extractClassDependencies(class *ClassInfo, moduleImports []ImportInfo) []string {
+// moduleImports is reserved for future cross-file resolution
+func (ca *CodeAnalyzer) extractClassDependencies(class *ClassInfo, _ []ImportInfo) []string {
 	var deps []string
 	seen := make(map[string]bool)
 

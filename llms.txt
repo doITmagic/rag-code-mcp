@@ -63,15 +63,15 @@ User: "Find authentication middleware in this codebase"
 
 ## 9 MCP Tools
 
-1. `search_code` - Semantic search across the codebase
-2. `hybrid_search` - Combined semantic + lexical search
-3. `get_function_details` - Get function signature and body
-4. `find_type_definition` - Find struct/interface definitions
-5. `find_implementations` - Find usages of a symbol
-6. `list_package_exports` - List exported symbols from a package
-7. `search_docs` - Search markdown documentation
-8. `get_code_context` - Read code with surrounding context
-9. `index_workspace` - Manual indexing (usually automatic)
+1. `search_code` - **Use FIRST** - Semantic search, returns complete code with file/line. Go, PHP, Python.
+2. `hybrid_search` - Keyword + semantic for **EXACT matches** (variable names, errors) + context
+3. `get_function_details` - **COMPLETE** function code with signature, params, body
+4. `find_type_definition` - Class/struct/interface with all fields, methods, inheritance
+5. `find_implementations` - All callers/usages - **use before refactoring**
+6. `list_package_exports` - List public symbols in package. Go, PHP, Python.
+7. `search_docs` - Search Markdown docs (README, guides). **Not for code.**
+8. `get_code_context` - Read file lines with context (use with file path + line numbers)
+9. `index_workspace` - Reindex codebase. **Usually automatic.**
 
 ## Configuration
 

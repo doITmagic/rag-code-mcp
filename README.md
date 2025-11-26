@@ -493,15 +493,15 @@ The `-skip-build` flag skips binary compilation and only updates IDE configurati
 
 | Tool | What it does | When to use |
 | --- | --- | --- |
-| `search_code` | Semantic search for relevant code fragments based on intent, not just keywords. | General questions like "show me the authentication logic" or "find the function that processes payments". |
-| `hybrid_search` | Combines semantic + lexical (BM25) for exact matches plus context. | When you have both exact terms (e.g., constant names) and need semantic context. |
-| `get_function_details` | Returns complete signature, parameters, and function body. | Quick clarification of a function/handler without manually opening the file. |
-| `find_type_definition` | Locates structs, types, or interfaces and their fields. | When you need to quickly inspect a complex model/dto/struct. |
-| `find_implementations` | Lists all implementations or usages of a symbol. | Interface audits, identifying handlers that implement a method. |
-| `list_package_exports` | Lists exported symbols from a package. | Quick navigation through a module/package API. |
-| `search_docs` | Semantic search in indexed Markdown documentation. | For questions about guides, RFCs, or large READMEs. |
-| `get_code_context` | Reads a file with context (lines before/after). | When you need an exact snippet from a file without opening it manually. |
-| `index_workspace` | Forces manual re-indexing of a workspace. | Use only if you disabled auto-indexing or want to run indexing from CLI/automations. |
+| `search_code` | Semantic code search - finds functions, classes, methods by meaning. Returns complete code with file path and line numbers. **Supports Go, PHP, Python.** | **Use FIRST** when exploring unfamiliar code or answering "how does X work?" questions. |
+| `hybrid_search` | Combined keyword + semantic search for exact matches plus context. | When you need **EXACT matches** (variable names, error messages, constants) plus semantic context. |
+| `get_function_details` | Returns **COMPLETE** function/method code with signature, parameters, return types, and full body. | When you know the exact function name and need to see or modify its implementation. |
+| `find_type_definition` | Returns complete class/struct/interface with all fields, methods, and inheritance chain. | When you need to understand a data model or see what methods a type has. |
+| `find_implementations` | Shows all callers and implementations of a function/method/interface. | **Before refactoring** to understand impact, or to find usage examples of an API. |
+| `list_package_exports` | Lists all public functions, classes, types in a package/module. **Works for Go, PHP, Python.** | To explore an unfamiliar package or find the right function to call. |
+| `search_docs` | Semantic search in Markdown documentation (README, guides, API docs). | For project setup, architecture decisions, or usage examples. **Not for code.** |
+| `get_code_context` | Reads specific lines from a file with surrounding context. | When you have file path + line numbers (from search results or errors) and need the actual code. |
+| `index_workspace` | Index/reindex the codebase. **Usually automatic.** | Only if search returns "workspace not indexed" or after major code changes. |
 
 **All tools require a `file_path` parameter** so that RagCode can determine the correct workspace.
 

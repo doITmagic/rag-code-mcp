@@ -25,7 +25,7 @@ import (
 )
 
 var (
-	Version = "1.1.15"
+	Version = "1.1.16"
 	Commit  = "none"
 	Date    = "unknown"
 	// Build trigger: Python analyzer support
@@ -543,7 +543,7 @@ func main() {
 
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "ragcode",
-		Version: "1.1.15",
+		Version: "1.1.16",
 	}, nil)
 
 	// All tools use workspace manager - no single collections

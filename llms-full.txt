@@ -376,7 +376,7 @@ Edit `~/.config/Code/User/globalStorage/mcp-servers.json`:
 See [QUICKSTART.md](./QUICKSTART.md) for detailed VS Code setup and troubleshooting.
 
 ### Available Tools
-1. **`search_code`** – **Use FIRST** – semantic search, returns complete code. Go, PHP, Python.
+1. **`search_code`** – **Use FIRST** – semantic search, returns complete code. Go, PHP, Python, HTML.
 2. **`hybrid_search`** – keyword + semantic for **EXACT matches** + context
 3. **`get_function_details`** – **COMPLETE** function code with signature, params, body
 4. **`find_type_definition`** – class/struct/interface with fields, methods, inheritance
@@ -888,7 +888,7 @@ You can also explicitly reference RagCode tools using the `#` symbol:
 
 #### Available Tools:
 
-1. **`search_code`** - **Use FIRST** - Semantic search, returns complete code. Go, PHP, Python.
+1. **`search_code`** - **Use FIRST** - Semantic search, returns complete code. Go, PHP, Python, HTML.
    ```json
    {
      "query": "authentication middleware",

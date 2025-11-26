@@ -473,7 +473,8 @@ RagCode creates separate collections per language:
 - `ragcode-{workspace}-go`
 - `ragcode-{workspace}-php`
 - `ragcode-{workspace}-python`
-- `ragcode-{workspace}-javascript`
+- `ragcode-{workspace}-html`
+
 
 This improves search accuracy and performance.
 

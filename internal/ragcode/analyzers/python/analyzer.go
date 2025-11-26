@@ -12,15 +12,31 @@ import (
 	"github.com/doITmagic/rag-code-mcp/internal/codetypes"
 )
 
+// Pre-compiled regex patterns for better performance
+var (
+	importRe     = regexp.MustCompile(`^import\s+(.+)$`)
+	fromImportRe = regexp.MustCompile(`^from\s+(\S+)\s+import\s+(.+)$`)
+)
+
 // CodeAnalyzer implements PathAnalyzer for Python
 type CodeAnalyzer struct {
-	modules map[string]*ModuleInfo
+	modules      map[string]*ModuleInfo
+	includeTests bool // Option to include test files
 }
 
 // NewCodeAnalyzer creates a new Python code analyzer
 func NewCodeAnalyzer() *CodeAnalyzer {
 	return &CodeAnalyzer{
-		modules: make(map[string]*ModuleInfo),
+		modules:      make(map[string]*ModuleInfo),
+		includeTests: false,
+	}
+}
+
+// NewCodeAnalyzerWithOptions creates a Python code analyzer with options
+func NewCodeAnalyzerWithOptions(includeTests bool) *CodeAnalyzer {
+	return &CodeAnalyzer{
+		modules:      make(map[string]*ModuleInfo),
+		includeTests: includeTests,
 	}
 }
 
@@ -61,9 +77,11 @@ func (ca *CodeAnalyzer) AnalyzePaths(paths []string) ([]codetypes.CodeChunk, err
 					return nil
 				}
 
-				// Skip test files for main analysis (can be included optionally)
-				if strings.HasPrefix(d.Name(), "test_") || strings.HasSuffix(d.Name(), "_test.py") {
-					return nil
+				// Skip test files unless includeTests is enabled
+				if !ca.includeTests {
+					if strings.HasPrefix(d.Name(), "test_") || strings.HasSuffix(d.Name(), "_test.py") {
+						return nil
+					}
 				}
 
 				content, err := os.ReadFile(path)
@@ -241,12 +259,9 @@ func (ca *CodeAnalyzer) extractDocstring(lines []string, startIdx int) string {
 	return strings.TrimSpace(strings.Join(docLines, "\n"))
 }
 
-// extractImports parses import statements
+// extractImports parses import statements (including multi-line imports)
 func (ca *CodeAnalyzer) extractImports(lines []string) []ImportInfo {
 	var imports []ImportInfo
-
-	importRe := regexp.MustCompile(`^import\s+(.+)$`)
-	fromImportRe := regexp.MustCompile(`^from\s+(\S+)\s+import\s+(.+)$`)
 
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -256,10 +271,24 @@ func (ca *CodeAnalyzer) extractImports(lines []string) []ImportInfo {
 			continue
 		}
 
-		// Check "from X import Y"
+		// Check "from X import Y" (including multi-line with parentheses)
 		if matches := fromImportRe.FindStringSubmatch(trimmed); matches != nil {
 			module := matches[1]
 			namesStr := matches[2]
+
+			// Handle multi-line imports: from X import (
+			if strings.HasPrefix(strings.TrimSpace(namesStr), "(") {
+				namesStr = strings.TrimPrefix(strings.TrimSpace(namesStr), "(")
+				// Collect lines until closing parenthesis
+				for j := i + 1; j < len(lines); j++ {
+					contLine := strings.TrimSpace(lines[j])
+					if strings.Contains(contLine, ")") {
+						namesStr += " " + strings.TrimSuffix(contLine, ")")
+						break
+					}
+					namesStr += " " + contLine
+				}
+			}
 
 			// Parse imported names
 			var names []string
@@ -269,7 +298,7 @@ func (ca *CodeAnalyzer) extractImports(lines []string) []ImportInfo {
 				if idx := strings.Index(name, " as "); idx != -1 {
 					name = strings.TrimSpace(name[:idx])
 				}
-				if name != "" && name != "*" {
+				if name != "" && name != "*" && name != "(" && name != ")" {
 					names = append(names, name)
 				}
 			}
@@ -367,10 +396,18 @@ func (ca *CodeAnalyzer) extractClasses(lines []string, filePath string, content 
 					}
 				}
 
-				// Check if inherits from ABC
+				// Check base classes for special types
+				isEnum := false
+				isProtocol := false
 				for _, base := range bases {
 					if base == "ABC" || strings.Contains(base, "Abstract") {
 						isAbstract = true
+					}
+					if base == "Enum" || base == "IntEnum" || base == "StrEnum" || base == "Flag" || base == "IntFlag" {
+						isEnum = true
+					}
+					if base == "Protocol" || base == "typing.Protocol" {
+						isProtocol = true
 					}
 				}
 
@@ -381,6 +418,8 @@ func (ca *CodeAnalyzer) extractClasses(lines []string, filePath string, content 
 					Decorators:  currentDecorators,
 					IsAbstract:  isAbstract,
 					IsDataclass: isDataclass,
+					IsEnum:      isEnum,
+					IsProtocol:  isProtocol,
 					FilePath:    filePath,
 					StartLine:   startLine,
 					EndLine:     endLine,
@@ -981,6 +1020,8 @@ func (ca *CodeAnalyzer) convertToChunks() []codetypes.CodeChunk {
 					"decorators":   class.Decorators,
 					"is_abstract":  class.IsAbstract,
 					"is_dataclass": class.IsDataclass,
+					"is_enum":      class.IsEnum,
+					"is_protocol":  class.IsProtocol,
 				},
 			}
 			chunks = append(chunks, chunk)

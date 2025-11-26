@@ -649,3 +649,101 @@ def test():
 		t.Errorf("expected 1 module, got %d", len(modules))
 	}
 }
+
+func TestEnumDetection(t *testing.T) {
+	analyzer := NewCodeAnalyzer()
+
+	content := `from enum import Enum, IntEnum
+
+class Color(Enum):
+    """Color enumeration."""
+    RED = 1
+    GREEN = 2
+    BLUE = 3
+
+class Priority(IntEnum):
+    """Priority levels."""
+    LOW = 1
+    MEDIUM = 2
+    HIGH = 3
+`
+
+	lines := strings.Split(content, "\n")
+	classes := analyzer.extractClasses(lines, "test.py", []byte(content))
+
+	if len(classes) != 2 {
+		t.Fatalf("expected 2 classes, got %d", len(classes))
+	}
+
+	for _, class := range classes {
+		if !class.IsEnum {
+			t.Errorf("class %s should be marked as Enum", class.Name)
+		}
+	}
+}
+
+func TestProtocolDetection(t *testing.T) {
+	analyzer := NewCodeAnalyzer()
+
+	content := `from typing import Protocol
+
+class Drawable(Protocol):
+    """Protocol for drawable objects."""
+    def draw(self) -> None:
+        ...
+`
+
+	lines := strings.Split(content, "\n")
+	classes := analyzer.extractClasses(lines, "test.py", []byte(content))
+
+	if len(classes) != 1 {
+		t.Fatalf("expected 1 class, got %d", len(classes))
+	}
+
+	if !classes[0].IsProtocol {
+		t.Error("class should be marked as Protocol")
+	}
+}
+
+func TestMultiLineImports(t *testing.T) {
+	analyzer := NewCodeAnalyzer()
+
+	content := `from typing import (
+    Optional,
+    List,
+    Dict,
+    Union,
+)
+
+from collections import OrderedDict
+`
+
+	lines := strings.Split(content, "\n")
+	imports := analyzer.extractImports(lines)
+
+	if len(imports) != 2 {
+		t.Fatalf("expected 2 import statements, got %d", len(imports))
+	}
+
+	// Check multi-line import
+	typingImport := imports[0]
+	if typingImport.Module != "typing" {
+		t.Errorf("expected module 'typing', got '%s'", typingImport.Module)
+	}
+	if len(typingImport.Names) < 4 {
+		t.Errorf("expected at least 4 names imported, got %d", len(typingImport.Names))
+	}
+}
+
+func TestIncludeTestsOption(t *testing.T) {
+	// Test that NewCodeAnalyzerWithOptions works
+	analyzer := NewCodeAnalyzerWithOptions(true)
+	if !analyzer.includeTests {
+		t.Error("includeTests should be true")
+	}
+
+	analyzer2 := NewCodeAnalyzerWithOptions(false)
+	if analyzer2.includeTests {
+		t.Error("includeTests should be false")
+	}
+}

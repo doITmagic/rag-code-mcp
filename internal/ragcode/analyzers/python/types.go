@@ -25,6 +25,8 @@ type ClassInfo struct {
 	ClassVars   []VariableInfo `json:"class_vars,omitempty"`
 	IsAbstract  bool           `json:"is_abstract"`
 	IsDataclass bool           `json:"is_dataclass"`
+	IsEnum      bool           `json:"is_enum"`     // Inherits from Enum
+	IsProtocol  bool           `json:"is_protocol"` // Inherits from Protocol (typing)
 	FilePath    string         `json:"file_path,omitempty"`
 	StartLine   int            `json:"start_line,omitempty"`
 	EndLine     int            `json:"end_line,omitempty"`
@@ -33,23 +35,23 @@ type ClassInfo struct {
 
 // MethodInfo describes a class method
 type MethodInfo struct {
-	Name        string                 `json:"name"`
-	Signature   string                 `json:"signature"`
-	Description string                 `json:"description"` // Method docstring
-	Parameters  []codetypes.ParamInfo  `json:"parameters"`
-	ReturnType  string                 `json:"return_type,omitempty"`
-	Returns     []codetypes.ReturnInfo `json:"returns,omitempty"`
-	Decorators  []string               `json:"decorators,omitempty"`
-	IsStatic    bool                   `json:"is_static"`
-	IsClassMethod bool                 `json:"is_classmethod"`
-	IsProperty  bool                   `json:"is_property"`
-	IsAbstract  bool                   `json:"is_abstract"`
-	IsAsync     bool                   `json:"is_async"`
-	ClassName   string                 `json:"class_name,omitempty"`
-	FilePath    string                 `json:"file_path,omitempty"`
-	StartLine   int                    `json:"start_line,omitempty"`
-	EndLine     int                    `json:"end_line,omitempty"`
-	Code        string                 `json:"code,omitempty"`
+	Name          string                 `json:"name"`
+	Signature     string                 `json:"signature"`
+	Description   string                 `json:"description"` // Method docstring
+	Parameters    []codetypes.ParamInfo  `json:"parameters"`
+	ReturnType    string                 `json:"return_type,omitempty"`
+	Returns       []codetypes.ReturnInfo `json:"returns,omitempty"`
+	Decorators    []string               `json:"decorators,omitempty"`
+	IsStatic      bool                   `json:"is_static"`
+	IsClassMethod bool                   `json:"is_classmethod"`
+	IsProperty    bool                   `json:"is_property"`
+	IsAbstract    bool                   `json:"is_abstract"`
+	IsAsync       bool                   `json:"is_async"`
+	ClassName     string                 `json:"class_name,omitempty"`
+	FilePath      string                 `json:"file_path,omitempty"`
+	StartLine     int                    `json:"start_line,omitempty"`
+	EndLine       int                    `json:"end_line,omitempty"`
+	Code          string                 `json:"code,omitempty"`
 }
 
 // FunctionInfo describes a module-level function
@@ -107,22 +109,22 @@ type ConstantInfo struct {
 
 // ImportInfo describes an import statement
 type ImportInfo struct {
-	Module    string   `json:"module"`              // Module being imported
-	Names     []string `json:"names,omitempty"`     // Specific names imported (from X import a, b)
-	Alias     string   `json:"alias,omitempty"`     // Import alias (import X as Y)
-	IsFrom    bool     `json:"is_from"`             // True if "from X import Y"
+	Module    string   `json:"module"`          // Module being imported
+	Names     []string `json:"names,omitempty"` // Specific names imported (from X import a, b)
+	Alias     string   `json:"alias,omitempty"` // Import alias (import X as Y)
+	IsFrom    bool     `json:"is_from"`         // True if "from X import Y"
 	StartLine int      `json:"start_line,omitempty"`
 }
 
 // DocstringInfo contains parsed docstring information
 type DocstringInfo struct {
-	Summary     string              `json:"summary"`
-	Description string              `json:"description"`
-	Args        []DocstringArg      `json:"args,omitempty"`
-	Returns     *DocstringReturn    `json:"returns,omitempty"`
-	Raises      []DocstringRaise    `json:"raises,omitempty"`
-	Examples    []string            `json:"examples,omitempty"`
-	Attributes  []DocstringArg      `json:"attributes,omitempty"`
+	Summary     string           `json:"summary"`
+	Description string           `json:"description"`
+	Args        []DocstringArg   `json:"args,omitempty"`
+	Returns     *DocstringReturn `json:"returns,omitempty"`
+	Raises      []DocstringRaise `json:"raises,omitempty"`
+	Examples    []string         `json:"examples,omitempty"`
+	Attributes  []DocstringArg   `json:"attributes,omitempty"`
 }
 
 // DocstringArg represents a parameter/attribute in docstring

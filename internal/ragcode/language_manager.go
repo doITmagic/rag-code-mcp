@@ -7,15 +7,17 @@ import (
 	"github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/golang"
 	htmlanalyzer "github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/html"
 	"github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/php/laravel"
+	"github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/python"
 )
 
 // Language identifies a programming language family for code analysis.
 type Language string
 
 const (
-	LanguageGo   Language = "go"
-	LanguagePHP  Language = "php"
-	LanguageHTML Language = "html"
+	LanguageGo     Language = "go"
+	LanguagePHP    Language = "php"
+	LanguageHTML   Language = "html"
+	LanguagePython Language = "python"
 )
 
 // AnalyzerManager selects analyzers based on language or workspace project type.
@@ -37,6 +39,8 @@ func normalizeProjectType(projectType string) Language {
 		return LanguagePHP
 	case "html", "web", "static-html":
 		return LanguageHTML
+	case "python", "py", "django", "flask", "fastapi":
+		return LanguagePython
 	default:
 		return Language(pt)
 	}
@@ -53,6 +57,8 @@ func (m *AnalyzerManager) CodeAnalyzerForProjectType(projectType string) codetyp
 		return laravel.NewAdapter()
 	case LanguageHTML:
 		return htmlanalyzer.NewCodeAnalyzer()
+	case LanguagePython:
+		return python.NewCodeAnalyzer()
 	default:
 		return nil
 	}

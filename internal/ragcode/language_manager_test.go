@@ -59,6 +59,35 @@ func TestAnalyzerManager_CodeAnalyzerForProjectType_PHP(t *testing.T) {
 	}
 }
 
+func TestAnalyzerManager_CodeAnalyzerForProjectType_Python(t *testing.T) {
+	mgr := NewAnalyzerManager()
+
+	tests := []struct {
+		name        string
+		projectType string
+		shouldExist bool
+	}{
+		{"python", "python", true},
+		{"Python uppercase", "Python", true},
+		{"py", "py", true},
+		{"django", "django", true},
+		{"flask", "flask", true},
+		{"fastapi", "fastapi", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			analyzer := mgr.CodeAnalyzerForProjectType(tt.projectType)
+			if tt.shouldExist && analyzer == nil {
+				t.Errorf("Expected non-nil analyzer for project type '%s'", tt.projectType)
+			}
+			if !tt.shouldExist && analyzer != nil {
+				t.Errorf("Expected nil analyzer for project type '%s'", tt.projectType)
+			}
+		})
+	}
+}
+
 func TestAnalyzerManager_CodeAnalyzerForProjectType_Unknown(t *testing.T) {
 	mgr := NewAnalyzerManager()
 
@@ -67,9 +96,9 @@ func TestAnalyzerManager_CodeAnalyzerForProjectType_Unknown(t *testing.T) {
 		projectType string
 		shouldExist bool
 	}{
-		{"python (not implemented)", "python", false},
 		{"rust (not implemented)", "rust", false},
 		{"javascript (not implemented)", "javascript", false},
+		{"java (not implemented)", "java", false},
 	}
 
 	for _, tt := range tests {
@@ -101,7 +130,12 @@ func TestNormalizeProjectType(t *testing.T) {
 		{"laravel", LanguagePHP},
 		{"Laravel", LanguagePHP},
 		{"  php  ", LanguagePHP},
-		{"python", Language("python")},
+		{"python", LanguagePython},
+		{"Python", LanguagePython},
+		{"py", LanguagePython},
+		{"django", LanguagePython},
+		{"flask", LanguagePython},
+		{"fastapi", LanguagePython},
 		{"rust", Language("rust")},
 	}
 

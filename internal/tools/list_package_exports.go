@@ -42,7 +42,7 @@ func (t *ListPackageExportsTool) Name() string {
 }
 
 func (t *ListPackageExportsTool) Description() string {
-	return "List all exported functions, types, and constants from a Go package"
+	return "List all public functions, classes, and types in a package/module - gives you an overview of what's available. Use to explore an unfamiliar package or find the right function to call. Works for Go packages, PHP namespaces, Python modules."
 }
 
 func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {

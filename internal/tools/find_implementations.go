@@ -38,7 +38,7 @@ func (t *FindImplementationsTool) Name() string {
 }
 
 func (t *FindImplementationsTool) Description() string {
-	return "Find implementations, usages, or references to a function, method, or interface"
+	return "Find where a function/method/interface is USED - shows all callers and implementations. Use to understand impact before refactoring, or to find examples of how to use an API. Returns code snippets with file locations."
 }
 
 func (t *FindImplementationsTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {

@@ -36,7 +36,7 @@ func (t *SearchDocsTool) Name() string {
 
 // Description returns the tool description
 func (t *SearchDocsTool) Description() string {
-	return "Searches the project documentation (Markdown) for relevant information"
+	return "Search project documentation (README, guides, API docs) - use when you need to understand project setup, architecture decisions, or usage examples. Searches Markdown files only, not code."
 }
 
 // Execute executes a search in the docs index

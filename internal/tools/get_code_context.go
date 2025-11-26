@@ -21,7 +21,7 @@ func (t *GetCodeContextTool) Name() string {
 }
 
 func (t *GetCodeContextTool) Description() string {
-	return "Read code from a specific file location with surrounding context lines"
+	return "Read specific lines from a file with context - use when you have a file path and line numbers (e.g., from search results or error messages) and need to see the actual code. Returns the exact code snippet with surrounding lines."
 }
 
 func (t *GetCodeContextTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {

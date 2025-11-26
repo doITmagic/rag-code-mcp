@@ -29,7 +29,7 @@ func (t *IndexWorkspaceTool) Name() string {
 
 // Description returns the tool description
 func (t *IndexWorkspaceTool) Description() string {
-	return "Indexes a workspace to enable code search. Call this when you receive a message that the workspace is not yet indexed. Requires file_path parameter to detect the workspace."
+	return "Index/reindex the codebase for search - usually automatic, but call this if search returns 'workspace not indexed' or after major code changes. Analyzes all Go, PHP, Python files and stores them for semantic search."
 }
 
 // Execute indexes the workspace

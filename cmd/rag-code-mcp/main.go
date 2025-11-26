@@ -987,6 +987,26 @@ func getToolSchema(toolName string) map[string]interface{} {
 			"required": []string{"file_path"},
 		}
 
+	case "hybrid_search":
+		return map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"query": map[string]interface{}{
+					"type":        "string",
+					"description": "The search query combining lexical and semantic matching",
+				},
+				"file_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional: file path to help detect workspace context",
+				},
+				"limit": map[string]interface{}{
+					"type":        "number",
+					"description": "Maximum number of results to return (default: 5)",
+				},
+			},
+			"required": []string{"query"},
+		}
+
 	default:
 		return map[string]interface{}{
 			"type":       "object",

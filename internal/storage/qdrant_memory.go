@@ -61,6 +61,21 @@ func (m *QdrantLongTermMemory) Search(ctx context.Context, query []float64, limi
 	return convertSearchResultsToDocuments(results), nil
 }
 
+// SearchCodeOnly searches for similar documents, excluding markdown documentation
+func (m *QdrantLongTermMemory) SearchCodeOnly(ctx context.Context, query []float64, limit int) ([]memory.Document, error) {
+	if len(query) == 0 {
+		return nil, fmt.Errorf("query embedding is required")
+	}
+
+	// Search in Qdrant, excluding markdown chunks
+	results, err := m.client.SearchCodeOnly(ctx, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search code in qdrant: %w", err)
+	}
+
+	return convertSearchResultsToDocuments(results), nil
+}
+
 func convertSearchResultsToDocuments(results []SearchResult) []memory.Document {
 	documents := make([]memory.Document, 0, len(results))
 	for _, result := range results {

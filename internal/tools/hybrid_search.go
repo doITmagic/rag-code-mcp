@@ -39,7 +39,7 @@ func (t *HybridSearchTool) Name() string { return "hybrid_search" }
 
 // Description provides a description for the tool.
 func (t *HybridSearchTool) Description() string {
-	return "Combined keyword + semantic search - use when you need EXACT matches (variable names, error messages) plus semantic context. Better than search_code when you have specific identifiers to find. Returns complete code with metadata."
+	return "Combined keyword + semantic search - use ONLY when you need EXACT matches (variable names, error messages, specific identifiers). Returns complete source code with file path, line numbers, and metadata. Use search_code FIRST for general exploration; use this when search_code misses exact terms. Supports Go, PHP, Python, HTML."
 }
 
 type hybridScore struct {

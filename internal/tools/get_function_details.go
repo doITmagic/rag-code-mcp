@@ -40,7 +40,7 @@ func (t *GetFunctionDetailsTool) Name() string {
 }
 
 func (t *GetFunctionDetailsTool) Description() string {
-	return "Get COMPLETE function/method code - returns the full implementation with signature, parameters, return types, and body. Use when you know the exact function name and need to see or modify its code. Works for Go, PHP, Python."
+	return "Get COMPLETE function/method source code - returns full implementation with signature, parameters, return types, and body. Use when you know the exact function name. Returns the entire function ready to read or modify. Works for Go, PHP, Python."
 }
 
 func (t *GetFunctionDetailsTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {

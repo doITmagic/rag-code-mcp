@@ -40,7 +40,7 @@ func (t *FindTypeDefinitionTool) Name() string {
 }
 
 func (t *FindTypeDefinitionTool) Description() string {
-	return "Find class/struct/interface definition - returns the complete type with all fields, methods, and inheritance. Use when you need to understand a data model or see what methods a type has. Works for Go structs/interfaces, PHP classes, Python classes."
+	return "Find class/struct/interface definition - returns complete type source code with all fields, methods, and inheritance chain. Use when you need to understand a data model or see what methods a type has. Returns the full type definition ready to read. Works for Go structs/interfaces, PHP classes, Python classes."
 }
 
 func (t *FindTypeDefinitionTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {

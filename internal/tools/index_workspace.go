@@ -29,7 +29,7 @@ func (t *IndexWorkspaceTool) Name() string {
 
 // Description returns the tool description
 func (t *IndexWorkspaceTool) Description() string {
-	return "Index/reindex the codebase for search - usually automatic, but call this if search returns 'workspace not indexed' or after major code changes. Analyzes all Go, PHP, Python files and stores them for semantic search."
+	return "Index/reindex the codebase for search - USUALLY AUTOMATIC on first search. Call manually only if search returns 'workspace not indexed' or after major code changes (git pull, branch switch). Analyzes Go, PHP, Python, HTML files and stores vectors for semantic search."
 }
 
 // Execute indexes the workspace

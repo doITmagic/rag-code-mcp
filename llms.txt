@@ -63,15 +63,15 @@ User: "Find authentication middleware in this codebase"
 
 ## 9 MCP Tools
 
-1. `search_code` - **Use FIRST** - Semantic search, returns complete code with file/line. Go, PHP, Python.
-2. `hybrid_search` - Keyword + semantic for **EXACT matches** (variable names, errors) + context
-3. `get_function_details` - **COMPLETE** function code with signature, params, body
-4. `find_type_definition` - Class/struct/interface with all fields, methods, inheritance
-5. `find_implementations` - All callers/usages - **use before refactoring**
-6. `list_package_exports` - List public symbols in package. Go, PHP, Python.
-7. `search_docs` - Search Markdown docs (README, guides). **Not for code.**
-8. `get_code_context` - Read file lines with context (use with file path + line numbers)
-9. `index_workspace` - Reindex codebase. **Usually automatic.**
+1. `search_code` - **USE FIRST** - Semantic search by MEANING. Returns complete source code + file:line. Better than hybrid_search for exploration. **Go, PHP, Python, HTML.**
+2. `hybrid_search` - Keyword + semantic for **EXACT matches** only. Returns code + file:line + metadata. Use when search_code misses exact terms. **Go, PHP, Python, HTML.**
+3. `get_function_details` - **COMPLETE** function source: signature, params, return types, body. **Go, PHP, Python.**
+4. `find_type_definition` - Complete type source with fields, methods, inheritance chain. **Go, PHP, Python.**
+5. `find_implementations` - All callers/usages with code snippets + file:line. **Use before refactoring.** **Go, PHP, Python.**
+6. `list_package_exports` - Structured list: symbol names, types, signatures. **Go, PHP, Python.**
+7. `search_docs` - Doc snippets with file paths. **Markdown only. Not for code** - use search_code.
+8. `get_code_context` - Code snippet with configurable context lines. **Any text file.**
+9. `index_workspace` - Reindex codebase. **USUALLY AUTOMATIC.** Call after git pull/branch switch. **Go, PHP, Python, HTML.**
 
 ## Configuration
 

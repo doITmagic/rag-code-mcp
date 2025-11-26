@@ -43,7 +43,7 @@ func (t *SearchLocalIndexTool) Name() string {
 
 // Description returns the tool description
 func (t *SearchLocalIndexTool) Description() string {
-	return "Semantic code search - finds functions, classes, and methods by meaning, not just keywords. Returns complete code with file path and line numbers. Use this FIRST when exploring unfamiliar code or answering questions about how something works. Supports Go, PHP, Python."
+	return "Semantic code search - finds functions, classes, and methods by MEANING, not just keywords. USE THIS FIRST when exploring unfamiliar code. Returns complete source code with file path and line numbers. Better than hybrid_search for general exploration; use hybrid_search only when you need EXACT identifier matches. Supports Go, PHP, Python, HTML."
 }
 
 // Execute executes a search in the local index

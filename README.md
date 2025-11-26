@@ -493,15 +493,15 @@ The `-skip-build` flag skips binary compilation and only updates IDE configurati
 
 | Tool | What it does | When to use |
 | --- | --- | --- |
-| `search_code` | Semantic code search - finds functions, classes, methods by meaning. Returns complete code with file path and line numbers. **Supports Go, PHP, Python.** | **Use FIRST** when exploring unfamiliar code or answering "how does X work?" questions. |
-| `hybrid_search` | Combined keyword + semantic search for exact matches plus context. | When you need **EXACT matches** (variable names, error messages, constants) plus semantic context. |
-| `get_function_details` | Returns **COMPLETE** function/method code with signature, parameters, return types, and full body. | When you know the exact function name and need to see or modify its implementation. |
-| `find_type_definition` | Returns complete class/struct/interface with all fields, methods, and inheritance chain. | When you need to understand a data model or see what methods a type has. |
-| `find_implementations` | Shows all callers and implementations of a function/method/interface. | **Before refactoring** to understand impact, or to find usage examples of an API. |
-| `list_package_exports` | Lists all public functions, classes, types in a package/module. **Works for Go, PHP, Python.** | To explore an unfamiliar package or find the right function to call. |
-| `search_docs` | Semantic search in Markdown documentation (README, guides, API docs). | For project setup, architecture decisions, or usage examples. **Not for code.** |
-| `get_code_context` | Reads specific lines from a file with surrounding context. | When you have file path + line numbers (from search results or errors) and need the actual code. |
-| `index_workspace` | Index/reindex the codebase. **Usually automatic.** | Only if search returns "workspace not indexed" or after major code changes. |
+| `search_code` | Semantic search by MEANING. Returns complete source code with file:line. **Go, PHP, Python, HTML.** | **USE FIRST** for exploration. Better than hybrid_search for general queries. |
+| `hybrid_search` | Keyword + semantic for **EXACT matches**. Returns code with file:line + metadata. **Go, PHP, Python, HTML.** | **ONLY** when you need exact identifiers (variable names, error messages). Use search_code first. |
+| `get_function_details` | Returns **COMPLETE** function source: signature, params, return types, body. **Go, PHP, Python.** | When you know the exact function name and need full implementation. |
+| `find_type_definition` | Returns complete type source with fields, methods, inheritance. **Go, PHP, Python.** | To understand a data model or see what methods a type has. |
+| `find_implementations` | Lists all callers/usages with code snippets + file:line. **Go, PHP, Python.** | **Before refactoring** to understand impact, or to find usage examples. |
+| `list_package_exports` | Returns structured list: symbol names, types, signatures. **Go, PHP, Python.** | To explore unfamiliar packages or find the right function to call. |
+| `search_docs` | Returns doc snippets with file paths. **Markdown only.** | For setup, architecture, examples. **Not for code** - use search_code instead. |
+| `get_code_context` | Returns code snippet with configurable context lines. **Any text file.** | When you have file:line (from search/errors) and need surrounding code. |
+| `index_workspace` | Reindex codebase. **USUALLY AUTOMATIC.** **Go, PHP, Python, HTML.** | Only if "workspace not indexed" error or after git pull/branch switch. |
 
 **All tools require a `file_path` parameter** so that RagCode can determine the correct workspace.
 

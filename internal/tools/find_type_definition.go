@@ -135,7 +135,17 @@ func (t *FindTypeDefinitionTool) Execute(ctx context.Context, args map[string]in
 	}
 
 	// Use a larger search window to avoid missing type definitions when usages dominate
-	results, err := searchMemory.Search(ctx, queryEmbedding, 50)
+	// Prefer SearchCodeOnly to exclude markdown documentation
+	type CodeSearcher interface {
+		SearchCodeOnly(ctx context.Context, query []float64, limit int) ([]memory.Document, error)
+	}
+
+	var results []memory.Document
+	if codeSearcher, ok := searchMemory.(CodeSearcher); ok {
+		results, err = codeSearcher.SearchCodeOnly(ctx, queryEmbedding, 50)
+	} else {
+		results, err = searchMemory.Search(ctx, queryEmbedding, 50)
+	}
 	if err != nil {
 		return "", fmt.Errorf("search failed: %w", err)
 	}

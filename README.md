@@ -213,13 +213,23 @@ RagCode works with all major AI-powered IDEs:
 
 ## 📦 System Requirements
 
-| Component | Minimum | Recommended |
-|-----------|---------|-------------|
-| **CPU** | 4 cores | 8+ cores |
-| **RAM** | 16 GB | 32 GB |
-| **Disk** | 10 GB free | 20 GB SSD |
-| **GPU** | Not required | NVIDIA 8GB+ VRAM (faster) |
-| **Docker** | Required | Required |
+### Minimum Requirements
+
+| Component | Requirement | Notes |
+|-----------|-------------|-------|
+| **CPU** | 4 cores | For running Ollama models |
+| **RAM** | 16 GB | 8 GB for `phi3:medium`, 4 GB for `nomic-embed-text`, 4 GB system |
+| **Disk** | 10 GB free | ~8 GB for models + 2 GB for data |
+| **OS** | Linux, macOS, Windows | Docker required for Qdrant |
+
+### Recommended (for better performance)
+
+| Component | Requirement | Notes |
+|-----------|-------------|-------|
+| **CPU** | 8+ cores | Better concurrent operations |
+| **RAM** | 32 GB | Comfortable multi-workspace indexing |
+| **GPU** | NVIDIA 8GB+ VRAM | Significantly speeds up Ollama (optional) |
+| **Disk** | 20 GB SSD | Faster indexing and search |
 
 📖 **[Full Requirements →](./docs/CONFIGURATION.md#-system-requirements)**
 

@@ -39,7 +39,11 @@ internal/
 │       │       └── ast_helper.go     # AST utilities
 │       ├── html/          # HTML analyzer
 │       │   └── analyzer.go
-│       └── python/        # Python analyzer (placeholder)
+│       └── python/        # Python analyzer (full implementation)
+│           ├── analyzer.go
+│           ├── analyzer_test.go
+│           ├── api_analyzer.go
+│           ├── types.go
 │           └── README.md
 │
 ├── workspace/             # Multi-workspace detection and management
@@ -301,8 +305,9 @@ func (m *AnalyzerManager) APIAnalyzerForProjectType(projectType string) codetype
 
 **Supported Languages:**
 - `LanguageGo` (Go) - fully implemented
-- `LanguagePHP` (PHP) - placeholder
-- `LanguagePython` (Python) - placeholder
+- `LanguagePHP` (PHP) - fully implemented with Laravel support
+- `LanguagePython` (Python) - fully implemented with classes, decorators, type hints, mixins, metaclasses
+- `LanguageHTML` (HTML) - basic support
 
 ### 4. Workspace Manager (`internal/workspace/manager.go`)
 

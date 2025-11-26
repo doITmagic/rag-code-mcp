@@ -44,7 +44,7 @@ Built with the official [Model Context Protocol Go SDK](https://github.com/model
 - 🔍 **Semantic Code Search** - Find code by meaning, not just keywords
 - 🚀 **5-10x Faster** - Instant results vs. reading entire files
 - 💰 **98% Token Savings** - Reduce AI context usage dramatically
-- 🌐 **Multi-Language** - Go, PHP (Laravel), Python, JavaScript support
+- 🌐 **Multi-Language** - Go, PHP (Laravel), Python with full support
 - 🏢 **Multi-Workspace** - Handle multiple projects simultaneously
 - 🤖 **AI-Ready** - Works with Copilot, Cursor, Windsurf, Claude, Antigravity
 
@@ -124,15 +124,15 @@ Without RagCode, AI assistants must:
 
 ### 🌐 Multi-Language Code Intelligence
 
-- **Go** - ≈82% coverage with full AST analysis
-- **PHP** - ≈84% coverage + Laravel framework support
-- **Python** - Coming soon with full type hint support
-- **JavaScript/TypeScript** - Planned for future releases
+- **Go** - Full AST analysis with functions, types, interfaces, methods
+- **PHP** - Full support + Laravel framework (Eloquent models, routes, controllers)
+- **Python** - Full support with classes, functions, decorators, type hints, mixins, metaclasses
+- **JavaScript/TypeScript** - Planned for future releases (tree-sitter based)
 
 ### 🏗️ Advanced Architecture
 
-- **Multi-Workspace Detection** - Automatically detects project boundaries (git, go.mod, composer.json, package.json)
-- **Per-Language Collections** - Separate vector databases for each language (`ragcode-{workspace}-go`, `ragcode-{workspace}-php`)
+- **Multi-Workspace Detection** - Automatically detects project boundaries (git, go.mod, composer.json, package.json, pyproject.toml, requirements.txt)
+- **Per-Language Collections** - Separate vector databases for each language (`ragcode-{workspace}-go`, `ragcode-{workspace}-php`, `ragcode-{workspace}-python`)
 - **Automatic Indexing** - Background indexing on first use, no manual intervention needed
 - **Vector Embeddings** - Uses Ollama's `nomic-embed-text` for high-quality semantic embeddings
 - **Hybrid Search Engine** - Combines vector similarity with BM25 lexical matching
@@ -537,7 +537,7 @@ See the [LICENSE](./LICENSE) file for full details.
 
 ## 🏷️ Keywords & Topics
 
-`semantic-code-search` `rag` `retrieval-augmented-generation` `mcp-server` `model-context-protocol` `ai-code-assistant` `vector-search` `code-navigation` `ollama` `qdrant` `github-copilot` `cursor-ai` `windsurf` `go` `php` `laravel` `code-intelligence` `ast-analysis` `embeddings` `llm-tools` `local-ai` `privacy-first` `offline-ai` `self-hosted` `on-premise` `zero-cost` `no-cloud` `private-code-search` `enterprise-ai` `secure-coding-assistant`
+`semantic-code-search` `rag` `retrieval-augmented-generation` `mcp-server` `model-context-protocol` `ai-code-assistant` `vector-search` `code-navigation` `ollama` `qdrant` `github-copilot` `cursor-ai` `windsurf` `go` `php` `laravel` `python` `django` `flask` `fastapi` `code-intelligence` `ast-analysis` `embeddings` `llm-tools` `local-ai` `privacy-first` `offline-ai` `self-hosted` `on-premise` `zero-cost` `no-cloud` `private-code-search` `enterprise-ai` `secure-coding-assistant`
 
 ---
 

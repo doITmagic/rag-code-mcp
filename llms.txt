@@ -14,7 +14,8 @@
 ## Compatibility
 
 - **IDEs:** Windsurf, Cursor, VS Code + GitHub Copilot, Claude Desktop, Antigravity
-- **Languages:** Go, PHP (Laravel), Python, JavaScript
+- **Languages:** Go, PHP (Laravel), Python (full support with classes, decorators, type hints)
+- **Planned:** JavaScript/TypeScript (tree-sitter based)
 - **OS:** Linux, macOS, Windows (all require Docker)
 
 ## Quick Install
@@ -88,4 +89,4 @@ storage:
 
 ## Keywords
 
-semantic-code-search, rag, retrieval-augmented-generation, mcp-server, model-context-protocol, ai-code-assistant, vector-search, code-navigation, ollama, qdrant, github-copilot, cursor-ai, windsurf, local-ai, privacy-first, offline-ai, self-hosted, zero-cost
+semantic-code-search, rag, retrieval-augmented-generation, mcp-server, model-context-protocol, ai-code-assistant, vector-search, code-navigation, ollama, qdrant, github-copilot, cursor-ai, windsurf, go, php, laravel, python, django, flask, local-ai, privacy-first, offline-ai, self-hosted, zero-cost

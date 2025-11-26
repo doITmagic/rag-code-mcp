@@ -167,11 +167,24 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			}
 		}
 
-		// Search in workspace-specific collection
-		docs, err := workspaceMem.Search(ctx, queryEmbedding, limit)
+		// Search in workspace-specific collection, preferring code-only search
+		// Try SearchCodeOnly first (excludes markdown), fall back to Search
+		var docs []memory.Document
+		var searchErr error
+
+		// Type assertion to check if this memory supports code-only search
+		type CodeSearcher interface {
+			SearchCodeOnly(ctx context.Context, query []float64, limit int) ([]memory.Document, error)
+		}
+
+		if codeSearcher, ok := workspaceMem.(CodeSearcher); ok {
+			docs, searchErr = codeSearcher.SearchCodeOnly(ctx, queryEmbedding, limit)
+		} else {
+			docs, searchErr = workspaceMem.Search(ctx, queryEmbedding, limit)
+		}
 
 		// If search succeeds but returns no results, check if collection is empty
-		if err == nil && len(docs) == 0 {
+		if searchErr == nil && len(docs) == 0 {
 			// Collection might be empty - tell AI to index
 			collectionName := workspaceInfo.CollectionNameForLanguage(language)
 			return fmt.Sprintf("❌ Workspace '%s' appears to be empty or not indexed yet.\n\n"+
@@ -190,7 +203,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 				collectionName), nil
 		}
 
-		if err == nil && len(docs) > 0 {
+		if searchErr == nil && len(docs) > 0 {
 			if outputFormat == "markdown" {
 				result := fmt.Sprintf("🔍 Found %d relevant code snippets in workspace '%s':\n\n",
 					len(docs), workspaceInfo.Root)
@@ -201,9 +214,9 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			}
 
 			descriptors := buildSymbolDescriptorsFromDocs(docs)
-			data, err := json.MarshalIndent(descriptors, "", "  ")
-			if err != nil {
-				return "", fmt.Errorf("failed to marshal search_code results: %w", err)
+			data, marshalErr := json.MarshalIndent(descriptors, "", "  ")
+			if marshalErr != nil {
+				return "", fmt.Errorf("failed to marshal search_code results: %w", marshalErr)
 			}
 			return string(data), nil
 		}

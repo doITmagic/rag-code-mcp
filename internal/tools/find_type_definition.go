@@ -146,21 +146,39 @@ func (t *FindTypeDefinitionTool) Execute(ctx context.Context, args map[string]in
 		return "", fmt.Errorf("failed to generate query embedding: %w", err)
 	}
 
-	// Use a larger search window to avoid missing type definitions when usages dominate
-	// Prefer SearchCodeOnly to exclude markdown documentation
-	type CodeSearcher interface {
-		SearchCodeOnly(ctx context.Context, query []float64, limit int) ([]memory.Document, error)
+	// First, try exact name+type search (faster and more accurate)
+	type ExactSearcher interface {
+		SearchByNameAndType(ctx context.Context, name string, types []string) ([]memory.Document, error)
 	}
 
+	typeKinds := []string{"type", "class", "interface", "trait", "model"}
+
 	var results []memory.Document
-	if codeSearcher, ok := searchMemory.(CodeSearcher); ok {
-		results, err = codeSearcher.SearchCodeOnly(ctx, queryEmbedding, 50)
-	} else {
-		results, err = searchMemory.Search(ctx, queryEmbedding, 50)
+	if exactSearcher, ok := searchMemory.(ExactSearcher); ok {
+		results, err = exactSearcher.SearchByNameAndType(ctx, typeName, typeKinds)
+		if err == nil && len(results) > 0 {
+			// Found exact match, use it directly
+			goto processResults
+		}
 	}
-	if err != nil {
-		return "", fmt.Errorf("search failed: %w", err)
+
+	// Fallback to semantic search if exact search didn't find anything
+	{
+		type CodeSearcher interface {
+			SearchCodeOnly(ctx context.Context, query []float64, limit int) ([]memory.Document, error)
+		}
+
+		if codeSearcher, ok := searchMemory.(CodeSearcher); ok {
+			results, err = codeSearcher.SearchCodeOnly(ctx, queryEmbedding, 50)
+		} else {
+			results, err = searchMemory.Search(ctx, queryEmbedding, 50)
+		}
+		if err != nil {
+			return "", fmt.Errorf("search failed: %w", err)
+		}
 	}
+
+processResults:
 
 	if len(results) == 0 {
 		// Check if this is a workspace search with empty collection

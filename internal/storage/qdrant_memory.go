@@ -61,6 +61,15 @@ func (m *QdrantLongTermMemory) Search(ctx context.Context, query []float64, limi
 	return convertSearchResultsToDocuments(results), nil
 }
 
+// SearchByNameAndType searches for a symbol by exact name and type match
+func (m *QdrantLongTermMemory) SearchByNameAndType(ctx context.Context, name string, types []string) ([]memory.Document, error) {
+	results, err := m.client.SearchByNameAndType(ctx, name, types)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search by name and type: %w", err)
+	}
+	return convertSearchResultsToDocuments(results), nil
+}
+
 // SearchCodeOnly searches for similar documents, excluding markdown documentation
 func (m *QdrantLongTermMemory) SearchCodeOnly(ctx context.Context, query []float64, limit int) ([]memory.Document, error) {
 	if len(query) == 0 {

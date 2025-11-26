@@ -747,3 +747,202 @@ func TestIncludeTestsOption(t *testing.T) {
 		t.Error("includeTests should be false")
 	}
 }
+
+func TestMixinDetection(t *testing.T) {
+	analyzer := NewCodeAnalyzer()
+
+	content := `class LoggingMixin:
+    """Mixin for logging functionality."""
+    def log(self, message: str) -> None:
+        print(message)
+
+class UserMixin:
+    """User-related mixin."""
+    pass
+
+class MyClass(Base, LoggingMixin):
+    """Class using a mixin."""
+    pass
+`
+
+	lines := strings.Split(content, "\n")
+	classes := analyzer.extractClasses(lines, "test.py", []byte(content))
+
+	if len(classes) != 3 {
+		t.Fatalf("expected 3 classes, got %d", len(classes))
+	}
+
+	// LoggingMixin should be detected as mixin
+	if !classes[0].IsMixin {
+		t.Error("LoggingMixin should be marked as mixin")
+	}
+
+	// UserMixin should be detected as mixin
+	if !classes[1].IsMixin {
+		t.Error("UserMixin should be marked as mixin")
+	}
+
+	// MyClass inherits from a mixin, so it should also be marked
+	if !classes[2].IsMixin {
+		t.Error("MyClass should be marked as mixin (inherits from LoggingMixin)")
+	}
+}
+
+func TestMetaclassDetection(t *testing.T) {
+	analyzer := NewCodeAnalyzer()
+
+	content := `from abc import ABCMeta
+
+class MyAbstractClass(metaclass=ABCMeta):
+    """Class with metaclass."""
+    pass
+
+class AnotherClass(Base, metaclass=CustomMeta):
+    """Another class with custom metaclass."""
+    pass
+`
+
+	lines := strings.Split(content, "\n")
+	classes := analyzer.extractClasses(lines, "test.py", []byte(content))
+
+	if len(classes) != 2 {
+		t.Fatalf("expected 2 classes, got %d", len(classes))
+	}
+
+	if classes[0].Metaclass != "ABCMeta" {
+		t.Errorf("expected metaclass 'ABCMeta', got '%s'", classes[0].Metaclass)
+	}
+
+	if classes[1].Metaclass != "CustomMeta" {
+		t.Errorf("expected metaclass 'CustomMeta', got '%s'", classes[1].Metaclass)
+	}
+}
+
+func TestMethodCallExtraction(t *testing.T) {
+	analyzer := NewCodeAnalyzer()
+
+	content := `class MyClass:
+    def process(self, data: str) -> None:
+        self.validate(data)
+        self.transform(data)
+        result = Helper.compute(data)
+        save_to_db(result)
+        super().process(data)
+`
+
+	lines := strings.Split(content, "\n")
+	classes := analyzer.extractClasses(lines, "test.py", []byte(content))
+
+	if len(classes) != 1 {
+		t.Fatalf("expected 1 class, got %d", len(classes))
+	}
+
+	if len(classes[0].Methods) != 1 {
+		t.Fatalf("expected 1 method, got %d", len(classes[0].Methods))
+	}
+
+	method := classes[0].Methods[0]
+
+	// Should have detected calls to: validate, transform, Helper.compute, save_to_db, super().process
+	if len(method.Calls) < 4 {
+		t.Errorf("expected at least 4 method calls, got %d", len(method.Calls))
+	}
+
+	// Check for self.validate call
+	foundValidate := false
+	for _, call := range method.Calls {
+		if call.Name == "validate" && call.Receiver == "self" {
+			foundValidate = true
+			break
+		}
+	}
+	if !foundValidate {
+		t.Error("self.validate call not detected")
+	}
+}
+
+func TestTypeDependencyExtraction(t *testing.T) {
+	analyzer := NewCodeAnalyzer()
+
+	content := `from typing import Optional, List
+
+class UserService:
+    def get_user(self, user_id: int) -> User:
+        pass
+    
+    def get_users(self) -> List[User]:
+        pass
+    
+    def find_by_email(self, email: str) -> Optional[User]:
+        pass
+    
+    def create_order(self, user: User, items: List[Product]) -> Order:
+        pass
+`
+
+	lines := strings.Split(content, "\n")
+	classes := analyzer.extractClasses(lines, "test.py", []byte(content))
+
+	if len(classes) != 1 {
+		t.Fatalf("expected 1 class, got %d", len(classes))
+	}
+
+	// Check class dependencies
+	deps := classes[0].Dependencies
+
+	// Should include User, Product, Order
+	expectedDeps := map[string]bool{"User": false, "Product": false, "Order": false}
+	for _, dep := range deps {
+		if _, ok := expectedDeps[dep]; ok {
+			expectedDeps[dep] = true
+		}
+	}
+
+	for dep, found := range expectedDeps {
+		if !found {
+			t.Errorf("dependency '%s' not detected", dep)
+		}
+	}
+}
+
+func TestClassDependencies(t *testing.T) {
+	analyzer := NewCodeAnalyzer()
+
+	content := `class BaseModel:
+    pass
+
+class User(BaseModel):
+    manager: UserManager
+    
+    def get_orders(self) -> List[Order]:
+        pass
+
+class Order(BaseModel):
+    user: User
+`
+
+	lines := strings.Split(content, "\n")
+	classes := analyzer.extractClasses(lines, "test.py", []byte(content))
+
+	if len(classes) != 3 {
+		t.Fatalf("expected 3 classes, got %d", len(classes))
+	}
+
+	// User class should depend on BaseModel, UserManager, Order
+	userClass := classes[1]
+	if userClass.Name != "User" {
+		t.Fatalf("expected User class, got %s", userClass.Name)
+	}
+
+	// Check that BaseModel is in dependencies
+	foundBaseModel := false
+	for _, dep := range userClass.Dependencies {
+		if dep == "BaseModel" {
+			foundBaseModel = true
+			break
+		}
+	}
+	if !foundBaseModel {
+		t.Error("BaseModel not found in User dependencies")
+	}
+}

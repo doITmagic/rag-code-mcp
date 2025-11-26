@@ -411,6 +411,10 @@ func (ca *CodeAnalyzer) extractClasses(lines []string, filePath string, content 
 					}
 				}
 
+				// Detect mixin and metaclass
+				isMixin := isMixinClass(className, bases)
+				metaclass := ca.extractMetaclass(lines, i)
+
 				classInfo := ClassInfo{
 					Name:        className,
 					Description: docstring,
@@ -420,6 +424,8 @@ func (ca *CodeAnalyzer) extractClasses(lines []string, filePath string, content 
 					IsDataclass: isDataclass,
 					IsEnum:      isEnum,
 					IsProtocol:  isProtocol,
+					IsMixin:     isMixin,
+					Metaclass:   metaclass,
 					FilePath:    filePath,
 					StartLine:   startLine,
 					EndLine:     endLine,
@@ -430,6 +436,9 @@ func (ca *CodeAnalyzer) extractClasses(lines []string, filePath string, content 
 				classInfo.Methods = ca.extractMethods(lines, i, endLine-1, className, filePath, content)
 				classInfo.Properties = ca.extractProperties(classInfo.Methods)
 				classInfo.ClassVars = ca.extractClassVariables(lines, i, endLine-1, filePath)
+
+				// Extract class dependencies (after methods are extracted)
+				classInfo.Dependencies = ca.extractClassDependencies(&classInfo, nil)
 
 				classes = append(classes, classInfo)
 				currentDecorators = nil
@@ -512,6 +521,10 @@ func (ca *CodeAnalyzer) extractMethods(lines []string, classStartIdx, classEndId
 			// Build signature
 			signature := ca.buildMethodSignature(methodName, params, returnType, isAsync)
 
+			// Extract method calls and type dependencies
+			calls := ca.extractMethodCalls(lines, i+1, endLine-1)
+			typeDeps := ca.extractTypeDependencies(params, returnType)
+
 			methodInfo := MethodInfo{
 				Name:          methodName,
 				Signature:     signature,
@@ -519,6 +532,8 @@ func (ca *CodeAnalyzer) extractMethods(lines []string, classStartIdx, classEndId
 				Parameters:    params,
 				ReturnType:    returnType,
 				Decorators:    currentDecorators,
+				Calls:         calls,
+				TypeDeps:      typeDeps,
 				IsStatic:      isStatic,
 				IsClassMethod: isClassMethod,
 				IsProperty:    isProperty,
@@ -1022,6 +1037,9 @@ func (ca *CodeAnalyzer) convertToChunks() []codetypes.CodeChunk {
 					"is_dataclass": class.IsDataclass,
 					"is_enum":      class.IsEnum,
 					"is_protocol":  class.IsProtocol,
+					"is_mixin":     class.IsMixin,
+					"metaclass":    class.Metaclass,
+					"dependencies": class.Dependencies,
 				},
 			}
 			chunks = append(chunks, chunk)
@@ -1031,6 +1049,17 @@ func (ca *CodeAnalyzer) convertToChunks() []codetypes.CodeChunk {
 				// Skip property methods (they're handled separately)
 				if method.IsProperty {
 					continue
+				}
+
+				// Convert method calls to serializable format
+				var callsData []map[string]any
+				for _, call := range method.Calls {
+					callsData = append(callsData, map[string]any{
+						"name":       call.Name,
+						"receiver":   call.Receiver,
+						"class_name": call.ClassName,
+						"line":       call.Line,
+					})
 				}
 
 				methodChunk := codetypes.CodeChunk{
@@ -1050,6 +1079,8 @@ func (ca *CodeAnalyzer) convertToChunks() []codetypes.CodeChunk {
 						"is_classmethod": method.IsClassMethod,
 						"is_async":       method.IsAsync,
 						"decorators":     method.Decorators,
+						"calls":          callsData,
+						"type_deps":      method.TypeDeps,
 					},
 				}
 				chunks = append(chunks, methodChunk)
@@ -1207,4 +1238,278 @@ func buildClassSignature(cls ClassInfo) string {
 	}
 
 	return sig
+}
+
+// isMixinClass checks if a class is a mixin based on naming convention or usage
+func isMixinClass(name string, bases []string) bool {
+	// Check naming convention
+	if strings.HasSuffix(name, "Mixin") || strings.Contains(name, "Mixin") {
+		return true
+	}
+
+	// Check if any base class is a mixin
+	for _, base := range bases {
+		if strings.HasSuffix(base, "Mixin") || strings.Contains(base, "Mixin") {
+			return true
+		}
+	}
+
+	return false
+}
+
+// extractMetaclass extracts metaclass from class definition
+func (ca *CodeAnalyzer) extractMetaclass(lines []string, classLineIdx int) string {
+	if classLineIdx >= len(lines) {
+		return ""
+	}
+
+	line := lines[classLineIdx]
+
+	// Look for metaclass= in class definition
+	// class Foo(metaclass=ABCMeta):
+	// class Foo(Base, metaclass=MyMeta):
+	metaclassRe := regexp.MustCompile(`metaclass\s*=\s*(\w+)`)
+	if matches := metaclassRe.FindStringSubmatch(line); matches != nil {
+		return matches[1]
+	}
+
+	return ""
+}
+
+// extractMethodCalls extracts method/function calls from method body
+func (ca *CodeAnalyzer) extractMethodCalls(lines []string, startIdx, endIdx int) []MethodCall {
+	var calls []MethodCall
+
+	// Regex patterns for method calls
+	// self.method_name(...)
+	selfCallRe := regexp.MustCompile(`self\.(\w+)\s*\(`)
+	// cls.method_name(...)
+	clsCallRe := regexp.MustCompile(`cls\.(\w+)\s*\(`)
+	// super().method_name(...)
+	superCallRe := regexp.MustCompile(`super\(\)\.(\w+)\s*\(`)
+	// ClassName.method_name(...) or ClassName(...)
+	classCallRe := regexp.MustCompile(`([A-Z]\w+)\.(\w+)\s*\(`)
+	// function_name(...)
+	funcCallRe := regexp.MustCompile(`(?:^|[^.\w])(\w+)\s*\(`)
+
+	seen := make(map[string]bool)
+
+	for i := startIdx; i <= endIdx && i < len(lines); i++ {
+		line := lines[i]
+		lineNum := i + 1
+
+		// self.method()
+		for _, match := range selfCallRe.FindAllStringSubmatch(line, -1) {
+			key := "self." + match[1]
+			if !seen[key] {
+				calls = append(calls, MethodCall{
+					Name:     match[1],
+					Receiver: "self",
+					Line:     lineNum,
+				})
+				seen[key] = true
+			}
+		}
+
+		// cls.method()
+		for _, match := range clsCallRe.FindAllStringSubmatch(line, -1) {
+			key := "cls." + match[1]
+			if !seen[key] {
+				calls = append(calls, MethodCall{
+					Name:     match[1],
+					Receiver: "cls",
+					Line:     lineNum,
+				})
+				seen[key] = true
+			}
+		}
+
+		// super().method()
+		for _, match := range superCallRe.FindAllStringSubmatch(line, -1) {
+			key := "super." + match[1]
+			if !seen[key] {
+				calls = append(calls, MethodCall{
+					Name:     match[1],
+					Receiver: "super()",
+					Line:     lineNum,
+				})
+				seen[key] = true
+			}
+		}
+
+		// ClassName.method()
+		for _, match := range classCallRe.FindAllStringSubmatch(line, -1) {
+			key := match[1] + "." + match[2]
+			if !seen[key] {
+				calls = append(calls, MethodCall{
+					Name:      match[2],
+					Receiver:  match[1],
+					ClassName: match[1],
+					Line:      lineNum,
+				})
+				seen[key] = true
+			}
+		}
+
+		// Standalone function calls (excluding keywords and common builtins)
+		for _, match := range funcCallRe.FindAllStringSubmatch(line, -1) {
+			funcName := match[1]
+			// Skip Python keywords and common builtins
+			if isKeywordOrBuiltin(funcName) {
+				continue
+			}
+			// Skip if already captured as method call
+			if seen["self."+funcName] || seen["cls."+funcName] {
+				continue
+			}
+			key := "func." + funcName
+			if !seen[key] {
+				calls = append(calls, MethodCall{
+					Name: funcName,
+					Line: lineNum,
+				})
+				seen[key] = true
+			}
+		}
+	}
+
+	return calls
+}
+
+// extractTypeDependencies extracts type names from parameters and return type
+func (ca *CodeAnalyzer) extractTypeDependencies(params []codetypes.ParamInfo, returnType string) []string {
+	var deps []string
+	seen := make(map[string]bool)
+
+	// Type extraction regex - matches class names (capitalized)
+	typeRe := regexp.MustCompile(`([A-Z]\w+)`)
+
+	// Extract from parameters
+	for _, param := range params {
+		if param.Type != "" {
+			for _, match := range typeRe.FindAllStringSubmatch(param.Type, -1) {
+				typeName := match[1]
+				if !seen[typeName] && !isBuiltinType(typeName) {
+					deps = append(deps, typeName)
+					seen[typeName] = true
+				}
+			}
+		}
+	}
+
+	// Extract from return type
+	if returnType != "" {
+		for _, match := range typeRe.FindAllStringSubmatch(returnType, -1) {
+			typeName := match[1]
+			if !seen[typeName] && !isBuiltinType(typeName) {
+				deps = append(deps, typeName)
+				seen[typeName] = true
+			}
+		}
+	}
+
+	return deps
+}
+
+// extractClassDependencies extracts all dependencies for a class
+func (ca *CodeAnalyzer) extractClassDependencies(class *ClassInfo, moduleImports []ImportInfo) []string {
+	var deps []string
+	seen := make(map[string]bool)
+
+	// Add base classes as dependencies
+	for _, base := range class.Bases {
+		// Clean up generic types: List[User] -> User
+		baseName := extractBaseTypeName(base)
+		if baseName != "" && !isBuiltinType(baseName) && !seen[baseName] {
+			deps = append(deps, baseName)
+			seen[baseName] = true
+		}
+	}
+
+	// Add metaclass as dependency
+	if class.Metaclass != "" && !seen[class.Metaclass] {
+		deps = append(deps, class.Metaclass)
+		seen[class.Metaclass] = true
+	}
+
+	// Add type dependencies from methods
+	for _, method := range class.Methods {
+		for _, typeDep := range method.TypeDeps {
+			if !seen[typeDep] {
+				deps = append(deps, typeDep)
+				seen[typeDep] = true
+			}
+		}
+	}
+
+	// Add dependencies from class variables
+	for _, v := range class.ClassVars {
+		if v.Type != "" {
+			typeName := extractBaseTypeName(v.Type)
+			if typeName != "" && !isBuiltinType(typeName) && !seen[typeName] {
+				deps = append(deps, typeName)
+				seen[typeName] = true
+			}
+		}
+	}
+
+	return deps
+}
+
+// Helper functions
+
+// isKeywordOrBuiltin checks if a name is a Python keyword or common builtin
+func isKeywordOrBuiltin(name string) bool {
+	keywords := map[string]bool{
+		// Keywords
+		"if": true, "else": true, "elif": true, "for": true, "while": true,
+		"try": true, "except": true, "finally": true, "with": true, "as": true,
+		"def": true, "class": true, "return": true, "yield": true, "raise": true,
+		"import": true, "from": true, "pass": true, "break": true, "continue": true,
+		"and": true, "or": true, "not": true, "in": true, "is": true,
+		"lambda": true, "global": true, "nonlocal": true, "assert": true, "del": true,
+		"async": true, "await": true,
+		// Common builtins
+		"print": true, "len": true, "range": true, "str": true, "int": true,
+		"float": true, "bool": true, "list": true, "dict": true, "set": true,
+		"tuple": true, "type": true, "isinstance": true, "issubclass": true,
+		"hasattr": true, "getattr": true, "setattr": true, "delattr": true,
+		"open": true, "input": true, "super": true, "property": true,
+		"staticmethod": true, "classmethod": true, "enumerate": true, "zip": true,
+		"map": true, "filter": true, "sorted": true, "reversed": true,
+		"min": true, "max": true, "sum": true, "abs": true, "round": true,
+		"any": true, "all": true, "next": true, "iter": true,
+	}
+	return keywords[name]
+}
+
+// isBuiltinType checks if a type name is a Python builtin type
+func isBuiltinType(name string) bool {
+	builtins := map[string]bool{
+		"str": true, "int": true, "float": true, "bool": true, "bytes": true,
+		"list": true, "List": true, "dict": true, "Dict": true,
+		"set": true, "Set": true, "tuple": true, "Tuple": true,
+		"None": true, "Any": true, "Optional": true, "Union": true,
+		"Callable": true, "Type": true, "Sequence": true, "Mapping": true,
+		"Iterable": true, "Iterator": true, "Generator": true,
+		"Coroutine": true, "Awaitable": true, "AsyncIterator": true,
+		"Self": true, "TypeVar": true, "Generic": true,
+	}
+	return builtins[name]
+}
+
+// extractBaseTypeName extracts the base type name from a generic type
+// e.g., "List[User]" -> "User", "Optional[str]" -> "str", "Dict[str, User]" -> "User"
+func extractBaseTypeName(typeName string) string {
+	// Remove Optional, List, etc. wrappers
+	if idx := strings.Index(typeName, "["); idx != -1 {
+		inner := typeName[idx+1 : len(typeName)-1]
+		// For Dict[K, V], get the value type
+		if strings.Contains(inner, ",") {
+			parts := strings.Split(inner, ",")
+			inner = strings.TrimSpace(parts[len(parts)-1])
+		}
+		return extractBaseTypeName(inner)
+	}
+	return typeName
 }

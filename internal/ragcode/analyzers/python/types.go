@@ -16,21 +16,24 @@ type ModuleInfo struct {
 
 // ClassInfo describes a Python class
 type ClassInfo struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"` // Class docstring
-	Bases       []string       `json:"bases,omitempty"`
-	Decorators  []string       `json:"decorators,omitempty"`
-	Methods     []MethodInfo   `json:"methods"`
-	Properties  []PropertyInfo `json:"properties"`
-	ClassVars   []VariableInfo `json:"class_vars,omitempty"`
-	IsAbstract  bool           `json:"is_abstract"`
-	IsDataclass bool           `json:"is_dataclass"`
-	IsEnum      bool           `json:"is_enum"`     // Inherits from Enum
-	IsProtocol  bool           `json:"is_protocol"` // Inherits from Protocol (typing)
-	FilePath    string         `json:"file_path,omitempty"`
-	StartLine   int            `json:"start_line,omitempty"`
-	EndLine     int            `json:"end_line,omitempty"`
-	Code        string         `json:"code,omitempty"`
+	Name         string         `json:"name"`
+	Description  string         `json:"description"` // Class docstring
+	Bases        []string       `json:"bases,omitempty"`
+	Decorators   []string       `json:"decorators,omitempty"`
+	Methods      []MethodInfo   `json:"methods"`
+	Properties   []PropertyInfo `json:"properties"`
+	ClassVars    []VariableInfo `json:"class_vars,omitempty"`
+	IsAbstract   bool           `json:"is_abstract"`
+	IsDataclass  bool           `json:"is_dataclass"`
+	IsEnum       bool           `json:"is_enum"`                // Inherits from Enum
+	IsProtocol   bool           `json:"is_protocol"`            // Inherits from Protocol (typing)
+	IsMixin      bool           `json:"is_mixin"`               // Class name ends with Mixin or used as mixin
+	Metaclass    string         `json:"metaclass,omitempty"`    // metaclass= argument
+	Dependencies []string       `json:"dependencies,omitempty"` // Classes this class depends on (via type hints, imports)
+	FilePath     string         `json:"file_path,omitempty"`
+	StartLine    int            `json:"start_line,omitempty"`
+	EndLine      int            `json:"end_line,omitempty"`
+	Code         string         `json:"code,omitempty"`
 }
 
 // MethodInfo describes a class method
@@ -42,6 +45,8 @@ type MethodInfo struct {
 	ReturnType    string                 `json:"return_type,omitempty"`
 	Returns       []codetypes.ReturnInfo `json:"returns,omitempty"`
 	Decorators    []string               `json:"decorators,omitempty"`
+	Calls         []MethodCall           `json:"calls,omitempty"`     // Methods/functions this method calls
+	TypeDeps      []string               `json:"type_deps,omitempty"` // Types used in parameters/return
 	IsStatic      bool                   `json:"is_static"`
 	IsClassMethod bool                   `json:"is_classmethod"`
 	IsProperty    bool                   `json:"is_property"`
@@ -146,4 +151,27 @@ type DocstringReturn struct {
 type DocstringRaise struct {
 	Type        string `json:"type"`
 	Description string `json:"description"`
+}
+
+// MethodCall represents a call to another method/function
+type MethodCall struct {
+	Name      string `json:"name"`                 // Method/function name
+	Receiver  string `json:"receiver,omitempty"`   // Object the method is called on (e.g., "self", "cls", variable name)
+	ClassName string `json:"class_name,omitempty"` // Class name if known
+	Line      int    `json:"line,omitempty"`       // Line number of the call
+}
+
+// DependencyInfo represents a dependency relationship between classes/modules
+type DependencyInfo struct {
+	Source     string   `json:"source"`     // Source class/module
+	Target     string   `json:"target"`     // Target class/module
+	Type       string   `json:"type"`       // "inheritance", "composition", "import", "type_hint"
+	References []string `json:"references"` // Specific references (method names, etc.)
+}
+
+// ModuleDependencies contains all dependency information for a module
+type ModuleDependencies struct {
+	ModuleName   string           `json:"module_name"`
+	Imports      []ImportInfo     `json:"imports"`
+	Dependencies []DependencyInfo `json:"dependencies"`
 }

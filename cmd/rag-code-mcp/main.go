@@ -25,10 +25,10 @@ import (
 )
 
 var (
-	Version = "dev"
+	Version = "1.1.12"
 	Commit  = "none"
 	Date    = "unknown"
-	// Build trigger
+	// Build trigger: Python analyzer support
 )
 
 // Simple logger using log level from env
@@ -543,7 +543,7 @@ func main() {
 
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "ragcode",
-		Version: "1.0.0",
+		Version: "1.1.12",
 	}, nil)
 
 	// All tools use workspace manager - no single collections

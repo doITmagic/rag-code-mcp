@@ -122,10 +122,22 @@ func (t *FindTypeDefinitionTool) Execute(ctx context.Context, args map[string]in
 		return "", fmt.Errorf("no long-term memory configured")
 	}
 
+	// Detect language from file path to build appropriate query
+	language := inferLanguageFromPath(filePath)
+
 	// Search for the type in the vector database
-	query := fmt.Sprintf("type %s definition", typeName)
+	// Use language-appropriate keywords for better semantic matching
+	var query string
+	switch language {
+	case "python":
+		query = fmt.Sprintf("class %s definition python", typeName)
+	case "php":
+		query = fmt.Sprintf("class %s definition php", typeName)
+	default:
+		query = fmt.Sprintf("type %s definition struct interface", typeName)
+	}
 	if packagePath != "" {
-		query = fmt.Sprintf("type %s in package %s", typeName, packagePath)
+		query = fmt.Sprintf("%s in package %s", query, packagePath)
 	}
 
 	// Generate query embedding

@@ -17,6 +17,16 @@ type Detector struct {
 
 	// ExcludePatterns are path patterns to exclude from workspace detection
 	excludePatterns []string
+
+	// AllowedPaths restricts workspace detection to specific directories
+	// If set, only paths within these directories are allowed
+	allowedPaths []string
+
+	// DisableUpwardSearch when true, disables searching parent directories
+	disableUpwardSearch bool
+
+	// RequireExplicitPath when true, requires file_path parameter (no CWD fallback)
+	requireExplicitPath bool
 }
 
 // NewDetector creates a new workspace detector with default markers
@@ -47,7 +57,7 @@ func NewDetector() *Detector {
 }
 
 // NewDetectorWithConfig creates a detector with configuration
-func NewDetectorWithConfig(markers []string, excludePatterns []string) *Detector {
+func NewDetectorWithConfig(markers []string, excludePatterns []string, allowedPaths []string, disableUpwardSearch bool, requireExplicitPath bool) *Detector {
 	d := NewDetector()
 	if len(markers) > 0 {
 		d.markers = markers
@@ -55,6 +65,9 @@ func NewDetectorWithConfig(markers []string, excludePatterns []string) *Detector
 	if len(excludePatterns) > 0 {
 		d.excludePatterns = excludePatterns
 	}
+	d.allowedPaths = allowedPaths
+	d.disableUpwardSearch = disableUpwardSearch
+	d.requireExplicitPath = requireExplicitPath
 	return d
 }
 
@@ -66,6 +79,21 @@ func (d *Detector) SetMarkers(markers []string) {
 // SetExcludePatterns sets path patterns to exclude
 func (d *Detector) SetExcludePatterns(patterns []string) {
 	d.excludePatterns = patterns
+}
+
+// SetAllowedPaths sets allowed workspace paths
+func (d *Detector) SetAllowedPaths(paths []string) {
+	d.allowedPaths = paths
+}
+
+// SetDisableUpwardSearch sets whether to disable upward directory search
+func (d *Detector) SetDisableUpwardSearch(disable bool) {
+	d.disableUpwardSearch = disable
+}
+
+// SetRequireExplicitPath sets whether to require explicit file paths
+func (d *Detector) SetRequireExplicitPath(require bool) {
+	d.requireExplicitPath = require
 }
 
 // DetectFromPath detects workspace from a file path
@@ -83,6 +111,32 @@ func (d *Detector) DetectFromPath(filePath string) (*Info, error) {
 	startDir := absPath
 	if !isDir(absPath) {
 		startDir = filepath.Dir(absPath)
+	}
+	
+	// Validate against allowed paths if configured
+	if len(d.allowedPaths) > 0 {
+		allowed := false
+		for _, allowedPath := range d.allowedPaths {
+			// Normalize allowed path
+			absAllowed, err := filepath.Abs(allowedPath)
+			if err != nil {
+				continue
+			}
+			// Check if startDir is within allowed path
+			if startDir == absAllowed || strings.HasPrefix(startDir, absAllowed+string(filepath.Separator)) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return nil, fmt.Errorf(
+				"path '%s' is not within allowed workspace paths.\n\n"+
+					"Configured allowed paths:\n"+
+					"  %s\n\n"+
+					"To use this path, add it to 'workspace.allowed_workspace_paths' in your config.",
+				startDir, strings.Join(d.allowedPaths, "\n  "),
+			)
+		}
 	}
 	
 	// Reject filesystem root - never valid as a project
@@ -116,6 +170,29 @@ func (d *Detector) DetectFromPath(filePath string) (*Info, error) {
 		current = filepath.Dir(absPath)
 	}
 
+	// If upward search is disabled, only check current directory
+	if d.disableUpwardSearch {
+		foundMarkers, projectType, languages := d.findMarkers(current)
+		if len(foundMarkers) > 0 {
+			// Found workspace root in current directory
+			return &Info{
+				Root:        current,
+				ID:          generateWorkspaceID(current),
+				ProjectType: projectType,
+				Languages:   languages,
+				Markers:     foundMarkers,
+				DetectedAt:  time.Now(),
+			}, nil
+		}
+		// No markers in current directory and upward search is disabled
+		return nil, fmt.Errorf(
+			"no workspace markers found in '%s'.\n\n"+
+				"Upward directory search is disabled (workspace.disable_upward_search = true).\n"+
+				"Please ensure workspace markers exist in the current directory, or enable upward search.",
+			current,
+		)
+	}
+
 	// Walk up directory tree looking for workspace markers
 	// Stop at Home directory to prevent scanning beyond user's projects
 	// Also limit traversal depth to prevent excessive walking
@@ -132,6 +209,30 @@ func (d *Detector) DetectFromPath(filePath string) (*Info, error) {
 		// Check for workspace markers
 		foundMarkers, projectType, languages := d.findMarkers(current)
 		if len(foundMarkers) > 0 {
+			// Found workspace root - validate it's in allowed paths if configured
+			if len(d.allowedPaths) > 0 {
+				allowed := false
+				for _, allowedPath := range d.allowedPaths {
+					absAllowed, err := filepath.Abs(allowedPath)
+					if err != nil {
+						continue
+					}
+					if current == absAllowed || strings.HasPrefix(current, absAllowed+string(filepath.Separator)) {
+						allowed = true
+						break
+					}
+				}
+				if !allowed {
+					// Found markers but outside allowed paths, continue searching
+					parent := filepath.Dir(current)
+					if parent == current {
+						break
+					}
+					current = parent
+					continue
+				}
+			}
+			
 			// Found workspace root
 			return &Info{
 				Root:        current,
@@ -198,6 +299,16 @@ func (d *Detector) DetectFromParams(params map[string]interface{}) (*Info, error
 				return d.DetectFromPath(path)
 			}
 		}
+	}
+
+	// Check if explicit path is required
+	if d.requireExplicitPath {
+		return nil, fmt.Errorf(
+			"no file_path parameter provided.\n\n"+
+				"This server is configured to require explicit file paths (workspace.require_explicit_path = true).\n"+
+				"Please provide a file_path parameter in your tool call.\n\n"+
+				"This security setting prevents automatic use of current working directory.",
+		)
 	}
 
 	// Fallback: use current working directory

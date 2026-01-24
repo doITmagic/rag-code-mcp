@@ -211,6 +211,9 @@ func NewManager(qdrant *storage.QdrantClient, llm llm.Provider, cfg *config.Conf
 		detector = NewDetectorWithConfig(
 			cfg.Workspace.DetectionMarkers,
 			cfg.Workspace.ExcludePatterns,
+			cfg.Workspace.AllowedWorkspacePaths,
+			cfg.Workspace.DisableUpwardSearch,
+			cfg.Workspace.RequireExplicitPath,
 		)
 	} else {
 		detector = NewDetector()

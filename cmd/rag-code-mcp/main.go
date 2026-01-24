@@ -382,6 +382,11 @@ func main() {
 	versionFlag := flag.Bool("version", false, "Print version information and exit")
 	healthFlag := flag.Bool("health", false, "Run health check and exit")
 
+	// Workspace security flags - can be set in IDE MCP configuration
+	allowedPathsFlag := flag.String("allowed-paths", "", "Comma-separated list of allowed workspace paths (e.g., ~/projects,~/work)")
+	disableUpwardSearchFlag := flag.Bool("disable-upward-search", false, "Disable searching parent directories for workspace markers")
+	requireExplicitPathFlag := flag.Bool("require-explicit-path", false, "Require explicit file_path parameter (no CWD fallback)")
+
 	// Custom usage message
 	flag.Usage = printUsage
 
@@ -456,6 +461,31 @@ func main() {
 	}
 	if *qdrantURLFlag != "" {
 		cfg.Storage.VectorDB.URL = *qdrantURLFlag
+	}
+
+	// Apply workspace security CLI overrides
+	if *allowedPathsFlag != "" {
+		// Parse comma-separated paths
+		paths := strings.Split(*allowedPathsFlag, ",")
+		for i, p := range paths {
+			paths[i] = strings.TrimSpace(p)
+			// Expand ~ to home directory
+			if strings.HasPrefix(paths[i], "~/") {
+				if home, err := os.UserHomeDir(); err == nil {
+					paths[i] = filepath.Join(home, paths[i][2:])
+				}
+			}
+		}
+		cfg.Workspace.AllowedWorkspacePaths = paths
+		logger.Info("Allowed workspace paths set via CLI: %v", paths)
+	}
+	if *disableUpwardSearchFlag {
+		cfg.Workspace.DisableUpwardSearch = true
+		logger.Info("Upward directory search disabled via CLI")
+	}
+	if *requireExplicitPathFlag {
+		cfg.Workspace.RequireExplicitPath = true
+		logger.Info("Explicit file_path required via CLI")
 	}
 
 	// Set defaults
@@ -1031,6 +1061,18 @@ EXAMPLES:
     # Override Ollama and Qdrant URLs
     rag-code-mcp -ollama-base-url http://remote:11434 -qdrant-url http://remote:6333
 
+    # Restrict to specific project directories (SECURITY)
+    rag-code-mcp -allowed-paths "~/projects,~/work"
+
+    # Disable automatic parent directory search
+    rag-code-mcp -disable-upward-search
+
+    # Require explicit file paths (no CWD fallback)
+    rag-code-mcp -require-explicit-path
+
+    # Combined security settings for IDE configuration
+    rag-code-mcp -allowed-paths "~/projects" -disable-upward-search
+
     # Check version
     rag-code-mcp -version
 
@@ -1043,6 +1085,26 @@ OPTIONS:
 	fmt.Fprintf(os.Stderr, `
 CONFIGURATION PRECEDENCE:
     CLI flags > Environment variables > config.yaml > defaults
+
+SECURITY OPTIONS (Configurable in IDE MCP settings):
+    -allowed-paths string
+        Comma-separated list of directories where workspaces are allowed.
+        Only paths within these directories will be accepted as workspaces.
+        Useful for restricting tool to specific project folders.
+        Example: -allowed-paths "~/projects,~/work,/opt/code"
+        Can also be set in config: workspace.allowed_workspace_paths
+
+    -disable-upward-search
+        Disable automatic search of parent directories for workspace markers.
+        Tool will only check the exact directory provided.
+        Useful for strict control and preventing unintended directory traversal.
+        Can also be set in config: workspace.disable_upward_search
+
+    -require-explicit-path
+        Require explicit file_path parameter in all tool calls.
+        Disables fallback to current working directory.
+        Useful for maximum security when you want explicit paths always.
+        Can also be set in config: workspace.require_explicit_path
 
 ENVIRONMENT VARIABLES:
     OLLAMA_BASE_URL              Ollama server URL (default: http://localhost:11434)

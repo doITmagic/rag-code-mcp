@@ -76,32 +76,26 @@ func (d *Detector) DetectFromPath(filePath string) (*Info, error) {
 		return nil, fmt.Errorf("failed to get absolute path: %w", err)
 	}
 
-	// Early validation: reject system directories and Home directory to prevent broad filesystem access
 	homeDir, _ := os.UserHomeDir()
+	
+	// Early validation: Only reject filesystem root and bare /tmp
+	// DO NOT reject Home directory here - it might contain valid projects!
 	startDir := absPath
 	if !isDir(absPath) {
 		startDir = filepath.Dir(absPath)
 	}
 	
-	// Reject if path is at or above Home directory or filesystem root
-	// Allow subdirectories of /tmp for testing, but reject bare /tmp
-	// This prevents the tool from walking the entire Home directory tree
-	if startDir == "/" || startDir == homeDir {
+	// Reject filesystem root - never valid as a project
+	if startDir == "/" {
 		return nil, fmt.Errorf(
 			"cannot use '%s' as workspace.\n\n"+
-				"For security reasons, the tool cannot operate on system directories or Home directory.\n"+
-				"Please provide a file path inside a valid project directory with workspace markers like:\n"+
-				"  - .git (Git repository)\n"+
-				"  - go.mod (Go project)\n"+
-				"  - composer.json (PHP project)\n"+
-				"  - package.json (Node.js project)\n"+
-				"  - pyproject.toml (Python project)\n\n"+
-				"Example: Instead of running from Home, navigate to your project directory.",
+				"For security reasons, the tool cannot operate on the filesystem root.\n"+
+				"Please provide a file path inside a project directory with workspace markers.",
 			startDir,
 		)
 	}
 	
-	// Warn if using /tmp directly (but allow subdirectories for testing)
+	// Reject bare /tmp directory (but allow subdirectories for testing)
 	if startDir == "/tmp" {
 		return nil, fmt.Errorf(
 			"cannot use '%s' as workspace.\n\n"+
@@ -123,7 +117,18 @@ func (d *Detector) DetectFromPath(filePath string) (*Info, error) {
 	}
 
 	// Walk up directory tree looking for workspace markers
-	for {
+	// Stop at Home directory to prevent scanning beyond user's projects
+	// Also limit traversal depth to prevent excessive walking
+	maxDepth := 10 // Maximum number of parent directories to check
+	depth := 0
+	for depth < maxDepth {
+		depth++
+		
+		// Stop if we've reached Home directory - don't scan beyond it
+		if current == homeDir {
+			break
+		}
+		
 		// Check for workspace markers
 		foundMarkers, projectType, languages := d.findMarkers(current)
 		if len(foundMarkers) > 0 {
@@ -147,49 +152,28 @@ func (d *Detector) DetectFromPath(filePath string) (*Info, error) {
 		current = parent
 	}
 
-	// No markers found - use file's directory as fallback
-	fallbackDir := filepath.Dir(absPath)
-
-	// Validate fallback directory - reject suspicious workspace roots
-	if fallbackDir == "/" || fallbackDir == homeDir || fallbackDir == "/tmp" {
-		return nil, fmt.Errorf(
-			"could not detect workspace for file '%s'.\n\n"+
-				"The file appears to be outside any project directory.\n"+
-				"Please ensure the file is inside a project with workspace markers like:\n"+
-				"  - .git (Git repository)\n"+
-				"  - go.mod (Go project)\n"+
-				"  - composer.json (PHP project)\n"+
-				"  - package.json (Node.js project)\n"+
-				"  - pyproject.toml (Python project)\n\n"+
-				"Detected fallback directory: %s",
-			absPath, fallbackDir,
-		)
-	}
+	// No markers found - this is a security issue
+	// We should NOT use fallback directories without workspace markers
+	// This prevents the tool from accidentally scanning large directory trees
 	
-	// Also reject paths under /tmp when no markers are found (test directories without projects)
-	if strings.HasPrefix(fallbackDir, "/tmp/") {
-		return nil, fmt.Errorf(
-			"could not detect workspace for file '%s'.\n\n"+
-				"The file is in a temporary directory without workspace markers.\n"+
-				"Please ensure the file is inside a project with workspace markers like:\n"+
-				"  - .git (Git repository)\n"+
-				"  - go.mod (Go project)\n"+
-				"  - composer.json (PHP project)\n"+
-				"  - package.json (Node.js project)\n"+
-				"  - pyproject.toml (Python project)\n\n"+
-				"Detected fallback directory: %s",
-			absPath, fallbackDir,
-		)
-	}
-
-	return &Info{
-		Root:        fallbackDir,
-		ID:          generateWorkspaceID(fallbackDir),
-		ProjectType: "unknown",
-		Languages:   []string{},
-		Markers:     []string{},
-		DetectedAt:  time.Now(),
-	}, nil
+	// If we've searched up to 10 levels and found no markers, reject the request
+	return nil, fmt.Errorf(
+		"could not detect workspace for file '%s'.\n\n"+
+			"No workspace markers found in any parent directory (searched up to %d levels).\n"+
+			"For security reasons, the tool requires explicit workspace markers to prevent "+
+			"accidentally scanning large directory trees.\n\n"+
+			"Please ensure the file is inside a project with workspace markers like:\n"+
+			"  - .git (Git repository)\n"+
+			"  - go.mod (Go project)\n"+
+			"  - composer.json (PHP project)\n"+
+			"  - package.json (Node.js project)\n"+
+			"  - pyproject.toml (Python project)\n\n"+
+			"If this is a new project, initialize it with one of these markers:\n"+
+			"  $ git init          # Creates .git directory\n"+
+			"  $ go mod init name  # Creates go.mod file\n"+
+			"  $ npm init          # Creates package.json file",
+		absPath, maxDepth,
+	)
 }
 
 // DetectFromParams detects workspace from MCP tool parameters

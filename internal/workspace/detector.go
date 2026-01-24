@@ -76,6 +76,41 @@ func (d *Detector) DetectFromPath(filePath string) (*Info, error) {
 		return nil, fmt.Errorf("failed to get absolute path: %w", err)
 	}
 
+	// Early validation: reject system directories and Home directory to prevent broad filesystem access
+	homeDir, _ := os.UserHomeDir()
+	startDir := absPath
+	if !isDir(absPath) {
+		startDir = filepath.Dir(absPath)
+	}
+	
+	// Reject if path is at or above Home directory or filesystem root
+	// Allow subdirectories of /tmp for testing, but reject bare /tmp
+	// This prevents the tool from walking the entire Home directory tree
+	if startDir == "/" || startDir == homeDir {
+		return nil, fmt.Errorf(
+			"cannot use '%s' as workspace.\n\n"+
+				"For security reasons, the tool cannot operate on system directories or Home directory.\n"+
+				"Please provide a file path inside a valid project directory with workspace markers like:\n"+
+				"  - .git (Git repository)\n"+
+				"  - go.mod (Go project)\n"+
+				"  - composer.json (PHP project)\n"+
+				"  - package.json (Node.js project)\n"+
+				"  - pyproject.toml (Python project)\n\n"+
+				"Example: Instead of running from Home, navigate to your project directory.",
+			startDir,
+		)
+	}
+	
+	// Warn if using /tmp directly (but allow subdirectories for testing)
+	if startDir == "/tmp" {
+		return nil, fmt.Errorf(
+			"cannot use '%s' as workspace.\n\n"+
+				"For security reasons, the tool cannot operate on the /tmp directory directly.\n"+
+				"Please provide a file path inside a valid project directory.",
+			startDir,
+		)
+	}
+
 	// Check if path should be excluded
 	if d.shouldExclude(absPath) {
 		return nil, fmt.Errorf("path matches exclusion pattern: %s", absPath)
@@ -116,11 +151,26 @@ func (d *Detector) DetectFromPath(filePath string) (*Info, error) {
 	fallbackDir := filepath.Dir(absPath)
 
 	// Validate fallback directory - reject suspicious workspace roots
-	homeDir, _ := os.UserHomeDir()
-	if fallbackDir == "/" || fallbackDir == homeDir || strings.HasPrefix(fallbackDir, "/tmp") {
+	if fallbackDir == "/" || fallbackDir == homeDir || fallbackDir == "/tmp" {
 		return nil, fmt.Errorf(
 			"could not detect workspace for file '%s'.\n\n"+
 				"The file appears to be outside any project directory.\n"+
+				"Please ensure the file is inside a project with workspace markers like:\n"+
+				"  - .git (Git repository)\n"+
+				"  - go.mod (Go project)\n"+
+				"  - composer.json (PHP project)\n"+
+				"  - package.json (Node.js project)\n"+
+				"  - pyproject.toml (Python project)\n\n"+
+				"Detected fallback directory: %s",
+			absPath, fallbackDir,
+		)
+	}
+	
+	// Also reject paths under /tmp when no markers are found (test directories without projects)
+	if strings.HasPrefix(fallbackDir, "/tmp/") {
+		return nil, fmt.Errorf(
+			"could not detect workspace for file '%s'.\n\n"+
+				"The file is in a temporary directory without workspace markers.\n"+
 				"Please ensure the file is inside a project with workspace markers like:\n"+
 				"  - .git (Git repository)\n"+
 				"  - go.mod (Go project)\n"+

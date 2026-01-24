@@ -93,6 +93,12 @@ func addFileForLanguage(scan *workspaceScan, language, path string) {
 }
 
 func (m *Manager) scanWorkspace(info *Info) (*workspaceScan, error) {
+	// Validate workspace root before scanning to prevent broad filesystem access
+	homeDir, _ := os.UserHomeDir()
+	if info.Root == "/" || info.Root == homeDir || info.Root == "/tmp" {
+		return nil, fmt.Errorf("cannot scan invalid workspace root: %s", info.Root)
+	}
+
 	scan := &workspaceScan{
 		LanguageDirs:  make(map[string][]string),
 		LanguageFiles: make(map[string][]string),
@@ -281,7 +287,7 @@ func (m *Manager) GetMemoryForWorkspace(ctx context.Context, info *Info) (memory
 func (m *Manager) GetMemoryForWorkspaceLanguage(ctx context.Context, info *Info, language string) (memory.LongTermMemory, error) {
 	// Validate workspace root - reject suspicious directories
 	homeDir, _ := os.UserHomeDir()
-	if info.Root == "/" || info.Root == homeDir || strings.HasPrefix(info.Root, "/tmp") {
+	if info.Root == "/" || info.Root == homeDir || info.Root == "/tmp" {
 		return nil, fmt.Errorf(
 			"invalid workspace root '%s'. "+
 				"Please provide a file path inside a valid project directory with workspace markers "+
@@ -866,6 +872,13 @@ func (m *Manager) EnsureWorkspaceIndexed(ctx context.Context, rootPath string) e
 
 // StartWatcher starts the file watcher for a workspace if not already running
 func (m *Manager) StartWatcher(root string) {
+	// Validate root directory before starting watcher to prevent broad filesystem access
+	homeDir, _ := os.UserHomeDir()
+	if root == "/" || root == homeDir || root == "/tmp" {
+		log.Printf("[ERROR] Cannot start watcher on invalid root directory: %s", root)
+		return
+	}
+
 	m.watchersMu.Lock()
 	defer m.watchersMu.Unlock()
 

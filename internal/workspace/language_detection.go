@@ -17,6 +17,12 @@ func NewLanguageDetector() *LanguageDetector {
 // DetectLanguages scans a workspace and returns detected programming languages
 // Returns a slice of language identifiers (e.g., "go", "python", "php")
 func (ld *LanguageDetector) DetectLanguages(rootPath string) ([]string, error) {
+	// Validate root path before scanning to prevent broad filesystem access
+	homeDir, _ := os.UserHomeDir()
+	if rootPath == "/" || rootPath == homeDir || rootPath == "/tmp" {
+		return nil, nil // Return empty list instead of scanning invalid paths
+	}
+
 	languageMap := make(map[string]bool)
 
 	// Walk the directory tree

@@ -865,13 +865,9 @@ func getToolSchema(toolName string) map[string]interface{} {
 					"type":        "string",
 					"description": "The search query to find relevant code",
 				},
-				"workspace_root": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional: explicit workspace root path. If provided, skips workspace detection. Example: /home/user/projects/myapp",
-				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional: file path to help detect workspace context (not needed if workspace_root is provided)",
+					"description": "Optional: file path to help detect workspace context",
 				},
 				"limit": map[string]interface{}{
 					"type":        "number",
@@ -889,13 +885,9 @@ func getToolSchema(toolName string) map[string]interface{} {
 					"type":        "string",
 					"description": "The name of the function or method to look up",
 				},
-				"workspace_root": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional: explicit workspace root path. If provided, skips workspace detection. Example: /home/user/projects/myapp",
-				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional: file path to help detect workspace context (not needed if workspace_root is provided)",
+					"description": "Optional: file path to help detect workspace context",
 				},
 				"package": map[string]interface{}{
 					"type":        "string",
@@ -913,13 +905,9 @@ func getToolSchema(toolName string) map[string]interface{} {
 					"type":        "string",
 					"description": "The name of the type (struct or interface) to look up",
 				},
-				"workspace_root": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional: explicit workspace root path. If provided, skips workspace detection. Example: /home/user/projects/myapp",
-				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional: file path to help detect workspace context (not needed if workspace_root is provided)",
+					"description": "Optional: file path to help detect workspace context",
 				},
 				"package": map[string]interface{}{
 					"type":        "string",
@@ -961,13 +949,9 @@ func getToolSchema(toolName string) map[string]interface{} {
 					"type":        "string",
 					"description": "The package path to list exports from (e.g., 'internal/agents', 'ragcode')",
 				},
-				"workspace_root": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional: explicit workspace root path. If provided, skips workspace detection. Example: /home/user/projects/myapp",
-				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional: file path to help detect workspace context (not needed if workspace_root is provided)",
+					"description": "Optional: file path to help detect workspace context",
 				},
 				"symbol_type": map[string]interface{}{
 					"type":        "string",
@@ -985,13 +969,9 @@ func getToolSchema(toolName string) map[string]interface{} {
 					"type":        "string",
 					"description": "The name of the function, method, or interface to find usages of",
 				},
-				"workspace_root": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional: explicit workspace root path. If provided, skips workspace detection. Example: /home/user/projects/myapp",
-				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional: file path to help detect workspace context (not needed if workspace_root is provided)",
+					"description": "Optional: file path to help detect workspace context",
 				},
 				"package": map[string]interface{}{
 					"type":        "string",
@@ -1009,13 +989,9 @@ func getToolSchema(toolName string) map[string]interface{} {
 					"type":        "string",
 					"description": "The search query to find relevant documentation",
 				},
-				"workspace_root": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional: explicit workspace root path. If provided, skips workspace detection. Example: /home/user/projects/myapp",
-				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional: file path to help detect workspace context (not needed if workspace_root is provided)",
+					"description": "Optional: file path to help detect workspace context",
 				},
 				"limit": map[string]interface{}{
 					"type":        "number",
@@ -1053,13 +1029,9 @@ func getToolSchema(toolName string) map[string]interface{} {
 					"type":        "string",
 					"description": "The search query combining lexical and semantic matching",
 				},
-				"workspace_root": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional: explicit workspace root path. If provided, skips workspace detection. Example: /home/user/projects/myapp",
-				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional: file path to help detect workspace context (not needed if workspace_root is provided)",
+					"description": "Optional: file path to help detect workspace context",
 				},
 				"limit": map[string]interface{}{
 					"type":        "number",

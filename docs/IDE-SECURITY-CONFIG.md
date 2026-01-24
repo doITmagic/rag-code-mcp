@@ -45,21 +45,6 @@ Use command-line flags in your IDE's MCP configuration to control workspace secu
 
 ---
 
-### 3. `-require-explicit-path`
-**Requires file_path parameter (no CWD fallback)**
-
-```bash
--require-explicit-path
-```
-
-- Tool calls MUST include a `file_path` parameter
-- Disables fallback to current working directory
-- Maximum security
-
-**Use when:** You want to ensure explicit file paths are always provided.
-
----
-
 ## IDE Configuration Examples
 
 ### Cursor (`~/.cursor/mcp.config.json`)
@@ -91,7 +76,7 @@ Use command-line flags in your IDE's MCP configuration to control workspace secu
 }
 ```
 
-#### Ultra Secure: All restrictions
+#### Maximum Security: Both restrictions
 ```json
 {
   "mcpServers": {
@@ -99,8 +84,7 @@ Use command-line flags in your IDE's MCP configuration to control workspace secu
       "command": "/home/YOUR_USERNAME/.local/share/ragcode/bin/rag-code-mcp",
       "args": [
         "-allowed-paths", "~/projects",
-        "-disable-upward-search",
-        "-require-explicit-path"
+        "-disable-upward-search"
       ]
     }
   }
@@ -255,8 +239,7 @@ cd ~/Desktop
 {
   "args": [
     "-allowed-paths", "~/projects",
-    "-disable-upward-search",
-    "-require-explicit-path"
+    "-disable-upward-search"
   ]
 }
 ```
@@ -290,16 +273,6 @@ No args = default behavior, maximum flexibility
 **Solution:**
 1. Initialize your project: `git init` or `go mod init` or `npm init`
 2. Or remove `-disable-upward-search` flag
-
----
-
-### Error: "no file_path parameter provided"
-
-**Cause:** Tool requires explicit paths but none was provided
-
-**Solution:**
-1. Ensure your IDE/tool provides `file_path` parameter
-2. Or remove `-require-explicit-path` flag
 
 ---
 

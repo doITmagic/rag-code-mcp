@@ -24,9 +24,6 @@ type Detector struct {
 
 	// DisableUpwardSearch when true, disables searching parent directories
 	disableUpwardSearch bool
-
-	// RequireExplicitPath when true, requires file_path parameter (no CWD fallback)
-	requireExplicitPath bool
 }
 
 // NewDetector creates a new workspace detector with default markers
@@ -57,7 +54,7 @@ func NewDetector() *Detector {
 }
 
 // NewDetectorWithConfig creates a detector with configuration
-func NewDetectorWithConfig(markers []string, excludePatterns []string, allowedPaths []string, disableUpwardSearch bool, requireExplicitPath bool) *Detector {
+func NewDetectorWithConfig(markers []string, excludePatterns []string, allowedPaths []string, disableUpwardSearch bool) *Detector {
 	d := NewDetector()
 	if len(markers) > 0 {
 		d.markers = markers
@@ -67,7 +64,6 @@ func NewDetectorWithConfig(markers []string, excludePatterns []string, allowedPa
 	}
 	d.allowedPaths = allowedPaths
 	d.disableUpwardSearch = disableUpwardSearch
-	d.requireExplicitPath = requireExplicitPath
 	return d
 }
 
@@ -89,11 +85,6 @@ func (d *Detector) SetAllowedPaths(paths []string) {
 // SetDisableUpwardSearch sets whether to disable upward directory search
 func (d *Detector) SetDisableUpwardSearch(disable bool) {
 	d.disableUpwardSearch = disable
-}
-
-// SetRequireExplicitPath sets whether to require explicit file paths
-func (d *Detector) SetRequireExplicitPath(require bool) {
-	d.requireExplicitPath = require
 }
 
 // DetectFromPath detects workspace from a file path
@@ -299,16 +290,6 @@ func (d *Detector) DetectFromParams(params map[string]interface{}) (*Info, error
 				return d.DetectFromPath(path)
 			}
 		}
-	}
-
-	// Check if explicit path is required
-	if d.requireExplicitPath {
-		return nil, fmt.Errorf(
-			"no file_path parameter provided.\n\n"+
-				"This server is configured to require explicit file paths (workspace.require_explicit_path = true).\n"+
-				"Please provide a file_path parameter in your tool call.\n\n"+
-				"This security setting prevents automatic use of current working directory.",
-		)
 	}
 
 	// Fallback: use current working directory

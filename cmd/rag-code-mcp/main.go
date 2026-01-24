@@ -385,7 +385,6 @@ func main() {
 	// Workspace security flags - can be set in IDE MCP configuration
 	allowedPathsFlag := flag.String("allowed-paths", "", "Comma-separated list of allowed workspace paths (e.g., ~/projects,~/work)")
 	disableUpwardSearchFlag := flag.Bool("disable-upward-search", false, "Disable searching parent directories for workspace markers")
-	requireExplicitPathFlag := flag.Bool("require-explicit-path", false, "Require explicit file_path parameter (no CWD fallback)")
 
 	// Custom usage message
 	flag.Usage = printUsage
@@ -482,10 +481,6 @@ func main() {
 	if *disableUpwardSearchFlag {
 		cfg.Workspace.DisableUpwardSearch = true
 		logger.Info("Upward directory search disabled via CLI")
-	}
-	if *requireExplicitPathFlag {
-		cfg.Workspace.RequireExplicitPath = true
-		logger.Info("Explicit file_path required via CLI")
 	}
 
 	// Set defaults
@@ -1072,7 +1067,8 @@ EXAMPLES:
     rag-code-mcp -disable-upward-search
 
     # Require explicit file paths (no CWD fallback)
-    rag-code-mcp -require-explicit-path
+    # Disable automatic parent directory search
+    rag-code-mcp -disable-upward-search
 
     # Combined security settings for IDE configuration
     rag-code-mcp -allowed-paths "~/projects" -disable-upward-search
@@ -1103,12 +1099,6 @@ SECURITY OPTIONS (Configurable in IDE MCP settings):
         Tool will only check the exact directory provided.
         Useful for strict control and preventing unintended directory traversal.
         Can also be set in config: workspace.disable_upward_search
-
-    -require-explicit-path
-        Require explicit file_path parameter in all tool calls.
-        Disables fallback to current working directory.
-        Useful for maximum security when you want explicit paths always.
-        Can also be set in config: workspace.require_explicit_path
 
 ENVIRONMENT VARIABLES:
     OLLAMA_BASE_URL              Ollama server URL (default: http://localhost:11434)

@@ -197,10 +197,4 @@ type WorkspaceConfig struct {
 	// Useful when you want strict control and don't want automatic parent directory traversal
 	// Default: false (upward search enabled)
 	DisableUpwardSearch bool `yaml:"disable_upward_search"`
-
-	// RequireExplicitPath when true, requires file_path parameter in all tool calls
-	// Disables falling back to current working directory
-	// Useful for maximum security when you want to ensure explicit file paths always
-	// Default: false (CWD fallback allowed)
-	RequireExplicitPath bool `yaml:"require_explicit_path"`
 }

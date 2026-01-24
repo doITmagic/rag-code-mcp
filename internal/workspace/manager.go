@@ -235,6 +235,44 @@ func NewManager(qdrant *storage.QdrantClient, llm llm.Provider, cfg *config.Conf
 
 // DetectWorkspace detects workspace from tool parameters
 func (m *Manager) DetectWorkspace(params map[string]interface{}) (*Info, error) {
+	// PRIORITY 1: Check for explicit workspace_root parameter
+	if workspaceRoot, ok := params["workspace_root"]; ok {
+		if rootPath, ok := workspaceRoot.(string); ok && rootPath != "" {
+			log.Printf("🎯 Using explicit workspace_root: %s", rootPath)
+			
+			// Expand tilde if present
+			if strings.HasPrefix(rootPath, "~/") {
+				if home, err := os.UserHomeDir(); err == nil {
+					rootPath = filepath.Join(home, rootPath[2:])
+				}
+			}
+			
+			// Convert to absolute path
+			absPath, err := filepath.Abs(rootPath)
+			if err != nil {
+				return nil, fmt.Errorf("invalid workspace_root path: %w", err)
+			}
+			
+			// Use the detector to validate and get workspace info
+			// This will still run all security checks
+			info, err := m.detector.DetectFromPath(absPath)
+			if err != nil {
+				return nil, fmt.Errorf("workspace_root validation failed: %w", err)
+			}
+			
+			// Set collection prefix from config
+			if m.config != nil && m.config.Workspace.CollectionPrefix != "" {
+				info.CollectionPrefix = m.config.Workspace.CollectionPrefix
+			}
+			
+			// Cache by the explicit root
+			m.cache.Set(absPath, info)
+			
+			return info, nil
+		}
+	}
+	
+	// PRIORITY 2: Fall back to automatic detection from file_path
 	// Try to extract file path for cache key
 	var cacheKey string
 	for _, param := range []string{"file_path", "filePath", "path", "file"} {

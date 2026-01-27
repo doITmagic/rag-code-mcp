@@ -76,13 +76,20 @@ Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/lates
 
 ### 🔄 Keep Updated
 
-RagCode now includes a self-update mechanism.
+The auto-update feature is available starting with **v1.1.18**.
 
-**For existing users (Upgrade):**
-```bash
-# If you installed using the method above (v1.1.18+):
-rag-code-mcp --update
-```
+**How to Upgrade:**
+
+1.  **If you are on an older version (< v1.1.18):**
+    Your version **does not know** the update command.
+    You must **re-run the installation command** (the curl command above) one last time.
+    *(Don't worry, your indexes and configuration will be preserved).*
+
+2.  **If you are on v1.1.18 or newer:**
+    Simply run:
+    ```bash
+    rag-code-mcp --update
+    ```
 
 **For new installations:**
 The update system is built-in. Use the installer once, then simply run `rag-code-mcp --update` anytime to get the latest features.

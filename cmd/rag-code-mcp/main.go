@@ -404,10 +404,7 @@ func main() {
 			altPath := filepath.Join(exeDir, "config.yaml")
 			// Always prefer the one next to binary if it exists, OR if we are in HOME dir to avoid picking up random configs
 			cwd, _ := os.Getwd()
-			home, err := os.UserHomeDir()
-			if err != nil {
-				// Log but continue - home check will just fail
-			}
+			home, _ := os.UserHomeDir()
 
 			if _, err := os.Stat(altPath); err == nil {
 				cfgPath = altPath

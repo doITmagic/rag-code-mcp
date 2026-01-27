@@ -59,8 +59,12 @@ func TestDetector_AllowedPaths(t *testing.T) {
 	allowedDir := filepath.Join(tmpBase, "allowed")
 	restrictedDir := filepath.Join(tmpBase, "restricted")
 
-	os.MkdirAll(allowedDir, 0755)
-	os.MkdirAll(restrictedDir, 0755)
+	if err := os.MkdirAll(allowedDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(restrictedDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Create a project in each
 	for _, dir := range []string{allowedDir, restrictedDir} {
@@ -97,8 +101,12 @@ func TestDetector_SymlinkNormalization(t *testing.T) {
 	realDir := filepath.Join(tmpBase, "real-project")
 	linkDir := filepath.Join(tmpBase, "linked-project")
 
-	os.MkdirAll(realDir, 0755)
-	os.MkdirAll(filepath.Join(realDir, ".git"), 0755)
+	if err := os.MkdirAll(realDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(realDir, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Create symlink: linked-project -> real-project
 	if err := os.Symlink(realDir, linkDir); err != nil {
@@ -370,7 +378,9 @@ func TestDetector_UpwardSearchLimit(t *testing.T) {
 	}
 
 	testFile := filepath.Join(current, "main.go")
-	os.WriteFile(testFile, []byte("package main"), 0644)
+	if err := os.WriteFile(testFile, []byte("package main"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	detector := NewDetector()
 	_, err := detector.DetectFromPath(testFile)

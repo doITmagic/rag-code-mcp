@@ -130,9 +130,6 @@ func isInvalidRoot(path string) bool {
 	homeDir, err := os.UserHomeDir()
 	if err == nil && homeDir != "" && path == homeDir {
 		return true
-	} else if err != nil {
-		// If we can't get home dir, verify we are not erroring out
-		// We'll just log it lightly if needed, but here we can't block what we don't know
 	}
 
 	return false

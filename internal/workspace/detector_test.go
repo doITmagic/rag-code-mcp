@@ -108,6 +108,13 @@ func TestDetector_DetectFromParams(t *testing.T) {
 		want   string
 	}{
 		{
+			name: "workspace_root parameter",
+			params: map[string]interface{}{
+				"workspace_root": tmpDir,
+			},
+			want: tmpDir,
+		},
+		{
 			name: "file_path parameter",
 			params: map[string]interface{}{
 				"file_path": testFile,

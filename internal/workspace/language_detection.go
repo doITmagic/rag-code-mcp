@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,7 +19,10 @@ func NewLanguageDetector() *LanguageDetector {
 // Returns a slice of language identifiers (e.g., "go", "python", "php")
 func (ld *LanguageDetector) DetectLanguages(rootPath string) ([]string, error) {
 	// Validate root path before scanning to prevent broad filesystem access
-	homeDir, _ := os.UserHomeDir()
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		log.Printf("workspace: could not determine user home directory: %v", err)
+	}
 	if rootPath == "/" || rootPath == homeDir || rootPath == "/tmp" {
 		return nil, nil // Return empty list instead of scanning invalid paths
 	}
@@ -26,7 +30,7 @@ func (ld *LanguageDetector) DetectLanguages(rootPath string) ([]string, error) {
 	languageMap := make(map[string]bool)
 
 	// Walk the directory tree
-	err := filepath.Walk(rootPath, func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(rootPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil // Skip errors, continue walking
 		}

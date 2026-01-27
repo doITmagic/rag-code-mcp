@@ -19,12 +19,13 @@ import (
 
 // Configuration Flags
 var (
-	ollamaMode = flag.String("ollama", "local", "Mode for Ollama: 'local' (use existing) or 'docker' (run container)")
-	qdrantMode = flag.String("qdrant", "docker", "Mode for Qdrant: 'docker' (run container) or 'remote' (use existing URL)")
-	modelsDir  = flag.String("models-dir", "", "Path to local Ollama models directory (for Docker mapping). Defaults to ~/.ollama")
-	gpu        = flag.Bool("gpu", false, "Enable GPU support for Docker containers (requires nvidia-container-toolkit)")
-	skipBuild  = flag.Bool("skip-build", false, "Skip building the binary (use existing if available)")
-	idesFlag   = flag.String("ides", "auto", "Comma-separated IDE list to configure (auto, vs-code, claude, cursor, windsurf, antigravity)")
+	ollamaMode  = flag.String("ollama", "local", "Mode for Ollama: 'local' (use existing) or 'docker' (run container)")
+	qdrantMode  = flag.String("qdrant", "docker", "Mode for Qdrant: 'docker' (run container) or 'remote' (use existing URL)")
+	modelsDir   = flag.String("models-dir", "", "Path to local Ollama models directory (for Docker mapping). Defaults to ~/.ollama")
+	gpu         = flag.Bool("gpu", false, "Enable GPU support for Docker containers (requires nvidia-container-toolkit)")
+	skipBuild   = flag.Bool("skip-build", false, "Skip building the binary (use existing if available)")
+	idesFlag    = flag.String("ides", "auto", "Comma-separated IDE list to configure (auto, vs-code, claude, cursor, windsurf, antigravity)")
+	upgradeFlag = flag.Bool("upgrade", false, "Upgrade existing installation")
 )
 
 // Constants
@@ -55,7 +56,10 @@ func init() {
 }
 
 func installRuntimeBinaries() {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fail(fmt.Sprintf("Could not determine user home directory: %v", err))
+	}
 	installDir := filepath.Join(home, installDirName)
 	binDir := filepath.Join(installDir, "bin")
 
@@ -138,8 +142,10 @@ func installRuntimeBinaries() {
 
 func runHealthCheck() {
 	log("Running RagCode health check...")
-
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fail(fmt.Sprintf("Could not determine user home directory: %v", err))
+	}
 	installDir := filepath.Join(home, installDirName)
 	binPath := filepath.Join(installDir, "bin", "rag-code-mcp")
 
@@ -285,6 +291,10 @@ func main() {
 
 	printBanner()
 
+	if *upgradeFlag {
+		log("Upgrading RagCode MCP Server...")
+	}
+
 	// 0. Check Docker availability if needed
 	if *ollamaMode == "docker" || *qdrantMode == "docker" {
 		checkDockerAvailable()
@@ -332,7 +342,10 @@ func installBinary() {
 	log("Installing RagCode binary...")
 
 	// Determine install path
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fail(fmt.Sprintf("Could not determine user home directory: %v", err))
+	}
 	var binDir string
 	if runtime.GOOS == "windows" {
 		binDir = filepath.Join(home, ".local", "share", "ragcode", "bin")
@@ -494,7 +507,10 @@ func addToPath(binDir string) {
 	log("Adding binary to PATH...")
 
 	var shellConfig string
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fail(fmt.Sprintf("Could not determine user home directory: %v", err))
+	}
 
 	switch filepath.Base(os.Getenv("SHELL")) {
 	case "zsh":
@@ -530,7 +546,10 @@ func setupServices() {
 
 	// Setup Qdrant
 	if *qdrantMode == "docker" {
-		home, _ := os.UserHomeDir()
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fail(fmt.Sprintf("Could not determine user home directory: %v", err))
+		}
 		dataDir := filepath.Join(home, ".local", "share", "qdrant")
 		if err := os.MkdirAll(dataDir, 0755); err != nil {
 			fail(fmt.Sprintf("Could not create Qdrant data dir: %v", err))
@@ -548,7 +567,10 @@ func setupServices() {
 
 	// Setup Ollama
 	if *ollamaMode == "docker" {
-		home, _ := os.UserHomeDir()
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fail(fmt.Sprintf("Could determine user home directory: %v", err))
+		}
 		localModels := *modelsDir
 		if localModels == "" {
 			localModels = filepath.Join(home, ".ollama")
@@ -744,8 +766,10 @@ func pullModel(name string) {
 
 func configureIDEs(selected []string) {
 	log("Configuring IDEs...")
-
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fail(fmt.Sprintf("Could not determine user home directory: %v", err))
+	}
 	paths := resolveIDEPaths(home)
 	if len(paths) == 0 {
 		warn("No known IDE paths detected")

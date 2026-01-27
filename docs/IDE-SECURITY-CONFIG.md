@@ -76,20 +76,6 @@ Use command-line flags in your IDE's MCP configuration to control workspace secu
 }
 ```
 
-#### Maximum Security: Both restrictions
-```json
-{
-  "mcpServers": {
-    "ragcode": {
-      "command": "/home/YOUR_USERNAME/.local/share/ragcode/bin/rag-code-mcp",
-      "args": [
-        "-allowed-paths", "~/projects",
-        "-disable-upward-search"
-      ]
-    }
-  }
-}
-```
 
 ---
 

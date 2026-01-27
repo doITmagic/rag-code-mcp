@@ -4,8 +4,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -67,6 +69,75 @@ func NewDetectorWithConfig(markers []string, excludePatterns []string, allowedPa
 	return d
 }
 
+// isPathAllowed checks if a path is within the allowed workspace paths
+func (d *Detector) isPathAllowed(path string) bool {
+	if len(d.allowedPaths) == 0 {
+		return true
+	}
+	return isWithinAllowedPaths(path, d.allowedPaths)
+}
+
+// isWithinAllowedPaths helper to check if path is within allowed list
+func isWithinAllowedPaths(path string, allowedPaths []string) bool {
+	// Normalize path: handle relative paths and evaluate symlinks for security
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	evalPath, err := filepath.EvalSymlinks(absPath)
+	if err == nil {
+		absPath = evalPath
+	}
+
+	for _, allowedPath := range allowedPaths {
+		// Normalize allowed path
+		absAllowed, err := filepath.Abs(allowedPath)
+		if err != nil {
+			continue
+		}
+		evalAllowed, err := filepath.EvalSymlinks(absAllowed)
+		if err == nil {
+			absAllowed = evalAllowed
+		}
+
+		// Check if absPath is within absAllowed
+		if absPath == absAllowed || strings.HasPrefix(absPath, absAllowed+string(filepath.Separator)) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// isInvalidRoot checks if the path is a filesystem root or other restricted directory
+func isInvalidRoot(path string) bool {
+	// Using generic filepath.Dir(path) == path to detect root on any OS
+	if path != "" && filepath.Dir(path) == path {
+		return true
+	}
+
+	// Check path against os.TempDir for platform agnostic temp dir check
+	// Also explicitly check /tmp for unix systems just in case
+	sysTemp := os.TempDir()
+	if sysTemp != "" && (path == sysTemp || strings.TrimSuffix(path, string(filepath.Separator)) == strings.TrimSuffix(sysTemp, string(filepath.Separator))) {
+		return true
+	}
+	if runtime.GOOS != "windows" && (path == "/tmp" || path == "/var/tmp") {
+		return true
+	}
+
+	// Check for system directories boundary - specifically Home
+	homeDir, err := os.UserHomeDir()
+	if err == nil && homeDir != "" && path == homeDir {
+		return true
+	} else if err != nil {
+		// If we can't get home dir, verify we are not erroring out
+		// We'll just log it lightly if needed, but here we can't block what we don't know
+	}
+
+	return false
+}
+
 // SetMarkers allows customizing workspace markers
 func (d *Detector) SetMarkers(markers []string) {
 	d.markers = markers
@@ -95,56 +166,35 @@ func (d *Detector) DetectFromPath(filePath string) (*Info, error) {
 		return nil, fmt.Errorf("failed to get absolute path: %w", err)
 	}
 
-	homeDir, _ := os.UserHomeDir()
-	
-	// Early validation: Only reject filesystem root and bare /tmp
-	// DO NOT reject Home directory here - it might contain valid projects!
+	// Check home dir and handle error properly
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		// Not fatal, but we can't protect home dir if we don't know it
+		log.Printf("[WARN] workspace: could not determine user home directory: %v", err)
+	}
+
+	// Early validation
 	startDir := absPath
 	if !isDir(absPath) {
 		startDir = filepath.Dir(absPath)
 	}
-	
+
 	// Validate against allowed paths if configured
-	if len(d.allowedPaths) > 0 {
-		allowed := false
-		for _, allowedPath := range d.allowedPaths {
-			// Normalize allowed path
-			absAllowed, err := filepath.Abs(allowedPath)
-			if err != nil {
-				continue
-			}
-			// Check if startDir is within allowed path
-			if startDir == absAllowed || strings.HasPrefix(startDir, absAllowed+string(filepath.Separator)) {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			return nil, fmt.Errorf(
-				"path '%s' is not within allowed workspace paths.\n\n"+
-					"Configured allowed paths:\n"+
-					"  %s\n\n"+
-					"To use this path, add it to 'workspace.allowed_workspace_paths' in your config.",
-				startDir, strings.Join(d.allowedPaths, "\n  "),
-			)
-		}
-	}
-	
-	// Reject filesystem root - never valid as a project
-	if startDir == "/" {
+	if !d.isPathAllowed(startDir) {
 		return nil, fmt.Errorf(
-			"cannot use '%s' as workspace.\n\n"+
-				"For security reasons, the tool cannot operate on the filesystem root.\n"+
-				"Please provide a file path inside a project directory with workspace markers.",
-			startDir,
-		)
+			"path '%s' is not within allowed workspace paths.\n\n"+
+				"Configured allowed paths:\n"+
+				"  %s\n\n"+
+				"Safety: Only paths within these directories are accepted.\n"+
+				"Update your IDE MCP configuration to include this project path.",
+			startDir, strings.Join(d.allowedPaths, ", "))
 	}
-	
-	// Reject bare /tmp directory (but allow subdirectories for testing)
-	if startDir == "/tmp" {
+
+	// Reject invalid roots (/, /tmp, home bare)
+	if isInvalidRoot(startDir) {
 		return nil, fmt.Errorf(
-			"cannot use '%s' as workspace.\n\n"+
-				"For security reasons, the tool cannot operate on the /tmp directory directly.\n"+
+			"cannot use '%s' as workspace root.\n\n"+
+				"For security reasons, the tool cannot operate on the filesystem root or other restricted directories.\n"+
 				"Please provide a file path inside a valid project directory.",
 			startDir,
 		)
@@ -185,46 +235,32 @@ func (d *Detector) DetectFromPath(filePath string) (*Info, error) {
 	}
 
 	// Walk up directory tree looking for workspace markers
-	// Stop at Home directory to prevent scanning beyond user's projects
-	// Also limit traversal depth to prevent excessive walking
 	maxDepth := 10 // Maximum number of parent directories to check
 	depth := 0
 	for depth < maxDepth {
 		depth++
-		
-		// Stop if we've reached Home directory - don't scan beyond it
-		if current == homeDir {
+
+		// Stop if we've reached Home directory or other invalid root
+		if current == homeDir || isInvalidRoot(current) {
 			break
 		}
-		
+
 		// Check for workspace markers
 		foundMarkers, projectType, languages := d.findMarkers(current)
 		if len(foundMarkers) > 0 {
-			// Found workspace root - validate it's in allowed paths if configured
-			if len(d.allowedPaths) > 0 {
-				allowed := false
-				for _, allowedPath := range d.allowedPaths {
-					absAllowed, err := filepath.Abs(allowedPath)
-					if err != nil {
-						continue
-					}
-					if current == absAllowed || strings.HasPrefix(current, absAllowed+string(filepath.Separator)) {
-						allowed = true
-						break
-					}
+			// Found markers - validate it's in allowed paths if configured
+			// Found markers - validate it's in allowed paths if configured
+			if len(d.allowedPaths) > 0 && !isWithinAllowedPaths(current, d.allowedPaths) {
+				// Found markers but outside allowed paths, continue searching
+				parent := filepath.Dir(current)
+				if parent == current {
+					break
 				}
-				if !allowed {
-					// Found markers but outside allowed paths, continue searching
-					parent := filepath.Dir(current)
-					if parent == current {
-						break
-					}
-					current = parent
-					continue
-				}
+				current = parent
+				continue
 			}
-			
-			// Found workspace root
+
+			// Found valid workspace root
 			return &Info{
 				Root:        current,
 				ID:          generateWorkspaceID(current),
@@ -244,11 +280,7 @@ func (d *Detector) DetectFromPath(filePath string) (*Info, error) {
 		current = parent
 	}
 
-	// No markers found - this is a security issue
-	// We should NOT use fallback directories without workspace markers
-	// This prevents the tool from accidentally scanning large directory trees
-	
-	// If we've searched up to 10 levels and found no markers, reject the request
+	// No markers found
 	return nil, fmt.Errorf(
 		"could not detect workspace for file '%s'.\n\n"+
 			"No workspace markers found in any parent directory (searched up to %d levels).\n"+
@@ -269,9 +301,15 @@ func (d *Detector) DetectFromPath(filePath string) (*Info, error) {
 }
 
 // DetectFromParams detects workspace from MCP tool parameters
-// Looks for file paths in common parameter names
 func (d *Detector) DetectFromParams(params map[string]interface{}) (*Info, error) {
-	// Common parameter names that contain file paths
+	// Priority 1: Check for explicit workspace_root parameter
+	if workspaceRoot, ok := params["workspace_root"]; ok {
+		if rootPath, ok := workspaceRoot.(string); ok && rootPath != "" {
+			return d.DetectFromPath(rootPath)
+		}
+	}
+
+	// Priority 2: Extract file path from standard parameters
 	pathParams := []string{
 		"file_path",
 		"filePath",
@@ -292,7 +330,7 @@ func (d *Detector) DetectFromParams(params map[string]interface{}) (*Info, error
 		}
 	}
 
-	// Fallback: use current working directory
+	// Fallback: use current working directory of the server
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, fmt.Errorf("no file path in params and failed to get cwd: %w", err)
@@ -302,11 +340,10 @@ func (d *Detector) DetectFromParams(params map[string]interface{}) (*Info, error
 }
 
 // findMarkers checks for workspace markers in a directory
-// Returns found markers, detected project type, and list of languages
 func (d *Detector) findMarkers(dir string) ([]string, string, []string) {
 	var found []string
 	var languages []string
-	languageMap := make(map[string]bool) // Deduplicate languages
+	languageMap := make(map[string]bool)
 	projectType := "unknown"
 
 	for _, marker := range d.markers {
@@ -314,12 +351,10 @@ func (d *Detector) findMarkers(dir string) ([]string, string, []string) {
 		if exists(markerPath) {
 			found = append(found, marker)
 
-			// Determine project type from first marker
 			if projectType == "unknown" {
 				projectType = inferProjectType(marker)
 			}
 
-			// Collect all detected languages
 			lang := inferLanguageFromMarker(marker)
 			if lang != "" && !languageMap[lang] {
 				languageMap[lang] = true
@@ -341,11 +376,9 @@ func (d *Detector) shouldExclude(path string) bool {
 	return false
 }
 
-// generateWorkspaceID creates a stable, unique ID from workspace root path
+// generateWorkspaceID creates a stable, unique ID
 func generateWorkspaceID(rootPath string) string {
-	// Use SHA256 hash of absolute path
 	h := sha256.Sum256([]byte(rootPath))
-	// Return first 12 characters of hex for readability
 	return hex.EncodeToString(h[:])[:12]
 }
 
@@ -358,8 +391,6 @@ func inferProjectType(marker string) string {
 		return "laravel"
 	case "composer.json":
 		return "php"
-	case "index.html", "index.htm", "package-lock.json", "vite.config.js", "vite.config.ts":
-		return "html"
 	case "package.json":
 		return "nodejs"
 	case "Cargo.toml":
@@ -378,13 +409,12 @@ func inferProjectType(marker string) string {
 }
 
 // inferLanguageFromMarker determines programming language from marker
-// Returns normalized language name for collection naming
 func inferLanguageFromMarker(marker string) string {
 	switch marker {
 	case "go.mod":
 		return "go"
 	case "package.json":
-		return "javascript" // or "nodejs"
+		return "javascript"
 	case "Cargo.toml":
 		return "rust"
 	case "pyproject.toml", "setup.py", "requirements.txt":
@@ -401,8 +431,6 @@ func inferLanguageFromMarker(marker string) string {
 		return ""
 	}
 }
-
-// Helper functions
 
 func exists(path string) bool {
 	_, err := os.Stat(path)

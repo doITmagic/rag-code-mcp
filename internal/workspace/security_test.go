@@ -1,8 +1,10 @@
 package workspace
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -23,8 +25,8 @@ func TestDetector_RejectsHomeDirectory(t *testing.T) {
 		t.Skip("Home directory has workspace markers, which is valid")
 	}
 
-	if !strings.Contains(err.Error(), "could not detect workspace") {
-		t.Fatalf("Expected error message about missing workspace markers, got: %v", err)
+	if !strings.Contains(err.Error(), "cannot use") {
+		t.Fatalf("Expected error message about invalid workspace, got: %v", err)
 	}
 	t.Logf("✅ Correctly rejected Home directory without workspace markers")
 	t.Logf("   Error: %v", err)
@@ -32,10 +34,93 @@ func TestDetector_RejectsHomeDirectory(t *testing.T) {
 
 // TestDetector_AcceptsHomeWithMarkers tests that Home directory WITH markers is accepted
 func TestDetector_AcceptsHomeWithMarkers(t *testing.T) {
-	// We can't modify the real home directory in tests, so we'll create a subdir
-	// But let's document the expected behavior
-	t.Log("✅ Expected behavior: If Home directory contains .git, go.mod, etc., it should be accepted as a valid workspace")
-	t.Log("   The tool should ONLY reject Home directory if no workspace markers are found")
+	// Create a temp directory with markers
+	tmpDir := t.TempDir()
+	gitDir := filepath.Join(tmpDir, ".git")
+	if err := os.MkdirAll(gitDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	detector := NewDetector()
+	info, err := detector.DetectFromPath(tmpDir)
+	if err != nil {
+		t.Fatalf("Expected workspace with markers to be accepted, got error: %v", err)
+	}
+
+	if info.Root != tmpDir {
+		t.Errorf("Expected root %s, got %s", tmpDir, info.Root)
+	}
+	t.Log("✅ Correctly accepted directory with markers")
+}
+
+// TestDetector_AllowedPaths tests the allowed paths security feature
+func TestDetector_AllowedPaths(t *testing.T) {
+	tmpBase := t.TempDir()
+	allowedDir := filepath.Join(tmpBase, "allowed")
+	restrictedDir := filepath.Join(tmpBase, "restricted")
+
+	os.MkdirAll(allowedDir, 0755)
+	os.MkdirAll(restrictedDir, 0755)
+
+	// Create a project in each
+	for _, dir := range []string{allowedDir, restrictedDir} {
+		if err := os.MkdirAll(filepath.Join(dir, ".git"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	detector := NewDetectorWithConfig(nil, nil, []string{allowedDir}, false)
+
+	// Test allowed path
+	_, err := detector.DetectFromPath(filepath.Join(allowedDir, "file.go"))
+	if err != nil {
+		t.Errorf("Expected path in %s to be allowed, got error: %v", allowedDir, err)
+	}
+
+	// Test restricted path
+	_, err = detector.DetectFromPath(filepath.Join(restrictedDir, "file.go"))
+	if err == nil {
+		t.Errorf("Expected path in %s to be rejected, but it was allowed", restrictedDir)
+	} else if !strings.Contains(err.Error(), "not within allowed workspace paths") {
+		t.Errorf("Expected 'not within allowed workspace paths' error, got: %v", err)
+	}
+	t.Log("✅ Correctly enforced allowed paths boundary")
+}
+
+// TestDetector_SymlinkNormalization tests security normalization for symlinks
+func TestDetector_SymlinkNormalization(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Symlinks require special permissions on Windows")
+	}
+
+	tmpBase := t.TempDir()
+	realDir := filepath.Join(tmpBase, "real-project")
+	linkDir := filepath.Join(tmpBase, "linked-project")
+
+	os.MkdirAll(realDir, 0755)
+	os.MkdirAll(filepath.Join(realDir, ".git"), 0755)
+
+	// Create symlink: linked-project -> real-project
+	if err := os.Symlink(realDir, linkDir); err != nil {
+		t.Fatalf("Failed to create symlink: %v", err)
+	}
+
+	// Only allow the REAL path
+	detector := NewDetectorWithConfig(nil, nil, []string{realDir}, false)
+
+	// Accessing via link should still work because we normalize
+	_, err := detector.DetectFromPath(filepath.Join(linkDir, "main.go"))
+	if err != nil {
+		t.Errorf("Expected symlinked path to be allowed via normalization, got error: %v", err)
+	}
+
+	// Now only allow the LINK path
+	detector2 := NewDetectorWithConfig(nil, nil, []string{linkDir}, false)
+	_, err = detector2.DetectFromPath(filepath.Join(realDir, "main.go"))
+	if err != nil {
+		t.Errorf("Expected real path to be allowed when linked path is in allowed list, got error: %v", err)
+	}
+	t.Log("✅ Correctly handled symlink normalization in security checks")
 }
 
 // TestDetector_AcceptsProjectInHome tests that projects INSIDE Home work correctly
@@ -228,4 +313,73 @@ func TestDetector_StopsAtHomeDirectory(t *testing.T) {
 	}
 
 	t.Logf("✅ Detector correctly stopped at Home directory during upward search")
+}
+
+// TestIsInvalidRoot tests the root validation helper
+func TestIsInvalidRoot(t *testing.T) {
+	tests := []struct {
+		name     string
+		path     string
+		expected bool
+	}{
+		{"Linux root", "/", true},
+		{"Bare /tmp", "/tmp", true},
+		{"Bare /var/tmp", "/var/tmp", true},
+		{"Valid project dir", "/home/user/projects/my-app", false},
+		{"Valid tmp subdir", "/tmp/my-test-app", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if runtime.GOOS == "windows" && (tt.path == "/" || tt.path == "/tmp") {
+				t.Skip("Unix-specific path")
+			}
+			result := isInvalidRoot(tt.path)
+			if result != tt.expected {
+				t.Errorf("isInvalidRoot(%q) = %v, want %v", tt.path, result, tt.expected)
+			}
+		})
+	}
+
+	// Test Home directory separately
+	homeDir, err := os.UserHomeDir()
+	if err == nil && homeDir != "" {
+		if !isInvalidRoot(homeDir) {
+			t.Errorf("isInvalidRoot(homeDir) = false, want true")
+		}
+	}
+}
+
+// TestDetector_UpwardSearchLimit tests the maxDepth limit
+func TestDetector_UpwardSearchLimit(t *testing.T) {
+	tmpBase := t.TempDir()
+
+	// Create a deep directory structure
+	// .git is at level 0
+	// file is at level 15 (exceeds maxDepth=10)
+	current := tmpBase
+	if err := os.MkdirAll(filepath.Join(current, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 1; i <= 15; i++ {
+		current = filepath.Join(current, fmt.Sprintf("level%d", i))
+	}
+	if err := os.MkdirAll(current, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	testFile := filepath.Join(current, "main.go")
+	os.WriteFile(testFile, []byte("package main"), 0644)
+
+	detector := NewDetector()
+	_, err := detector.DetectFromPath(testFile)
+
+	if err == nil {
+		t.Fatal("Expected error for upward search exceeding limit, got nil")
+	}
+	if !strings.Contains(err.Error(), "searched up to 10 levels") {
+		t.Errorf("Expected error mentioning search depth limit, got: %v", err)
+	}
+	t.Log("✅ Correctly enforced upward search depth limit")
 }

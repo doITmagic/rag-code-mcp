@@ -20,12 +20,13 @@ import (
 	"github.com/doITmagic/rag-code-mcp/internal/llm"
 	"github.com/doITmagic/rag-code-mcp/internal/storage"
 	"github.com/doITmagic/rag-code-mcp/internal/tools"
+	"github.com/doITmagic/rag-code-mcp/internal/updater"
 	"github.com/doITmagic/rag-code-mcp/internal/workspace"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 var (
-	Version = "1.1.16"
+	Version = "1.1.18"
 	Commit  = "none"
 	Date    = "unknown"
 	// Build trigger: Python analyzer support
@@ -379,7 +380,9 @@ func main() {
 	ollamaModelFlag := flag.String("ollama-model", "", "Ollama chat model (overrides config/env)")
 	ollamaEmbedFlag := flag.String("ollama-embed", "", "Ollama embedding model (overrides config/env)")
 	qdrantURLFlag := flag.String("qdrant-url", "", "Qdrant URL (overrides config/env)")
+
 	versionFlag := flag.Bool("version", false, "Print version information and exit")
+	updateFlag := flag.Bool("update", false, "Check for updates and apply if available")
 	healthFlag := flag.Bool("health", false, "Run health check and exit")
 
 	// Workspace security flags - can be set in IDE MCP configuration
@@ -401,7 +404,10 @@ func main() {
 			altPath := filepath.Join(exeDir, "config.yaml")
 			// Always prefer the one next to binary if it exists, OR if we are in HOME dir to avoid picking up random configs
 			cwd, _ := os.Getwd()
-			home, _ := os.UserHomeDir()
+			home, err := os.UserHomeDir()
+			if err != nil {
+				// Log but continue - home check will just fail
+			}
 
 			if _, err := os.Stat(altPath); err == nil {
 				cfgPath = altPath
@@ -430,6 +436,33 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Handle update flag
+	if *updateFlag {
+		fmt.Println("Checking for updates...")
+		info, err := updater.CheckForUpdates(Version)
+		if err != nil {
+			log.Fatalf("Failed to check for updates: %v", err)
+		}
+		if info == nil {
+			fmt.Println("You are already using the latest version.")
+			os.Exit(0)
+		}
+
+		fmt.Printf("Found new version: %s\nDownloading...\n", info.LatestVersion)
+		tempFile := filepath.Join(os.TempDir(), "ragcode_update.tar.gz")
+		if err := info.DownloadAndVerify(tempFile); err != nil {
+			log.Fatalf("Update failed: %v", err)
+		}
+
+		fmt.Println("Installing update...")
+		if err := updater.ApplyUpdate(tempFile); err != nil {
+			log.Fatalf("Failed to apply update: %v", err)
+		}
+
+		fmt.Printf("Successfully updated to %s! Please restart the server.\n", info.LatestVersion)
+		os.Exit(0)
+	}
+
 	// Auto-create config.yaml if it doesn't exist
 	// Logic updated: Always check if the RESOLVED cfgPath exists. If not, create it.
 	// This ensures we create the config next to the binary even if we changed cfgPath from the default.
@@ -444,6 +477,14 @@ func main() {
 		logger.Warn("Failed to load config file %s, using defaults: %v", cfgPath, err)
 		cfg = config.DefaultConfig()
 	}
+
+	// Background update check
+	go func() {
+		info, err := updater.CheckForUpdates(Version)
+		if err == nil && info != nil {
+			logger.Info("🌟 New version available: %s. Run 'rag-code-mcp --update' to upgrade.", info.LatestVersion)
+		}
+	}()
 
 	// Apply logging settings from config unless env vars already override them
 	applyLoggingConfig(cfg.Logging)
@@ -472,6 +513,8 @@ func main() {
 			if strings.HasPrefix(paths[i], "~/") {
 				if home, err := os.UserHomeDir(); err == nil {
 					paths[i] = filepath.Join(home, paths[i][2:])
+				} else {
+					logger.Warn("Could not expand tilde in path '%s': %v", paths[i], err)
 				}
 			}
 		}
@@ -1063,13 +1106,6 @@ EXAMPLES:
     # Restrict to specific project directories (SECURITY)
     rag-code-mcp -allowed-paths "~/projects,~/work"
 
-    # Disable automatic parent directory search
-    rag-code-mcp -disable-upward-search
-
-    # Require explicit file paths (no CWD fallback)
-    # Disable automatic parent directory search
-    rag-code-mcp -disable-upward-search
-
     # Combined security settings for IDE configuration
     rag-code-mcp -allowed-paths "~/projects" -disable-upward-search
 
@@ -1078,6 +1114,9 @@ EXAMPLES:
 
     # Run health check only
     rag-code-mcp -health
+
+    # Check for updates and install if available
+    rag-code-mcp -update
 
 OPTIONS:
 `)

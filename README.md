@@ -74,6 +74,19 @@ Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/lates
 - ✅ Configures your IDE (VS Code, Cursor, Windsurf, Claude Desktop)
 - ✅ Adds binaries to your PATH
 
+### 🔄 Keep Updated
+
+RagCode now includes a self-update mechanism.
+
+**For existing users (Upgrade):**
+```bash
+# If you installed using the method above (v1.1.18+):
+rag-code-mcp --update
+```
+
+**For new installations:**
+The update system is built-in. Use the installer once, then simply run `rag-code-mcp --update` anytime to get the latest features.
+
 📖 **[Full Installation Guide →](./QUICKSTART.md)** | **[Windows WSL Setup →](./QUICKSTART.md#windows-with-wsl-alternative)**
 
 ---

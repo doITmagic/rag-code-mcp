@@ -19,13 +19,14 @@ import (
 
 // Configuration Flags
 var (
-	ollamaMode  = flag.String("ollama", "local", "Mode for Ollama: 'local' (use existing) or 'docker' (run container)")
-	qdrantMode  = flag.String("qdrant", "docker", "Mode for Qdrant: 'docker' (run container) or 'remote' (use existing URL)")
-	modelsDir   = flag.String("models-dir", "", "Path to local Ollama models directory (for Docker mapping). Defaults to ~/.ollama")
-	gpu         = flag.Bool("gpu", false, "Enable GPU support for Docker containers (requires nvidia-container-toolkit)")
-	skipBuild   = flag.Bool("skip-build", false, "Skip building the binary (use existing if available)")
-	idesFlag    = flag.String("ides", "auto", "Comma-separated IDE list to configure (auto, vs-code, claude, cursor, windsurf, antigravity)")
-	upgradeFlag = flag.Bool("upgrade", false, "Upgrade existing installation")
+	ollamaMode    = flag.String("ollama", "local", "Mode for Ollama: 'local' (use existing) or 'docker' (run container)")
+	qdrantMode    = flag.String("qdrant", "docker", "Mode for Qdrant: 'docker' (run container) or 'remote' (use existing URL)")
+	modelsDir     = flag.String("models-dir", "", "Path to local Ollama models directory (for Docker mapping). Defaults to ~/.ollama")
+	gpu           = flag.Bool("gpu", false, "Enable GPU support for Docker containers (requires nvidia-container-toolkit)")
+	skipBuild     = flag.Bool("skip-build", false, "Skip building the binary (use existing if available)")
+	idesFlag      = flag.String("ides", "auto", "Comma-separated IDE list to configure (auto, vs-code, claude, cursor, windsurf, antigravity)")
+	upgradeFlag   = flag.Bool("upgrade", false, "Upgrade existing installation")
+	uninstallFlag = flag.Bool("uninstall", false, "Uninstall the application and clean up configurations")
 )
 
 // Constants
@@ -119,7 +120,7 @@ func installRuntimeBinaries() {
 
 		if _, err := os.Stat(output); err == nil {
 			os.Chmod(output, 0755)
-			
+
 			// CLI Tool Support: Symlink to ~/.local/bin if it exists
 			localBin := filepath.Join(home, ".local", "bin")
 			if _, err := os.Stat(localBin); err == nil {
@@ -310,6 +311,11 @@ func freeRequiredPorts() {
 func main() {
 	flag.Parse()
 
+	if *uninstallFlag {
+		runUninstall()
+		return
+	}
+
 	printBanner()
 
 	if *upgradeFlag {
@@ -343,6 +349,110 @@ func main() {
 	runHealthCheck()
 
 	printSummary()
+}
+
+func runUninstall() {
+	log("Starting uninstallation process...")
+
+	// 1. Stop and remove Docker containers
+	if commandExists("docker") {
+		log("Cleaning up Docker containers...")
+		exec.Command("docker", "stop", ollamaContainer, qdrantContainer).Run()
+		exec.Command("docker", "rm", ollamaContainer, qdrantContainer).Run()
+	}
+
+	home, _ := os.UserHomeDir()
+
+	// 2. Remove configuration from IDEs
+	log("Removing configurations from IDEs...")
+	allIDEs := resolveIDEPaths(home)
+	for key, ide := range allIDEs {
+		removeConfigFromIDE(key, ide.path, ide.displayName)
+	}
+
+	// 3. Remove symlinks/binaries from ~/.local/bin or go/bin
+	log("Removing binaries...")
+	binaries := []string{"rag-code-mcp", "index-all", "ragcode-installer"}
+
+	var binPath string
+	if runtime.GOOS == "windows" {
+		binPath = filepath.Join(home, "go", "bin")
+	} else {
+		binPath = "/usr/local/bin" // Traditional path
+		if userBin, err := os.UserHomeDir(); err == nil {
+			userBin = filepath.Join(userBin, ".local", "bin")
+			if _, err := os.Stat(userBin); err == nil {
+				binPath = userBin
+			}
+		}
+	}
+
+	for _, bin := range binaries {
+		p := filepath.Join(binPath, bin)
+		if runtime.GOOS == "windows" {
+			p += ".exe"
+		}
+		if _, err := os.Stat(p); err == nil {
+			os.Remove(p)
+			log(fmt.Sprintf("Removed %s", p))
+		}
+	}
+
+	// 4. Remove runtime binaries and metadata
+	log("Removing application files...")
+	installDir := filepath.Join(home, installDirName)
+	os.RemoveAll(installDir)
+
+	success("RagCode MCP has been uninstalled successfully.")
+}
+
+func commandExists(cmd string) bool {
+	_, err := exec.LookPath(cmd)
+	return err == nil
+}
+
+func removeConfigFromIDE(ideKey, path, displayName string) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+
+	var config map[string]interface{}
+	if err := json.Unmarshal(data, &config); err != nil {
+		return
+	}
+
+	// Determine the collection key (mcpServers or mcp-servers)
+	collectionKey := "mcpServers"
+	if ideKey == "vs-code" || ideKey == "copilot" || ideKey == "cursor" {
+		// These IDEs use mcpServers
+	} else {
+		// Check if mcp-servers exists
+		if _, ok := config["mcp-servers"]; ok {
+			collectionKey = "mcp-servers"
+		}
+	}
+
+	serversRaw, ok := config[collectionKey]
+	if !ok {
+		return
+	}
+
+	servers, ok := serversRaw.(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	if _, ok := servers["ragcode"]; ok {
+		delete(servers, "ragcode")
+		updated, _ := json.MarshalIndent(config, "", "  ")
+		os.WriteFile(path, updated, 0644)
+		log(fmt.Sprintf("Removed config from %s", displayName))
+	}
 }
 
 func printBanner() {

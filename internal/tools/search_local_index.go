@@ -177,6 +177,12 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			SearchCodeOnly(ctx context.Context, query []float64, limit int) ([]memory.Document, error)
 		}
 
+		if searcher, ok := workspaceMem.(CodeSearcher); ok {
+			docs, searchErr = searcher.SearchCodeOnly(ctx, queryEmbedding, limit)
+		} else {
+			docs, searchErr = workspaceMem.Search(ctx, queryEmbedding, limit)
+		}
+
 		if searchErr != nil {
 			// Check for vector dimension mismatch (common when changing models)
 			if strings.Contains(strings.ToLower(searchErr.Error()), "dimension mismatch") ||

@@ -37,6 +37,10 @@ type Manager struct {
 	memoryMu sync.RWMutex
 	memories map[string]memory.LongTermMemory // collection name -> memory
 
+	// Migration state: canonical name -> active temporary name during migration
+	migrationMu sync.RWMutex
+	migrations  map[string]string
+
 	// Workspace scan fingerprints to detect file changes per language
 	scanMu           sync.RWMutex
 	scanFingerprints map[string]string
@@ -225,9 +229,11 @@ func NewManager(qdrant *storage.QdrantClient, llm llm.Provider, cfg *config.Conf
 		qdrant:   qdrant,
 		llm:      llm,
 		config:   cfg,
-		indexing: make(map[string]bool),
-		memories: make(map[string]memory.LongTermMemory),
-		watchers: make(map[string]*FileWatcher),
+		indexing:         make(map[string]bool),
+		memories:         make(map[string]memory.LongTermMemory),
+		migrations:       make(map[string]string),
+		scanFingerprints: make(map[string]string),
+		watchers:         make(map[string]*FileWatcher),
 	}
 }
 
@@ -342,6 +348,14 @@ func (m *Manager) GetMemoryForWorkspaceLanguage(ctx context.Context, info *Info,
 	m.StartWatcher(info.Root)
 
 	collectionName := info.CollectionNameForLanguage(language)
+
+	// Check for active migration redirect
+	m.migrationMu.RLock()
+	if targetCollection, ok := m.migrations[collectionName]; ok {
+		collectionName = targetCollection
+		log.Printf("↪️ Redirecting search from '%s' to active migration collection '%s'", info.CollectionNameForLanguage(language), collectionName)
+	}
+	m.migrationMu.RUnlock()
 
 	// Check memory cache
 	m.memoryMu.RLock()
@@ -479,14 +493,9 @@ func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string
 	log.Printf("   Project type: %s", info.ProjectType)
 
 	// Check if we need to migrate due to dimension mismatch
-	newCollection, oldCollection, needsMigration, err := m.CheckAndPrepareMigration(ctx, info, language)
+	collectionName, _, needsMigration, err := m.CheckAndPrepareMigration(ctx, info, language)
 	if err != nil {
 		return fmt.Errorf("failed to check collection migration: %w", err)
-	}
-
-	if needsMigration {
-		log.Printf("🔄 Dimension mismatch detected, migrating to new collection: %s", newCollection)
-		collectionName = newCollection
 	}
 
 	// Create collection-specific memory
@@ -533,6 +542,12 @@ func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string
 	if err != nil {
 		log.Printf("⚠️  Failed to load workspace state: %v", err)
 		state = NewWorkspaceState()
+	}
+
+	// If migration is needed, we MUST perform a full re-index regardless of state
+	if needsMigration {
+		log.Printf("🧹 Force indexing: dimension change detected, re-indexing all files in collection '%s'", collectionName)
+		state = NewWorkspaceState() // Start with fresh state
 	}
 
 	// Identify changes
@@ -666,15 +681,6 @@ func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string
 		log.Printf("⚠️  Failed to save workspace state: %v", err)
 	}
 
-	// Complete migration if needed (delete old collection)
-	if needsMigration && oldCollection != "" {
-		if err := m.CompleteMigration(ctx, info, language, collectionName, oldCollection); err != nil {
-			log.Printf("⚠️  Failed to complete collection migration: %v", err)
-		} else {
-			log.Printf("✅ Collection migration completed successfully")
-		}
-	}
-
 	m.recordFingerprint(info, language, scan)
 	return nil
 }
@@ -682,7 +688,17 @@ func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string
 // checkAndReindexIfNeeded checks if any files have changed and triggers incremental re-indexing if needed
 // This is called automatically when a tool accesses an existing workspace collection
 func (m *Manager) checkAndReindexIfNeeded(ctx context.Context, info *Info, language string, collectionName string) {
-	// Load workspace state
+	// 1. Check if we need to migrate/re-index due to dimension mismatch or empty collection
+	_, _, needsMigration, err := m.CheckAndPrepareMigration(ctx, info, language)
+	if err == nil && needsMigration {
+		log.Printf("ℹ️ Migration or re-index needed for '%s', triggering IndexLanguage", collectionName)
+		if err := m.IndexLanguage(ctx, info, language, collectionName); err != nil {
+			log.Printf("⚠️  Migration/Re-index failed: %v", err)
+		}
+		return
+	}
+
+	// 2. Load workspace state
 	stateFile := filepath.Join(info.Root, ".ragcode", "state.json")
 	state, err := LoadState(stateFile)
 	if err != nil {
@@ -877,14 +893,26 @@ func (m *Manager) CheckAndPrepareMigration(ctx context.Context, info *Info, lang
 	currentDimension := m.llm.GetEmbeddingDimension()
 	existingDimension := collectionInfo.VectorSize
 
+	// Case 1: Dimension mismatch - hard reset
 	if existingDimension > 0 && currentDimension > 0 && existingDimension != currentDimension {
-		// Dimension mismatch detected - need migration
-		newCollectionName := fmt.Sprintf("%s_new_%d", collectionName, time.Now().Unix())
-		log.Printf("🔄 Dimension mismatch detected in collection '%s':", collectionName)
-		log.Printf("   Existing: %d dimensions", existingDimension)
-		log.Printf("   Current model: %d dimensions", currentDimension)
-		log.Printf("   Will migrate to new collection: %s", newCollectionName)
-		return newCollectionName, collectionName, true, nil
+		log.Printf("🔄 Dimension mismatch detected in collection '%s': %d vs %d", collectionName, existingDimension, currentDimension)
+		log.Printf("🧹 Resetting collection '%s' to use %d dimensions", collectionName, currentDimension)
+		
+		if err := m.qdrant.DeleteCollection(ctx, collectionName); err != nil {
+			log.Printf("⚠️ Failed to delete old collection during reset: %v", err)
+		}
+		
+		if err := m.qdrant.CreateCollection(ctx, collectionName, int(currentDimension)); err != nil {
+			return collectionName, "", false, fmt.Errorf("failed to recreate collection with new dimension: %w", err)
+		}
+		
+		return collectionName, "", true, nil
+	}
+
+	// Case 2: Collection exists but is empty - trigger full re-index to be safe
+	if collectionInfo.PointsCount == 0 {
+		log.Printf("ℹ️ Collection '%s' exists but is empty. Triggering full re-index.", collectionName)
+		return collectionName, "", true, nil
 	}
 
 	return collectionName, "", false, nil
@@ -897,6 +925,11 @@ func (m *Manager) CompleteMigration(ctx context.Context, info *Info, language st
 	}
 
 	log.Printf("✅ Migration successful! Cleaning up old collection: %s", oldCollectionName)
+
+	// Clear redirection
+	m.migrationMu.Lock()
+	delete(m.migrations, oldCollectionName)
+	m.migrationMu.Unlock()
 
 	// Remove old collection from cache
 	m.memoryMu.Lock()

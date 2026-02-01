@@ -426,7 +426,7 @@ func (m *Manager) GetMemoryForWorkspaceLanguage(ctx context.Context, info *Info,
 			// Pass a long-lived context for background indexing
 			indexCtx := context.Background()
 			go func() {
-				if err := m.IndexLanguage(indexCtx, info, language, collectionName); err != nil {
+				if err := m.IndexLanguage(indexCtx, info, language, collectionName, false); err != nil {
 					log.Printf("❌ Background indexing failed: %v", err)
 				}
 			}()
@@ -486,7 +486,7 @@ func (m *Manager) GetMemoriesForAllLanguages(ctx context.Context, info *Info) (m
 
 // IndexLanguage indexes a specific language in a workspace
 // It runs synchronously. Use StartIndexing for background execution.
-func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string, collectionName string) error {
+func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string, collectionName string, force bool) error {
 	log.Printf("🚀 Starting indexing for workspace: %s", info.Root)
 	log.Printf("   Collection: %s", collectionName)
 	log.Printf("   Language: %s", language)
@@ -509,11 +509,6 @@ func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string
 	if err != nil {
 		return fmt.Errorf("failed to create collection client: %w", err)
 	}
-	// We should close the client, but LongTermMemory might need it?
-	// QdrantLongTermMemory takes *QdrantClient.
-	// If we close it here, LTM might fail if it uses it later?
-	// But LTM is used within this function scope mostly.
-	// Actually, NewQdrantLongTermMemory just stores the reference.
 	defer collectionClient.Close()
 
 	ltm := storage.NewQdrantLongTermMemory(collectionClient)
@@ -544,9 +539,17 @@ func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string
 		state = NewWorkspaceState()
 	}
 
-	// If migration is needed, we MUST perform a full re-index regardless of state
-	if needsMigration {
-		log.Printf("🧹 Force indexing: dimension change detected, re-indexing all files in collection '%s'", collectionName)
+	// Double check if collection is actually empty in Qdrant. If it is, we MUST re-index regardless of state.
+	// This handles cases where the collection was deleted but state.json remains.
+	pointsCount, err := m.qdrant.GetCollectionPointCount(ctx, collectionName)
+	if err == nil && pointsCount == 0 && !needsMigration {
+		log.Printf("📭 Collection '%s' is empty, forcing full re-index (ignoring state.json)", collectionName)
+		state = NewWorkspaceState()
+	}
+
+	// If migration is needed OR force is true, we MUST perform a full re-index regardless of state
+	if needsMigration || force {
+		log.Printf("🧹 Force indexing: re-indexing all files in collection '%s'", collectionName)
 		state = NewWorkspaceState() // Start with fresh state
 	}
 
@@ -692,7 +695,7 @@ func (m *Manager) checkAndReindexIfNeeded(ctx context.Context, info *Info, langu
 	_, _, needsMigration, err := m.CheckAndPrepareMigration(ctx, info, language)
 	if err == nil && needsMigration {
 		log.Printf("ℹ️ Migration or re-index needed for '%s', triggering IndexLanguage", collectionName)
-		if err := m.IndexLanguage(ctx, info, language, collectionName); err != nil {
+		if err := m.IndexLanguage(ctx, info, language, collectionName, false); err != nil {
 			log.Printf("⚠️  Migration/Re-index failed: %v", err)
 		}
 		return
@@ -756,7 +759,7 @@ func (m *Manager) checkAndReindexIfNeeded(ctx context.Context, info *Info, langu
 	// If changes detected, trigger incremental re-indexing
 	if hasChanges {
 		log.Printf("🔄 Auto-detected file changes in workspace '%s' (language: %s), triggering incremental re-indexing...", info.Root, language)
-		if err := m.IndexLanguage(ctx, info, language, collectionName); err != nil {
+		if err := m.IndexLanguage(ctx, info, language, collectionName, false); err != nil {
 			log.Printf("⚠️  Auto-reindex failed: %v", err)
 		}
 	}
@@ -795,9 +798,11 @@ func (m *Manager) indexMarkdownFile(ctx context.Context, path string, collection
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	var (
-		chunks   []string
-		current  strings.Builder
-		maxChars = 1000
+		chunks          []string
+		current         strings.Builder
+		maxChars        = 2000 // Increased for better context
+		emptyLineCount  = 0
+		lastLineHeading = false
 	)
 
 	flushChunk := func() {
@@ -806,22 +811,54 @@ func (m *Manager) indexMarkdownFile(ctx context.Context, path string, collection
 			chunks = append(chunks, text)
 		}
 		current.Reset()
+		emptyLineCount = 0
+		lastLineHeading = false
+	}
+
+	isHeading := func(line string) bool {
+		trimmed := strings.TrimSpace(line)
+		return strings.HasPrefix(trimmed, "#") ||
+			strings.HasPrefix(trimmed, "##") ||
+			strings.HasPrefix(trimmed, "###")
 	}
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.TrimSpace(line) == "" && current.Len() > 0 {
-			flushChunk()
+		trimmedLine := strings.TrimSpace(line)
+
+		// Empty line handling
+		if trimmedLine == "" {
+			emptyLineCount++
+			// Only flush if we have multiple empty lines AND we're not after a heading
+			if emptyLineCount >= 2 && !lastLineHeading && current.Len() > 0 {
+				flushChunk()
+				continue
+			}
+			// Keep single empty line for formatting
+			if current.Len() > 0 {
+				current.WriteString("\n")
+			}
 			continue
 		}
 
+		// Reset empty line counter on content
+		emptyLineCount = 0
+
+		// New section: flush on heading unless it's the first content
+		if isHeading(line) && current.Len() > 500 { // Keep headings together if chunk is small for better context
+			flushChunk()
+		}
+
+		// Size check
 		if current.Len()+len(line)+1 > maxChars {
 			flushChunk()
 		}
+
 		if current.Len() > 0 {
 			current.WriteString("\n")
 		}
 		current.WriteString(line)
+		lastLineHeading = isHeading(line)
 	}
 	if err := scanner.Err(); err != nil {
 		return 0, fmt.Errorf("scan %s: %w", path, err)
@@ -991,7 +1028,7 @@ func (m *Manager) DeleteLanguageCollection(ctx context.Context, info *Info, lang
 }
 
 // StartIndexing explicitly starts background indexing for a workspace language
-func (m *Manager) StartIndexing(ctx context.Context, info *Info, language string) error {
+func (m *Manager) StartIndexing(ctx context.Context, info *Info, language string, force bool) error {
 	collectionName := info.CollectionNameForLanguage(language)
 
 	// Check if already indexing BEFORE starting goroutine
@@ -1013,7 +1050,7 @@ func (m *Manager) StartIndexing(ctx context.Context, info *Info, language string
 			m.indexingMu.Unlock()
 		}()
 
-		if err := m.IndexLanguage(context.Background(), info, language, collectionName); err != nil {
+		if err := m.IndexLanguage(context.Background(), info, language, collectionName, force); err != nil {
 			log.Printf("❌ Background indexing failed: %v", err)
 		}
 	}()
@@ -1049,7 +1086,7 @@ func (m *Manager) EnsureWorkspaceIndexed(ctx context.Context, rootPath string) e
 			return
 		}
 		colName := info.CollectionNameForLanguage(lang)
-		if err := m.IndexLanguage(ctx, info, lang, colName); err != nil {
+		if err := m.IndexLanguage(ctx, info, lang, colName, false); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", lang, err))
 		}
 	}

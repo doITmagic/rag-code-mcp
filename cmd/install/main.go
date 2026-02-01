@@ -57,6 +57,9 @@ func init() {
 }
 
 func installRuntimeBinaries() {
+	// Stop any running servers before attempting to replace binaries
+	stopRunningServers()
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fail(fmt.Sprintf("Could not determine user home directory: %v", err))
@@ -240,6 +243,27 @@ func killProcessOnPort(port int) {
 	} else {
 		// Linux/Mac: use fuser
 		_ = exec.Command("fuser", "-k", fmt.Sprintf("%d/tcp", port)).Run() // Ignore error - best effort kill
+	}
+}
+
+// stopRunningServers stops any running rag-code-mcp processes
+func stopRunningServers() {
+	log("Checking for running rag-code-mcp processes...")
+
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.Command("taskkill", "/F", "/IM", "rag-code-mcp.exe")
+	} else {
+		cmd = exec.Command("pkill", "-f", "rag-code-mcp")
+	}
+
+	err := cmd.Run()
+	if err == nil {
+		success("Stopped running MCP server processes")
+		time.Sleep(500 * time.Millisecond) // Give processes time to clean up
+	} else {
+		// Not an error if no processes found - just means nothing was running
+		log("No running MCP server processes found (this is normal)")
 	}
 }
 
@@ -471,6 +495,9 @@ func printBanner() {
 
 func installBinary() {
 	log("Installing RagCode binary...")
+
+	// Stop any running servers before attempting to replace binary
+	stopRunningServers()
 
 	// Determine install path
 	home, err := os.UserHomeDir()

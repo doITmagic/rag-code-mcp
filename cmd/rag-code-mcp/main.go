@@ -1064,6 +1064,10 @@ func getToolSchema(toolName string) map[string]interface{} {
 					"type":        "string",
 					"description": "Optional: specific language to index (e.g., 'go', 'python', 'php'). If not provided, all detected languages will be indexed.",
 				},
+				"recreate": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Optional: If true, deletes existing collections and forces a full re-index. Use this if the index seems corrupted or results are poor.",
+				},
 			},
 			"required": []string{},
 		}

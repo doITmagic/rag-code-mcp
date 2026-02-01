@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/doITmagic/rag-code-mcp/internal/memory"
@@ -102,6 +104,12 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 	if recreate {
 		log.Printf("🗑️ Recreating collection for language '%s'...", language)
 		t.workspaceManager.DeleteLanguageCollection(ctx, workspaceInfo, language)
+
+		// Also remove state file to force re-indexing of all files
+		stateFile := filepath.Join(workspaceInfo.Root, ".ragcode", "state.json")
+		if err := os.Remove(stateFile); err == nil {
+			log.Printf("🗑️ Removed state file: %s", stateFile)
+		}
 	}
 
 	mem, err := t.workspaceManager.GetMemoryForWorkspaceLanguage(ctx, workspaceInfo, language)
@@ -135,7 +143,7 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 
 	// SCENARIO 2: Start indexing (collection doesn't exist or is empty)
 	// Force indexing to start (or restart if stopped)
-	if err := t.workspaceManager.StartIndexing(ctx, workspaceInfo, language); err != nil {
+	if err := t.workspaceManager.StartIndexing(ctx, workspaceInfo, language, recreate); err != nil {
 		// If error is "already indexing", that's fine - just return status
 		if strings.Contains(err.Error(), "already being indexed") {
 			return fmt.Sprintf("⏳ Workspace '%s' language '%s' is already being indexed in the background.\n"+

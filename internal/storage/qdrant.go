@@ -267,6 +267,67 @@ func (c *QdrantClient) Search(ctx context.Context, vector []float64, limit int) 
 	return results, nil
 }
 
+// SearchDocsOnly searches for similar vectors that are markdown documentation
+func (c *QdrantClient) SearchDocsOnly(ctx context.Context, vector []float64, limit int) ([]SearchResult, error) {
+	// Convert float64 to float32
+	vector32 := make([]float32, len(vector))
+	for i, v := range vector {
+		vector32[i] = float32(v)
+	}
+
+	// Search for similar vectors
+	searchResult, err := c.client.Query(ctx, &qdrant.QueryPoints{
+		CollectionName: c.config.Collection,
+		Query:          qdrant.NewQuery(vector32...),
+		Filter: &qdrant.Filter{
+			Must: []*qdrant.Condition{
+				{
+					ConditionOneOf: &qdrant.Condition_Field{
+						Field: &qdrant.FieldCondition{
+							Key: "chunk_type",
+							Match: &qdrant.Match{
+								MatchValue: &qdrant.Match_Keyword{
+									Keyword: "markdown",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		Limit:       qdrant.PtrOf(uint64(limit)),
+		WithPayload: qdrant.NewWithPayload(true),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to search docs: %w", err)
+	}
+
+	// Convert results
+	results := make([]SearchResult, 0, len(searchResult))
+	for _, point := range searchResult {
+		payload := make(map[string]interface{})
+		for key, val := range point.Payload {
+			payload[key] = val.GetStringValue()
+		}
+
+		// Extract ID as string
+		var idStr string
+		if point.Id != nil && point.Id.GetNum() != 0 {
+			idStr = fmt.Sprintf("%d", point.Id.GetNum())
+		} else if point.Id != nil && point.Id.GetUuid() != "" {
+			idStr = point.Id.GetUuid()
+		}
+
+		results = append(results, SearchResult{
+			ID:      idStr,
+			Score:   float64(point.Score),
+			Payload: payload,
+		})
+	}
+
+	return results, nil
+}
+
 // SearchCodeOnly searches for similar vectors, excluding markdown documentation chunks
 func (c *QdrantClient) SearchCodeOnly(ctx context.Context, vector []float64, limit int) ([]SearchResult, error) {
 	// Convert float64 to float32

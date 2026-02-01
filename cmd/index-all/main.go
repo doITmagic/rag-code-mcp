@@ -138,13 +138,13 @@ func main() {
 
 	// Index Go files
 	fmt.Printf("🔎 Indexing Go files in '%s' (incremental)...\n", info.Root)
-	if err := mgr.IndexLanguage(ctx, info, "go", codeCollection); err != nil {
+	if err := mgr.IndexLanguage(ctx, info, "go", codeCollection, false); err != nil {
 		log.Printf("⚠️ Go indexing warning: %v", err)
 	}
 
 	// Index PHP files
 	fmt.Printf("🔎 Indexing PHP files in '%s' (incremental)...\n", info.Root)
-	if err := mgr.IndexLanguage(ctx, info, "php", codeCollection); err != nil {
+	if err := mgr.IndexLanguage(ctx, info, "php", codeCollection, false); err != nil {
 		log.Printf("⚠️ PHP indexing warning: %v", err)
 	}
 

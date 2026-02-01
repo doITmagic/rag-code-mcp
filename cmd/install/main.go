@@ -35,7 +35,7 @@ const (
 	ollamaContainer = "ragcode-ollama"
 	qdrantContainer = "ragcode-qdrant"
 	defaultModel    = "phi3:medium"
-	defaultEmbed    = "nomic-embed-text"
+	defaultEmbed    = "mxbai-embed-large"
 	installDirName  = ".local/share/ragcode"
 )
 
@@ -257,59 +257,58 @@ func freeRequiredPorts() {
 	}
 	if *qdrantMode == "docker" {
 		ports[6333] = "Qdrant"
-		ports[6334] = "Qdrant gRPC"
 	}
 
-	var blocked []string
 	for port, name := range ports {
 		if isPortInUse(port) {
-			// Check if it's already the service we want
+			// 1. Check if it's already our named container (shorthand check)
+			containerName := ""
+			if port == 11434 {
+				containerName = ollamaContainer
+			} else if port == 6333 {
+				containerName = qdrantContainer
+			}
+
+			if containerName != "" {
+				cmd := exec.Command("docker", "ps", "--filter", "name="+containerName, "--filter", "status=running", "--format", "{{.Names}}")
+				output, _ := cmd.CombinedOutput()
+				if strings.Contains(string(output), containerName) {
+					success(fmt.Sprintf("Service %s (%s) is already running in Docker", name, containerName))
+					continue
+				}
+			}
+
+			// 2. Check if it's already the service we want responding on the port
 			isOurs := false
+			client := &http.Client{Timeout: 2 * time.Second}
 			switch port {
 			case 11434:
-				resp, err := http.Get("http://localhost:11434/api/tags")
+				resp, err := client.Get("http://127.0.0.1:11434/api/tags")
 				if err == nil {
 					resp.Body.Close()
 					isOurs = true
 				}
 			case 6333:
-				resp, err := http.Get("http://localhost:6333/readyz")
+				// Qdrant check
+				resp, err := client.Get("http://127.0.0.1:6333/readyz")
 				if err == nil {
 					resp.Body.Close()
 					isOurs = true
 				}
-			case 6334:
-				// Qdrant gRPC, if 6333 is ours, 6334 likely is too if it's qdrant
-				isOurs = true // Conservative assumption if 6333 passed
 			}
 
 			if isOurs {
 				success(fmt.Sprintf("Service %s is already running on port %d", name, port))
 				continue
 			}
-			blocked = append(blocked, fmt.Sprintf("%d (%s)", port, name))
-		}
-	}
 
-	if len(blocked) > 0 {
-		warn(fmt.Sprintf("Ports in use by unknown processes: %s", strings.Join(blocked, ", ")))
-		log("Stopping processes on required ports...")
-		for _, b := range blocked {
-			var port int
-			if _, err := fmt.Sscanf(b, "%d", &port); err == nil {
-				killProcessOnPort(port)
-				time.Sleep(500 * time.Millisecond)
-			}
-		}
-		// Verify
-		for _, b := range blocked {
-			var port int
-			var name string
-			if _, err := fmt.Sscanf(b, "%d (%s)", &port, &name); err == nil {
-				if isPortInUse(port) {
-					// Don't fail immediately if it's a re-install and containers might be ours
-					warn(fmt.Sprintf("Could not free port %d (%s) via kill. Checking if it's our container...", port, name))
-				}
+			// 3. It's an unknown process, try to kill it
+			log(fmt.Sprintf("Port %d (%s) is in use by an unknown process. Trying to free it...", port, name))
+			killProcessOnPort(port)
+			time.Sleep(1 * time.Second)
+
+			if isPortInUse(port) {
+				fail(fmt.Sprintf("Could not free port %d (%s). Please stop the process manually.", port, name))
 			}
 		}
 	}
@@ -587,9 +586,11 @@ func addToPath(binDir string) {
 func setupServices() {
 	log("Configuring services...")
 
+	client := &http.Client{Timeout: 2 * time.Second}
+
 	// Setup Qdrant
 	qdrantReady := false
-	resp, err := http.Get("http://localhost:6333/readyz")
+	resp, err := client.Get("http://127.0.0.1:6333/readyz")
 	if err == nil {
 		resp.Body.Close()
 		qdrantReady = true
@@ -618,7 +619,7 @@ func setupServices() {
 
 	// Setup Ollama
 	ollamaReady := false
-	resp, err = http.Get("http://localhost:11434/api/tags")
+	resp, err = client.Get("http://127.0.0.1:11434/api/tags")
 	if err == nil {
 		resp.Body.Close()
 		ollamaReady = true
@@ -986,6 +987,15 @@ func updateMCPConfig(ideKey, displayName, path, binPath string) {
 	servers := make(map[string]interface{})
 	if existing, ok := config[collectionKey].(map[string]interface{}); ok {
 		servers = existing
+	}
+
+	// Migration: Clean up legacy server keys
+	legacyKeys := []string{"coderag", "do-ai", "ragcond"}
+	for _, lk := range legacyKeys {
+		if _, exists := servers[lk]; exists {
+			delete(servers, lk)
+			log(fmt.Sprintf("Migrating legacy config: removed %s", lk))
+		}
 	}
 
 	servers["ragcode"] = buildMCPServerEntry(ideKey, binPath)

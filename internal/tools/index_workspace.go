@@ -50,6 +50,11 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 		language = lang
 	}
 
+	recreate := false
+	if r, ok := params["recreate"].(bool); ok {
+		recreate = r
+	}
+
 	// If no language specified, index all detected languages
 	if language == "" {
 		if len(workspaceInfo.Languages) == 0 {
@@ -64,6 +69,13 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 	// If still no specific language, index all languages
 	if language == "" {
 		// Index all detected languages
+		if recreate {
+			// Delete collections first
+			for _, lang := range workspaceInfo.Languages {
+				t.workspaceManager.DeleteLanguageCollection(ctx, workspaceInfo, lang)
+			}
+		}
+
 		memories, err := t.workspaceManager.GetMemoriesForAllLanguages(ctx, workspaceInfo)
 		if err != nil {
 			return "", fmt.Errorf("failed to initialize indexing for workspace: %w", err)
@@ -87,6 +99,11 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 	}
 
 	// Index specific language
+	if recreate {
+		log.Printf("🗑️ Recreating collection for language '%s'...", language)
+		t.workspaceManager.DeleteLanguageCollection(ctx, workspaceInfo, language)
+	}
+
 	mem, err := t.workspaceManager.GetMemoryForWorkspaceLanguage(ctx, workspaceInfo, language)
 	if err != nil {
 		return "", fmt.Errorf("failed to initialize indexing for language '%s': %w", language, err)

@@ -847,8 +847,35 @@ func (m *Manager) IsIndexing(workspaceID string) bool {
 	return m.indexing[workspaceID]
 }
 
+// DeleteLanguageCollection deletes the Qdrant collection and associated state for a language
+func (m *Manager) DeleteLanguageCollection(ctx context.Context, info *Info, language string) error {
+	collectionName := info.CollectionNameForLanguage(language)
+
+	// Remove from cache
+	m.memoryMu.Lock()
+	if mem, ok := m.memories[collectionName]; ok {
+		if closer, ok := mem.(interface{ Close() error }); ok {
+			closer.Close()
+		}
+		delete(m.memories, collectionName)
+	}
+	m.memoryMu.Unlock()
+
+	// Delete from Qdrant
+	if err := m.qdrant.DeleteCollection(ctx, collectionName); err != nil {
+		log.Printf("⚠️ Failed to delete collection %s from Qdrant: %v", collectionName, err)
+	}
+
+	// Delete workspace state file
+	stateFile := filepath.Join(info.Root, ".ragcode", "state.json")
+	if err := os.Remove(stateFile); err != nil && !os.IsNotExist(err) {
+		log.Printf("⚠️ Failed to delete state file %s: %v", stateFile, err)
+	}
+
+	return nil
+}
+
 // StartIndexing explicitly starts background indexing for a workspace language
-// This is used by the index_workspace tool to manually trigger indexing
 func (m *Manager) StartIndexing(ctx context.Context, info *Info, language string) error {
 	collectionName := info.CollectionNameForLanguage(language)
 

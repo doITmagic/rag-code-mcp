@@ -296,7 +296,7 @@ llm:
   provider: ollama
   ollama_base_url: http://localhost:11434
   ollama_model: phi3:medium
-  ollama_embed: nomic-embed-text
+  ollama_embed: mxbai-embed-large
   temperature: 0.7
   max_tokens: 1024
   timeout: 60s

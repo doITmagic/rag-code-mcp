@@ -79,7 +79,7 @@ Environment variables override `config.yaml` settings. Set these in your IDE's M
 |----------|---------|-------------|
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
 | `OLLAMA_MODEL` | `phi3:medium` | LLM model for code analysis |
-| `OLLAMA_EMBED` | `nomic-embed-text` | Embedding model |
+| `OLLAMA_EMBED` | `mxbai-embed-large` | Embedding model |
 | `QDRANT_URL` | `http://localhost:6333` | Qdrant vector database URL |
 | `MCP_LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
 
@@ -94,7 +94,7 @@ Environment variables override `config.yaml` settings. Set these in your IDE's M
       "env": {
         "OLLAMA_BASE_URL": "http://localhost:11434",
         "OLLAMA_MODEL": "phi3:medium",
-        "OLLAMA_EMBED": "nomic-embed-text",
+        "OLLAMA_EMBED": "mxbai-embed-large",
         "QDRANT_URL": "http://localhost:6333"
       }
     }

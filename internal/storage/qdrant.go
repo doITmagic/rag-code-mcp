@@ -112,6 +112,48 @@ func (c *QdrantClient) CollectionExists(ctx context.Context, name string) (bool,
 	return c.client.CollectionExists(ctx, name)
 }
 
+// CollectionInfo holds information about a collection
+type CollectionInfo struct {
+	PointsCount uint64
+	VectorSize  uint64
+}
+
+// GetCollectionInfo returns detailed information about a collection
+func (c *QdrantClient) GetCollectionInfo(ctx context.Context, name string) (*CollectionInfo, error) {
+	info, err := c.client.GetCollectionInfo(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get collection info: %w", err)
+	}
+
+	if info == nil {
+		return nil, fmt.Errorf("collection info is nil")
+	}
+
+	// Extract vector size from config
+	var vectorSize uint64
+	if info.Config != nil && info.Config.Params != nil && info.Config.Params.VectorsConfig != nil {
+		vectorsConfig := info.Config.Params.VectorsConfig
+
+		// Try single vector params first
+		if params := vectorsConfig.GetParams(); params != nil {
+			vectorSize = params.Size
+		} else if paramsMap := vectorsConfig.GetParamsMap(); paramsMap != nil && len(paramsMap.Map) > 0 {
+			// Multiple named vectors - use the first one
+			for _, params := range paramsMap.Map {
+				if params != nil {
+					vectorSize = params.Size
+					break
+				}
+			}
+		}
+	}
+
+	return &CollectionInfo{
+		PointsCount: info.GetPointsCount(),
+		VectorSize:  vectorSize,
+	}, nil
+}
+
 // GetCollectionPointCount returns the number of points (documents) in a collection
 func (c *QdrantClient) GetCollectionPointCount(ctx context.Context, name string) (uint64, error) {
 	collectionInfo, err := c.client.GetCollectionInfo(ctx, name)

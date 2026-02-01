@@ -898,11 +898,11 @@ func getToolSchema(toolName string) map[string]interface{} {
 			"properties": map[string]interface{}{
 				"query": map[string]interface{}{
 					"type":        "string",
-					"description": "The search query to find relevant code",
+					"description": "The search query to find relevant code. MANDATORY: Use this as your first step to understand unfamiliar code or find logic across the project.",
 				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional: file path to help detect workspace context",
+					"description": "Optional: file path to help detect workspace context. Highly recommended to use the current file path.",
 				},
 				"limit": map[string]interface{}{
 					"type":        "number",
@@ -918,7 +918,7 @@ func getToolSchema(toolName string) map[string]interface{} {
 			"properties": map[string]interface{}{
 				"function_name": map[string]interface{}{
 					"type":        "string",
-					"description": "The name of the function or method to look up",
+					"description": "The name of the function or method to look up. MANDATORY: Use this to get the ACTUAL source code instead of guessing its implementation.",
 				},
 				"file_path": map[string]interface{}{
 					"type":        "string",

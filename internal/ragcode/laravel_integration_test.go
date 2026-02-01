@@ -157,6 +157,10 @@ func (m *mockProvider) Embed(ctx context.Context, text string) ([]float64, error
 	return make([]float64, 384), nil
 }
 
+func (m *mockProvider) GetEmbeddingDimension() uint64 {
+	return 384
+}
+
 func (m *mockProvider) Generate(ctx context.Context, prompt string, opts ...llm.GenerateOption) (string, error) {
 	return "mock response", nil
 }

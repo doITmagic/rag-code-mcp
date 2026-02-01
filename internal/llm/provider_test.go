@@ -120,6 +120,10 @@ func (f *fakeProvider) Embed(ctx context.Context, text string) ([]float64, error
 	return f.embedResult, f.embedErr
 }
 
+func (f *fakeProvider) GetEmbeddingDimension() uint64 {
+	return uint64(len(f.embedResult))
+}
+
 func (f *fakeProvider) Name() string {
 	if f.name != "" {
 		return f.name

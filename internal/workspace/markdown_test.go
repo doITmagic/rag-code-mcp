@@ -31,6 +31,10 @@ func (m *MockLLMProvider) Embed(ctx context.Context, text string) ([]float64, er
 	return make([]float64, 768), nil
 }
 
+func (m *MockLLMProvider) GetEmbeddingDimension() uint64 {
+	return 768
+}
+
 func (m *MockLLMProvider) Name() string {
 	return "mock"
 }

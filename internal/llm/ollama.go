@@ -88,6 +88,22 @@ func (p *OllamaLLMProvider) Generate(ctx context.Context, prompt string, opts ..
 	return llms.GenerateFromSinglePrompt(ctx, p.chatModel, prompt, lcOpts...)
 }
 
+// GetEmbeddingDimension returns the dimension of the embedding model
+func (p *OllamaLLMProvider) GetEmbeddingDimension() uint64 {
+	// Common Ollama embedding models and their dimensions
+	switch p.embedName {
+	case "mxbai-embed-large":
+		return 1024
+	case "nomic-embed-text":
+		return 768
+	case "all-minilm":
+		return 384
+	default:
+		log.Printf("⚠️  Unknown embedding model '%s', assuming 1024 dimensions", p.embedName)
+		return 1024 // Default to mxbai-embed-large dimension
+	}
+}
+
 // GenerateStream generates streaming text using Ollama chat model
 func (p *OllamaLLMProvider) GenerateStream(ctx context.Context, prompt string, opts ...GenerateOption) (<-chan string, <-chan error) {
 	textChan := make(chan string)

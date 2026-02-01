@@ -34,6 +34,10 @@ func (m *mockProvider) Embed(ctx context.Context, text string) ([]float64, error
 	return []float64{0.1, 0.2, 0.3}, nil
 }
 
+func (m *mockProvider) GetEmbeddingDimension() uint64 {
+	return 3
+}
+
 func (m *mockProvider) Name() string { return "mock" }
 
 var _ llm.Provider = (*mockProvider)(nil)

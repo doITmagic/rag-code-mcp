@@ -478,6 +478,17 @@ func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string
 	log.Printf("   Language: %s", language)
 	log.Printf("   Project type: %s", info.ProjectType)
 
+	// Check if we need to migrate due to dimension mismatch
+	newCollection, oldCollection, needsMigration, err := m.CheckAndPrepareMigration(ctx, info, language)
+	if err != nil {
+		return fmt.Errorf("failed to check collection migration: %w", err)
+	}
+
+	if needsMigration {
+		log.Printf("🔄 Dimension mismatch detected, migrating to new collection: %s", newCollection)
+		collectionName = newCollection
+	}
+
 	// Create collection-specific memory
 	collectionConfig := storage.QdrantConfig{
 		URL:        m.config.Storage.VectorDB.URL,
@@ -655,6 +666,15 @@ func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string
 		log.Printf("⚠️  Failed to save workspace state: %v", err)
 	}
 
+	// Complete migration if needed (delete old collection)
+	if needsMigration && oldCollection != "" {
+		if err := m.CompleteMigration(ctx, info, language, collectionName, oldCollection); err != nil {
+			log.Printf("⚠️  Failed to complete collection migration: %v", err)
+		} else {
+			log.Printf("✅ Collection migration completed successfully")
+		}
+	}
+
 	m.recordFingerprint(info, language, scan)
 	return nil
 }
@@ -828,6 +848,85 @@ func (m *Manager) IsIndexing(workspaceID string) bool {
 	m.indexingMu.RLock()
 	defer m.indexingMu.RUnlock()
 	return m.indexing[workspaceID]
+}
+
+// CheckAndPrepareMigration checks if collection needs migration due to dimension mismatch
+// Returns: (newCollectionName, oldCollectionName, needsMigration, error)
+func (m *Manager) CheckAndPrepareMigration(ctx context.Context, info *Info, language string) (string, string, bool, error) {
+	collectionName := info.CollectionNameForLanguage(language)
+
+	// Check if collection exists
+	exists, err := m.qdrant.CollectionExists(ctx, collectionName)
+	if err != nil {
+		return collectionName, "", false, fmt.Errorf("failed to check collection: %w", err)
+	}
+
+	if !exists {
+		// Collection doesn't exist, no migration needed
+		return collectionName, "", false, nil
+	}
+
+	// Try to get collection info to check vector dimensions
+	collectionInfo, err := m.qdrant.GetCollectionInfo(ctx, collectionName)
+	if err != nil {
+		log.Printf("⚠️ Could not get collection info, proceeding without migration: %v", err)
+		return collectionName, "", false, nil
+	}
+
+	// Get current embedding dimension from LLM config
+	currentDimension := m.llm.GetEmbeddingDimension()
+	existingDimension := collectionInfo.VectorSize
+
+	if existingDimension > 0 && currentDimension > 0 && existingDimension != currentDimension {
+		// Dimension mismatch detected - need migration
+		newCollectionName := fmt.Sprintf("%s_new_%d", collectionName, time.Now().Unix())
+		log.Printf("🔄 Dimension mismatch detected in collection '%s':", collectionName)
+		log.Printf("   Existing: %d dimensions", existingDimension)
+		log.Printf("   Current model: %d dimensions", currentDimension)
+		log.Printf("   Will migrate to new collection: %s", newCollectionName)
+		return newCollectionName, collectionName, true, nil
+	}
+
+	return collectionName, "", false, nil
+}
+
+// CompleteMigration finalizes the migration by deleting old collection and updating cache
+func (m *Manager) CompleteMigration(ctx context.Context, info *Info, language string, newCollectionName string, oldCollectionName string) error {
+	if oldCollectionName == "" {
+		return nil // No migration to complete
+	}
+
+	log.Printf("✅ Migration successful! Cleaning up old collection: %s", oldCollectionName)
+
+	// Remove old collection from cache
+	m.memoryMu.Lock()
+	if mem, ok := m.memories[oldCollectionName]; ok {
+		if closer, ok := mem.(interface{ Close() error }); ok {
+			closer.Close()
+		}
+		delete(m.memories, oldCollectionName)
+	}
+	m.memoryMu.Unlock()
+
+	// Delete old collection from Qdrant
+	if err := m.qdrant.DeleteCollection(ctx, oldCollectionName); err != nil {
+		log.Printf("⚠️ Failed to delete old collection %s: %v", oldCollectionName, err)
+	}
+
+	// Rename new collection to original name
+	log.Printf("🔄 Renaming new collection to original name...")
+
+	// Qdrant doesn't support rename, so we update our cache mapping
+	m.memoryMu.Lock()
+	if mem, ok := m.memories[newCollectionName]; ok {
+		// Move memory reference to original collection name
+		m.memories[info.CollectionNameForLanguage(language)] = mem
+		delete(m.memories, newCollectionName)
+	}
+	m.memoryMu.Unlock()
+
+	log.Printf("✨ Migration completed successfully")
+	return nil
 }
 
 // DeleteLanguageCollection deletes the Qdrant collection and associated state for a language

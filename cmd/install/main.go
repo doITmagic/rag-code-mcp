@@ -73,6 +73,7 @@ func installRuntimeBinaries() {
 	}{
 		{"rag-code-mcp", "./cmd/rag-code-mcp"},
 		{"index-all", "./cmd/index-all"},
+		{"ragcode-installer", "./cmd/install"},
 	}
 
 	// Check which binaries are missing from the install directory
@@ -90,53 +91,45 @@ func installRuntimeBinaries() {
 		}
 	}
 
-	if len(missingBinaries) == 0 {
-		success(fmt.Sprintf("Runtime binaries already installed in %s", binDir))
-		return
-	}
-
 	log(fmt.Sprintf("Installing runtime binaries into %s...", binDir))
-	for _, bin := range missingBinaries {
+	for _, bin := range binaries { // Install/update all to ensure latest version
 		binName := bin.name
 		if runtime.GOOS == "windows" {
 			binName += ".exe"
 		}
 		output := filepath.Join(binDir, binName)
 
-		// Option 1: Check if pre-built binary exists in current directory (from release archive)
+		// Option 1: Check if pre-built binary exists in current directory
 		if _, err := os.Stat(binName); err == nil {
 			log(fmt.Sprintf(" - Found %s in current directory, copying...", binName))
 			if err := copyFile(binName, output); err != nil {
 				fail(fmt.Sprintf("Failed to copy %s: %v", binName, err))
 			}
-			if err := os.Chmod(output, 0755); err != nil {
-				warn(fmt.Sprintf("Could not set executable flag on %s: %v", binName, err))
+		} else if _, err := os.Stat(bin.pkg); err == nil {
+			// Option 2: Build from source
+			if _, err := exec.LookPath("go"); err == nil {
+				log(fmt.Sprintf(" - Building %s from source...", bin.name))
+				cmd := exec.Command("go", "build", "-o", output, bin.pkg)
+				if err := cmd.Run(); err != nil {
+					warn(fmt.Sprintf("Failed to build %s: %v", bin.name, err))
+					continue
+				}
 			}
-			success(fmt.Sprintf("Installed %s", output))
-			continue
 		}
 
-		// Option 2: Fallback to building from source if Go is available and source exists
-		if _, err := os.Stat(bin.pkg); err == nil {
-			if _, err := exec.LookPath("go"); err != nil {
-				fail(fmt.Sprintf("Binary %s not found and Go toolchain is not available. Please download the complete release archive from:\nhttps://github.com/doITmagic/rag-code-mcp/releases/latest", binName))
+		if _, err := os.Stat(output); err == nil {
+			os.Chmod(output, 0755)
+			
+			// CLI Tool Support: Symlink to ~/.local/bin if it exists
+			localBin := filepath.Join(home, ".local", "bin")
+			if _, err := os.Stat(localBin); err == nil {
+				linkPath := filepath.Join(localBin, binName)
+				os.Remove(linkPath) // Remove old link
+				if err := os.Symlink(output, linkPath); err == nil {
+					success(fmt.Sprintf("Linked %s to %s", binName, linkPath))
+				}
 			}
-			log(fmt.Sprintf(" - Building %s from source...", bin.name))
-			cmd := exec.Command("go", "build", "-o", output, bin.pkg)
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			if err := cmd.Run(); err != nil {
-				fail(fmt.Sprintf("Failed to build %s: %v", bin.name, err))
-			}
-			if err := os.Chmod(output, 0755); err != nil {
-				fail(fmt.Sprintf("Failed to set executable bit on %s: %v", output, err))
-			}
-			success(fmt.Sprintf("Built and installed %s", output))
-			continue
 		}
-
-		// Neither pre-built binary nor source found
-		fail(fmt.Sprintf("Binary %s not found in current directory and source not available. Please download the complete release archive from:\nhttps://github.com/doITmagic/rag-code-mcp/releases/latest", binName))
 	}
 }
 
@@ -879,9 +872,17 @@ func resolveIDEPaths(home string) map[string]idePath {
 			path:        filepath.Join(home, ".cursor", "mcp.config.json"),
 			displayName: "Cursor",
 		},
+		"copilot": {
+			path:        filepath.Join(home, ".aitk", "mcp.json"),
+			displayName: "GitHub Copilot",
+		},
 		"antigravity": {
 			path:        filepath.Join(home, ".gemini", "antigravity", "mcp_config.json"),
 			displayName: "Antigravity",
+		},
+		"mcp-cli": {
+			path:        filepath.Join(home, ".config", "mcp-servers.json"),
+			displayName: "MCP CLI / Generic",
 		},
 	}
 
@@ -980,7 +981,7 @@ func updateMCPConfig(ideKey, displayName, path, binPath string) {
 	}
 
 	collectionKey := "mcpServers"
-	if ideKey == "vs-code" {
+	if ideKey == "vs-code" || ideKey == "copilot" {
 		collectionKey = "servers"
 	}
 
@@ -1024,7 +1025,7 @@ func buildMCPServerEntry(ideKey, binPath string) map[string]interface{} {
 
 	// add specific fields for each ide
 	switch ideKey {
-	case "vs-code":
+	case "vs-code", "copilot":
 		entry["alwaysAllow"] = []string{
 			"search_code",
 			"search_local_index",

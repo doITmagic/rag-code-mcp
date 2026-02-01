@@ -1,5 +1,8 @@
 # Copilot Instructions - RagCode MCP
 
+## ⚖️ The Golden Rule
+**For any information about the code (location, structure, logic, or usage), you MUST use RagCode MCP tools. Never guess code details from memory; always search the local index first.**
+
 ## Project Overview
 RagCode is a Model Context Protocol (MCP) server that provides semantic code search (RAG) for local codebases using Ollama (embeddings) and Qdrant (vector storage). It supports multiple languages through a pluggable analyzer architecture.
 

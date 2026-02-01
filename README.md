@@ -23,6 +23,11 @@ RagCode is a **Model Context Protocol (MCP) server** that instantly makes your p
 
 Built with the official [Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk), RagCode provides **9 powerful tools** to index, search, and analyze code, making it the ultimate solution for **AI-ready software development**.
 
+## ⚖️ The Golden Rule
+> **"FOR ANY INFORMATION ABOUT YOUR CODE (location, structure, logic, or usage), YOU MUST USE RAGCODE MCP TOOLS."**
+> 
+> *By using semantic search instead of simple keyword lookups, your AI assistant gains true context, avoiding hallucinations and and missing details even in massive legacy mono-repos.*
+
 ---
 
 ## ⚡ One-Command Installation

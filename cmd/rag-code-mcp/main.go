@@ -608,7 +608,7 @@ func main() {
 
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "ragcode",
-		Version: "1.1.16",
+		Version: Version,
 	}, nil)
 
 	// All tools use workspace manager - no single collections

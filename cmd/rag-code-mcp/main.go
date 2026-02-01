@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -78,25 +77,6 @@ func (l *simpleLogger) Warn(format string, args ...interface{}) {
 }
 
 var logger = &simpleLogger{}
-
-func getAppDataDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-
-	if runtime.GOOS == "windows" {
-		return filepath.Join(home, "AppData", "Local", "ragcode"), nil
-	} else if runtime.GOOS == "darwin" {
-		return filepath.Join(home, "Library", "Application Support", "ragcode"), nil
-	}
-
-	// Linux / Unix standard (XDG state home or fallback to local/state)
-	if xdgState := os.Getenv("XDG_STATE_HOME"); xdgState != "" {
-		return filepath.Join(xdgState, "ragcode"), nil
-	}
-	return filepath.Join(home, ".local", "state", "ragcode"), nil
-}
 
 func resolveLogPath(path string) (string, error) {
 	if path == "" {
@@ -192,6 +172,70 @@ func initLoggerFromEnv() {
 	log.Printf("Logger initialized successfully writing to %s", path)
 }
 
+func rotateLogFile(path string, maxSizeMB int) {
+	if maxSizeMB <= 0 {
+		return
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return // File doesn't exist or error
+	}
+
+	maxSizeBytes := int64(maxSizeMB) * 1024 * 1024
+	if info.Size() < maxSizeBytes {
+		return
+	}
+
+	// Log rotation needed
+	fmt.Fprintf(os.Stderr, "[INFO] Log file %s exceeds %dMB (%d bytes). Rotating...\n", path, maxSizeMB, info.Size())
+
+	// Read file
+	content, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to read log file for rotation: %v\n", err)
+		return
+	}
+
+	// Calculate cutoff (remove ~10%)
+	cutSize := len(content) / 10
+	if cutSize == 0 {
+		return
+	}
+
+	// Find next newline after cutoff to keep lines intact
+	cutoffIndex := -1
+	for i := cutSize; i < len(content); i++ {
+		if content[i] == '\n' {
+			cutoffIndex = i + 1
+			break
+		}
+	}
+
+	if cutoffIndex == -1 {
+		// Fallback: if no newline found (rare), just cut at 10%
+		cutoffIndex = cutSize
+	}
+
+	if cutoffIndex >= len(content) {
+		// Should not happen if file is large, but safety check
+		// If we cut everything, just truncate
+		if err := os.Truncate(path, 0); err != nil {
+			fmt.Fprintf(os.Stderr, "[WARN] Failed to truncate log file: %v\n", err)
+		}
+		return
+	}
+
+	newContent := content[cutoffIndex:]
+
+	// Rewrite file
+	if err := os.WriteFile(path, newContent, 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to write rotated log file: %v\n", err)
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "[INFO] Log file rotated. Removed %d bytes.\n", cutoffIndex)
+}
+
 func applyLoggingConfig(logCfg config.LoggingConfig) {
 	if logCfg.Level != "" {
 		if _, ok := os.LookupEnv("MCP_LOG_LEVEL"); !ok {
@@ -205,6 +249,9 @@ func applyLoggingConfig(logCfg config.LoggingConfig) {
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "[WARN] Failed to resolve log path %s: %v\n", logCfg.Path, err)
 			} else {
+				// Rotate log file if needed before opening
+				rotateLogFile(expanded, logCfg.MaxSizeMB)
+
 				// Set the fully resolved path in env var for initLoggerFromEnv to use
 				_ = os.Setenv("MCP_LOG_FILE", expanded)
 			}
@@ -938,6 +985,26 @@ func getToolSchema(toolName string) map[string]interface{} {
 				},
 			},
 			"required": []string{"file_path"},
+		}
+
+	case "hybrid_search":
+		return map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"query": map[string]interface{}{
+					"type":        "string",
+					"description": "The search query combining lexical and semantic matching",
+				},
+				"file_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional: file path to help detect workspace context",
+				},
+				"limit": map[string]interface{}{
+					"type":        "number",
+					"description": "Maximum number of results to return (default: 5)",
+				},
+			},
+			"required": []string{"query"},
 		}
 
 	default:

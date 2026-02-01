@@ -122,10 +122,22 @@ func (t *FindTypeDefinitionTool) Execute(ctx context.Context, args map[string]in
 		return "", fmt.Errorf("no long-term memory configured")
 	}
 
+	// Detect language from file path to build appropriate query
+	language := inferLanguageFromPath(filePath)
+
 	// Search for the type in the vector database
-	query := fmt.Sprintf("type %s definition", typeName)
+	// Use language-appropriate keywords for better semantic matching
+	var query string
+	switch language {
+	case "python":
+		query = fmt.Sprintf("class %s definition python", typeName)
+	case "php":
+		query = fmt.Sprintf("class %s definition php", typeName)
+	default:
+		query = fmt.Sprintf("type %s definition struct interface", typeName)
+	}
 	if packagePath != "" {
-		query = fmt.Sprintf("type %s in package %s", typeName, packagePath)
+		query = fmt.Sprintf("%s in package %s", query, packagePath)
 	}
 
 	// Generate query embedding
@@ -134,11 +146,39 @@ func (t *FindTypeDefinitionTool) Execute(ctx context.Context, args map[string]in
 		return "", fmt.Errorf("failed to generate query embedding: %w", err)
 	}
 
-	// Use a larger search window to avoid missing type definitions when usages dominate
-	results, err := searchMemory.Search(ctx, queryEmbedding, 50)
-	if err != nil {
-		return "", fmt.Errorf("search failed: %w", err)
+	// First, try exact name+type search (faster and more accurate)
+	type ExactSearcher interface {
+		SearchByNameAndType(ctx context.Context, name string, types []string) ([]memory.Document, error)
 	}
+
+	typeKinds := []string{"type", "class", "interface", "trait", "model"}
+
+	var results []memory.Document
+	if exactSearcher, ok := searchMemory.(ExactSearcher); ok {
+		results, err = exactSearcher.SearchByNameAndType(ctx, typeName, typeKinds)
+		if err == nil && len(results) > 0 {
+			// Found exact match, use it directly
+			goto processResults
+		}
+	}
+
+	// Fallback to semantic search if exact search didn't find anything
+	{
+		type CodeSearcher interface {
+			SearchCodeOnly(ctx context.Context, query []float64, limit int) ([]memory.Document, error)
+		}
+
+		if codeSearcher, ok := searchMemory.(CodeSearcher); ok {
+			results, err = codeSearcher.SearchCodeOnly(ctx, queryEmbedding, 50)
+		} else {
+			results, err = searchMemory.Search(ctx, queryEmbedding, 50)
+		}
+		if err != nil {
+			return "", fmt.Errorf("search failed: %w", err)
+		}
+	}
+
+processResults:
 
 	if len(results) == 0 {
 		// Check if this is a workspace search with empty collection

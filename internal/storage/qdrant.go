@@ -225,6 +225,140 @@ func (c *QdrantClient) Search(ctx context.Context, vector []float64, limit int) 
 	return results, nil
 }
 
+// SearchCodeOnly searches for similar vectors, excluding markdown documentation chunks
+func (c *QdrantClient) SearchCodeOnly(ctx context.Context, vector []float64, limit int) ([]SearchResult, error) {
+	// Convert float64 to float32
+	vector32 := make([]float32, len(vector))
+	for i, v := range vector {
+		vector32[i] = float32(v)
+	}
+
+	// Search for similar vectors, excluding markdown chunks
+	// Markdown chunks have chunk_type="markdown", code chunks have type="class|method|function|etc"
+	searchResult, err := c.client.Query(ctx, &qdrant.QueryPoints{
+		CollectionName: c.config.Collection,
+		Query:          qdrant.NewQuery(vector32...),
+		Limit:          qdrant.PtrOf(uint64(limit)),
+		WithPayload:    qdrant.NewWithPayload(true),
+		Filter: &qdrant.Filter{
+			MustNot: []*qdrant.Condition{
+				{
+					ConditionOneOf: &qdrant.Condition_Field{
+						Field: &qdrant.FieldCondition{
+							Key: "chunk_type",
+							Match: &qdrant.Match{
+								MatchValue: &qdrant.Match_Keyword{
+									Keyword: "markdown",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to search code: %w", err)
+	}
+
+	// Convert results
+	results := make([]SearchResult, 0, len(searchResult))
+	for _, point := range searchResult {
+		payload := make(map[string]interface{})
+		for key, val := range point.Payload {
+			payload[key] = val.GetStringValue()
+		}
+
+		// Extract ID as string
+		var idStr string
+		if point.Id != nil && point.Id.GetNum() != 0 {
+			idStr = fmt.Sprintf("%d", point.Id.GetNum())
+		} else if point.Id != nil && point.Id.GetUuid() != "" {
+			idStr = point.Id.GetUuid()
+		}
+
+		results = append(results, SearchResult{
+			ID:      idStr,
+			Score:   float64(point.Score),
+			Payload: payload,
+		})
+	}
+
+	return results, nil
+}
+
+// SearchByNameAndType searches for a specific symbol by exact name and type match
+// This is useful for find_type_definition where semantic search may not find the exact match
+func (c *QdrantClient) SearchByNameAndType(ctx context.Context, name string, types []string) ([]SearchResult, error) {
+	// Build type conditions
+	typeConditions := make([]*qdrant.Condition, 0, len(types))
+	for _, t := range types {
+		typeConditions = append(typeConditions, &qdrant.Condition{
+			ConditionOneOf: &qdrant.Condition_Field{
+				Field: &qdrant.FieldCondition{
+					Key: "type",
+					Match: &qdrant.Match{
+						MatchValue: &qdrant.Match_Keyword{
+							Keyword: t,
+						},
+					},
+				},
+			},
+		})
+	}
+
+	// Scroll with filter for exact name match and type in list
+	scrollResult, err := c.client.Scroll(ctx, &qdrant.ScrollPoints{
+		CollectionName: c.config.Collection,
+		Filter: &qdrant.Filter{
+			Must: []*qdrant.Condition{
+				{
+					ConditionOneOf: &qdrant.Condition_Field{
+						Field: &qdrant.FieldCondition{
+							Key: "name",
+							Match: &qdrant.Match{
+								MatchValue: &qdrant.Match_Keyword{
+									Keyword: name,
+								},
+							},
+						},
+					},
+				},
+			},
+			Should: typeConditions,
+		},
+		Limit:       qdrant.PtrOf(uint32(10)),
+		WithPayload: qdrant.NewWithPayload(true),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to scroll: %w", err)
+	}
+
+	// Convert results
+	results := make([]SearchResult, 0, len(scrollResult))
+	for _, point := range scrollResult {
+		payload := make(map[string]interface{})
+		for key, val := range point.Payload {
+			payload[key] = val.GetStringValue()
+		}
+
+		var idStr string
+		if point.Id != nil && point.Id.GetNum() != 0 {
+			idStr = fmt.Sprintf("%d", point.Id.GetNum())
+		} else if point.Id != nil && point.Id.GetUuid() != "" {
+			idStr = point.Id.GetUuid()
+		}
+
+		results = append(results, SearchResult{
+			ID:      idStr,
+			Score:   1.0, // Exact match
+			Payload: payload,
+		})
+	}
+
+	return results, nil
+}
+
 // Delete deletes a vector by ID
 func (c *QdrantClient) Delete(ctx context.Context, id string) error {
 	_, err := c.client.Delete(ctx, &qdrant.DeletePoints{

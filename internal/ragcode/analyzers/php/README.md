@@ -1,10 +1,379 @@
-# PHP Analyzer
+# PHP Code Analyzer
 
-PHP code analyzer for extracting symbols and structure from PHP files, with Laravel framework support.
+Analizor de cod PHP pentru extragerea simbolurilor, structurii și relațiilor din fișiere PHP. Include suport complet pentru framework-ul Laravel. Indexează codul pentru căutare semantică în Qdrant.
 
-## Status
+## Status: ✅ PRODUCTION READY
 
-**PAS 8-10 COMPLETE** ✅ **PRODUCTION READY**
+---
+
+## 🎯 Ce Face Acest Analizor?
+
+Analizorul PHP parsează fișierele `.php` și extrage:
+1. **Simboluri** - clase, metode, funcții, interfețe, traits, constante
+2. **Relații** - moșteniri, implementări, relații Eloquent
+3. **Metadate** - PHPDoc, vizibilitate, tipuri, Laravel-specific
+4. **Framework** - Eloquent models, Controllers, Routes (Laravel)
+
+---
+
+## 📊 Fluxul de Date
+
+```
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│  Fișiere .php   │────▶│   PHP Analyzer   │────▶│   CodeChunks    │
+│  (cod sursă)    │     │  (VKCOM parser)  │     │   (structurat)  │
+└─────────────────┘     └──────────────────┘     └────────┬────────┘
+                                                          │
+                        ┌──────────────────┐              │
+                        │ Laravel Analyzer │◀─────────────┤
+                        │ (Eloquent, etc.) │              │
+                        └──────────────────┘              ▼
+                                                 ┌─────────────────┐
+                                                 │     Qdrant      │
+                                                 │  (vector store) │
+                                                 └─────────────────┘
+```
+
+---
+
+## 🔍 Ce Indexăm
+
+### 1. Clase (`type: "class"`)
+
+```php
+<?php
+namespace App\Models;
+
+/**
+ * Reprezintă un utilizator în sistem.
+ */
+class User extends Model implements Authenticatable
+{
+    use SoftDeletes, Notifiable;
+    
+    protected $fillable = ['name', 'email'];
+    protected $casts = ['email_verified_at' => 'datetime'];
+}
+```
+
+**Informații extrase:**
+| Câmp | Valoare | Descriere |
+|------|---------|-----------|
+| `name` | `"User"` | Numele clasei |
+| `namespace` | `"App\\Models"` | Namespace-ul |
+| `full_name` | `"App\\Models\\User"` | Numele complet |
+| `extends` | `"Model"` | Clasa părinte |
+| `implements` | `["Authenticatable"]` | Interfețele implementate |
+| `traits` | `["SoftDeletes", "Notifiable"]` | Traits folosite |
+| `is_abstract` | `false` | Dacă e abstractă |
+| `is_final` | `false` | Dacă e final |
+| `docstring` | `"Reprezintă un utilizator..."` | PHPDoc |
+
+### 2. Metode (`type: "method"`)
+
+```php
+/**
+ * Returnează comenzile utilizatorului.
+ * 
+ * @param int $limit Numărul maxim de comenzi
+ * @return Collection<Order>
+ */
+public function getOrders(int $limit = 10): Collection
+{
+    return $this->orders()->limit($limit)->get();
+}
+```
+
+**Informații extrase:**
+| Câmp | Valoare | Descriere |
+|------|---------|-----------|
+| `name` | `"getOrders"` | Numele metodei |
+| `visibility` | `"public"` | Vizibilitate |
+| `is_static` | `false` | Dacă e statică |
+| `is_abstract` | `false` | Dacă e abstractă |
+| `parameters` | `[{name: "limit", type: "int", default: "10"}]` | Parametri |
+| `return_type` | `"Collection"` | Tipul returnat |
+| `phpdoc.params` | `[{name: "limit", type: "int", desc: "..."}]` | PHPDoc params |
+| `phpdoc.return` | `{type: "Collection<Order>", desc: ""}` | PHPDoc return |
+
+### 3. Interfețe (`type: "interface"`)
+
+```php
+interface PaymentGateway extends Gateway
+{
+    public function charge(float $amount): bool;
+    public function refund(string $transactionId): bool;
+}
+```
+
+### 4. Traits (`type: "trait"`)
+
+```php
+trait Auditable
+{
+    public function getCreatedBy(): ?User { ... }
+    public function logActivity(string $action): void { ... }
+}
+```
+
+### 5. Funcții Globale (`type: "function"`)
+
+```php
+/**
+ * Helper pentru formatare preț.
+ */
+function format_price(float $amount, string $currency = 'RON'): string
+{
+    return number_format($amount, 2) . ' ' . $currency;
+}
+```
+
+---
+
+## 🔗 Laravel Framework Support
+
+### Eloquent Models
+
+```php
+class Order extends Model
+{
+    protected $fillable = ['user_id', 'total', 'status'];
+    protected $casts = ['total' => 'decimal:2'];
+    
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
+    
+    public function items(): HasMany
+    {
+        return $this->hasMany(OrderItem::class);
+    }
+    
+    public function scopeCompleted($query)
+    {
+        return $query->where('status', 'completed');
+    }
+    
+    public function getTotalFormattedAttribute(): string
+    {
+        return number_format($this->total, 2) . ' RON';
+    }
+}
+```
+
+**Metadate Laravel extrase:**
+```json
+{
+  "is_eloquent_model": true,
+  "fillable": ["user_id", "total", "status"],
+  "casts": {"total": "decimal:2"},
+  "relations": [
+    {"name": "user", "type": "belongsTo", "related": "User"},
+    {"name": "items", "type": "hasMany", "related": "OrderItem"}
+  ],
+  "scopes": ["completed"],
+  "accessors": ["total_formatted"]
+}
+```
+
+### Controllers
+
+```php
+class OrderController extends Controller
+{
+    public function index(): View { ... }
+    public function store(OrderRequest $request): RedirectResponse { ... }
+    public function show(Order $order): View { ... }
+}
+```
+
+**Metadate Controller:**
+```json
+{
+  "is_controller": true,
+  "is_resource_controller": true,
+  "actions": ["index", "store", "show"],
+  "http_methods": {
+    "index": "GET",
+    "store": "POST",
+    "show": "GET"
+  }
+}
+```
+
+### Routes
+
+```php
+Route::get('/orders', [OrderController::class, 'index'])->name('orders.index');
+Route::resource('users', UserController::class);
+```
+
+---
+
+## 🏗️ Structura Fișierelor
+
+```
+php/
+├── types.go              # Tipuri PHP: ClassInfo, MethodInfo, etc.
+├── analyzer.go           # PathAnalyzer implementation (21KB)
+├── api_analyzer.go       # APIAnalyzer pentru documentație
+├── phpdoc.go             # Parser PHPDoc
+├── analyzer_test.go      # 10 teste CodeAnalyzer
+├── api_analyzer_test.go  # 4 teste APIAnalyzer
+├── parser_test.go        # 5 teste parser
+├── README.md             # Această documentație
+└── laravel/              # Modul Laravel
+    ├── types.go          # Tipuri Laravel-specific
+    ├── analyzer.go       # Coordonator Laravel
+    ├── adapter.go        # Adapter PathAnalyzer
+    ├── eloquent.go       # Analizor Eloquent Models
+    ├── controller.go     # Analizor Controllers
+    ├── routes.go         # Analizor Routes
+    └── README.md         # Documentație Laravel
+```
+
+---
+
+## 💻 Utilizare
+
+```go
+import "github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/php/laravel"
+
+// Pentru proiecte Laravel (recomandat)
+analyzer := laravel.NewAdapter()
+
+// Analiză directoare/fișiere
+chunks, err := analyzer.AnalyzePaths([]string{"./app"})
+
+for _, chunk := range chunks {
+    fmt.Printf("[%s] %s\n", chunk.Type, chunk.Name)
+    if relations, ok := chunk.Metadata["relations"]; ok {
+        fmt.Printf("  Relations: %v\n", relations)
+    }
+}
+```
+
+---
+
+## 🔌 Integrare
+
+### Language Manager
+
+Analizorul PHP/Laravel este selectat automat pentru:
+- `php` - proiecte PHP generice
+- `laravel` - proiecte Laravel
+- `php-laravel` - alternativă Laravel
+
+### Detectare Workspace
+
+| Fișier/Director | Tip Proiect |
+|-----------------|-------------|
+| `artisan` | Laravel |
+| `composer.json` | PHP |
+| `app/Models/` | Laravel |
+| `routes/web.php` | Laravel |
+
+---
+
+## 📋 Tipuri de CodeChunk
+
+| Type | Descriere | Exemplu |
+|------|-----------|---------|
+| `class` | Clasă PHP | `class User extends Model` |
+| `method` | Metodă de clasă | `public function save()` |
+| `function` | Funcție globală | `function helper()` |
+| `interface` | Interfață | `interface Payable` |
+| `trait` | Trait | `trait Auditable` |
+| `const` | Constantă de clasă | `const STATUS_ACTIVE = 1` |
+| `property` | Proprietate | `protected $fillable` |
+
+---
+
+## 🏷️ Metadate Complete
+
+### Class Metadata
+```json
+{
+  "namespace": "App\\Models",
+  "extends": "Model",
+  "implements": ["Authenticatable"],
+  "traits": ["SoftDeletes"],
+  "is_abstract": false,
+  "is_final": false,
+  "is_eloquent_model": true,
+  "fillable": ["name", "email"],
+  "relations": [...]
+}
+```
+
+### Method Metadata
+```json
+{
+  "class_name": "UserController",
+  "visibility": "public",
+  "is_static": false,
+  "is_abstract": false,
+  "is_final": false,
+  "parameters": [...],
+  "return_type": "View",
+  "phpdoc": {
+    "description": "...",
+    "params": [...],
+    "return": {...}
+  }
+}
+```
+
+---
+
+## 🧪 Testare
+
+```bash
+# Toate testele PHP (19 teste)
+go test ./internal/ragcode/analyzers/php/...
+
+# Doar Laravel (21 teste)
+go test ./internal/ragcode/analyzers/php/laravel/...
+
+# Cu coverage
+go test -cover ./internal/ragcode/analyzers/php/...
+```
+
+**Rezultate:**
+- ✅ 19/19 teste PHP PASS
+- ✅ 21/21 teste Laravel PASS
+- ✅ Coverage: 83.6%
+
+---
+
+## 📦 Dependențe
+
+- **VKCOM/php-parser** v0.8.2 - Parser PHP cu suport PHP 8.0-8.2
+
+---
+
+## ⚠️ Limitări
+
+| Limitare | Descriere |
+|----------|-----------|
+| **No Runtime** | Analiză statică, nu execută codul |
+| **Single-file** | Fiecare fișier e analizat independent |
+| **No Autoload** | Nu rezolvă autoload-ul Composer |
+
+---
+
+## 🔮 Îmbunătățiri Viitoare
+
+- [ ] Route groups cu middleware
+- [ ] Migration analyzer
+- [ ] Symfony framework support
+- [ ] WordPress support
+- [ ] Cross-file type resolution
+
+---
+
+## Status Anterior (pentru referință)
 
 ### Laravel Analyzer - FULLY IMPLEMENTED
 

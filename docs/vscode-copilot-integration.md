@@ -30,8 +30,8 @@ Before setting up RagCode with VS Code + Copilot, ensure you have:
    - Copilot extension installed and activated
 
 3. **RagCode Installed**
-   - Use the quick-install script (recommended)
-   - Or build from source
+   - Run `ragcode-installer` from the latest GitHub release (recommended)
+   - Or build from source with `go run ./cmd/install`
 
 4. **Required Services Running**
    - Docker (for Qdrant vector database)
@@ -43,10 +43,11 @@ Before setting up RagCode with VS Code + Copilot, ensure you have:
 
 ### Automatic Setup (Recommended)
 
-The RagCode quick-install script automatically configures VS Code:
+`ragcode-installer` automatically configures VS Code and creates the MCP entry:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | bash
+# Linux (amd64) - ONE COMMAND
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
 ```
 
 This creates the MCP configuration file at:
@@ -89,6 +90,54 @@ If you need to configure manually or customize the setup:
    **Important:** Replace `YOUR_USERNAME` with your actual Linux username.
 
 4. **Restart VS Code** to load the new configuration.
+
+### Windows Setup
+
+On Windows, the MCP configuration file is located at:
+```
+%APPDATA%\Code\User\mcp.json
+```
+
+Example configuration:
+```json
+{
+  "servers": {
+    "ragcode": {
+      "command": "C:\\Users\\YOUR_USERNAME\\.local\\share\\ragcode\\bin\\rag-code-mcp.exe",
+      "args": [],
+      "env": {
+        "OLLAMA_BASE_URL": "http://localhost:11434",
+        "OLLAMA_MODEL": "phi3:medium",
+        "OLLAMA_EMBED": "nomic-embed-text",
+        "QDRANT_URL": "http://localhost:6333"
+      }
+    }
+  }
+}
+```
+
+### Windows with WSL Setup
+
+If you installed RagCode in WSL but use VS Code on Windows:
+
+```json
+{
+  "servers": {
+    "ragcode": {
+      "command": "wsl.exe",
+      "args": ["-e", "/home/YOUR_USERNAME/.local/share/ragcode/bin/rag-code-mcp"],
+      "env": {
+        "OLLAMA_BASE_URL": "http://localhost:11434",
+        "OLLAMA_MODEL": "phi3:medium",
+        "OLLAMA_EMBED": "nomic-embed-text",
+        "QDRANT_URL": "http://localhost:6333"
+      }
+    }
+  }
+}
+```
+
+> 💡 The `localhost` URLs work because WSL2 shares network ports with Windows.
 
 ---
 
@@ -301,11 +350,7 @@ tail -f /tmp/ragcode-mcp.log
 
 2. Check Qdrant is running:
    ```bash
-   docker ps | grep qdrant
-   ```
-   If not running:
-   ```bash
-   ~/.local/share/ragcode/start.sh
+   docker ps | grep ragcode-qdrant || docker start ragcode-qdrant
    ```
 
 3. Check Ollama is running:

@@ -1,19 +1,16 @@
 <div align="center">
   <img src="./docs/assets/ragcode-banner.png" alt="RagCode MCP - Semantic Code Navigation with AI" width="100%">
-</div>
 
-<div align="center">
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Go Version](https://img.shields.io/badge/Go-1.25%2B-blue)](https://go.dev/)
-[![Go Report Card](https://goreportcard.com/badge/github.com/doITmagic/rag-code-mcp)](https://goreportcard.com/report/github.com/doITmagic/rag-code-mcp)
-[![MCP](https://img.shields.io/badge/MCP-Compatible-green)](https://modelcontextprotocol.io)
-![AI Ready](https://img.shields.io/badge/Codebase-AI%20Ready-blueviolet)
-![Privacy](https://img.shields.io/badge/Privacy-100%25%20Local-brightgreen)
-![No Cloud](https://img.shields.io/badge/Cloud-Not%20Required-orange)
-![Zero Cost](https://img.shields.io/badge/API%20Costs-$0-success)
-[![GitHub Stars](https://img.shields.io/github/stars/doITmagic/rag-code-mcp?style=social)](https://github.com/doITmagic/rag-code-mcp)
-
+  <p align="center">
+    <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+    <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.25%2B-blue" alt="Go Version"></a>
+    <a href="https://goreportcard.com/report/github.com/doITmagic/rag-code-mcp"><img src="https://goreportcard.com/badge/github.com/doITmagic/rag-code-mcp" alt="Go Report Card"></a>
+    <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/Status-AI%20Ready-blueviolet" alt="AI Ready"></a>
+    <img src="https://img.shields.io/badge/Privacy-100%25%20Local-brightgreen" alt="Privacy">
+    <img src="https://img.shields.io/badge/Cloud-Not%20Required-orange" alt="No Cloud">
+    <img src="https://img.shields.io/badge/API%20Costs-$0-success" alt="Zero Cost">
+    <a href="https://github.com/doITmagic/rag-code-mcp"><img src="https://img.shields.io/github/stars/doITmagic/rag-code-mcp?style=social" alt="GitHub Stars"></a>
+  </p>
 </div>
 
 # RagCode MCP - Make Your Codebase AI-Ready
@@ -32,40 +29,24 @@ Built with the official [Model Context Protocol Go SDK](https://github.com/model
 
 **No Go, no build tools, no configuration needed. Just Docker.**
 
-<table>
-<tr><td><b>Linux (amd64)</b></td></tr>
-<tr><td>
-
+### Linux (amd64)
 ```bash
 curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
 ```
 
-</td></tr>
-<tr><td><b>macOS (Apple Silicon)</b></td></tr>
-<tr><td>
-
+### macOS (Apple Silicon / Intel)
 ```bash
+# Apple Silicon (M1/M2/M3)
 curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_arm64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
-```
 
-</td></tr>
-<tr><td><b>macOS (Intel)</b></td></tr>
-<tr><td>
-
-```bash
+# Intel Macs
 curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
 ```
 
-</td></tr>
-<tr><td><b>Windows (PowerShell)</b></td></tr>
-<tr><td>
-
+### Windows (PowerShell)
 ```powershell
 Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_windows_amd64.zip" -OutFile "ragcode.zip"; Expand-Archive ragcode.zip -DestinationPath . -Force; .\ragcode-installer.exe -ollama=docker -qdrant=docker
 ```
-
-</td></tr>
-</table>
 
 **That's it!** The installer automatically:
 - ✅ Downloads and installs the `rag-code-mcp` binary

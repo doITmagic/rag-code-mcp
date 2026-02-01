@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -46,7 +47,7 @@ func DefaultConfig() *Config {
 			Provider:         "ollama",
 			OllamaBaseURL:    "http://localhost:11434",
 			OllamaModel:      "llama3",
-			OllamaEmbed:      "nomic-embed-text",
+			OllamaEmbed:      "mxbai-embed-large",
 			LlamafileBaseURL: "http://localhost:8080",
 			Temperature:      0.7,
 			MaxTokens:        2048,
@@ -55,7 +56,7 @@ func DefaultConfig() *Config {
 			// Legacy fields for backward compatibility
 			BaseURL:    "http://localhost:11434",
 			Model:      "llama3",
-			EmbedModel: "nomic-embed-text",
+			EmbedModel: "mxbai-embed-large",
 		},
 		Memory: MemoryConfig{
 			ShortTermSize:  10,
@@ -212,8 +213,44 @@ func applyEnvOverrides(cfg *Config) {
 	}
 }
 
+// migrateEmbeddingModel automatically migrates from old unstable embedding model
+func migrateEmbeddingModel(cfg *Config) bool {
+	migrated := false
+
+	// List of deprecated/unstable models that should be migrated
+	deprecatedModels := []string{"nomic-embed-text"}
+	newStableModel := "mxbai-embed-large"
+
+	// Check if current model is deprecated
+	for _, deprecated := range deprecatedModels {
+		if cfg.LLM.OllamaEmbed == deprecated {
+			log.Printf("⚠️  MIGRATION: Detected deprecated embedding model '%s'", deprecated)
+			log.Printf("   Automatically upgrading to stable model '%s'", newStableModel)
+			log.Printf("   Note: Existing indexed data will need to be re-indexed.")
+			log.Printf("   Use 'index_workspace' tool with 'recreate: true' to rebuild indexes.")
+
+			cfg.LLM.OllamaEmbed = newStableModel
+			migrated = true
+			break
+		}
+
+		// Also check legacy field
+		if cfg.LLM.EmbedModel == deprecated {
+			cfg.LLM.EmbedModel = newStableModel
+			migrated = true
+		}
+	}
+
+	return migrated
+}
+
 // validate checks if the configuration is valid
 func validate(cfg *Config) error {
+	// Auto-migrate deprecated embedding models
+	if migrateEmbeddingModel(cfg) {
+		log.Printf("✓ Configuration migrated to stable embedding model")
+	}
+
 	// Default to ollama if provider is not set
 	if cfg.LLM.Provider == "" {
 		cfg.LLM.Provider = "ollama"

@@ -136,22 +136,18 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 	// SCENARIO 2: Start indexing (collection doesn't exist or is empty)
 	// Force indexing to start (or restart if stopped)
 	if err := t.workspaceManager.StartIndexing(ctx, workspaceInfo, language); err != nil {
-		// If error is "already indexing", that's fine
-		if !t.workspaceManager.IsIndexing(indexKey) {
-			return "", fmt.Errorf("failed to start indexing: %w", err)
+		// If error is "already indexing", that's fine - just return status
+		if strings.Contains(err.Error(), "already being indexed") {
+			return fmt.Sprintf("⏳ Workspace '%s' language '%s' is already being indexed in the background.\n"+
+				"Collection: %s\n"+
+				"You can use search_code immediately - results will appear as indexing progresses.",
+				workspaceInfo.Root, language, collectionName), nil
 		}
+		return "", fmt.Errorf("failed to start indexing: %w", err)
 	}
 
 	log.Printf("📦 Tool triggered indexing for workspace: %s, language: %s, collection: %s",
 		workspaceInfo.Root, language, collectionName)
-
-	// Explicitly start indexing using StartIndexing method
-	if err := t.workspaceManager.StartIndexing(ctx, workspaceInfo, language); err != nil {
-		// If error is "already in progress", that's okay (race condition)
-		if !strings.Contains(err.Error(), "already in progress") {
-			return "", fmt.Errorf("failed to start indexing: %w", err)
-		}
-	}
 
 	return fmt.Sprintf("✓ Indexing started for workspace '%s'\n"+
 		"Language: %s\n"+

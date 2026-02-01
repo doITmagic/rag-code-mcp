@@ -473,23 +473,6 @@ func (m *Manager) GetMemoriesForAllLanguages(ctx context.Context, info *Info) (m
 // IndexLanguage indexes a specific language in a workspace
 // It runs synchronously. Use StartIndexing for background execution.
 func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string, collectionName string) error {
-	// Check if already indexing
-	indexKey := info.ID + "-" + language
-	m.indexingMu.Lock()
-	if m.indexing[indexKey] {
-		m.indexingMu.Unlock()
-		return fmt.Errorf("workspace '%s' language '%s' is already being indexed", info.Root, language)
-	}
-	m.indexing[indexKey] = true
-	m.indexingMu.Unlock()
-
-	// Ensure we clear indexing flag when done
-	defer func() {
-		m.indexingMu.Lock()
-		delete(m.indexing, indexKey)
-		m.indexingMu.Unlock()
-	}()
-
 	log.Printf("🚀 Starting indexing for workspace: %s", info.Root)
 	log.Printf("   Collection: %s", collectionName)
 	log.Printf("   Language: %s", language)
@@ -879,8 +862,25 @@ func (m *Manager) DeleteLanguageCollection(ctx context.Context, info *Info, lang
 func (m *Manager) StartIndexing(ctx context.Context, info *Info, language string) error {
 	collectionName := info.CollectionNameForLanguage(language)
 
+	// Check if already indexing BEFORE starting goroutine
+	indexKey := info.ID + "-" + language
+	m.indexingMu.Lock()
+	if m.indexing[indexKey] {
+		m.indexingMu.Unlock()
+		return fmt.Errorf("workspace '%s' language '%s' is already being indexed", info.Root, language)
+	}
+	m.indexing[indexKey] = true
+	m.indexingMu.Unlock()
+
 	// Start background indexing
 	go func() {
+		// Clear indexing flag when done
+		defer func() {
+			m.indexingMu.Lock()
+			delete(m.indexing, indexKey)
+			m.indexingMu.Unlock()
+		}()
+
 		if err := m.IndexLanguage(context.Background(), info, language, collectionName); err != nil {
 			log.Printf("❌ Background indexing failed: %v", err)
 		}

@@ -10,11 +10,11 @@ import (
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 
-	"github.com/doITmagic/coderag-mcp/internal/coderag/analyzers/php"
-	"github.com/doITmagic/coderag-mcp/internal/codetypes"
-	"github.com/doITmagic/coderag-mcp/internal/llm"
-	"github.com/doITmagic/coderag-mcp/internal/memory"
-	"github.com/doITmagic/coderag-mcp/internal/workspace"
+	"github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/php"
+	"github.com/doITmagic/rag-code-mcp/internal/codetypes"
+	"github.com/doITmagic/rag-code-mcp/internal/llm"
+	"github.com/doITmagic/rag-code-mcp/internal/memory"
+	"github.com/doITmagic/rag-code-mcp/internal/workspace"
 )
 
 // ListPackageExportsTool lists all exported symbols from a package

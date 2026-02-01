@@ -14,11 +14,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/doITmagic/coderag-mcp/internal/coderag"
-	"github.com/doITmagic/coderag-mcp/internal/config"
-	"github.com/doITmagic/coderag-mcp/internal/llm"
-	"github.com/doITmagic/coderag-mcp/internal/memory"
-	"github.com/doITmagic/coderag-mcp/internal/storage"
+	"github.com/doITmagic/rag-code-mcp/internal/ragcode"
+	"github.com/doITmagic/rag-code-mcp/internal/config"
+	"github.com/doITmagic/rag-code-mcp/internal/llm"
+	"github.com/doITmagic/rag-code-mcp/internal/memory"
+	"github.com/doITmagic/rag-code-mcp/internal/storage"
 )
 
 // Manager manages workspace detection, collection management, and indexing
@@ -428,7 +428,7 @@ func (m *Manager) indexWorkspaceLanguage(ctx context.Context, info *Info, langua
 	ltm := storage.NewQdrantLongTermMemory(collectionClient)
 
 	// Select analyzer based on language (not ProjectType)
-	analyzerManager := coderag.NewAnalyzerManager()
+	analyzerManager := ragcode.NewAnalyzerManager()
 	analyzer := analyzerManager.CodeAnalyzerForProjectType(language)
 	if analyzer == nil {
 		log.Printf("⚠️ No code analyzer available for language '%s', skipping indexing", language)
@@ -449,7 +449,7 @@ func (m *Manager) indexWorkspaceLanguage(ctx context.Context, info *Info, langua
 	}
 
 	// Create indexer
-	indexer := coderag.NewIndexer(analyzer, m.llm, ltm)
+	indexer := ragcode.NewIndexer(analyzer, m.llm, ltm)
 
 	// Index the language-specific directories
 	startTime := time.Now()

@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/doITmagic/coderag-mcp/internal/coderag/analyzers/golang"
-	"github.com/doITmagic/coderag-mcp/internal/coderag/analyzers/php"
-	laravel "github.com/doITmagic/coderag-mcp/internal/coderag/analyzers/php/laravel"
-	"github.com/doITmagic/coderag-mcp/internal/codetypes"
-	"github.com/doITmagic/coderag-mcp/internal/llm"
-	"github.com/doITmagic/coderag-mcp/internal/memory"
-	"github.com/doITmagic/coderag-mcp/internal/workspace"
+	"github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/golang"
+	"github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/php"
+	laravel "github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/php/laravel"
+	"github.com/doITmagic/rag-code-mcp/internal/codetypes"
+	"github.com/doITmagic/rag-code-mcp/internal/llm"
+	"github.com/doITmagic/rag-code-mcp/internal/memory"
+	"github.com/doITmagic/rag-code-mcp/internal/workspace"
 )
 
 // FindTypeDefinitionTool finds and returns complete type definitions (struct/interface)

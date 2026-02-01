@@ -86,7 +86,7 @@ func DefaultConfig() *Config {
 			Format: "text",
 			Output: "stdout",
 		},
-		CodeRAG: CodeRAGConfig{
+		RagCode: RagCodeConfig{
 			Enabled:        false,
 			IndexOnStartup: false,
 			Paths:          []string{"./internal", "./cmd"},
@@ -109,9 +109,9 @@ func DefaultConfig() *Config {
 			MaxWorkspaces:    10,
 			DetectionMarkers: []string{".git", "go.mod", "package.json", "Cargo.toml", "pyproject.toml", "pom.xml"},
 			ExcludePatterns:  []string{"node_modules", ".git", "vendor", "target", "build", "dist", ".venv"},
-			CollectionPrefix: "coderag",
-			IndexInclude:     []string{}, // Empty means use global code_rag.include
-			IndexExclude:     []string{}, // Empty means use global code_rag.exclude
+			CollectionPrefix: "ragcode",
+			IndexInclude:     []string{}, // Empty means use global rag_code.include
+			IndexExclude:     []string{}, // Empty means use global rag_code.exclude
 		},
 	}
 }
@@ -172,21 +172,21 @@ func applyEnvOverrides(cfg *Config) {
 		cfg.Storage.VectorDB.Collection = coll
 	}
 
-	// CodeRAG configuration overrides
+	// RagCode configuration overrides
 	if codeColl := os.Getenv("CODE_RAG_COLLECTION"); codeColl != "" {
-		cfg.CodeRAG.Collection = codeColl
+		cfg.RagCode.Collection = codeColl
 	}
 	if codeModel := os.Getenv("CODE_RAG_MODEL"); codeModel != "" {
-		cfg.CodeRAG.Model = codeModel
+		cfg.RagCode.Model = codeModel
 	}
 	if enabled := os.Getenv("CODE_RAG_ENABLED"); enabled != "" {
 		if v, err := strconv.ParseBool(enabled); err == nil {
-			cfg.CodeRAG.Enabled = v
+			cfg.RagCode.Enabled = v
 		}
 	}
 	if indexOnStartup := os.Getenv("CODE_RAG_INDEX_ON_STARTUP"); indexOnStartup != "" {
 		if v, err := strconv.ParseBool(indexOnStartup); err == nil {
-			cfg.CodeRAG.IndexOnStartup = v
+			cfg.RagCode.IndexOnStartup = v
 		}
 	}
 

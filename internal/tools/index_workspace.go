@@ -6,8 +6,8 @@ import (
 	"log"
 	"strings"
 
-	"github.com/doITmagic/coderag-mcp/internal/memory"
-	"github.com/doITmagic/coderag-mcp/internal/workspace"
+	"github.com/doITmagic/rag-code-mcp/internal/memory"
+	"github.com/doITmagic/rag-code-mcp/internal/workspace"
 )
 
 // IndexWorkspaceTool indexes a workspace for code search

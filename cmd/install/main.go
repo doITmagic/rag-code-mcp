@@ -13,13 +13,13 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/doITmagic/coderag-mcp/internal/healthcheck"
+	"github.com/doITmagic/rag-code-mcp/internal/healthcheck"
 )
 
 const (
-	repoSlug   = "doITmagic/coderag-mcp"
-	releaseURL = "https://github.com/" + repoSlug + "/releases/latest/download/coderag-linux.tar.gz"
-	installDir = ".local/share/coderag"
+	repoSlug   = "doITmagic/rag-code-mcp"
+	releaseURL = "https://github.com/" + repoSlug + "/releases/latest/download/ragcode-linux.tar.gz"
+	installDir = ".local/share/ragcode"
 	binDir     = "bin"
 )
 
@@ -124,7 +124,7 @@ func extractTarGz(src, dst string) error {
 
 func installFromRelease(tmpDir string) error {
 	archive := filepath.Join(tmpDir, "release.tar.gz")
-	log("Downloading CodeRAG release (may take a while)...")
+	log("Downloading RagCode release (may take a while)...")
 	if err := downloadFile(releaseURL, archive); err != nil {
 		return fmt.Errorf("could not download release: %w", err)
 	}
@@ -144,7 +144,7 @@ func installFromRelease(tmpDir string) error {
 		return err
 	}
 	// Copy binaries
-	for _, bin := range []string{"coderag-mcp", "index-all"} {
+	for _, bin := range []string{"rag-code-mcp", "index-all"} {
 		src := filepath.Join(root, "bin", bin)
 		dst := filepath.Join(targetBinDir, bin)
 		if _, err := os.Stat(src); err != nil {
@@ -180,11 +180,11 @@ func buildLocal() error {
 	if err != nil {
 		return err
 	}
-	// Build coderag-mcp
-	cmd := exec.Command("go", "build", "-o", filepath.Join(targetBinDir, "coderag-mcp"), "./cmd/coderag-mcp")
+	// Build rag-code-mcp
+	cmd := exec.Command("go", "build", "-o", filepath.Join(targetBinDir, "rag-code-mcp"), "./cmd/rag-code-mcp")
 	cmd.Dir = repoRoot
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("build coderag-mcp failed: %w\n%s", err, out)
+		return fmt.Errorf("build rag-code-mcp failed: %w\n%s", err, out)
 	}
 	// Build index-all
 	cmd = exec.Command("go", "build", "-o", filepath.Join(targetBinDir, "index-all"), "./cmd/index-all")
@@ -231,7 +231,7 @@ func ensurePath() {
 
 func configureMCPClient(targetPath, label string) {
 	home := homeDir()
-	binPath := filepath.Join(home, installDir, binDir, "coderag-mcp")
+	binPath := filepath.Join(home, installDir, binDir, "rag-code-mcp")
 	path := filepath.Join(home, targetPath)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		warn(fmt.Sprintf("could not create directory for %s: %v", path, err))
@@ -252,8 +252,8 @@ func configureMCPClient(targetPath, label string) {
 		}
 	}
 
-	// Add coderag only to mcpServers (not top-level)
-	mcpServers["coderag"] = map[string]interface{}{
+	// Add ragcode only to mcpServers (not top-level)
+	mcpServers["ragcode"] = map[string]interface{}{
 		"command": binPath,
 		"args":    []string{},
 		"env": map[string]string{
@@ -267,8 +267,8 @@ func configureMCPClient(targetPath, label string) {
 	// Update config with mcpServers
 	config["mcpServers"] = mcpServers
 
-	// Remove top-level coderag entry if exists (to avoid duplicates)
-	delete(config, "coderag")
+	// Remove top-level ragcode entry if exists (to avoid duplicates)
+	delete(config, "ragcode")
 
 	data, _ := json.MarshalIndent(config, "", "  ")
 	if err := os.WriteFile(path, append(data, '\n'), 0644); err == nil {
@@ -319,7 +319,7 @@ func runSetupOnce() {
 
 func main() {
 	requireCommands("go", "tar", "python3")
-	tmpDir, err := os.MkdirTemp("", "coderag-install-*")
+	tmpDir, err := os.MkdirTemp("", "ragcode-install-*")
 	if err != nil {
 		fail(fmt.Sprintf("could not create temp directory: %v", err))
 	}
@@ -339,7 +339,7 @@ func main() {
 	runSetupOnce()
 
 	home := homeDir()
-	binPath := filepath.Join(home, installDir, binDir, "coderag-mcp")
+	binPath := filepath.Join(home, installDir, binDir, "rag-code-mcp")
 	installDirPath := filepath.Join(home, installDir)
 	fmt.Printf("\n%sInstallation complete!%s\n", c.green, c.reset)
 	fmt.Printf("%s────────────────────────────────────────────%s\n", c.blue, c.reset)

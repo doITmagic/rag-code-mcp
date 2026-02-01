@@ -1,0 +1,1841 @@
+<div align="center">
+  <img src="./docs/assets/ragcode-banner.png" alt="RagCode MCP - Semantic Code Navigation with AI" width="100%">
+</div>
+
+<div align="center">
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Go Version](https://img.shields.io/badge/Go-1.25%2B-blue)](https://go.dev/)
+[![MCP](https://img.shields.io/badge/MCP-Compatible-green)](https://modelcontextprotocol.io)
+![AI Ready](https://img.shields.io/badge/Codebase-AI%20Ready-blueviolet)
+![Privacy](https://img.shields.io/badge/Privacy-100%25%20Local-brightgreen)
+![No Cloud](https://img.shields.io/badge/Cloud-Not%20Required-orange)
+![Zero Cost](https://img.shields.io/badge/API%20Costs-$0-success)
+[![GitHub Stars](https://img.shields.io/github/stars/doITmagic/rag-code-mcp?style=social)](https://github.com/doITmagic/rag-code-mcp)
+
+</div>
+
+# RagCode MCP - Make Your Codebase AI-Ready
+
+> **The privacy-first MCP server that transforms any repository into an AI-ready codebase with semantic search and RAG.**
+
+RagCode is a **Model Context Protocol (MCP) server** that instantly makes your project **AI-ready**. It enables AI assistants like **GitHub Copilot**, **Cursor**, **Windsurf**, and **Claude** to understand your entire codebase through **semantic vector search**, bridging the gap between your code and Large Language Models (LLMs).
+
+Built with the official [Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk), RagCode provides **9 powerful tools** to index, search, and analyze code, making it the ultimate solution for **AI-ready software development**.
+
+## 🔒 Privacy-First: 100% Local AI
+
+**Your code never leaves your machine.** RagCode runs entirely on your local infrastructure:
+
+- ✅ **Local AI Models** - Uses Ollama for LLM and embeddings (runs on your hardware)
+- ✅ **Local Vector Database** - Qdrant runs in Docker on your machine
+- ✅ **Zero Cloud Dependencies** - No external API calls, no data transmission
+- ✅ **No API Costs** - Free forever, no usage limits or subscriptions
+- ✅ **Complete Privacy** - Your proprietary code stays private and secure
+- ✅ **Offline Capable** - Works without internet connection (after initial model download)
+- ✅ **Full Control** - You own the data, models, and infrastructure
+
+**Perfect for:** Enterprise codebases, proprietary projects, security-conscious teams, and developers who value privacy.
+
+### 🎯 Key Features
+
+- 🔍 **Semantic Code Search** - Find code by meaning, not just keywords
+- 🚀 **5-10x Faster** - Instant results vs. reading entire files
+- 💰 **98% Token Savings** - Reduce AI context usage dramatically
+- 🌐 **Multi-Language** - Go, PHP (Laravel), Python, JavaScript support
+- 🏢 **Multi-Workspace** - Handle multiple projects simultaneously
+- 🤖 **AI-Ready** - Works with Copilot, Cursor, Windsurf, Claude, Antigravity
+
+### 🛠️ Technology Stack
+
+**100% Local Stack:** Ollama (local LLM + embeddings) + Qdrant (local vector database) + Docker + MCP Protocol
+
+### 💻 Compatible IDEs & AI Assistants
+
+Windsurf • Cursor • Antigravity • Claude Desktop • **VS Code + GitHub Copilot** • MCP Inspector
+
+---
+
+## 🚀 Why RagCode? Performance Benefits
+
+### **5-10x Faster Code Understanding**
+
+Without RagCode, AI assistants must:
+- 📄 Read entire files to find relevant code
+- 🔍 Search through thousands of lines manually
+- 💭 Use precious context window tokens on irrelevant code
+- ⏱️ Wait for multiple file reads and searches
+
+**With RagCode:**
+- ⚡ **Instant semantic search** - finds relevant code in milliseconds
+- 🎯 **Pinpoint accuracy** - returns only the exact functions/types you need
+- 💰 **90% less context usage** - AI sees only relevant code, not entire files
+- 🧠 **Smarter responses** - AI has more tokens for actual reasoning
+
+### Real-World Impact
+
+| Task | Without RagCode | With RagCode | Speedup |
+|------|----------------|--------------|---------|
+| Find authentication logic | 30-60s (read 10+ files) | 2-3s (semantic search) | **10-20x faster** |
+| Understand function signature | 15-30s (grep + read file) | 1-2s (direct lookup) | **15x faster** |
+| Find all API endpoints | 60-120s (manual search) | 3-5s (hybrid search) | **20-40x faster** |
+| Navigate type hierarchy | 45-90s (multiple files) | 2-4s (type definition) | **20x faster** |
+
+### Token Efficiency
+
+**Example: Finding a function in a 50,000 line codebase**
+
+- **Without RagCode:** AI reads 5-10 files (~15,000 tokens) to find the function
+- **With RagCode:** AI gets exact function + context (~200 tokens)
+- **Savings:** **98% fewer tokens** = faster responses + lower costs
+
+### 🆚 RagCode vs Cloud-Based Solutions
+
+| Feature | RagCode (Local) | Cloud-Based AI Code Search |
+|---------|-----------------|---------------------------|
+| **Privacy** | ✅ 100% local, code never leaves machine | ❌ Code sent to cloud servers |
+| **Cost** | ✅ $0 - Free forever | ❌ $20-100+/month subscriptions |
+| **API Limits** | ✅ Unlimited usage | ❌ Rate limits, token caps |
+| **Offline** | ✅ Works without internet | ❌ Requires constant connection |
+| **Data Control** | ✅ You own everything | ❌ Vendor controls your data |
+| **Enterprise Ready** | ✅ No compliance issues | ⚠️ May violate security policies |
+| **Setup** | ⚠️ Requires local resources | ✅ Instant cloud access |
+| **Performance** | ✅ Fast (local hardware) | ⚠️ Depends on network latency |
+
+**Bottom Line:** RagCode gives you enterprise-grade AI code search with zero privacy concerns and zero ongoing costs.
+
+---
+
+## ✨ Core Features & Capabilities
+
+### 🔧 9 Powerful MCP Tools for AI Code Assistants
+
+1. **`search_code`** - Semantic vector search across your entire codebase
+2. **`hybrid_search`** - Combined semantic + keyword search for maximum accuracy
+3. **`get_function_details`** - Complete function signatures, parameters, and implementation
+4. **`find_type_definition`** - Locate class, struct, and interface definitions instantly
+5. **`find_implementations`** - Discover all usages and implementations of any symbol
+6. **`list_package_exports`** - Browse all exported symbols from any package/module
+7. **`search_docs`** - Semantic search through project documentation (Markdown)
+8. **`get_code_context`** - Extract code snippets with surrounding context
+9. **`index_workspace`** - Automated workspace indexing with language detection
+
+### 🌐 Multi-Language Code Intelligence
+
+- **Go** - ≈82% coverage with full AST analysis
+- **PHP** - ≈84% coverage + Laravel framework support
+- **Python** - Coming soon with full type hint support
+- **JavaScript/TypeScript** - Planned for future releases
+
+### 🏗️ Advanced Architecture
+
+- **Multi-Workspace Detection** - Automatically detects project boundaries (git, go.mod, composer.json, package.json)
+- **Per-Language Collections** - Separate vector databases for each language (`ragcode-{workspace}-go`, `ragcode-{workspace}-php`)
+- **Automatic Indexing** - Background indexing on first use, no manual intervention needed
+- **Vector Embeddings** - Uses Ollama's `nomic-embed-text` for high-quality semantic embeddings
+- **Hybrid Search Engine** - Combines vector similarity with BM25 lexical matching
+- **Direct File Access** - Read code without indexing for quick lookups
+- **Smart Caching** - Efficient re-indexing only for changed files
+
+---
+
+## 📦 System Requirements
+
+### Minimum Requirements
+
+| Component | Requirement | Notes |
+|-----------|-------------|-------|
+| **CPU**   | 4 cores     | For running Ollama models |
+| **RAM**   | 16 GB       | 8 GB for `phi3:medium`, 4 GB for `nomic-embed-text`, 4 GB system |
+| **Disk**  | 10 GB free  | ~8 GB for models + 2 GB for data |
+| **OS**    | Linux, macOS, Windows | Docker required for Qdrant |
+
+### Recommended Requirements
+
+| Component | Requirement | Notes |
+|-----------|-------------|-------|
+| **CPU**   | 8+ cores    | Better performance for concurrent operations |
+| **RAM**   | 32 GB       | Allows comfortable multi‑workspace indexing |
+| **GPU**   | NVIDIA GPU with 8 GB+ VRAM | Significantly speeds up Ollama inference (optional) |
+| **Disk**  | 20 GB free SSD | Faster indexing and search |
+
+### Model Sizes
+
+- `nomic-embed-text`: ~274 MB (embeddings model)
+- `phi3:medium`: ~7.9 GB (LLM for code analysis)
+- **Total**: ~8.2 GB for models
+
+---
+
+## ⚡ Quick Start (One‑Command Installer)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | bash
+```
+
+The installer will:
+1. ✅ Download the latest release from GitHub (or build locally if the download fails)
+2. ✅ Install binaries into `~/.local/share/ragcode/bin`
+3. ✅ Add `rag-code-mcp` to your `PATH`
+4. ✅ Configure Windsurf, Cursor, and Antigravity automatically (writes `mcp_config.json`)
+5. ✅ **Start Docker** if it is not already running
+6. ✅ **Start the Qdrant container** (vector database)
+7. ✅ **Start Ollama** with `ollama serve` if it is not already running
+8. ✅ **Download required AI models** (`nomic-embed-text` and `phi3:medium`)
+9. ✅ Launch the MCP server in the background
+
+### Customization Options
+
+You can customize the installation using environment variables:
+
+```bash
+# Use development branch
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/develop/quick-install.sh | BRANCH=develop bash
+
+# Custom Ollama model
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | OLLAMA_MODEL=llama3.1:8b bash
+
+# Combine multiple options
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/develop/quick-install.sh | BRANCH=develop OLLAMA_MODEL=phi3:mini bash
+```
+
+**Available environment variables:**
+- `BRANCH` – Git branch to install from (default: `main`)
+- `OLLAMA_MODEL` – LLM model name (default: `phi3:medium`)
+- `OLLAMA_EMBED` – Embedding model (default: `nomic-embed-text`)
+- `OLLAMA_BASE_URL` – Ollama server URL (default: `http://localhost:11434`)
+- `QDRANT_URL` – Qdrant server URL (default: `http://localhost:6333`)
+
+See [QUICKSTART.md](./QUICKSTART.md) for detailed installation and usage instructions.
+
+### Manual Build (for developers)
+
+```bash
+git clone https://github.com/doITmagic/rag-code-mcp.git
+cd rag-code-mcp
+go run ./cmd/install
+```
+
+---
+
+## 📋 Step‑by‑Step Setup
+
+### 1. Install Prerequisites
+
+#### Docker (for Qdrant)
+```bash
+# Ubuntu/Debian
+sudo apt update && sudo apt install docker.io
+sudo systemctl start docker
+sudo usermod -aG docker $USER   # log out / log in again
+
+# macOS
+brew install docker
+```
+
+#### Ollama (for AI models)
+```bash
+# Linux
+curl -fsSL https://ollama.com/install.sh | sh
+
+# macOS
+brew install ollama
+```
+
+### 2. Run the Installer
+```bash
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | bash
+```
+
+Installation typically takes 5‑10 minutes (downloading the AI models can be the longest part).
+
+### 3. Verify Installation
+```bash
+# Check the binary
+~/.local/share/ragcode/bin/rag-code-mcp --version
+
+# Verify services are running
+docker ps | grep qdrant
+ollama list
+```
+
+### 4. Start the Server (optional – the installer already starts it)
+```bash
+~/.local/share/ragcode/start.sh
+```
+
+---
+
+## 🎯 Using RagCode in Your IDE
+
+After installation, RagCode is automatically available in supported IDEs. No additional configuration is required.
+
+### Supported IDEs
+
+- **Windsurf** - Full MCP support
+- **Cursor** - Full MCP support  
+- **Antigravity** - Full MCP support
+- **Claude Desktop** - Full MCP support
+- **VS Code + GitHub Copilot** - Agent mode integration (requires VS Code 1.95+)
+
+### VS Code + GitHub Copilot Integration
+
+RagCode integrates with **GitHub Copilot's Agent Mode** through MCP, enabling semantic code search as part of Copilot's autonomous workflow.
+
+**Quick Setup:**
+1. Install RagCode using the quick-install script (automatically configures VS Code)
+2. Open VS Code in your project
+3. Open Copilot Chat (Ctrl+Shift+I / Cmd+Shift+I)
+4. Enable **Agent Mode** (click "Agent" button or type `/agent`)
+5. Ask questions - Copilot will automatically use RagCode tools
+
+**Example Prompts:**
+```
+Find all authentication middleware functions in this codebase
+Show me the User model definition and all its methods
+Search for functions that handle database connections
+```
+
+**Manual Configuration:**  
+Edit `~/.config/Code/User/globalStorage/mcp-servers.json`:
+```json
+{
+  "mcpServers": {
+    "ragcode": {
+      "command": "/home/YOUR_USERNAME/.local/share/ragcode/bin/rag-code-mcp",
+      "args": [],
+      "env": {
+        "OLLAMA_BASE_URL": "http://localhost:11434",
+        "OLLAMA_MODEL": "phi3:medium",
+        "OLLAMA_EMBED": "nomic-embed-text",
+        "QDRANT_URL": "http://localhost:6333"
+      }
+    }
+  }
+}
+```
+
+**Verify Integration:**
+- Command Palette → `MCP: Show MCP Servers`
+- Check that `ragcode` appears with "Connected" status
+
+**📖 Detailed Guide:** See [docs/vscode-copilot-integration.md](./docs/vscode-copilot-integration.md) for complete setup, troubleshooting, and advanced features.
+
+See [QUICKSTART.md](./QUICKSTART.md) for detailed VS Code setup and troubleshooting.
+
+### Available Tools
+1. **`search_code`** – semantic code search
+2. **`hybrid_search`** – semantic + lexical search
+3. **`get_function_details`** – detailed information about a function or method
+4. **`find_type_definition`** – locate struct, interface, or type definitions
+5. **`find_implementations`** – find implementations or usages of a symbol
+6. **`list_package_exports`** – list all exported symbols in a package
+7. **`search_docs`** – search markdown documentation
+8. **`index_workspace`** – manually trigger indexing of a workspace (usually not needed)
+9. **`get_code_context`** – read code from specific file locations with context
+
+**All tools require a `file_path` parameter** so that RagCode can determine the correct workspace.
+
+---
+
+## 🔄 Automatic Indexing
+
+When a tool is invoked for the first time in a workspace, RagCode will:
+1. Detect the workspace from `file_path`
+2. Create a Qdrant collection for that workspace and language
+3. Index the code in the background
+4. Return results immediately (even if indexing is still in progress)
+
+You never need to run `index_workspace` manually.
+
+---
+
+## 🛠 Advanced Configuration
+
+### Changing AI Models
+Edit `~/.local/share/ragcode/config.yaml`:
+```yaml
+llm:
+  provider: "ollama"
+  base_url: "http://localhost:11434"
+  model: "phi3:medium"        # change to another model if desired
+  embed_model: "nomic-embed-text"
+```
+Recommended models:
+- **LLM:** `phi3:medium`, `llama3.1:8b`, `qwen2.5:7b`
+- **Embeddings:** `nomic-embed-text`, `all-minilm`
+
+### Qdrant Configuration
+```yaml
+qdrant:
+  url: "http://localhost:6333"
+  collection_prefix: "ragcode"
+```
+
+### Excluding Directories
+```yaml
+workspace:
+  exclude_patterns:
+    - "vendor"
+    - "node_modules"
+    - ".git"
+    - "dist"
+    - "build"
+```
+
+---
+
+## 🐛 Troubleshooting
+
+### "Workspace '/home' is not indexed yet"
+**Cause:** `file_path` is missing or points outside a recognized project.
+**Fix:** Provide a valid `file_path` inside your project, e.g.:
+```json
+{ "query": "search query", "file_path": "/path/to/your/project/file.go" }
+```
+
+### "Could not connect to Qdrant"
+**Cause:** Docker is not running or the Qdrant container is stopped.
+**Fix:**
+```bash
+sudo systemctl start docker   # Linux
+# Then start Qdrant (the installer does this automatically)
+~/.local/share/ragcode/start.sh
+```
+
+### "Ollama model not found"
+**Cause:** Required models have not been downloaded.
+**Fix:**
+```bash
+ollama pull nomic-embed-text
+ollama pull phi3:medium
+```
+
+### Indexing is too slow
+**Cause:** Large workspace or a heavy model.
+**Fix:**
+- Use a smaller model (`phi3:mini`)
+- Exclude large directories in `config.yaml`
+- Wait – indexing runs in the background.
+
+---
+
+## 📚 Example Requests
+```json
+{ "query": "user authentication login", "file_path": "/home/user/myproject/auth/handler.go" }
+```
+```json
+{ "type_name": "UserController", "file_path": "/home/user/laravel-app/app/Http/Controllers/UserController.php" }
+```
+```json
+{ "query": "API endpoints documentation", "file_path": "/home/user/myproject/docs/API.md" }
+```
+
+---
+
+## 🔗 Resources & Documentation
+
+### 📖 Project Documentation
+- **[Quick Start Guide](./QUICKSTART.md)** - Get started in 5 minutes
+- **[VS Code + Copilot Integration](./docs/vscode-copilot-integration.md)** - Detailed setup for GitHub Copilot
+- **[Architecture Overview](./docs/architecture.md)** - Technical deep dive
+- **[Tool Schema Reference](./docs/tool_schema_v2.md)** - Complete API documentation
+
+### 🌐 External Resources
+- **[GitHub Repository](https://github.com/doITmagic/rag-code-mcp)** - Source code and releases
+- **[Issue Tracker](https://github.com/doITmagic/rag-code-mcp/issues)** - Report bugs or request features
+- **[Model Context Protocol](https://modelcontextprotocol.io)** - Official MCP specification
+- **[Ollama Documentation](https://ollama.com)** - LLM and embedding models
+- **[Qdrant Documentation](https://qdrant.tech)** - Vector database guide
+
+### 🎓 Learning Resources
+- **[What is RAG?](https://en.wikipedia.org/wiki/Prompt_engineering#Retrieval-augmented_generation)** - Understanding Retrieval-Augmented Generation
+- **[Vector Embeddings Explained](https://qdrant.tech/articles/what-are-embeddings/)** - How semantic search works
+- **[MCP for Developers](https://github.com/modelcontextprotocol/specification)** - Building MCP servers
+
+---
+
+## 🤝 Contributing & Community
+
+We welcome contributions from the community! Here's how you can help:
+
+- 🐛 **Report Bugs** - [Open an issue](https://github.com/doITmagic/rag-code-mcp/issues/new)
+- 💡 **Request Features** - Share your ideas for new tools or languages
+- 🔧 **Submit PRs** - Improve code, documentation, or add new features
+- ⭐ **Star the Project** - Show your support on GitHub
+- 📢 **Spread the Word** - Share RagCode with other developers
+
+### Development Setup
+```bash
+git clone https://github.com/doITmagic/rag-code-mcp.git
+cd rag-code-mcp
+go mod download
+go run ./cmd/rag-code-mcp
+```
+
+---
+
+## 📄 License
+
+RagCode MCP is open source software licensed under the **MIT License**.
+
+See the [LICENSE](./LICENSE) file for full details.
+
+---
+
+## 🏷️ Keywords & Topics
+
+`semantic-code-search` `rag` `retrieval-augmented-generation` `mcp-server` `model-context-protocol` `ai-code-assistant` `vector-search` `code-navigation` `ollama` `qdrant` `github-copilot` `cursor-ai` `windsurf` `go` `php` `laravel` `code-intelligence` `ast-analysis` `embeddings` `llm-tools` `local-ai` `privacy-first` `offline-ai` `self-hosted` `on-premise` `zero-cost` `no-cloud` `private-code-search` `enterprise-ai` `secure-coding-assistant`
+
+---
+
+<div align="center">
+
+**Built with ❤️ for developers who want smarter AI code assistants**
+
+⭐ **[Star us on GitHub](https://github.com/doITmagic/rag-code-mcp)** if RagCode helps your workflow!
+
+**Questions? Problems?** [Open an Issue](https://github.com/doITmagic/rag-code-mcp/issues) • [Read the Docs](./QUICKSTART.md) • [Join Discussions](https://github.com/doITmagic/rag-code-mcp/discussions)
+
+</div>
+# 🚀 RagCode MCP - Quick Start Guide
+
+**Semantic code navigation using RAG (Retrieval-Augmented Generation)**
+
+---
+
+## 📦 What is RagCode?
+
+RagCode is an MCP (Model Context Protocol) server that allows you to navigate and understand code using semantic search. It works with **Windsurf**, **Cursor**, **Antigravity**, **Claude Desktop**, and other MCP-compatible IDEs to provide:
+
+- 🔍 **Semantic Search** in your codebase (not just text matching)
+- 📚 **Contextual Understanding** of code (functions, classes, relationships)
+- 🎯 **Multi-workspace** - works on multiple projects simultaneously
+- 🌐 **Multi-language** - support for Go, PHP (Laravel), JavaScript, Python
+
+---
+
+## ⚡ Quick Install (1 Command)
+
+### Option 1: Install Script (Recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | bash
+```
+
+The installer will:
+1. ✅ Download the latest release from GitHub (or build locally if download fails)
+2. ✅ Install binaries to `~/.local/share/ragcode/bin`
+3. ✅ Add `rag-code-mcp` to PATH (in `.bashrc` or `.zshrc`)
+4. ✅ Configures Windsurf, Cursor, Antigravity, and VS Code automatically (in `mcp_config.json`)
+5. ✅ **Starts Docker** (if not already running)
+6. ✅ **Starts Qdrant container** (vector database)
+7. ✅ **Starts Ollama** with `ollama serve` (if not already running)
+8. ✅ **Downloads required AI models**:
+   - `nomic-embed-text` (~274 MB) - for embeddings
+   - `phi3:medium` (~7.9 GB) - for LLM
+9. ✅ Starts MCP server in background
+
+**Environment Variables (Optional):**
+
+You can customize the installation by setting environment variables before running the script:
+
+```bash
+# Use development branch instead of main
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/develop/quick-install.sh | BRANCH=develop bash
+
+# Custom Ollama model
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | OLLAMA_MODEL=llama3.1:8b bash
+
+# Custom embedding model
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | OLLAMA_EMBED=all-minilm bash
+
+# Custom Ollama URL (if running remotely)
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | OLLAMA_BASE_URL=http://192.168.1.100:11434 bash
+
+# Custom Qdrant URL
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | QDRANT_URL=http://192.168.1.100:6333 bash
+
+# Combine multiple variables
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/develop/quick-install.sh | BRANCH=develop OLLAMA_MODEL=phi3:mini bash
+```
+
+**Available Environment Variables:**
+- `BRANCH` - Git branch to install from (default: `main`)
+- `OLLAMA_MODEL` - LLM model name (default: `phi3:medium`)
+- `OLLAMA_EMBED` - Embedding model (default: `nomic-embed-text`)
+- `OLLAMA_BASE_URL` - Ollama server URL (default: `http://localhost:11434`)
+- `QDRANT_URL` - Qdrant server URL (default: `http://localhost:6333`)
+
+### Option 2: Local Build (For Developers)
+
+```bash
+git clone https://github.com/doITmagic/rag-code-mcp.git
+cd rag-code-mcp
+go run ./cmd/install
+```
+
+---
+
+## 🔧 System Requirements
+
+### Mandatory:
+- **Docker** - for Qdrant (vector database)
+- **Ollama** - for LLM and embeddings
+- **Go 1.21+** - only for local build
+
+### Optional:
+- **Windsurf**, **Cursor**, **Antigravity**, **Claude Desktop**, or other MCP compatible IDEs
+
+---
+
+## 📋 Step-by-Step Setup
+
+### 1. Install Dependencies
+
+#### Docker (for Qdrant)
+```bash
+# Ubuntu/Debian
+sudo apt update && sudo apt install docker.io
+sudo systemctl start docker
+sudo usermod -aG docker $USER  # Logout/login after
+
+# macOS
+brew install docker
+```
+
+#### Ollama (for AI)
+```bash
+# Linux
+curl -fsSL https://ollama.com/install.sh | sh
+
+# macOS
+brew install ollama
+```
+
+### 2. Run the Installer
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | bash
+```
+
+**Installation time:** ~5-10 minutes (downloads ~4GB of AI models)
+
+### 3. Verify Installation
+
+```bash
+# Verify binaries are installed
+~/.local/share/ragcode/bin/rag-code-mcp --version
+
+# Verify services are running
+docker ps | grep qdrant
+ollama list
+```
+
+### 4. Start Server (Optional - starts automatically)
+
+```bash
+~/.local/share/ragcode/start.sh
+```
+
+---
+
+## 💡 First Time Setup - Index Your Workspace
+
+After installation, you need to index each project you want to work with. This is a **one-time setup per project**.
+
+### Quick Start Prompt for Your AI Assistant
+
+Open your project in Windsurf or Cursor and paste this prompt to the AI:
+
+```
+Please use the RagCode MCP tool 'index_workspace' to index this project 
+for semantic code search. Provide the file_path parameter pointing to any 
+file in this workspace. Once indexing completes, I'll be able to use 
+search_code, get_function_details, and other tools to help you navigate 
+and understand the codebase.
+
+Note: Indexing runs in the background and may take a few minutes depending 
+on project size. You can start using search immediately - results will 
+improve as indexing progresses.
+```
+
+### What Happens During Indexing?
+
+1. 🔍 **Workspace Detection** - RagCode detects your project root (looks for `.git`, `go.mod`, `composer.json`, etc.)
+2. 📊 **Language Detection** - Identifies programming languages in your project
+3. 🗂️ **Collection Creation** - Creates a Qdrant collection: `ragcode-{workspace-id}-{language}`
+4. 📝 **Code Analysis** - Extracts functions, classes, types, and their relationships
+5. 🧠 **Embedding Generation** - Creates semantic embeddings using Ollama
+6. 💾 **Vector Storage** - Stores embeddings in Qdrant for fast retrieval
+
+### Example Workflow
+
+```bash
+# 1. Open your project in Windsurf/Cursor
+cd ~/projects/my-awesome-app
+
+# 2. Ask AI to index (using the prompt above)
+# AI will call: index_workspace with file_path="/path/to/my-awesome-app/main.go"
+
+# 3. Wait for confirmation (usually 1-5 minutes)
+# ✓ Indexing started for workspace '/path/to/my-awesome-app'
+# Languages: go
+# Collections will be created: ragcode-abc123-go
+
+# 4. Start using semantic search!
+# Ask: "Find all authentication middleware functions"
+# Ask: "Show me the User model definition"
+# Ask: "What functions call the database connection?"
+```
+
+### Multi-Project Support
+
+**Repeat the indexing process for each project:**
+
+```bash
+# Project 1
+cd ~/projects/backend-api
+# Ask AI to index this workspace
+
+# Project 2  
+cd ~/projects/frontend-app
+# Ask AI to index this workspace
+
+# Project 3
+cd ~/projects/mobile-app
+# Ask AI to index this workspace
+```
+
+Each project gets its own collection in Qdrant, and RagCode automatically switches between them based on which file you're working with.
+
+---
+
+## 🎯 How to Use RagCode?
+
+### In Your MCP-Compatible IDE (Windsurf, Cursor, Antigravity, etc.)
+
+After installation, RagCode is automatically available in the IDE. **No manual action required!**
+
+### In VS Code with GitHub Copilot
+
+RagCode integrates with **GitHub Copilot's Agent Mode** in VS Code through the Model Context Protocol (MCP). This allows Copilot to use RagCode's semantic search capabilities as part of its autonomous coding workflow.
+
+#### Prerequisites
+- **VS Code** with **GitHub Copilot** subscription
+- RagCode installed (via quick-install script above)
+- VS Code version **1.95+** (for MCP support)
+
+#### Setup
+
+The quick-install script automatically configures RagCode for VS Code by creating:
+```
+~/.config/Code/User/globalStorage/mcp-servers.json
+```
+
+**Manual Configuration (if needed):**
+
+Create or edit `~/.config/Code/User/globalStorage/mcp-servers.json`:
+
+```json
+{
+  "mcpServers": {
+    "ragcode": {
+      "command": "/home/YOUR_USERNAME/.local/share/ragcode/bin/rag-code-mcp",
+      "args": [],
+      "env": {
+        "OLLAMA_BASE_URL": "http://localhost:11434",
+        "OLLAMA_MODEL": "phi3:medium",
+        "OLLAMA_EMBED": "nomic-embed-text",
+        "QDRANT_URL": "http://localhost:6333"
+      }
+    }
+  }
+}
+```
+
+**Note:** Replace `YOUR_USERNAME` with your actual username.
+
+#### Using RagCode with Copilot Agent Mode
+
+1. **Open VS Code** in your project directory
+2. **Open Copilot Chat** (Ctrl+Shift+I or Cmd+Shift+I)
+3. **Enable Agent Mode** by clicking the "Agent" button or typing `/agent`
+4. **Use RagCode tools** - Copilot will automatically invoke them based on your prompts
+
+**Example Prompts:**
+
+```
+Find all authentication middleware functions in this codebase
+```
+
+```
+Show me the User model definition and all its methods
+```
+
+```
+Search for functions that handle database connections
+```
+
+```
+Find all API endpoints related to user management
+```
+
+Copilot will automatically use RagCode's `search_code`, `get_function_details`, `find_type_definition`, and other tools to answer your questions.
+
+#### Explicit Tool Usage
+
+You can also explicitly reference RagCode tools using the `#` symbol:
+
+```
+#ragcode search for payment processing functions
+```
+
+```
+#ragcode find the UserController type definition
+```
+
+#### Verifying MCP Integration
+
+1. Open **Command Palette** (Ctrl+Shift+P / Cmd+Shift+P)
+2. Type: `MCP: Show MCP Servers`
+3. Verify that `ragcode` appears in the list
+4. Check status shows "Connected"
+
+#### Troubleshooting VS Code Integration
+
+**MCP server not showing:**
+- Verify config file exists: `~/.config/Code/User/globalStorage/mcp-servers.json`
+- Restart VS Code
+- Check VS Code version (requires 1.95+)
+
+**Tools not working:**
+- Ensure Qdrant and Ollama are running: `docker ps | grep qdrant`
+- Check MCP server logs in VS Code Output panel (select "MCP" from dropdown)
+- Verify binary path is correct in config
+
+**Copilot not using tools:**
+- Make sure you're in **Agent Mode** (not regular chat)
+- Try explicitly mentioning `#ragcode` in your prompt
+- Ensure workspace is indexed (ask Copilot to index first)
+
+**📖 For more details:** See [docs/vscode-copilot-integration.md](../docs/vscode-copilot-integration.md) for:
+- Advanced configuration options
+- Custom Ollama models
+- Remote Ollama/Qdrant setup
+- Detailed troubleshooting
+- Multi-workspace workflows
+- Performance optimization tips
+
+#### Available Tools:
+
+1. **`search_code`** - Semantic code search
+   ```json
+   {
+     "query": "authentication middleware",
+     "file_path": "/path/to/your/project/file.go"
+   }
+   ```
+
+2. **`hybrid_search`** - Hybrid search (semantic + lexical)
+   ```json
+   {
+     "query": "user login function",
+     "file_path": "/path/to/your/project/file.php"
+   }
+   ```
+
+3. **`get_function_details`** - Complete details about a function
+   ```json
+   {
+     "function_name": "HandleLogin",
+     "file_path": "/path/to/your/project/auth.go"
+   }
+   ```
+
+4. **`find_type_definition`** - Find type/class definition
+   ```json
+   {
+     "type_name": "User",
+     "file_path": "/path/to/your/project/models/user.php"
+   }
+   ```
+
+5. **`find_implementations`** - Find where a function is used
+   ```json
+   {
+     "symbol_name": "ProcessPayment",
+     "file_path": "/path/to/your/project/payment.go"
+   }
+   ```
+
+6. **`list_package_exports`** - List all exports of a package
+   ```json
+   {
+     "package": "github.com/myapp/auth",
+     "file_path": "/path/to/your/project/auth/handler.go"
+   }
+   ```
+
+7. **`search_docs`** - Search in documentation (Markdown)
+   ```json
+   {
+     "query": "API authentication",
+     "file_path": "/path/to/your/project/README.md"
+   }
+   ```
+
+8. **`index_workspace`** - Manually index a workspace
+   ```json
+   {
+     "file_path": "/path/to/your/project/main.go"
+   }
+   ```
+
+### 📌 **IMPORTANT:** All tools require `file_path`!
+
+RagCode automatically detects the workspace from `file_path`. Ensure you provide a valid path from your project.
+
+---
+
+## 🔄 Automatic Indexing
+
+**RagCode automatically indexes the workspace on first use!**
+
+When you call a tool (e.g., `search_code`) for the first time in a workspace:
+1. ✅ Detects workspace from `file_path`
+2. ✅ Creates a Qdrant collection for that workspace + language
+3. ✅ Indexes code in background
+4. ✅ Returns results (even if indexing is not complete)
+
+**You do not need to run `index_workspace` manually** - it happens automatically!
+
+---
+
+## 🛠️ Advanced Configuration
+
+### Change AI Models
+
+Edit `~/.local/share/ragcode/config.yaml`:
+
+```yaml
+llm:
+  provider: "ollama"
+  base_url: "http://localhost:11434"
+  model: "phi3:medium"        # Change to another model
+  embed_model: "nomic-embed-text"  # Change embedding model
+```
+
+Recommended models:
+- **LLM:** `phi3:medium`, `llama3.1:8b`, `qwen2.5:7b`
+- **Embeddings:** `nomic-embed-text`, `all-minilm`
+
+### Configure Qdrant
+
+```yaml
+qdrant:
+  url: "http://localhost:6333"
+  collection_prefix: "ragcode"
+```
+
+### Exclude Directories
+
+```yaml
+workspace:
+  exclude_patterns:
+    - "vendor"
+    - "node_modules"
+    - ".git"
+    - "dist"
+    - "build"
+```
+
+---
+
+## 🐛 Troubleshooting
+
+### Error: "Workspace '/home' is not indexed yet"
+
+**Cause:** You did not provide `file_path` or the path is not in a valid project.
+
+**Solution:**
+```json
+{
+  "query": "search query",
+  "file_path": "/path/to/your/actual/project/file.go"  // ← Add this!
+}
+```
+
+### Error: "Could not connect to Qdrant"
+
+**Cause:** Docker is not running or Qdrant is stopped.
+
+**Solution:**
+```bash
+# Start Docker
+sudo systemctl start docker
+
+# Start Qdrant
+~/.local/share/ragcode/start.sh
+```
+
+### Error: "Ollama model not found"
+
+**Cause:** AI models are not downloaded.
+
+**Solution:**
+```bash
+ollama pull phi3:medium
+ollama pull nomic-embed-text
+```
+
+### Indexing is too slow
+
+**Cause:** Large workspace or slow AI model.
+
+**Solution:**
+- Use a smaller model: `phi3:mini` instead of `phi3:medium`
+- Exclude large directories in `config.yaml`
+- Wait - indexing runs in background
+
+---
+
+## 📚 Usage Examples
+
+### Example 1: Search authentication functions
+
+```json
+{
+  "query": "user authentication login",
+  "file_path": "/home/user/myproject/auth/handler.go"
+}
+```
+
+### Example 2: Find all methods of a Laravel class
+
+```json
+{
+  "type_name": "UserController",
+  "file_path": "/home/user/laravel-app/app/Http/Controllers/UserController.php"
+}
+```
+
+### Example 3: Search in documentation
+
+```json
+{
+  "query": "API endpoints documentation",
+  "file_path": "/home/user/myproject/docs/API.md"
+}
+```
+
+---
+
+## 🔗 Useful Links
+
+- **GitHub:** https://github.com/doITmagic/rag-code-mcp
+- **Issues:** https://github.com/doITmagic/rag-code-mcp/issues
+- **Ollama Documentation:** https://ollama.com
+- **Qdrant Documentation:** https://qdrant.tech
+
+---
+
+## 🤝 Contributions
+
+Contributions are welcome! Open a PR or Issue on GitHub.
+
+---
+
+## 📄 License
+
+MIT License - see `LICENSE` for details.
+
+---
+
+**Questions? Problems?** Open an Issue on GitHub! 🚀
+# Architecture
+
+This document describes the internal architecture of RagCode MCP Server after the multi-language restructuring.
+
+## Overview
+
+RagCode MCP is structured to support multiple programming languages through a pluggable analyzer architecture. The codebase is organized to separate language-agnostic components from language-specific analyzers.
+
+## Directory Structure
+
+```
+internal/
+├── codetypes/              # Universal types and interfaces (language-agnostic)
+│   ├── types.go           # CodeChunk (canonical), PathAnalyzer (legacy APIChunk/APIAnalyzer kept only for compatibility)
+│   └── symbol_schema.go   # Symbol schema definitions
+│
+├── ragcode/               # Core indexing and language management
+│   ├── indexer.go         # Indexing logic using PathAnalyzer (CodeChunk-only)
+│   ├── language_manager.go # Factory for selecting language analyzers (by project type)
+│   ├── ragcode_test.go    # Integration tests
+│   ├── laravel_integration_test.go # Laravel integration tests
+│   └── analyzers/         # Language-specific analyzers
+│       ├── golang/        # Go language analyzer (fully implemented)
+│       │   ├── analyzer.go           # PathAnalyzer implementation → CodeChunk
+│       │   ├── api_analyzer.go       # API documentation analyzer
+│       │   ├── types.go              # Go-specific types (FunctionInfo, TypeInfo, etc.)
+│       │   └── analyzer_test.go      # Unit tests
+│       ├── php/           # PHP analyzer (including Laravel support)
+│       │   ├── analyzer.go           # Main PHP analyzer
+│       │   ├── api_analyzer.go       # PHP API analyzer
+│       │   ├── phpdoc.go             # PHPDoc parsing
+│       │   ├── types.go              # PHP-specific types
+│       │   └── laravel/   # Laravel-specific analyzers
+│       │       ├── analyzer.go       # Laravel analyzer coordinator
+│       │       ├── eloquent.go       # Eloquent model analyzer
+│       │       ├── controller.go     # Controller analyzer
+│       │       ├── routes.go         # Route analyzer
+│       │       ├── adapter.go        # Adapter for integration
+│       │       └── ast_helper.go     # AST utilities
+│       ├── html/          # HTML analyzer
+│       │   └── analyzer.go
+│       └── python/        # Python analyzer (placeholder)
+│           └── README.md
+│
+├── workspace/             # Multi-workspace detection and management
+│   ├── manager.go         # Workspace manager (per-language collections)
+│   ├── detector.go        # Workspace root detection
+│   ├── language_detection.go # Language detection from markers
+│   ├── multi_search.go    # Cross-workspace search logic
+│   ├── cache.go           # Workspace cache
+│   ├── types.go           # Workspace types and structs
+│   ├── README.md          # Workspace documentation
+│   └── *_test.go          # Comprehensive test suite (manager_multilang_test.go, etc.)
+│
+├── tools/                 # MCP tool implementations (9 tools)
+│   ├── search_local_index.go
+│   ├── hybrid_search.go
+│   ├── get_function_details.go
+│   ├── find_type_definition.go
+│   ├── get_code_context.go
+│   ├── list_package_exports.go
+│   ├── find_implementations.go
+│   ├── search_docs.go
+│   ├── index_workspace.go    # Manual indexing tool
+│   ├── workspace_helpers.go  # Helper functions for tools
+│   ├── utils.go
+│   └── *_test.go             # Tool tests
+│
+├── storage/               # Vector database (Qdrant) integration
+│   ├── qdrant.go          # Qdrant client wrapper
+│   ├── qdrant_memory.go   # LongTermMemory implementation
+│   ├── qdrant_memory_test.go
+│   └── (Redis, SQLite configs - optional backends)
+│
+├── memory/                # Memory management (short-term, long-term)
+│   ├── state.go           # Memory state interface
+│   ├── shortterm.go       # Short-term memory implementation
+│   ├── longterm.go        # Long-term memory interface
+│   └── (Storage implementations)
+│
+├── llm/                   # LLM provider (Ollama, HuggingFace, etc.)
+│   ├── provider.go        # LLM provider interface
+│   ├── ollama.go          # Ollama implementation
+│   └── provider_test.go   # Tests
+│
+├── config/                # Configuration management
+│   ├── config.go          # Config structs (8 sections: LLM, Storage, etc.)
+│   ├── loader.go          # YAML + ENV parsing
+│   └── config_test.go     # Tests
+│
+├── healthcheck/           # Health check utilities
+│   └── healthcheck.go     # Dependency checks (Ollama, Qdrant, etc.)
+│
+├── utils/                 # Utility functions
+│   └── retry.go           # Retry logic
+│
+└── codetypes/             # (See above)
+```
+
+## Multi-Language & Multi-Workspace Architecture
+
+### Overview
+
+RagCode MCP supports **polyglot workspaces** (containing multiple programming languages) by creating **separate Qdrant collections per language per workspace**. This ensures clean separation of code by language, better search quality, and improved scalability.
+
+### Collection Naming Strategy
+
+**Format:**
+```
+{prefix}-{workspaceID}-{language}
+```
+
+**Examples:**
+```
+ragcode-a1b2c3d4e5f6-go
+ragcode-a1b2c3d4e5f6-python
+ragcode-a1b2c3d4e5f6-javascript
+ragcode-a1b2c3d4e5f6-php
+```
+
+**Default Prefix:** `ragcode` (configurable via `workspace.collection_prefix` in `config.yaml`)
+
+### Language Detection Strategy
+
+Language detection uses **file markers** to identify programming languages present in a workspace:
+
+| Marker File         | Detected Language |
+|---------------------|-------------------|
+| `go.mod`            | `go`              |
+| `package.json`      | `javascript`      |
+| `pyproject.toml`    | `python`          |
+| `setup.py`          | `python`          |
+| `requirements.txt`  | `python`          |
+| `composer.json`     | `php`             |
+| `Cargo.toml`        | `rust`            |
+| `pom.xml`           | `java`            |
+| `build.gradle`      | `java`            |
+| `Gemfile`           | `ruby`            |
+| `Package.swift`     | `swift`           |
+| `.git`              | workspace root    |
+
+### Multi-Language Workspace Example
+
+Consider a monorepo with multiple languages:
+
+```
+myproject/
+├── .git
+├── go.mod                  # Triggers Go detection
+├── main.go                 # → Indexed into ragcode-xxx-go
+├── api_server.go
+├── scripts/
+│   ├── pyproject.toml      # Triggers Python detection
+│   ├── train.py            # → Indexed into ragcode-xxx-python
+│   └── ml_utils.py
+└── web/
+    ├── package.json        # Triggers JavaScript detection
+    ├── app.js              # → Indexed into ragcode-xxx-javascript
+    └── utils.ts
+```
+
+**Results in 3 collections:**
+- `ragcode-{workspaceID}-go` - Contains all Go code
+- `ragcode-{workspaceID}-python` - Contains all Python code
+- `ragcode-{workspaceID}-javascript` - Contains all JavaScript/TypeScript code
+
+### Indexing Strategy
+
+When indexing a workspace:
+
+1. **Detect all languages** present in the workspace from markers
+2. **For each detected language**:
+   - Create collection if it doesn't exist: `{prefix}-{workspaceID}-{language}`
+   - Select appropriate analyzer (Go, PHP, Python, etc.)
+   - Filter files by language extension (`**/*.go`, `**/*.py`, etc.)
+   - Index using language-specific analyzer
+   - Store all chunks with `Language` field set to the language identifier
+
+**File Filtering Examples:**
+
+| Language     | Include Patterns       | Exclude Patterns          |
+|--------------|------------------------|---------------------------|
+| Go           | `**/*.go`              | `**/*_test.go`, `vendor/` |
+| Python       | `**/*.py`              | `**/__pycache__/`, `**/.venv/` |
+| JavaScript   | `**/*.js`, `**/*.ts`   | `**/node_modules/`, `**/dist/` |
+| PHP          | `**/*.php`             | `**/vendor/`, `**/cache/` |
+
+### Query Strategy
+
+#### Language-Specific Search
+
+When a query is received via MCP tools with file context:
+
+1. **Detect file context** from query parameters (e.g., `file_path`)
+2. **Infer language** from file extension or workspace markers
+3. **Search in language-specific collection**: `{prefix}-{workspaceID}-{language}`
+
+**Example:** Query with Go file context
+```json
+{
+  "file_path": "/workspace/main.go",
+  "query": "handler function"
+}
+```
+→ Automatically searches in `ragcode-{workspaceID}-go`
+
+#### Cross-Language Search
+
+For semantic searches across all code:
+
+1. **Query all language collections** in the workspace
+2. **Merge and rank results** by relevance score
+3. **Return unified results** with language metadata for context
+
+**Example:** Semantic search without file context
+```json
+{
+  "query": "authentication middleware",
+  "workspace_id": "backend"
+}
+```
+→ Searches in:
+- `ragcode-backend-go`
+- `ragcode-backend-python`
+- `ragcode-backend-javascript`
+→ Returns combined results with language labels
+
+### Workspace Info API
+
+The `Workspace.Info` struct tracks detected languages:
+
+```go
+type Info struct {
+    Root             string    `json:"root"`
+    ID               string    `json:"id"`
+    ProjectType      string    `json:"project_type,omitempty"`
+    Languages        []string  `json:"languages,omitempty"` // Detected languages
+    Markers          []string  `json:"markers,omitempty"`   // Detection markers found
+    DetectedAt       time.Time `json:"detected_at,omitempty"`
+    CollectionPrefix string    `json:"collection_prefix,omitempty"`
+}
+
+// CollectionNameForLanguage returns the collection name for a specific language
+func (w *Info) CollectionNameForLanguage(language string) string {
+    return w.CollectionPrefix + "-" + w.ID + "-" + language
+}
+```
+
+### Migration from Single-Collection Mode
+
+**Legacy Format (Deprecated):**
+```
+ragcode-{workspaceID}  →  [Mixed Go + Python + JavaScript code]
+```
+
+**New Format:**
+```
+ragcode-{workspaceID}-go          →  [Go code only]
+ragcode-{workspaceID}-python      →  [Python code only]
+ragcode-{workspaceID}-javascript  →  [JavaScript code only]
+```
+
+To migrate:
+1. **Delete old collection** (optional): `ragcode-{workspaceID}`
+2. **Re-run indexing**: Automatically creates language-specific collections
+3. **Update queries**: Use `CollectionNameForLanguage(language)` instead of single collection
+
+### Benefits of Multi-Language Architecture
+
+1. **Better Organization** - Clear separation of code by language
+2. **Improved Search Quality** - Language-specific chunking and embeddings
+3. **Scalability** - Independent indexing per language, supports parallel processing
+4. **Debugging** - Easy to identify and fix language-specific indexing issues
+5. **Extensibility** - Add new languages without affecting existing ones
+
+---
+
+## Core Components
+
+### 1. Universal Types (`internal/codetypes`)
+
+**Purpose:** Define language-agnostic types and interfaces used across all analyzers.
+
+**Key Types:**
+- `CodeChunk` - Represents a code symbol (function, method, type, etc.)
+- `APIChunk` - Represents API documentation for a symbol
+- `PathAnalyzer` - Interface for code analysis
+- `APIAnalyzer` - Interface for API documentation extraction
+
+**Design Principle:** These types are enhanced with LSP-inspired fields (Language, URI, SelectionRange, Detail, AccessModifier, Tags, Children) to support rich code navigation.
+
+### 2. Language Manager (`internal/ragcode/language_manager.go`)
+
+**Purpose:** Factory pattern for selecting the appropriate analyzer based on project type or language.
+
+**Key Functions:**
+```go
+func (m *AnalyzerManager) CodeAnalyzerForProjectType(projectType string) codetypes.PathAnalyzer
+func (m *AnalyzerManager) APIAnalyzerForProjectType(projectType string) codetypes.APIAnalyzer
+```
+
+**Supported Languages:**
+- `LanguageGo` (Go) - fully implemented
+- `LanguagePHP` (PHP) - placeholder
+- `LanguagePython` (Python) - placeholder
+
+### 4. Workspace Manager (`internal/workspace/manager.go`)
+
+**Purpose:** Core component for multi-workspace and multi-language support. Manages automatic workspace detection, per-language collections, and multi-workspace indexing.
+
+**Key Capabilities:**
+- Automatic workspace detection using markers (`.git`, `go.mod`, `package.json`, etc.)
+- Per-workspace, per-language collection creation: `{prefix}-{workspaceID}-{language}`
+- Language detection from file markers
+- Workspace cache for performance
+- Multi-workspace simultaneous indexing with concurrency limits
+
+**Key Methods:**
+```go
+func (m *Manager) GetMemoryForWorkspaceLanguage(workspaceID, language string) (memory.LongTermMemory, error)
+func (m *Manager) DetectWorkspace(params map[string]interface{}) (*Info, error)
+func (m *Manager) GetAllWorkspaces() []Info
+```
+
+**Example:**
+For a monorepo with Go + Python code:
+```
+├── backend/                      → workspace "backend"
+│   ├── .git/
+│   ├── go.mod                   → language: "go"
+│   └── Collections: ragcode-backend-go
+├── frontend/                     → workspace "frontend"
+│   ├── package.json             → language: "javascript"
+│   └── Collections: ragcode-frontend-javascript
+└── scripts/                      → workspace "scripts"
+    ├── requirements.txt         → language: "python"
+    └── Collections: ragcode-scripts-python
+```
+
+### 5. Workspace Detector (`internal/workspace/detector.go`)
+
+**Purpose:** Detects workspace roots from file paths and manages workspace information caching.
+
+**Key Features:**
+- Find workspace root by looking for detection markers
+- Cache workspace information for fast lookups
+- Extract workspace metadata (root, ID, detected markers)
+
+### 6. Language Detection (`internal/workspace/language_detection.go`)
+
+**Purpose:** Identifies programming language from workspace detection markers.
+
+**Supported Languages (11+):**
+- Go: `go.mod`
+- JavaScript/TypeScript/Node.js: `package.json`
+- Python: `pyproject.toml`, `setup.py`, `requirements.txt`
+- Rust: `Cargo.toml`
+- PHP: `composer.json`
+- Java: `pom.xml`, `build.gradle`
+- Ruby: `Gemfile`
+- Swift: `Package.swift`
+- C#: `*.csproj`
+- Others: `.git` alone indicates workspace root
+
+### 5. Indexer (`internal/ragcode/indexer.go`)
+
+**Purpose:** Indexes code chunks into vector database using embeddings.
+
+**Dependencies:**
+- Accepts `codetypes.PathAnalyzer` or `codetypes.APIAnalyzer`
+- Uses `llm.Provider` for embeddings
+- Stores in `memory.LongTermMemory` (Qdrant)
+
+**Workflow:**
+```
+paths → analyzer.AnalyzePaths() → []CodeChunk → embeddings → Qdrant
+```
+
+### 6. Go Analyzer (`internal/ragcode/analyzers/golang`)
+
+**Purpose:** Implements PathAnalyzer and APIAnalyzer for Go language using `go/ast`, `go/doc`, and `go/parser`.
+
+**Components:**
+- `analyzer.go` - Implements `AnalyzePaths()` for code chunk extraction
+- `api_analyzer.go` - Implements `AnalyzeAPIPaths()` for API documentation
+- `types.go` - Go-specific internal types (PackageInfo, FunctionInfo, TypeInfo, etc.)
+
+**Key Features:**
+- Extracts functions, methods, types, interfaces
+- Populates `Language: "go"` for all chunks
+- Supports docstring extraction
+- Line-accurate positioning (StartLine, EndLine, SelectionRange)
+
+**Test Coverage:** 82.1% (13 unit tests)
+
+### 7. Storage: Qdrant Integration (`internal/storage`)
+
+**Purpose:** Vector database integration for storing and retrieving embeddings.
+
+**Components:**
+- `qdrant.go` - Qdrant client wrapper with collection management
+- `qdrant_memory.go` - LongTermMemory implementation using Qdrant
+
+**Features:**
+- Automatic collection creation
+- Per-workspace, per-language collections
+- Vector similarity search
+- Filtering and text search integration
+
+### 8. Tools: 8 MCP Tools (`internal/tools`)
+
+**Purpose:** Implements semantic code navigation and search tools for IDE integration.
+
+**Tools:**
+1. `search_local_index.go` - Semantic search across indexed codebase
+2. `hybrid_search.go` - Combined semantic + lexical search
+3. `get_function_details.go` - Retrieve function signatures and documentation
+4. `find_type_definition.go` - Locate type and interface definitions
+5. `get_code_context.go` - Direct file access without indexing
+6. `list_package_exports.go` - List exported symbols
+7. `find_implementations.go` - Find interface implementations
+8. `search_docs.go` - Search markdown documentation
+
+**All tools support:**
+- Workspace-specific queries
+- Language-specific filtering
+- Multi-language workspaces
+
+## Adding a New Language Analyzer
+
+To add support for a new language (e.g., PHP, Python):
+
+### Step 1: Create Analyzer Package
+
+```bash
+mkdir -p internal/ragcode/analyzers/<language>
+```
+
+### Step 2: Implement PathAnalyzer
+
+Create `analyzer.go`:
+
+```go
+package <language>
+
+import "github.com/doITmagic/rag-code-mcp/internal/codetypes"
+
+type CodeAnalyzer struct {
+    // language-specific fields
+}
+
+func NewCodeAnalyzer() *CodeAnalyzer {
+    return &CodeAnalyzer{}
+}
+
+func (ca *CodeAnalyzer) AnalyzePaths(paths []string) ([]codetypes.CodeChunk, error) {
+    // Parse files and extract symbols
+    // Set Language field to appropriate value (e.g., "php", "python")
+    // Return chunks
+}
+```
+
+### Step 3: Implement APIAnalyzer
+
+Create `api_analyzer.go`:
+
+```go
+package <language>
+
+import "github.com/doITmagic/rag-code-mcp/internal/codetypes"
+
+type APIAnalyzerImpl struct {
+    analyzer *CodeAnalyzer
+}
+
+func NewAPIAnalyzer(analyzer *CodeAnalyzer) *APIAnalyzerImpl {
+    return &APIAnalyzerImpl{analyzer: analyzer}
+}
+
+func (a *APIAnalyzerImpl) AnalyzeAPIPaths(paths []string) ([]codetypes.APIChunk, error) {
+    // Extract API documentation
+    // Set Language field
+    // Return API chunks
+}
+```
+
+### Step 4: Register in Language Manager
+
+Update `internal/ragcode/language_manager.go`:
+
+```go
+import "github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/<language>"
+
+const (
+    Language<Name> Language = "<language>"
+)
+
+func (m *AnalyzerManager) CodeAnalyzerForProjectType(projectType string) codetypes.PathAnalyzer {
+    lang := normalizeProjectType(projectType)
+    switch lang {
+    case Language<Name>:
+        return <language>.NewCodeAnalyzer()
+    // ...
+    }
+}
+```
+
+### Step 5: Add Tests
+
+Create `analyzer_test.go` and `api_analyzer_test.go` following the pattern in `golang/` tests.
+
+### Step 6: Update Documentation
+
+Update this file and main README.md to list the new language as supported.
+
+## Key Design Decisions
+
+### 1. Separate `codetypes` Package
+
+**Rationale:** Prevents import cycles. Analyzers import `codetypes`, not `ragcode`.
+
+**Benefits:**
+- Clean dependency graph: `golang` → `codetypes`, `ragcode` → `codetypes`, `ragcode` → `golang`
+- Shared types accessible from all packages
+- Easy to add new languages without circular dependencies
+
+### 2. Language Field in All Chunks
+
+**Rationale:** Support multi-language workspaces and language-specific queries.
+
+**Implementation:** Each analyzer must set `Language` field (e.g., "go", "php", "python") in all returned chunks.
+
+### 3. LSP-Inspired Metadata
+
+**Rationale:** Enable rich IDE-like features (navigation, hover, completion).
+
+**Fields Added:**
+- `URI` - Full document URI for protocol compliance
+- `SelectionRange` - Precise symbol name location for "Go to Definition"
+- `Detail` - Short description for hover tooltips
+- `AccessModifier` - public/private/protected for filtering
+- `Tags` - deprecated/experimental/internal for UI badges
+- `Children` - Nested symbols for hierarchy display
+
+### 4. Factory Pattern (Language Manager)
+
+**Rationale:** Single point of entry for analyzer selection, easy to extend.
+
+**Benefits:**
+- Centralized language detection logic
+- Consistent interface for all languages
+- Easy to add language variants (e.g., "php-laravel")
+
+## Testing Strategy
+
+### Unit Tests
+- Test each analyzer independently with temporary test files
+- Verify Language field is set correctly
+- Check metadata accuracy (line numbers, signatures)
+- Test edge cases (empty dirs, non-existent paths, interfaces)
+
+### Integration Tests
+- Test full indexing pipeline (analyzer → embeddings → Qdrant)
+- Verify search results match expectations
+- Test workspace detection and multi-workspace scenarios
+
+### Coverage Goals
+- Analyzers: >80% coverage
+- Core packages: >70% coverage
+- Tools: >60% coverage
+
+## Performance Considerations
+
+### Indexing
+- Batch embedding calls to reduce latency
+- Use goroutines for parallel file parsing
+- Cache parsed ASTs when possible
+
+### Search
+- Hybrid search combines vector + lexical for better results
+- Limit results to top-k to reduce memory usage
+- Use Qdrant's filtering for language-specific queries
+
+## Multi-Language Configuration
+
+### config.yaml
+
+```yaml
+workspace:
+  enabled: true                    # Enable multi-workspace mode
+  auto_index: true                 # Auto-index detected workspaces
+  collection_prefix: ragcode       # Collection naming prefix
+  
+  # Language detection markers - file presence indicates language
+  detection_markers:
+    - .git                         # Generic workspace root
+    - go.mod                       # Go projects
+    - package.json                 # JavaScript/Node.js
+    - pyproject.toml               # Python (modern)
+    - setup.py                     # Python (legacy)
+    - requirements.txt             # Python (pip)
+    - composer.json                # PHP
+    - Cargo.toml                   # Rust
+    - pom.xml                      # Java (Maven)
+    - build.gradle                 # Java (Gradle)
+    - Gemfile                      # Ruby
+    - Package.swift                # Swift
+```
+
+### Environment Variables (Advanced)
+
+For advanced users (not recommended for typical use):
+
+- `WORKSPACE_ENABLED` - Enable/disable multi-workspace mode (default: true)
+- `WORKSPACE_AUTO_INDEX` - Auto-index detected workspaces (default: true)
+- `WORKSPACE_COLLECTION_PREFIX` - Collection naming prefix (default: "ragcode")
+- `WORKSPACE_MAX_WORKSPACES` - Maximum concurrent workspaces to index (default: 10)
+
+**Note:** These variables are auto-managed by the system. Use defaults unless you have specific requirements.
+
+## Future Enhancements
+
+### Planned
+- [x] PHP analyzer implementation (PHP + Laravel analyzer, ~84% coverage, PAS 1–10 complete, production ready)
+- [ ] Python analyzer implementation (placeholder ready)
+- [ ] TypeScript/JavaScript analyzer
+- [ ] Cross-language symbol references
+- [ ] Multi-workspace search across all languages
+- [ ] Language-specific embedding models
+
+### Under Consideration
+- [ ] Incremental indexing (watch mode)
+- [ ] Symbol relationship graph (calls, implements, extends)
+- [ ] Code metrics and quality analysis
+- [ ] Custom analyzer plugins via Go plugins
+
+## Current Implementation Status
+
+**Multi-Language Support:** ✅ Fully implemented architecture
+- **Go**: ✅ Fully implemented with 82% test coverage (13 unit tests)
+- **PHP**: ✅ Fully implemented with 83.6% test coverage (19 unit tests)
+  - **Laravel Framework**: ✅ Advanced framework support (14 integration tests)
+- **Python**: 🔄 Placeholder - ready for implementation
+- **Other languages**: Waiting for community contributions
+
+**Multi-Workspace Support:** ✅ Fully implemented
+- Automatic detection from 11+ language markers
+- Per-workspace, per-language collections
+- Concurrent multi-workspace indexing
+- Comprehensive test suite (15+ integration tests)
+
+**MCP Tools:** ✅ 8 tools fully implemented
+- All tools support multi-workspace and multi-language queries
+- Workspace-aware collection selection
+
+## PHP & Laravel Support
+
+### Overview
+
+The PHP analyzer provides comprehensive support for PHP 8.0+ codebases with advanced Laravel framework integration.
+
+### PHP Base Analyzer (`php/`)
+
+**Features:**
+- ✅ Namespace and package detection
+- ✅ Class extraction (properties, methods, constants)
+- ✅ Interface extraction
+- ✅ Trait extraction with usage detection
+- ✅ Function extraction (global and methods)
+- ✅ PHPDoc parsing for descriptions and types
+- ✅ Visibility modifiers (public, protected, private)
+- ✅ Type hints and return types
+- ✅ AST-based analysis using VKCOM/php-parser
+
+**Test Coverage:** 83.6% (19 unit tests)
+
+### Laravel Framework Support (`php/laravel/`)
+
+**Architecture:**
+```
+php/laravel/
+├── types.go              # Laravel-specific types
+├── analyzer.go           # Main coordinator
+├── eloquent.go           # Eloquent model analyzer
+├── controller.go         # Controller analyzer
+├── ast_helper.go         # AST extraction utilities
+├── *_test.go             # Comprehensive test suite
+└── README.md             # Documentation
+```
+
+**Features:**
+
+**1. Eloquent Model Analysis:**
+- ✅ Model detection (extends `Illuminate\Database\Eloquent\Model`)
+- ✅ Property extraction: `$table`, `$primaryKey`, `$fillable`, `$guarded`, `$casts`, `$hidden`, `$visible`, `$appends`
+- ✅ Trait detection: `SoftDeletes`, `HasFactory`, custom traits
+- ✅ Relationship extraction: `hasMany`, `hasOne`, `belongsTo`, `belongsToMany`, `morphMany`, etc.
+- ✅ Query scopes: `scopeActive`, `scopePublished`, etc.
+- ✅ Accessors/Mutators: `getFullNameAttribute`, `setPasswordAttribute`
+- ✅ AST-based property parsing (handles `Post::class` syntax)
+
+**2. Controller Analysis:**
+- ✅ Resource controller detection (7 CRUD methods: index, create, store, show, edit, update, destroy)
+- ✅ API controller detection (namespace `App\Http\Controllers\Api`)
+- ✅ Action extraction with HTTP method inference
+- ✅ Parameter extraction (with `$` prefix normalization)
+- ✅ Custom action detection (non-CRUD methods)
+
+**3. AST Helpers:**
+- ✅ Property extraction: arrays, maps, strings from class properties
+- ✅ Method call extraction: detects relation methods in model methods
+- ✅ PHP variable name handling: automatic `$` prefix trimming
+- ✅ `Class::class` constant fetch support
+
+**Laravel Detection:**
+The system automatically detects Laravel projects by checking for:
+- Namespaces starting with `App\Models`, `App\Http\Controllers`
+- Classes extending `Model`, `Controller`
+- `Illuminate\` framework classes
+
+**Test Coverage:**
+- 14 Laravel-specific tests (100% passing)
+- 4 AST helper tests
+- 3 Eloquent analyzer tests
+- 4 Controller analyzer tests
+- 3 Integration tests
+
+**Example Output:**
+
+```go
+// EloquentModel
+{
+  ClassName: "User",
+  Namespace: "App\\Models",
+  Table: "users",
+  Fillable: ["name", "email", "password"],
+  SoftDeletes: true,
+  Relations: [
+    {Name: "posts", Type: "hasMany", RelatedModel: "Post"},
+    {Name: "profile", Type: "hasOne", RelatedModel: "Profile"}
+  ],
+  Scopes: [{Name: "active", MethodName: "scopeActive"}],
+  Attributes: [{Name: "full_name", MethodName: "getFullNameAttribute"}]
+}
+
+// Controller
+{
+  ClassName: "PostController",
+  Namespace: "App\\Http\\Controllers",
+  IsResource: true,
+  IsApi: false,
+  Actions: [
+    {Name: "index", HttpMethods: ["GET"]},
+    {Name: "store", HttpMethods: ["POST"], Parameters: ["request"]},
+    {Name: "destroy", HttpMethods: ["DELETE"], Parameters: ["post"]}
+  ]
+}
+```
+
+**Usage:**
+
+```go
+// Detect Laravel project
+analyzer := php.NewCodeAnalyzer()
+analyzer.AnalyzeFile("app/Models/User.php")
+if analyzer.IsLaravelProject() {
+    // Get packages and analyze with Laravel
+    packages := analyzer.GetPackages()
+    laravelAnalyzer := laravel.NewAnalyzer(packages[0])
+    info := laravelAnalyzer.Analyze()
+    
+    // info.Models contains Eloquent models
+    // info.Controllers contains controllers
+}
+```
+
+## Contributing
+
+When contributing code:
+
+1. Follow the existing package structure
+2. Implement both `PathAnalyzer` and `APIAnalyzer` for new languages
+3. Add comprehensive tests (>80% coverage)
+4. Update this architecture document
+5. Set `Language` field correctly in all chunks
+6. Use `codetypes` for shared types, not package-local definitions

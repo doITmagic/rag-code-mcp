@@ -33,18 +33,18 @@ type Info struct {
 func (w *Info) CollectionName() string {
 	prefix := w.CollectionPrefix
 	if prefix == "" {
-		prefix = "coderag" // Default prefix
+		prefix = "ragcode" // Default prefix
 	}
 	return prefix + "-" + w.ID
 }
 
 // CollectionNameForLanguage returns the Qdrant collection name for a specific language in this workspace
 // Format: {prefix}-{workspaceID}-{language}
-// Example: coderag-a1b2c3d4e5f6-go, coderag-a1b2c3d4e5f6-python
+// Example: ragcode-a1b2c3d4e5f6-go, ragcode-a1b2c3d4e5f6-python
 func (w *Info) CollectionNameForLanguage(language string) string {
 	prefix := w.CollectionPrefix
 	if prefix == "" {
-		prefix = "coderag" // Default prefix
+		prefix = "ragcode" // Default prefix
 	}
 	if language == "" {
 		// Fallback to old behavior if no language specified

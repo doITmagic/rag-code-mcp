@@ -6,8 +6,8 @@ import (
 	"io"
 	"time"
 
-	"github.com/doITmagic/coderag-mcp/internal/config"
-	"github.com/doITmagic/coderag-mcp/internal/utils"
+	"github.com/doITmagic/rag-code-mcp/internal/config"
+	"github.com/doITmagic/rag-code-mcp/internal/utils"
 )
 
 // Provider represents an LLM provider interface
@@ -62,7 +62,7 @@ func WithStopWords(words []string) GenerateOption {
 
 // NewProvider creates a new LLM provider based on configuration
 func NewProvider(cfg *config.LLMConfig) (Provider, error) {
-	// MCP CodeRAG currently uses only Ollama as LLM provider
+	// MCP RagCode currently uses only Ollama as LLM provider
 	switch cfg.Provider {
 	case "", "ollama":
 		p, err := NewOllamaLLMProvider(*cfg)

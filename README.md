@@ -1,29 +1,74 @@
-# CodeRAG MCP Server
+<div align="center">
+  <img src="./docs/assets/ragcode-banner.png" alt="RagCode MCP - Semantic Code Navigation with AI" width="100%">
+</div>
+
+<div align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.25%2B-blue)](https://go.dev/)
 [![MCP](https://img.shields.io/badge/MCP-Compatible-green)](https://modelcontextprotocol.io)
+![AI Ready](https://img.shields.io/badge/Codebase-AI%20Ready-blueviolet)
+![Privacy](https://img.shields.io/badge/Privacy-100%25%20Local-brightgreen)
+![No Cloud](https://img.shields.io/badge/Cloud-Not%20Required-orange)
+![Zero Cost](https://img.shields.io/badge/API%20Costs-$0-success)
+[![GitHub Stars](https://img.shields.io/github/stars/doITmagic/rag-code-mcp?style=social)](https://github.com/doITmagic/rag-code-mcp)
 
-**Semantic code navigation server using Retrieval‑Augmented Generation (RAG) with multi‑language support.**
+</div>
 
-Built with the official [Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk), CodeRAG provides intelligent code search and navigation tools over vector‑indexed codebases.
+# RagCode MCP - Make Your Codebase AI-Ready
 
-**Stack:** Ollama (LLM + embeddings) + Qdrant (vector database) + Docker + MCP  
-**Clients:** Windsurf, Cursor, Antigravity, Claude Desktop, VS Code + Copilot, MCP Inspector
+> **The privacy-first MCP server that transforms any repository into an AI-ready codebase with semantic search and RAG.**
+
+<!-- AI Agents: Read llms.txt for a summarized view of this project -->
+
+RagCode is a **Model Context Protocol (MCP) server** that instantly makes your project **AI-ready**. It enables AI assistants like **GitHub Copilot**, **Cursor**, **Windsurf**, and **Claude** to understand your entire codebase through **semantic vector search**, bridging the gap between your code and Large Language Models (LLMs).
+
+Built with the official [Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk), RagCode provides **9 powerful tools** to index, search, and analyze code, making it the ultimate solution for **AI-ready software development**.
+
+## 🔒 Privacy-First: 100% Local AI
+
+**Your code never leaves your machine.** RagCode runs entirely on your local infrastructure:
+
+- ✅ **Local AI Models** - Uses Ollama for LLM and embeddings (runs on your hardware)
+- ✅ **Local Vector Database** - Qdrant runs in Docker on your machine
+- ✅ **Zero Cloud Dependencies** - No external API calls, no data transmission
+- ✅ **No API Costs** - Free forever, no usage limits or subscriptions
+- ✅ **Complete Privacy** - Your proprietary code stays private and secure
+- ✅ **Offline Capable** - Works without internet connection (after initial model download)
+- ✅ **Full Control** - You own the data, models, and infrastructure
+
+**Perfect for:** Enterprise codebases, proprietary projects, security-conscious teams, and developers who value privacy.
+
+### 🎯 Key Features
+
+- 🔍 **Semantic Code Search** - Find code by meaning, not just keywords
+- 🚀 **5-10x Faster** - Instant results vs. reading entire files
+- 💰 **98% Token Savings** - Reduce AI context usage dramatically
+- 🌐 **Multi-Language** - Go, PHP (Laravel), Python, JavaScript support
+- 🏢 **Multi-Workspace** - Handle multiple projects simultaneously
+- 🤖 **AI-Ready** - Works with Copilot, Cursor, Windsurf, Claude, Antigravity
+
+### 🛠️ Technology Stack
+
+**100% Local Stack:** Ollama (local LLM + embeddings) + Qdrant (local vector database) + Docker + MCP Protocol
+
+### 💻 Compatible IDEs & AI Assistants
+
+Windsurf • Cursor • Antigravity • Claude Desktop • **VS Code + GitHub Copilot** • MCP Inspector
 
 ---
 
-## 🚀 Why CodeRAG? Performance Benefits
+## 🚀 Why RagCode? Performance Benefits
 
 ### **5-10x Faster Code Understanding**
 
-Without CodeRAG, AI assistants must:
+Without RagCode, AI assistants must:
 - 📄 Read entire files to find relevant code
 - 🔍 Search through thousands of lines manually
 - 💭 Use precious context window tokens on irrelevant code
 - ⏱️ Wait for multiple file reads and searches
 
-**With CodeRAG:**
+**With RagCode:**
 - ⚡ **Instant semantic search** - finds relevant code in milliseconds
 - 🎯 **Pinpoint accuracy** - returns only the exact functions/types you need
 - 💰 **90% less context usage** - AI sees only relevant code, not entire files
@@ -31,7 +76,7 @@ Without CodeRAG, AI assistants must:
 
 ### Real-World Impact
 
-| Task | Without CodeRAG | With CodeRAG | Speedup |
+| Task | Without RagCode | With RagCode | Speedup |
 |------|----------------|--------------|---------|
 | Find authentication logic | 30-60s (read 10+ files) | 2-3s (semantic search) | **10-20x faster** |
 | Understand function signature | 15-30s (grep + read file) | 1-2s (direct lookup) | **15x faster** |
@@ -42,20 +87,57 @@ Without CodeRAG, AI assistants must:
 
 **Example: Finding a function in a 50,000 line codebase**
 
-- **Without CodeRAG:** AI reads 5-10 files (~15,000 tokens) to find the function
-- **With CodeRAG:** AI gets exact function + context (~200 tokens)
+- **Without RagCode:** AI reads 5-10 files (~15,000 tokens) to find the function
+- **With RagCode:** AI gets exact function + context (~200 tokens)
 - **Savings:** **98% fewer tokens** = faster responses + lower costs
+
+### 🆚 RagCode vs Cloud-Based Solutions
+
+| Feature | RagCode (Local) | Cloud-Based AI Code Search |
+|---------|-----------------|---------------------------|
+| **Privacy** | ✅ 100% local, code never leaves machine | ❌ Code sent to cloud servers |
+| **Cost** | ✅ $0 - Free forever | ❌ $20-100+/month subscriptions |
+| **API Limits** | ✅ Unlimited usage | ❌ Rate limits, token caps |
+| **Offline** | ✅ Works without internet | ❌ Requires constant connection |
+| **Data Control** | ✅ You own everything | ❌ Vendor controls your data |
+| **Enterprise Ready** | ✅ No compliance issues | ⚠️ May violate security policies |
+| **Setup** | ⚠️ Requires local resources | ✅ Instant cloud access |
+| **Performance** | ✅ Fast (local hardware) | ⚠️ Depends on network latency |
+
+**Bottom Line:** RagCode gives you enterprise-grade AI code search with zero privacy concerns and zero ongoing costs.
 
 ---
 
-## ✨ Features
+## ✨ Core Features & Capabilities
 
-- **9 MCP Tools** – semantic search, hybrid search, function details, type definitions, workspace indexing, and more
-- **Multi‑Language Support** – Go (≈82% coverage), PHP (≈84% coverage) + Laravel framework, Python (planned)
-- **Multi‑Workspace Detection** – automatic workspace detection and per‑workspace collections
-- **Per‑Language Collections** – separate Qdrant collections for each language (e.g., `coderag-{workspace}-go`)
-- **Hybrid Search** – combines semantic (vector) and lexical (keyword) search for better relevance
-- **Direct File Access** – read code context without indexing
+### 🔧 9 Powerful MCP Tools for AI Code Assistants
+
+1. **`search_code`** - Semantic vector search across your entire codebase
+2. **`hybrid_search`** - Combined semantic + keyword search for maximum accuracy
+3. **`get_function_details`** - Complete function signatures, parameters, and implementation
+4. **`find_type_definition`** - Locate class, struct, and interface definitions instantly
+5. **`find_implementations`** - Discover all usages and implementations of any symbol
+6. **`list_package_exports`** - Browse all exported symbols from any package/module
+7. **`search_docs`** - Semantic search through project documentation (Markdown)
+8. **`get_code_context`** - Extract code snippets with surrounding context
+9. **`index_workspace`** - Automated workspace indexing with language detection
+
+### 🌐 Multi-Language Code Intelligence
+
+- **Go** - ≈82% coverage with full AST analysis
+- **PHP** - ≈84% coverage + Laravel framework support
+- **Python** - Coming soon with full type hint support
+- **JavaScript/TypeScript** - Planned for future releases
+
+### 🏗️ Advanced Architecture
+
+- **Multi-Workspace Detection** - Automatically detects project boundaries (git, go.mod, composer.json, package.json)
+- **Per-Language Collections** - Separate vector databases for each language (`ragcode-{workspace}-go`, `ragcode-{workspace}-php`)
+- **Automatic Indexing** - Background indexing on first use, no manual intervention needed
+- **Vector Embeddings** - Uses Ollama's `nomic-embed-text` for high-quality semantic embeddings
+- **Hybrid Search Engine** - Combines vector similarity with BM25 lexical matching
+- **Direct File Access** - Read code without indexing for quick lookups
+- **Smart Caching** - Efficient re-indexing only for changed files
 
 ---
 
@@ -90,13 +172,13 @@ Without CodeRAG, AI assistants must:
 ## ⚡ Quick Start (One‑Command Installer)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/doITmagic/coderag-mcp/main/quick-install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | bash
 ```
 
 The installer will:
 1. ✅ Download the latest release from GitHub (or build locally if the download fails)
-2. ✅ Install binaries into `~/.local/share/coderag/bin`
-3. ✅ Add `coderag-mcp` to your `PATH`
+2. ✅ Install binaries into `~/.local/share/ragcode/bin`
+3. ✅ Add `rag-code-mcp` to your `PATH`
 4. ✅ Configure Windsurf, Cursor, and Antigravity automatically (writes `mcp_config.json`)
 5. ✅ **Start Docker** if it is not already running
 6. ✅ **Start the Qdrant container** (vector database)
@@ -110,13 +192,13 @@ You can customize the installation using environment variables:
 
 ```bash
 # Use development branch
-curl -fsSL https://raw.githubusercontent.com/doITmagic/coderag-mcp/develop/quick-install.sh | BRANCH=develop bash
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/develop/quick-install.sh | BRANCH=develop bash
 
 # Custom Ollama model
-curl -fsSL https://raw.githubusercontent.com/doITmagic/coderag-mcp/main/quick-install.sh | OLLAMA_MODEL=llama3.1:8b bash
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | OLLAMA_MODEL=llama3.1:8b bash
 
 # Combine multiple options
-curl -fsSL https://raw.githubusercontent.com/doITmagic/coderag-mcp/develop/quick-install.sh | BRANCH=develop OLLAMA_MODEL=phi3:mini bash
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/develop/quick-install.sh | BRANCH=develop OLLAMA_MODEL=phi3:mini bash
 ```
 
 **Available environment variables:**
@@ -131,8 +213,8 @@ See [QUICKSTART.md](./QUICKSTART.md) for detailed installation and usage instruc
 ### Manual Build (for developers)
 
 ```bash
-git clone https://github.com/doITmagic/coderag-mcp.git
-cd coderag-mcp
+git clone https://github.com/doITmagic/rag-code-mcp.git
+cd rag-code-mcp
 go run ./cmd/install
 ```
 
@@ -164,7 +246,7 @@ brew install ollama
 
 ### 2. Run the Installer
 ```bash
-curl -fsSL https://raw.githubusercontent.com/doITmagic/coderag-mcp/main/quick-install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | bash
 ```
 
 Installation typically takes 5‑10 minutes (downloading the AI models can be the longest part).
@@ -172,7 +254,7 @@ Installation typically takes 5‑10 minutes (downloading the AI models can be 
 ### 3. Verify Installation
 ```bash
 # Check the binary
-~/.local/share/coderag/bin/coderag-mcp --version
+~/.local/share/ragcode/bin/rag-code-mcp --version
 
 # Verify services are running
 docker ps | grep qdrant
@@ -181,14 +263,67 @@ ollama list
 
 ### 4. Start the Server (optional – the installer already starts it)
 ```bash
-~/.local/share/coderag/start.sh
+~/.local/share/ragcode/start.sh
 ```
 
 ---
 
-## 🎯 Using CodeRAG in Windsurf / Cursor
+## 🎯 Using RagCode in Your IDE
 
-After installation, CodeRAG is automatically available in supported IDEs. No additional configuration is required.
+After installation, RagCode is automatically available in supported IDEs. No additional configuration is required.
+
+### Supported IDEs
+
+- **Windsurf** - Full MCP support
+- **Cursor** - Full MCP support  
+- **Antigravity** - Full MCP support
+- **Claude Desktop** - Full MCP support
+- **VS Code + GitHub Copilot** - Agent mode integration (requires VS Code 1.95+)
+
+### VS Code + GitHub Copilot Integration
+
+RagCode integrates with **GitHub Copilot's Agent Mode** through MCP, enabling semantic code search as part of Copilot's autonomous workflow.
+
+**Quick Setup:**
+1. Install RagCode using the quick-install script (automatically configures VS Code)
+2. Open VS Code in your project
+3. Open Copilot Chat (Ctrl+Shift+I / Cmd+Shift+I)
+4. Enable **Agent Mode** (click "Agent" button or type `/agent`)
+5. Ask questions - Copilot will automatically use RagCode tools
+
+**Example Prompts:**
+```
+Find all authentication middleware functions in this codebase
+Show me the User model definition and all its methods
+Search for functions that handle database connections
+```
+
+**Manual Configuration:**  
+Edit `~/.config/Code/User/globalStorage/mcp-servers.json`:
+```json
+{
+  "mcpServers": {
+    "ragcode": {
+      "command": "/home/YOUR_USERNAME/.local/share/ragcode/bin/rag-code-mcp",
+      "args": [],
+      "env": {
+        "OLLAMA_BASE_URL": "http://localhost:11434",
+        "OLLAMA_MODEL": "phi3:medium",
+        "OLLAMA_EMBED": "nomic-embed-text",
+        "QDRANT_URL": "http://localhost:6333"
+      }
+    }
+  }
+}
+```
+
+**Verify Integration:**
+- Command Palette → `MCP: Show MCP Servers`
+- Check that `ragcode` appears with "Connected" status
+
+**📖 Detailed Guide:** See [docs/vscode-copilot-integration.md](./docs/vscode-copilot-integration.md) for complete setup, troubleshooting, and advanced features.
+
+See [QUICKSTART.md](./QUICKSTART.md) for detailed VS Code setup and troubleshooting.
 
 ### Available Tools
 1. **`search_code`** – semantic code search
@@ -199,14 +334,15 @@ After installation, CodeRAG is automatically available in supported IDEs. No add
 6. **`list_package_exports`** – list all exported symbols in a package
 7. **`search_docs`** – search markdown documentation
 8. **`index_workspace`** – manually trigger indexing of a workspace (usually not needed)
+9. **`get_code_context`** – read code from specific file locations with context
 
-**All tools require a `file_path` parameter** so that CodeRAG can determine the correct workspace.
+**All tools require a `file_path` parameter** so that RagCode can determine the correct workspace.
 
 ---
 
 ## 🔄 Automatic Indexing
 
-When a tool is invoked for the first time in a workspace, CodeRAG will:
+When a tool is invoked for the first time in a workspace, RagCode will:
 1. Detect the workspace from `file_path`
 2. Create a Qdrant collection for that workspace and language
 3. Index the code in the background
@@ -219,7 +355,7 @@ You never need to run `index_workspace` manually.
 ## 🛠 Advanced Configuration
 
 ### Changing AI Models
-Edit `~/.local/share/coderag/config.yaml`:
+Edit `~/.local/share/ragcode/config.yaml`:
 ```yaml
 llm:
   provider: "ollama"
@@ -235,7 +371,7 @@ Recommended models:
 ```yaml
 qdrant:
   url: "http://localhost:6333"
-  collection_prefix: "coderag"
+  collection_prefix: "ragcode"
 ```
 
 ### Excluding Directories
@@ -266,7 +402,7 @@ workspace:
 ```bash
 sudo systemctl start docker   # Linux
 # Then start Qdrant (the installer does this automatically)
-~/.local/share/coderag/start.sh
+~/.local/share/ragcode/start.sh
 ```
 
 ### "Ollama model not found"
@@ -299,22 +435,68 @@ ollama pull phi3:medium
 
 ---
 
-## 🔗 Useful Links
-- **GitHub:** https://github.com/doITmagic/coderag-mcp
-- **Issues:** https://github.com/doITmagic/coderag-mcp/issues
-- **Ollama Docs:** https://ollama.com
-- **Qdrant Docs:** https://qdrant.tech
+## 🔗 Resources & Documentation
+
+### 📖 Project Documentation
+- **[Quick Start Guide](./QUICKSTART.md)** - Get started in 5 minutes
+- **[VS Code + Copilot Integration](./docs/vscode-copilot-integration.md)** - Detailed setup for GitHub Copilot
+- **[Architecture Overview](./docs/architecture.md)** - Technical deep dive
+- **[Tool Schema Reference](./docs/tool_schema_v2.md)** - Complete API documentation
+
+### 🌐 External Resources
+- **[GitHub Repository](https://github.com/doITmagic/rag-code-mcp)** - Source code and releases
+- **[Issue Tracker](https://github.com/doITmagic/rag-code-mcp/issues)** - Report bugs or request features
+- **[Model Context Protocol](https://modelcontextprotocol.io)** - Official MCP specification
+- **[Ollama Documentation](https://ollama.com)** - LLM and embedding models
+- **[Qdrant Documentation](https://qdrant.tech)** - Vector database guide
+
+### 🎓 Learning Resources
+- **[What is RAG?](https://en.wikipedia.org/wiki/Prompt_engineering#Retrieval-augmented_generation)** - Understanding Retrieval-Augmented Generation
+- **[Vector Embeddings Explained](https://qdrant.tech/articles/what-are-embeddings/)** - How semantic search works
+- **[MCP for Developers](https://github.com/modelcontextprotocol/specification)** - Building MCP servers
 
 ---
 
-## 🤝 Contributing
-Contributions are welcome! Open a PR or an Issue on GitHub.
+## 🤝 Contributing & Community
+
+We welcome contributions from the community! Here's how you can help:
+
+- 🐛 **Report Bugs** - [Open an issue](https://github.com/doITmagic/rag-code-mcp/issues/new)
+- 💡 **Request Features** - Share your ideas for new tools or languages
+- 🔧 **Submit PRs** - Improve code, documentation, or add new features
+- ⭐ **Star the Project** - Show your support on GitHub
+- 📢 **Spread the Word** - Share RagCode with other developers
+
+### Development Setup
+```bash
+git clone https://github.com/doITmagic/rag-code-mcp.git
+cd rag-code-mcp
+go mod download
+go run ./cmd/rag-code-mcp
+```
 
 ---
 
 ## 📄 License
-MIT License – see the `LICENSE` file for details.
+
+RagCode MCP is open source software licensed under the **MIT License**.
+
+See the [LICENSE](./LICENSE) file for full details.
 
 ---
 
-**Questions? Problems?** Open an Issue on GitHub! 🚀
+## 🏷️ Keywords & Topics
+
+`semantic-code-search` `rag` `retrieval-augmented-generation` `mcp-server` `model-context-protocol` `ai-code-assistant` `vector-search` `code-navigation` `ollama` `qdrant` `github-copilot` `cursor-ai` `windsurf` `go` `php` `laravel` `code-intelligence` `ast-analysis` `embeddings` `llm-tools` `local-ai` `privacy-first` `offline-ai` `self-hosted` `on-premise` `zero-cost` `no-cloud` `private-code-search` `enterprise-ai` `secure-coding-assistant`
+
+---
+
+<div align="center">
+
+**Built with ❤️ for developers who want smarter AI code assistants**
+
+⭐ **[Star us on GitHub](https://github.com/doITmagic/rag-code-mcp)** if RagCode helps your workflow!
+
+**Questions? Problems?** [Open an Issue](https://github.com/doITmagic/rag-code-mcp/issues) • [Read the Docs](./QUICKSTART.md) • [Join Discussions](https://github.com/doITmagic/rag-code-mcp/discussions)
+
+</div>

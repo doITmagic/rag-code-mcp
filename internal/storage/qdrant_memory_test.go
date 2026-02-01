@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/doITmagic/coderag-mcp/internal/memory"
+	"github.com/doITmagic/rag-code-mcp/internal/memory"
 )
 
 func TestQdrantLongTermMemoryStoreValidation(t *testing.T) {

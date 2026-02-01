@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/doITmagic/coderag-mcp/internal/config"
+	"github.com/doITmagic/rag-code-mcp/internal/config"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/ollama"
 )

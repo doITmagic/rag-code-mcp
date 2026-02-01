@@ -1,9 +1,9 @@
-# GoReleaser configuration for CodeRAG MCP Server
+# GoReleaser configuration for RagCode MCP Server
 # See https://goreleaser.com for documentation
 
 version: 2
 
-project_name: coderag-mcp
+project_name: rag-code-mcp
 
 before:
   hooks:
@@ -12,9 +12,9 @@ before:
     - go mod download
 
 builds:
-  - id: coderag-mcp
-    main: ./cmd/coderag-mcp
-    binary: coderag-mcp
+  - id: rag-code-mcp
+    main: ./cmd/rag-code-mcp
+    binary: rag-code-mcp
     
     env:
       - CGO_ENABLED=0
@@ -92,7 +92,7 @@ changelog:
 release:
   github:
     owner: doITmagic
-    name: do-ai
+    name: rag-code-mcp
   
   draft: false
   prerelease: auto
@@ -100,7 +100,7 @@ release:
   name_template: "{{.ProjectName}} v{{.Version}}"
   
   header: |
-    ## CodeRAG MCP Server v{{.Version}}
+    ## RagCode MCP Server v{{.Version}}
     
     Semantic code navigation for Go codebases using RAG (Retrieval-Augmented Generation).
     
@@ -108,7 +108,7 @@ release:
     
     **Quick install (Linux/macOS):**
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/doITmagic/do-ai/main/install.sh | bash
+    curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/install.sh | bash
     ```
     
     **Or download the binary for your platform below.**
@@ -118,15 +118,15 @@ release:
     
     1. Install dependencies: Ollama and Qdrant
     2. Configure your environment (see README.md)
-    3. Start the server: `coderag-mcp`
+    3. Start the server: `rag-code-mcp`
     
-    **Full documentation:** https://github.com/doITmagic/coderag-mcp
+    **Full documentation:** https://github.com/doITmagic/rag-code-mcp
 
 # Docker images
 dockers:
   - image_templates:
-      - "doitmagic/coderag-mcp:{{ .Version }}-amd64"
-      - "doitmagic/coderag-mcp:latest-amd64"
+      - "doitmagic/rag-code-mcp:{{ .Version }}-amd64"
+      - "doitmagic/rag-code-mcp:latest-amd64"
     use: buildx
     dockerfile: Dockerfile
     build_flag_templates:
@@ -137,8 +137,8 @@ dockers:
       - "--label=org.opencontainers.image.version={{.Version}}"
   
   - image_templates:
-      - "doitmagic/coderag-mcp:{{ .Version }}-arm64"
-      - "doitmagic/coderag-mcp:latest-arm64"
+      - "doitmagic/rag-code-mcp:{{ .Version }}-arm64"
+      - "doitmagic/rag-code-mcp:latest-arm64"
     use: buildx
     dockerfile: Dockerfile
     build_flag_templates:
@@ -150,21 +150,21 @@ dockers:
     goarch: arm64
 
 docker_manifests:
-  - name_template: "doitmagic/coderag-mcp:{{ .Version }}"
+  - name_template: "doitmagic/rag-code-mcp:{{ .Version }}"
     image_templates:
-      - "doitmagic/coderag-mcp:{{ .Version }}-amd64"
-      - "doitmagic/coderag-mcp:{{ .Version }}-arm64"
+      - "doitmagic/rag-code-mcp:{{ .Version }}-amd64"
+      - "doitmagic/rag-code-mcp:{{ .Version }}-arm64"
   
-  - name_template: "doitmagic/coderag-mcp:latest"
+  - name_template: "doitmagic/rag-code-mcp:latest"
     image_templates:
-      - "doitmagic/coderag-mcp:latest-amd64"
-      - "doitmagic/coderag-mcp:latest-arm64"
+      - "doitmagic/rag-code-mcp:latest-amd64"
+      - "doitmagic/rag-code-mcp:latest-arm64"
 
 # Homebrew tap (optional, can be enabled later)
 # brews:
 #   - repository:
 #       owner: doITmagic
 #       name: homebrew-tap
-#     homepage: https://github.com/doITmagic/coderag-mcp
+#     homepage: https://github.com/doITmagic/rag-code-mcp
 #     description: Semantic code navigation for Go codebases using RAG
 #     license: MIT

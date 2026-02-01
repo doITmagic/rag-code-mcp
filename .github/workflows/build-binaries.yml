@@ -33,8 +33,8 @@ jobs:
           
       - name: Build binaries
         run: |
-          echo "Building coderag-mcp..."
-          go build -o bin/coderag-mcp ./cmd/coderag-mcp
+          echo "Building rag-code-mcp..."
+          go build -o bin/rag-code-mcp ./cmd/rag-code-mcp
           
           echo "Building index-all..."
           go build -o bin/index-all ./cmd/index-all

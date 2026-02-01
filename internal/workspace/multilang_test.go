@@ -74,7 +74,7 @@ func TestCollectionNameForLanguage(t *testing.T) {
 	info := &Info{
 		Root:             "/home/user/project",
 		ID:               "abc123def456",
-		CollectionPrefix: "coderag",
+		CollectionPrefix: "ragcode",
 		Languages:        []string{"go", "python"},
 	}
 
@@ -86,17 +86,17 @@ func TestCollectionNameForLanguage(t *testing.T) {
 		{
 			name:     "Go collection",
 			language: "go",
-			expected: "coderag-abc123def456-go",
+			expected: "ragcode-abc123def456-go",
 		},
 		{
 			name:     "Python collection",
 			language: "python",
-			expected: "coderag-abc123def456-python",
+			expected: "ragcode-abc123def456-python",
 		},
 		{
 			name:     "Empty language fallback",
 			language: "",
-			expected: "coderag-abc123def456",
+			expected: "ragcode-abc123def456",
 		},
 	}
 

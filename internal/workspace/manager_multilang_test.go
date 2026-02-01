@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/doITmagic/coderag-mcp/internal/config"
+	"github.com/doITmagic/rag-code-mcp/internal/config"
 )
 
 // TestGetMemoryForWorkspaceLanguage tests language-specific memory retrieval
@@ -19,7 +19,7 @@ func TestGetMemoryForWorkspaceLanguage(t *testing.T) {
 			Enabled:          true,
 			AutoIndex:        false, // Don't auto-index in tests
 			MaxWorkspaces:    10,
-			CollectionPrefix: "test-coderag",
+			CollectionPrefix: "test-ragcode",
 		},
 	}
 
@@ -29,7 +29,7 @@ func TestGetMemoryForWorkspaceLanguage(t *testing.T) {
 		ID:               "test123",
 		ProjectType:      "go",
 		Languages:        []string{"go", "python"},
-		CollectionPrefix: "test-coderag",
+		CollectionPrefix: "test-ragcode",
 		DetectedAt:       time.Now(),
 	}
 
@@ -37,13 +37,13 @@ func TestGetMemoryForWorkspaceLanguage(t *testing.T) {
 
 	// Test collection names
 	goCollection := info.CollectionNameForLanguage("go")
-	if goCollection != "test-coderag-test123-go" {
-		t.Errorf("Expected 'test-coderag-test123-go', got '%s'", goCollection)
+	if goCollection != "test-ragcode-test123-go" {
+		t.Errorf("Expected 'test-ragcode-test123-go', got '%s'", goCollection)
 	}
 
 	pythonCollection := info.CollectionNameForLanguage("python")
-	if pythonCollection != "test-coderag-test123-python" {
-		t.Errorf("Expected 'test-coderag-test123-python', got '%s'", pythonCollection)
+	if pythonCollection != "test-ragcode-test123-python" {
+		t.Errorf("Expected 'test-ragcode-test123-python', got '%s'", pythonCollection)
 	}
 
 	t.Logf("Go collection: %s", goCollection)
@@ -67,7 +67,7 @@ func TestGetMemoriesForAllLanguages(t *testing.T) {
 		ID:               "poly123",
 		ProjectType:      "go",
 		Languages:        []string{"go", "python", "javascript"},
-		CollectionPrefix: "test-coderag",
+		CollectionPrefix: "test-ragcode",
 		DetectedAt:       time.Now(),
 	}
 
@@ -78,9 +78,9 @@ func TestGetMemoriesForAllLanguages(t *testing.T) {
 	// 4. Verify cross-language search aggregation
 
 	expectedCollections := []string{
-		"test-coderag-poly123-go",
-		"test-coderag-poly123-python",
-		"test-coderag-poly123-javascript",
+		"test-ragcode-poly123-go",
+		"test-ragcode-poly123-python",
+		"test-ragcode-poly123-javascript",
 	}
 
 	for i, lang := range info.Languages {
@@ -101,7 +101,7 @@ func TestLanguageInferenceFromPath(t *testing.T) {
 		Root:             "/home/user/project",
 		ID:               "abc123",
 		Languages:        []string{"go", "python"},
-		CollectionPrefix: "coderag",
+		CollectionPrefix: "ragcode",
 	}
 
 	testCases := []struct {
@@ -112,17 +112,17 @@ func TestLanguageInferenceFromPath(t *testing.T) {
 		{
 			filePath:           "/home/user/project/main.go",
 			expectedLanguage:   "go",
-			expectedCollection: "coderag-abc123-go",
+			expectedCollection: "ragcode-abc123-go",
 		},
 		{
 			filePath:           "/home/user/project/script.py",
 			expectedLanguage:   "python",
-			expectedCollection: "coderag-abc123-python",
+			expectedCollection: "ragcode-abc123-python",
 		},
 		{
 			filePath:           "/home/user/project/app.js",
 			expectedLanguage:   "javascript",
-			expectedCollection: "coderag-abc123-javascript",
+			expectedCollection: "ragcode-abc123-javascript",
 		},
 	}
 

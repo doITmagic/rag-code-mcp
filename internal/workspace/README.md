@@ -15,7 +15,7 @@ The `workspace` package provides workspace detection and identification for mult
 ### Basic Detection
 
 ```go
-import "github.com/doITmagic/coderag-mcp/internal/workspace"
+import "github.com/doITmagic/rag-code-mcp/internal/workspace"
 
 // Create detector
 detector := workspace.NewDetector()
@@ -48,7 +48,7 @@ if err != nil {
 }
 
 // Use workspace-specific collection
-collectionName := info.CollectionName() // "coderag-a3f4b8c9d2e1"
+collectionName := info.CollectionName() // "ragcode-a3f4b8c9d2e1"
 ```
 
 ### Using Cache
@@ -105,7 +105,7 @@ type Info struct {
     DetectedAt  time.Time // Detection timestamp
 }
 
-func (i *Info) CollectionName() string // Returns "coderag-{ID}"
+func (i *Info) CollectionName() string // Returns "ragcode-{ID}"
 ```
 
 #### `Metadata`

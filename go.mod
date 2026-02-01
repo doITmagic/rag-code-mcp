@@ -1,4 +1,4 @@
-module github.com/doITmagic/coderag-mcp
+module github.com/doITmagic/rag-code-mcp
 
 go 1.24.4
 

@@ -27,11 +27,11 @@ func TestDefaultConfigValues(t *testing.T) {
 	if !cfg.Workspace.Enabled {
 		t.Errorf("Workspace.Enabled = false, want true")
 	}
-	if cfg.Workspace.CollectionPrefix != "coderag" {
-		t.Errorf("Workspace.CollectionPrefix = %q, want %q", cfg.Workspace.CollectionPrefix, "coderag")
+	if cfg.Workspace.CollectionPrefix != "ragcode" {
+		t.Errorf("Workspace.CollectionPrefix = %q, want %q", cfg.Workspace.CollectionPrefix, "ragcode")
 	}
-	if cfg.CodeRAG.Collection != "do-ai-code" {
-		t.Errorf("CodeRAG.Collection = %q, want %q", cfg.CodeRAG.Collection, "do-ai-code")
+	if cfg.RagCode.Collection != "do-ai-code" {
+		t.Errorf("RagCode.Collection = %q, want %q", cfg.RagCode.Collection, "do-ai-code")
 	}
 	if cfg.Docs.Collection != "do-ai-docs" {
 		t.Errorf("Docs.Collection = %q, want %q", cfg.Docs.Collection, "do-ai-docs")
@@ -110,7 +110,7 @@ func TestApplyEnvOverrides(t *testing.T) {
 	t.Setenv("WORKSPACE_ENABLED", "false")
 	t.Setenv("WORKSPACE_AUTO_INDEX", "false")
 	t.Setenv("WORKSPACE_MAX_WORKSPACES", "42")
-	t.Setenv("WORKSPACE_COLLECTION_PREFIX", "mycoderag")
+	t.Setenv("WORKSPACE_COLLECTION_PREFIX", "myragcode")
 
 	applyEnvOverrides(cfg)
 
@@ -141,8 +141,8 @@ func TestApplyEnvOverrides(t *testing.T) {
 	if cfg.Workspace.MaxWorkspaces != 42 {
 		t.Errorf("Workspace.MaxWorkspaces = %d, want %d", cfg.Workspace.MaxWorkspaces, 42)
 	}
-	if cfg.Workspace.CollectionPrefix != "mycoderag" {
-		t.Errorf("Workspace.CollectionPrefix = %q, want %q", cfg.Workspace.CollectionPrefix, "mycoderag")
+	if cfg.Workspace.CollectionPrefix != "myragcode" {
+		t.Errorf("Workspace.CollectionPrefix = %q, want %q", cfg.Workspace.CollectionPrefix, "myragcode")
 	}
 }
 

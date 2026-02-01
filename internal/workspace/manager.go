@@ -224,11 +224,11 @@ func NewManager(qdrant *storage.QdrantClient, llm llm.Provider, cfg *config.Conf
 	log.Printf("🔧 Workspace Manager initialized (logging verified)")
 
 	return &Manager{
-		detector: detector,
-		cache:    NewCache(5 * time.Minute),
-		qdrant:   qdrant,
-		llm:      llm,
-		config:   cfg,
+		detector:         detector,
+		cache:            NewCache(5 * time.Minute),
+		qdrant:           qdrant,
+		llm:              llm,
+		config:           cfg,
 		indexing:         make(map[string]bool),
 		memories:         make(map[string]memory.LongTermMemory),
 		migrations:       make(map[string]string),
@@ -897,15 +897,15 @@ func (m *Manager) CheckAndPrepareMigration(ctx context.Context, info *Info, lang
 	if existingDimension > 0 && currentDimension > 0 && existingDimension != currentDimension {
 		log.Printf("🔄 Dimension mismatch detected in collection '%s': %d vs %d", collectionName, existingDimension, currentDimension)
 		log.Printf("🧹 Resetting collection '%s' to use %d dimensions", collectionName, currentDimension)
-		
+
 		if err := m.qdrant.DeleteCollection(ctx, collectionName); err != nil {
 			log.Printf("⚠️ Failed to delete old collection during reset: %v", err)
 		}
-		
+
 		if err := m.qdrant.CreateCollection(ctx, collectionName, int(currentDimension)); err != nil {
 			return collectionName, "", false, fmt.Errorf("failed to recreate collection with new dimension: %w", err)
 		}
-		
+
 		return collectionName, "", true, nil
 	}
 

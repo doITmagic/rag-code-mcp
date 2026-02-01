@@ -175,64 +175,16 @@ Without RagCode, AI assistants must:
 
 ### One-Command Installation
 
-**Linux (amd64):**
+**Linux / macOS:**
 ```bash
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
-```
-
-That's it! One command downloads, extracts, and runs the installer.
-
-**macOS (Apple Silicon):**
-```bash
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_arm64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
-```
-
-**macOS (Intel):**
-```bash
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/ragcode-installer-$(uname -s | tr '[:upper:]' '[:lower:]') -o ragcode-installer && chmod +x ragcode-installer && ./ragcode-installer
 ```
 
 **Windows (PowerShell):**
 ```powershell
-# Download and extract
-Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_windows_amd64.zip" -OutFile "ragcode.zip"
-Expand-Archive ragcode.zip -DestinationPath . -Force
-
-# Run installer (requires Docker Desktop running)
-.\ragcode-installer.exe -ollama=docker -qdrant=docker
+Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/latest/download/ragcode-installer-windows.exe" -OutFile "ragcode-installer.exe"
+.\ragcode-installer.exe
 ```
-> ⚠️ Windows requires [Docker Desktop](https://www.docker.com/products/docker-desktop/) to be installed and running.
-
-**Windows with WSL (alternative):**
-
-If you prefer to run RagCode inside WSL while using Windows IDEs (Windsurf, Cursor, VS Code):
-
-```bash
-# Inside WSL terminal
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
-```
-
-Then manually configure your Windows IDE to use the WSL binary. Example for Windsurf (`%USERPROFILE%\.codeium\windsurf\mcp_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "ragcode": {
-      "command": "wsl.exe",
-      "args": ["-e", "/home/YOUR_USERNAME/.local/share/ragcode/bin/rag-code-mcp"],
-      "env": {
-        "OLLAMA_BASE_URL": "http://localhost:11434",
-        "OLLAMA_MODEL": "phi3:medium",
-        "OLLAMA_EMBED": "nomic-embed-text",
-        "QDRANT_URL": "http://localhost:6333"
-      },
-      "disabled": false
-    }
-  }
-}
-```
-
-> 💡 Replace `YOUR_USERNAME` with your WSL username. The `localhost` URLs work because WSL2 shares network ports with Windows.
 
 ### What the installer does:
 1. ✅ Downloads and installs the `rag-code-mcp` binary
@@ -254,22 +206,28 @@ Once installed, **you don't need to configure anything**.
 
 ### Installation Options
 
-The installer runs **Ollama and Qdrant in Docker by default**, but you can quickly mix and match components:
+The installer supports flexible configuration via flags:
 
-| Scenario | When to use | Example command |
-| --- | --- | --- |
-| Everything in Docker (default) | Quick setup, no local software needed | `./ragcode-installer -ollama=docker -qdrant=docker` |
-| Local Ollama + Docker Qdrant | You already have Ollama installed/optimized locally | `./ragcode-installer -ollama=local -qdrant=docker` |
-| Existing remote services | Running Qdrant/Ollama in separate infrastructure | `./ragcode-installer -ollama=local -qdrant=remote --skip-build` |
-| Docker + GPU | Run Ollama container with GPU acceleration | `./ragcode-installer -ollama=docker -qdrant=docker -gpu` |
-| Docker with custom models folder | Reuse locally downloaded Ollama models | `./ragcode-installer -ollama=docker -models-dir=$HOME/.ollama` |
+```bash
+# Use Docker for both Ollama and Qdrant (recommended for isolation)
+./ragcode-installer -ollama=docker -qdrant=docker
 
-**Key flags:**
-- `-ollama`: `docker` (default) or `local`
+# Use local Ollama with Docker Qdrant (if you already have Ollama installed)
+./ragcode-installer -ollama=local -qdrant=docker
+
+# Enable GPU support in Docker containers
+./ragcode-installer -ollama=docker -gpu
+
+# Custom models directory for Docker volume mapping
+./ragcode-installer -ollama=docker -models-dir=/path/to/models
+```
+
+**Available Flags:**
+- `-ollama`: `local` (default) or `docker`
 - `-qdrant`: `docker` (default) or `remote`
-- `-models-dir`: mount your local directory as `/root/.ollama`
-- `-gpu`: adds `--gpus=all` to the Ollama container
-- `-skip-build`: skip rebuild if binaries already exist
+- `-models-dir`: Custom path for Ollama models (for Docker mapping)
+- `-gpu`: Enable NVIDIA GPU support in containers
+- `-skip-build`: Skip binary installation (use existing)
 
 See [QUICKSTART.md](./QUICKSTART.md) for detailed installation and usage instructions.
 
@@ -287,8 +245,7 @@ go run ./cmd/install
 
 ### 1. Install Prerequisites
 
-**Docker is required** (for Qdrant, and optionally for Ollama):
-
+#### Docker (for Qdrant)
 ```bash
 # Ubuntu/Debian
 sudo apt update && sudo apt install docker.io
@@ -299,23 +256,21 @@ sudo usermod -aG docker $USER   # log out / log in again
 brew install docker
 ```
 
-### 2. Run the Installer
-
-**Option A: Everything in Docker (recommended, no extra installs needed)**
+#### Ollama (for AI models)
 ```bash
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
-```
-
-**Option B: Use local Ollama (if you already have Ollama installed)**
-```bash
-# First, install Ollama locally (skip if already installed)
+# Linux
 curl -fsSL https://ollama.com/install.sh | sh
 
-# Then run installer with local Ollama
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=local -qdrant=docker
+# macOS
+brew install ollama
 ```
 
-Installation takes 5‑10 minutes (downloading the Ollama models is the long pole).
+### 2. Run the Installer
+```bash
+curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/quick-install.sh | bash
+```
+
+Installation typically takes 5‑10 minutes (downloading the AI models can be the longest part).
 
 ### 3. Verify Installation
 ```bash
@@ -327,18 +282,10 @@ docker ps | grep qdrant
 ollama list
 ```
 
-### 4. Health Check (services start automatically)
+### 4. Start the Server (optional – the installer already starts it)
 ```bash
-~/.local/share/ragcode/bin/rag-code-mcp --health
-docker ps | grep ragcode-qdrant
-docker ps | grep ragcode-ollama
+~/.local/share/ragcode/start.sh
 ```
-
-### 5. Logs and Troubleshooting
-
-- Main log file: `~/.local/share/ragcode/bin/mcp.log`
-- Watch in real-time: `tail -f ~/.local/share/ragcode/bin/mcp.log`
-- For service issues, also check Docker logs (`docker logs ragcode-ollama`, `docker logs ragcode-qdrant`).
 
 ---
 
@@ -359,7 +306,7 @@ After installation, RagCode is automatically available in supported IDEs. No add
 RagCode integrates with **GitHub Copilot's Agent Mode** through MCP, enabling semantic code search as part of Copilot's autonomous workflow.
 
 **Quick Setup:**
-1. Install RagCode with `ragcode-installer` (it configures VS Code automatically)
+1. Install RagCode using the quick-install script (automatically configures VS Code)
 2. Open VS Code in your project
 3. Open Copilot Chat (Ctrl+Shift+I / Cmd+Shift+I)
 4. Enable **Agent Mode** (click "Agent" button or type `/agent`)
@@ -399,71 +346,16 @@ Edit `~/.config/Code/User/globalStorage/mcp-servers.json`:
 
 See [QUICKSTART.md](./QUICKSTART.md) for detailed VS Code setup and troubleshooting.
 
-### Manual IDE Integration
-
-If you install a new IDE **after** running `ragcode-installer`, you'll need to configure it manually. Below are the configuration file paths and JSON snippets for each supported IDE.
-
-#### Configuration File Locations
-
-| IDE | Config File Path |
-| --- | --- |
-| **Windsurf** | `~/.codeium/windsurf/mcp_config.json` |
-| **Cursor** | `~/.cursor/mcp.config.json` |
-| **Antigravity** | `~/.gemini/antigravity/mcp_config.json` |
-| **Claude Desktop (Linux)** | `~/.config/Claude/mcp-servers.json` |
-| **Claude Desktop (macOS)** | `~/Library/Application Support/Claude/mcp-servers.json` |
-| **Claude Desktop (Windows)** | `%APPDATA%\Claude\mcp-servers.json` |
-| **VS Code + Copilot** | `~/.config/Code/User/globalStorage/mcp-servers.json` |
-
-#### JSON Configuration Snippet
-
-Add the following to your IDE's MCP configuration file (create the file if it doesn't exist):
-
-```json
-{
-  "mcpServers": {
-    "ragcode": {
-      "command": "/home/YOUR_USERNAME/.local/share/ragcode/bin/rag-code-mcp",
-      "args": [],
-      "env": {
-        "OLLAMA_BASE_URL": "http://localhost:11434",
-        "OLLAMA_MODEL": "phi3:medium",
-        "OLLAMA_EMBED": "nomic-embed-text",
-        "QDRANT_URL": "http://localhost:6333"
-      }
-    }
-  }
-}
-```
-
-> **Important:** Replace `YOUR_USERNAME` with your actual system username. On macOS, the binary path is typically `/Users/YOUR_USERNAME/.local/share/ragcode/bin/rag-code-mcp`.
-
-#### Re-running the Installer for New IDEs
-
-Alternatively, you can re-run the installer to auto-configure newly installed IDEs:
-
-```bash
-# Re-run installer (it will detect and configure new IDEs)
-~/.local/share/ragcode/bin/ragcode-installer -skip-build -ollama=local -qdrant=docker
-```
-
-The `-skip-build` flag skips binary compilation and only updates IDE configurations.
-
----
-
 ### Available Tools
-
-| Tool | What it does | When to use |
-| --- | --- | --- |
-| `search_code` | Semantic search for relevant code fragments based on intent, not just keywords. | General questions like "show me the authentication logic" or "find the function that processes payments". |
-| `hybrid_search` | Combines semantic + lexical (BM25) for exact matches plus context. | When you have both exact terms (e.g., constant names) and need semantic context. |
-| `get_function_details` | Returns complete signature, parameters, and function body. | Quick clarification of a function/handler without manually opening the file. |
-| `find_type_definition` | Locates structs, types, or interfaces and their fields. | When you need to quickly inspect a complex model/dto/struct. |
-| `find_implementations` | Lists all implementations or usages of a symbol. | Interface audits, identifying handlers that implement a method. |
-| `list_package_exports` | Lists exported symbols from a package. | Quick navigation through a module/package API. |
-| `search_docs` | Semantic search in indexed Markdown documentation. | For questions about guides, RFCs, or large READMEs. |
-| `get_code_context` | Reads a file with context (lines before/after). | When you need an exact snippet from a file without opening it manually. |
-| `index_workspace` | Forces manual re-indexing of a workspace. | Use only if you disabled auto-indexing or want to run indexing from CLI/automations. |
+1. **`search_code`** – semantic code search
+2. **`hybrid_search`** – semantic + lexical search
+3. **`get_function_details`** – detailed information about a function or method
+4. **`find_type_definition`** – locate struct, interface, or type definitions
+5. **`find_implementations`** – find implementations or usages of a symbol
+6. **`list_package_exports`** – list all exported symbols in a package
+7. **`search_docs`** – search markdown documentation
+8. **`index_workspace`** – manually trigger indexing of a workspace (usually not needed)
+9. **`get_code_context`** – read code from specific file locations with context
 
 **All tools require a `file_path` parameter** so that RagCode can determine the correct workspace.
 
@@ -471,13 +363,13 @@ The `-skip-build` flag skips binary compilation and only updates IDE configurati
 
 ## 🔄 Automatic Indexing
 
-When a tool (e.g., `search_code`, `get_function_details`, etc.) is invoked for the first time in a workspace, RagCode will:
+When a tool is invoked for the first time in a workspace, RagCode will:
 1. Detect the workspace from `file_path`
 2. Create a Qdrant collection for that workspace and language
 3. Index the code in the background
 4. Return results immediately (even if indexing is still in progress)
 
-👉 **You never need to run `index_workspace` manually** – MCP tools automatically trigger indexing and incremental re-indexing in the background.
+You never need to run `index_workspace` manually.
 
 ### ⚡ Incremental Indexing
 
@@ -494,9 +386,22 @@ RagCode features **smart incremental indexing** that dramatically reduces re-ind
 - **No changes:** Completes instantly with "No code changes detected"
 - **Single file change:** Re-indexes only that file (e.g., 1 file in ~1 second)
 
-**Manual CLI (optional):** If you prefer to automate indexing from CI/CD scripts or run a full reindex on demand, you can use `./bin/index-all -paths ...`. The command follows the same incremental mechanism, but most users don't need to run it manually.
+**Example:**
+```bash
+# First run
+./bin/index-all -paths /path/to/project
+# Output: "📝 Indexing 77 new/modified files..."
 
-**Note:** Incremental indexing applies to source code files. Markdown documentation is fully re-indexed on every run (optimization planned).
+# Second run (no changes)
+./bin/index-all -paths /path/to/project
+# Output: "✨ No code changes detected for language 'go'"
+
+# After modifying one file
+./bin/index-all -paths /path/to/project
+# Output: "📝 Indexing 1 new/modified files..."
+```
+
+**Note:** Incremental indexing applies to source code files. Markdown documentation is currently re-indexed on every run.
 
 For technical details, see [docs/incremental_indexing.md](./docs/incremental_indexing.md).
 
@@ -504,77 +409,36 @@ For technical details, see [docs/incremental_indexing.md](./docs/incremental_ind
 
 ## 🛠 Advanced Configuration
 
-### Installation Directory
-
-RagCode installs to `~/.local/share/ragcode/` with the following structure:
-
-```
-~/.local/share/ragcode/
-├── bin/
-│   ├── rag-code-mcp      # Main MCP server binary
-│   ├── index-all         # CLI indexing tool
-│   └── mcp.log           # Server logs
-└── config.yaml           # Main configuration file
-```
-
-### Configuration File
-
-Edit `~/.local/share/ragcode/config.yaml` to customize RagCode:
-
+### Changing AI Models
+Edit `~/.local/share/ragcode/config.yaml`:
 ```yaml
 llm:
   provider: "ollama"
   base_url: "http://localhost:11434"
-  model: "phi3:medium"        # LLM for code analysis
-  embed_model: "nomic-embed-text"  # Embedding model
+  model: "phi3:medium"        # change to another model if desired
+  embed_model: "nomic-embed-text"
+```
+Recommended models:
+- **LLM:** `phi3:medium`, `llama3.1:8b`, `qwen2.5:7b`
+- **Embeddings:** `nomic-embed-text`, `all-minilm`
 
-storage:
-  vector_db:
-    url: "http://localhost:6333"
-    collection_prefix: "ragcode"
+### Qdrant Configuration
+```yaml
+qdrant:
+  url: "http://localhost:6333"
+  collection_prefix: "ragcode"
+```
 
+### Excluding Directories
+```yaml
 workspace:
-  auto_index: true
   exclude_patterns:
     - "vendor"
     - "node_modules"
     - ".git"
     - "dist"
     - "build"
-
-logging:
-  level: "info"           # debug, info, warn, error
-  path: "~/.local/share/ragcode/bin/mcp.log"
 ```
-
-**Recommended models:**
-- **LLM:** `phi3:medium`, `llama3.1:8b`, `qwen2.5:7b`
-- **Embeddings:** `nomic-embed-text`, `all-minilm`
-
-### Environment Variables
-
-Environment variables override `config.yaml` settings. These are typically set in your IDE's MCP configuration:
-
-| Variable | Default | Description |
-| --- | --- | --- |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
-| `OLLAMA_MODEL` | `phi3:medium` | LLM model for code analysis |
-| `OLLAMA_EMBED` | `nomic-embed-text` | Embedding model |
-| `QDRANT_URL` | `http://localhost:6333` | Qdrant vector database URL |
-| `MCP_LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
-
-### Logs and Monitoring
-
-- **Log file:** `~/.local/share/ragcode/bin/mcp.log`
-- **Watch logs in real-time:**
-  ```bash
-  tail -f ~/.local/share/ragcode/bin/mcp.log
-  ```
-- **Docker container logs:**
-  ```bash
-  docker logs ragcode-ollama
-  docker logs ragcode-qdrant
-  ```
 
 ---
 

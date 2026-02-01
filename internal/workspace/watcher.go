@@ -56,10 +56,7 @@ func (fw *FileWatcher) Start() {
 			if strings.HasPrefix(base, ".") && base != "." && base != ".git" {
 				return filepath.SkipDir
 			}
-			if err := fw.watcher.Add(path); err != nil {
-				log.Printf("[WARN] Unable to watch %s: %v", path, err)
-			}
-			return nil
+			return fw.watcher.Add(path)
 		}
 		return nil
 	})
@@ -93,9 +90,7 @@ func (fw *FileWatcher) watchLoop() {
 					// Skip if ignored
 					base := filepath.Base(event.Name)
 					if _, skip := defaultSkipDirs[base]; !skip && !strings.HasPrefix(base, ".") {
-						if err := fw.watcher.Add(event.Name); err != nil {
-							log.Printf("[WARN] Unable to watch new dir %s: %v", event.Name, err)
-						}
+						fw.watcher.Add(event.Name)
 					}
 				}
 			}

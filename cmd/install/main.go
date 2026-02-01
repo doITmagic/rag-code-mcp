@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -71,68 +70,37 @@ func installRuntimeBinaries() {
 		{"index-all", "./cmd/index-all"},
 	}
 
-	// Check which binaries are missing from the install directory
-	var missingBinaries []struct {
-		name string
-		pkg  string
-	}
+	missing := false
 	for _, bin := range binaries {
-		binName := bin.name
-		if runtime.GOOS == "windows" {
-			binName += ".exe"
-		}
-		if _, err := os.Stat(filepath.Join(binDir, binName)); os.IsNotExist(err) {
-			missingBinaries = append(missingBinaries, bin)
+		if _, err := os.Stat(filepath.Join(binDir, bin.name)); os.IsNotExist(err) {
+			missing = true
+			break
 		}
 	}
 
-	if len(missingBinaries) == 0 {
+	if !missing {
 		success(fmt.Sprintf("Runtime binaries already installed in %s", binDir))
 		return
 	}
 
-	log(fmt.Sprintf("Installing runtime binaries into %s...", binDir))
-	for _, bin := range missingBinaries {
-		binName := bin.name
-		if runtime.GOOS == "windows" {
-			binName += ".exe"
-		}
-		output := filepath.Join(binDir, binName)
+	if _, err := exec.LookPath("go"); err != nil {
+		fail("Go toolchain is required to build RagCode binaries. Install Go from https://go.dev/doc/install or rerun without --skip-build once binaries exist.")
+	}
 
-		// Option 1: Check if pre-built binary exists in current directory (from release archive)
-		if _, err := os.Stat(binName); err == nil {
-			log(fmt.Sprintf(" - Found %s in current directory, copying...", binName))
-			if err := copyFile(binName, output); err != nil {
-				fail(fmt.Sprintf("Failed to copy %s: %v", binName, err))
-			}
-			if err := os.Chmod(output, 0755); err != nil {
-				warn(fmt.Sprintf("Could not set executable flag on %s: %v", binName, err))
-			}
-			success(fmt.Sprintf("Installed %s", output))
-			continue
+	log(fmt.Sprintf("Building RagCode binaries into %s...", binDir))
+	for _, bin := range binaries {
+		log(fmt.Sprintf(" - Building %s", bin.name))
+		output := filepath.Join(binDir, bin.name)
+		cmd := exec.Command("go", "build", "-o", output, bin.pkg)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			fail(fmt.Sprintf("Failed to build %s: %v", bin.name, err))
 		}
-
-		// Option 2: Fallback to building from source if Go is available and source exists
-		if _, err := os.Stat(bin.pkg); err == nil {
-			if _, err := exec.LookPath("go"); err != nil {
-				fail(fmt.Sprintf("Binary %s not found and Go toolchain is not available. Please download the complete release archive from:\nhttps://github.com/doITmagic/rag-code-mcp/releases/latest", binName))
-			}
-			log(fmt.Sprintf(" - Building %s from source...", bin.name))
-			cmd := exec.Command("go", "build", "-o", output, bin.pkg)
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			if err := cmd.Run(); err != nil {
-				fail(fmt.Sprintf("Failed to build %s: %v", bin.name, err))
-			}
-			if err := os.Chmod(output, 0755); err != nil {
-				fail(fmt.Sprintf("Failed to set executable bit on %s: %v", output, err))
-			}
-			success(fmt.Sprintf("Built and installed %s", output))
-			continue
+		if err := os.Chmod(output, 0755); err != nil {
+			fail(fmt.Sprintf("Failed to set executable bit on %s: %v", output, err))
 		}
-
-		// Neither pre-built binary nor source found
-		fail(fmt.Sprintf("Binary %s not found in current directory and source not available. Please download the complete release archive from:\nhttps://github.com/doITmagic/rag-code-mcp/releases/latest", binName))
+		success(fmt.Sprintf("Installed %s", output))
 	}
 }
 
@@ -169,127 +137,10 @@ func success(msg string) { fmt.Printf("%s✓ %s%s\n", green, msg, reset) }
 func warn(msg string)    { fmt.Printf("%s! %s%s\n", yellow, msg, reset) }
 func fail(msg string)    { fmt.Printf("%s✗ %s%s\n", red, msg, reset); os.Exit(1) }
 
-func checkDockerAvailable() {
-	log("Checking Docker availability...")
-
-	// Check if docker command exists in PATH
-	dockerPath, err := exec.LookPath("docker")
-	if err != nil {
-		if runtime.GOOS == "windows" {
-			fmt.Println()
-			fmt.Println("Docker CLI not found in PATH.")
-			fmt.Println()
-			fmt.Println("If you have Docker Desktop installed with WSL2 backend, you have two options:")
-			fmt.Println()
-			fmt.Println("  Option 1: Enable Docker CLI for Windows")
-			fmt.Println("    1. Open Docker Desktop")
-			fmt.Println("    2. Go to Settings > Resources > WSL Integration")
-			fmt.Println("    3. Enable 'Use the WSL 2 based engine'")
-			fmt.Println("    4. Restart Docker Desktop and try again")
-			fmt.Println()
-			fmt.Println("  Option 2: Run this installer inside WSL")
-			fmt.Println("    1. Open WSL terminal (wsl.exe)")
-			fmt.Println("    2. Download the Linux version of the installer")
-			fmt.Println("    3. Run the installer from within WSL")
-			fmt.Println()
-			fmt.Println("  Option 3: Use local services instead of Docker")
-			fmt.Println("    Run: .\\ragcode-installer.exe -ollama=local -qdrant=remote")
-			fmt.Println("    (Requires Ollama and Qdrant to be installed separately)")
-			fmt.Println()
-			fail("Docker CLI not available. See options above.")
-		} else {
-			fail("Docker not found. Please install Docker: https://docs.docker.com/get-docker/")
-		}
-	}
-
-	// Verify docker daemon is running
-	cmd := exec.Command("docker", "info")
-	if err := cmd.Run(); err != nil {
-		if runtime.GOOS == "windows" {
-			fmt.Println()
-			fmt.Println("Docker daemon is not running or not accessible.")
-			fmt.Println()
-			fmt.Println("Please ensure:")
-			fmt.Println("  1. Docker Desktop is running")
-			fmt.Println("  2. Docker Desktop has finished starting (check system tray)")
-			fmt.Println("  3. If using WSL2 backend, ensure WSL integration is enabled")
-			fmt.Println()
-			fail("Docker daemon not accessible. Start Docker Desktop and try again.")
-		} else {
-			fail("Docker daemon not running. Please start Docker and try again.")
-		}
-	}
-
-	success(fmt.Sprintf("Docker available at %s", dockerPath))
-}
-
-func isPortInUse(port int) bool {
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", port), time.Second)
-	if err != nil {
-		return false
-	}
-	conn.Close()
-	return true
-}
-
-func killProcessOnPort(port int) {
-	if runtime.GOOS == "windows" {
-		// Windows: find PID and kill
-		cmd := exec.Command("cmd", "/c", fmt.Sprintf("for /f \"tokens=5\" %%a in ('netstat -aon ^| findstr :%d ^| findstr LISTENING') do taskkill /PID %%a /F", port))
-		cmd.Run()
-	} else {
-		// Linux/Mac: use fuser
-		exec.Command("fuser", "-k", fmt.Sprintf("%d/tcp", port)).Run()
-	}
-}
-
-func freeRequiredPorts() {
-	ports := map[int]string{}
-
-	if *ollamaMode == "docker" {
-		ports[11434] = "Ollama"
-	}
-	if *qdrantMode == "docker" {
-		ports[6333] = "Qdrant"
-		ports[6334] = "Qdrant gRPC"
-	}
-
-	var blocked []string
-	for port, name := range ports {
-		if isPortInUse(port) {
-			blocked = append(blocked, fmt.Sprintf("%d (%s)", port, name))
-		}
-	}
-
-	if len(blocked) > 0 {
-		warn(fmt.Sprintf("Ports in use: %s", strings.Join(blocked, ", ")))
-		log("Stopping processes on required ports...")
-		for port := range ports {
-			if isPortInUse(port) {
-				killProcessOnPort(port)
-				time.Sleep(500 * time.Millisecond)
-			}
-		}
-		// Verify
-		for port, name := range ports {
-			if isPortInUse(port) {
-				fail(fmt.Sprintf("Could not free port %d (%s). Please stop the process manually.", port, name))
-			}
-		}
-		success("Required ports are now free")
-	}
-}
-
 func main() {
 	flag.Parse()
 
 	printBanner()
-
-	// 0. Check Docker availability if needed
-	if *ollamaMode == "docker" || *qdrantMode == "docker" {
-		checkDockerAvailable()
-		freeRequiredPorts()
-	}
 
 	// 1. Build and Install Binary
 	if !*skipBuild {
@@ -335,45 +186,31 @@ func installBinary() {
 	home, _ := os.UserHomeDir()
 	var binDir string
 	if runtime.GOOS == "windows" {
-		binDir = filepath.Join(home, ".local", "share", "ragcode", "bin")
+		binDir = filepath.Join(home, "go", "bin")
 	} else {
-		binDir = filepath.Join(home, ".local", "share", "ragcode", "bin")
+		binDir = filepath.Join(home, ".local", "bin")
 	}
 	if err := os.MkdirAll(binDir, 0755); err != nil {
 		fail(fmt.Sprintf("Could not create bin directory: %v", err))
 	}
 
-	binaryName := "rag-code-mcp"
+	outputBin := filepath.Join(binDir, "rag-code-mcp")
 	if runtime.GOOS == "windows" {
-		binaryName += ".exe"
+		outputBin += ".exe"
 	}
-	outputBin := filepath.Join(binDir, binaryName)
 
-	// Option 1: Check if binary exists in current directory (from extracted archive)
-	if _, err := os.Stat(binaryName); err == nil {
-		log(fmt.Sprintf("Found %s in current directory, copying to %s...", binaryName, binDir))
-		if err := copyFile(binaryName, outputBin); err != nil {
-			fail(fmt.Sprintf("Failed to copy binary: %v", err))
-		}
-		if err := os.Chmod(outputBin, 0755); err != nil {
-			warn(fmt.Sprintf("Could not set executable flag: %v", err))
-		}
-		success("Binary installed successfully")
+	// Try downloading pre‑built binary first
+	if downloadBinary(outputBin) {
+		success("Binary downloaded successfully")
 		addToPath(binDir)
 		return
 	}
 
-	// Option 2: Try downloading pre-built archive
-	if downloadAndExtractBinary(outputBin) {
-		success("Binary downloaded and installed successfully")
-		addToPath(binDir)
-		return
-	}
-
-	// Option 3: Fallback to local build if source is present
+	// Fallback: build locally if source is present
 	warn("Download failed – attempting local build from source.")
+	// Verify source exists
 	if _, err := os.Stat("./cmd/rag-code-mcp"); err != nil {
-		fail("Binary not found. Please download the release archive from:\nhttps://github.com/doITmagic/rag-code-mcp/releases/latest")
+		fail("Release not found and source code not available. Run installer from repository or create a GitHub release.")
 	}
 	cmd := exec.Command("go", "build", "-o", outputBin, "./cmd/rag-code-mcp")
 	cmd.Stdout = os.Stdout
@@ -386,101 +223,44 @@ func installBinary() {
 	addToPath(binDir)
 }
 
-// copyFile copies a file from src to dst
-func copyFile(src, dst string) error {
-	sourceFile, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer sourceFile.Close()
-
-	destFile, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer destFile.Close()
-
-	_, err = io.Copy(destFile, sourceFile)
-	return err
-}
-
-// downloadAndExtractBinary fetches the release archive and extracts the binary.
-func downloadAndExtractBinary(dest string) bool {
-	var archiveName string
-	arch := runtime.GOARCH
+// downloadBinary fetches the installer binary from the latest GitHub release.
+func downloadBinary(dest string) bool {
+	var binaryName string
 	switch runtime.GOOS {
 	case "linux":
-		archiveName = fmt.Sprintf("rag-code-mcp_linux_%s.tar.gz", arch)
+		binaryName = "ragcode-installer-linux"
 	case "darwin":
-		archiveName = fmt.Sprintf("rag-code-mcp_darwin_%s.tar.gz", arch)
+		binaryName = "ragcode-installer-darwin"
 	case "windows":
-		archiveName = fmt.Sprintf("rag-code-mcp_windows_%s.zip", arch)
+		binaryName = "ragcode-installer-windows.exe"
 	default:
 		return false
 	}
-	url := fmt.Sprintf("https://github.com/doITmagic/rag-code-mcp/releases/latest/download/%s", archiveName)
+	url := fmt.Sprintf("https://github.com/doITmagic/rag-code-mcp/releases/latest/download/%s", binaryName)
 	log(fmt.Sprintf("Downloading from %s...", url))
-
 	resp, err := http.Get(url)
-	if err != nil {
-		warn(fmt.Sprintf("Failed to download: %v", err))
-		return false
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		if resp.StatusCode == 404 {
+	if err != nil || resp.StatusCode != 200 {
+		if resp != nil && resp.StatusCode == 404 {
 			warn("Release not found (404). Skipping download.")
 		} else {
-			warn(fmt.Sprintf("Download failed with status %d", resp.StatusCode))
+			warn(fmt.Sprintf("Failed to download binary: %v (status %d)", err, resp.StatusCode))
 		}
 		return false
 	}
-
-	// Create temp file for archive
-	tmpFile, err := os.CreateTemp("", "ragcode-*.tar.gz")
+	defer resp.Body.Close()
+	out, err := os.Create(dest)
 	if err != nil {
-		warn(fmt.Sprintf("Could not create temp file: %v", err))
+		warn(fmt.Sprintf("Could not create file %s: %v", dest, err))
 		return false
 	}
-	defer os.Remove(tmpFile.Name())
-	defer tmpFile.Close()
-
-	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
-		warn(fmt.Sprintf("Error downloading archive: %v", err))
+	defer out.Close()
+	if _, err := io.Copy(out, resp.Body); err != nil {
+		warn(fmt.Sprintf("Error writing binary: %v", err))
 		return false
 	}
-	tmpFile.Close()
-
-	// Extract binary from archive
-	binaryName := "rag-code-mcp"
-	if runtime.GOOS == "windows" {
-		binaryName += ".exe"
-	}
-
-	if runtime.GOOS == "windows" {
-		// Handle zip for Windows
-		warn("Windows archive extraction not yet implemented")
-		return false
-	}
-
-	// Extract tar.gz
-	cmd := exec.Command("tar", "-xzf", tmpFile.Name(), "-O", binaryName)
-	outFile, err := os.Create(dest)
-	if err != nil {
-		warn(fmt.Sprintf("Could not create destination file: %v", err))
-		return false
-	}
-	defer outFile.Close()
-	cmd.Stdout = outFile
-
-	if err := cmd.Run(); err != nil {
-		warn(fmt.Sprintf("Failed to extract binary: %v", err))
-		return false
-	}
-
 	if err := os.Chmod(dest, 0755); err != nil {
 		warn(fmt.Sprintf("Could not set executable flag: %v", err))
+		return false
 	}
 	return true
 }
@@ -555,9 +335,7 @@ func setupServices() {
 		}
 
 		// Ensure local models dir exists
-		if err := os.MkdirAll(localModels, 0755); err != nil {
-			fail(fmt.Sprintf("Could not create Ollama models dir: %v", err))
-		}
+		os.MkdirAll(localModels, 0755)
 
 		args := []string{
 			"-p", "11434:11434",
@@ -589,12 +367,7 @@ func startDockerContainer(name, image string, args []string, env []string) {
 	}
 
 	// Remove if exists but stopped
-	if err := exec.Command("docker", "rm", name).Run(); err != nil {
-		// ignore if container didn't exist, but log other errors
-		if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
-			warn(fmt.Sprintf("Failed to remove existing container %s: %v", name, err))
-		}
-	}
+	exec.Command("docker", "rm", name).Run()
 
 	// Run
 	runArgs := []string{"run", "-d", "--name", name, "--restart", "unless-stopped"}
@@ -756,7 +529,7 @@ func configureIDEs(selected []string) {
 	if runtime.GOOS == "windows" {
 		binPath = filepath.Join(home, "go", "bin", "rag-code-mcp.exe")
 	} else {
-		binPath = filepath.Join(home, installDirName, "bin", "rag-code-mcp")
+		binPath = filepath.Join(home, ".local", "bin", "rag-code-mcp")
 	}
 
 	selection := normalizeIdeSelection(selected)
@@ -890,9 +663,7 @@ func updateMCPConfig(ideKey, displayName, path, binPath string) {
 
 	// Read existing
 	if data, err := os.ReadFile(path); err == nil {
-		if err := json.Unmarshal(data, &config); err != nil {
-			warn(fmt.Sprintf("Failed to parse existing MCP config %s: %v", path, err))
-		}
+		json.Unmarshal(data, &config)
 	}
 
 	collectionKey := "mcpServers"

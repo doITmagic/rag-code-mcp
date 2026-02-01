@@ -158,6 +158,16 @@ func (s *workspaceScan) fingerprint(language string) string {
 	return fmt.Sprintf("%x", h.Sum64())
 }
 
+// Helper to check if a slice contains a string
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *Manager) fingerprintKey(info *Info, language string) string {
 	return info.ID + "-" + strings.ToLower(language)
 }
@@ -286,9 +296,6 @@ func (m *Manager) GetMemoryForWorkspaceLanguage(ctx context.Context, info *Info,
 			info.Root,
 		)
 	}
-
-	// Ensure filesystem watcher is running so future changes trigger reindex automatically
-	m.StartWatcher(info.Root)
 
 	collectionName := info.CollectionNameForLanguage(language)
 

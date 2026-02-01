@@ -26,7 +26,7 @@ import (
 )
 
 var (
-	Version = "1.1.18"
+	Version = "1.1.20"
 	Commit  = "none"
 	Date    = "unknown"
 	// Build trigger: Python analyzer support
@@ -404,10 +404,7 @@ func main() {
 			altPath := filepath.Join(exeDir, "config.yaml")
 			// Always prefer the one next to binary if it exists, OR if we are in HOME dir to avoid picking up random configs
 			cwd, _ := os.Getwd()
-			home, err := os.UserHomeDir()
-			if err != nil {
-				// Log but continue - home check will just fail
-			}
+			home, _ := os.UserHomeDir()
 
 			if _, err := os.Stat(altPath); err == nil {
 				cfgPath = altPath
@@ -611,7 +608,7 @@ func main() {
 
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "ragcode",
-		Version: "1.1.16",
+		Version: Version,
 	}, nil)
 
 	// All tools use workspace manager - no single collections

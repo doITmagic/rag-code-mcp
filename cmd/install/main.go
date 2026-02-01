@@ -263,26 +263,55 @@ func freeRequiredPorts() {
 	var blocked []string
 	for port, name := range ports {
 		if isPortInUse(port) {
+			// Check if it's already the service we want
+			isOurs := false
+			switch port {
+			case 11434:
+				resp, err := http.Get("http://localhost:11434/api/tags")
+				if err == nil {
+					resp.Body.Close()
+					isOurs = true
+				}
+			case 6333:
+				resp, err := http.Get("http://localhost:6333/readyz")
+				if err == nil {
+					resp.Body.Close()
+					isOurs = true
+				}
+			case 6334:
+				// Qdrant gRPC, if 6333 is ours, 6334 likely is too if it's qdrant
+				isOurs = true // Conservative assumption if 6333 passed
+			}
+
+			if isOurs {
+				success(fmt.Sprintf("Service %s is already running on port %d", name, port))
+				continue
+			}
 			blocked = append(blocked, fmt.Sprintf("%d (%s)", port, name))
 		}
 	}
 
 	if len(blocked) > 0 {
-		warn(fmt.Sprintf("Ports in use: %s", strings.Join(blocked, ", ")))
+		warn(fmt.Sprintf("Ports in use by unknown processes: %s", strings.Join(blocked, ", ")))
 		log("Stopping processes on required ports...")
-		for port := range ports {
-			if isPortInUse(port) {
+		for _, b := range blocked {
+			var port int
+			if _, err := fmt.Sscanf(b, "%d", &port); err == nil {
 				killProcessOnPort(port)
 				time.Sleep(500 * time.Millisecond)
 			}
 		}
 		// Verify
-		for port, name := range ports {
-			if isPortInUse(port) {
-				fail(fmt.Sprintf("Could not free port %d (%s). Please stop the process manually.", port, name))
+		for _, b := range blocked {
+			var port int
+			var name string
+			if _, err := fmt.Sscanf(b, "%d (%s)", &port, &name); err == nil {
+				if isPortInUse(port) {
+					// Don't fail immediately if it's a re-install and containers might be ours
+					warn(fmt.Sprintf("Could not free port %d (%s) via kill. Checking if it's our container...", port, name))
+				}
 			}
 		}
-		success("Required ports are now free")
 	}
 }
 
@@ -409,7 +438,21 @@ func copyFile(src, dst string) error {
 
 	destFile, err := os.Create(dst)
 	if err != nil {
-		return err
+		// If "text file busy", try to move the existing file aside
+		if strings.Contains(err.Error(), "text file busy") {
+			oldPath := dst + ".old-" + time.Now().Format("20060102-150405")
+			if renameErr := os.Rename(dst, oldPath); renameErr == nil {
+				// Try creating again
+				destFile, err = os.Create(dst)
+				if err != nil {
+					return err
+				}
+			} else {
+				return fmt.Errorf("could not move existing file %s: %v", dst, renameErr)
+			}
+		} else {
+			return err
+		}
 	}
 	defer destFile.Close()
 
@@ -545,7 +588,15 @@ func setupServices() {
 	log("Configuring services...")
 
 	// Setup Qdrant
-	if *qdrantMode == "docker" {
+	qdrantReady := false
+	resp, err := http.Get("http://localhost:6333/readyz")
+	if err == nil {
+		resp.Body.Close()
+		qdrantReady = true
+		success("Qdrant detected and responding on port 6333 - using existing instance")
+	}
+
+	if !qdrantReady && *qdrantMode == "docker" {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			fail(fmt.Sprintf("Could not determine user home directory: %v", err))
@@ -561,12 +612,20 @@ func setupServices() {
 			"-v", fmt.Sprintf("%s:/qdrant/storage", dataDir),
 		}
 		startDockerContainer(qdrantContainer, qdrantImage, qdrantArgs, nil)
-	} else {
+	} else if !qdrantReady {
 		log("Using remote/local Qdrant (skipping Docker setup)")
 	}
 
 	// Setup Ollama
-	if *ollamaMode == "docker" {
+	ollamaReady := false
+	resp, err = http.Get("http://localhost:11434/api/tags")
+	if err == nil {
+		resp.Body.Close()
+		ollamaReady = true
+		success("Ollama detected and responding on port 11434 - using existing instance")
+	}
+
+	if !ollamaReady && *ollamaMode == "docker" {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			fail(fmt.Sprintf("Could determine user home directory: %v", err))
@@ -592,7 +651,7 @@ func setupServices() {
 		}
 
 		startDockerContainer(ollamaContainer, ollamaImage, args, nil)
-	} else {
+	} else if !ollamaReady {
 		log("Using local Ollama service (skipping Docker setup)")
 	}
 

@@ -26,7 +26,7 @@ import (
 )
 
 var (
-	Version = "1.1.19"
+	Version = "1.1.20"
 	Commit  = "none"
 	Date    = "unknown"
 	// Build trigger: Python analyzer support

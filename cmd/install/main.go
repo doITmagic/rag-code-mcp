@@ -296,18 +296,20 @@ func freeRequiredPorts() {
 		log("Stopping processes on required ports...")
 		for _, b := range blocked {
 			var port int
-			fmt.Sscanf(b, "%d", &port)
-			killProcessOnPort(port)
-			time.Sleep(500 * time.Millisecond)
+			if _, err := fmt.Sscanf(b, "%d", &port); err == nil {
+				killProcessOnPort(port)
+				time.Sleep(500 * time.Millisecond)
+			}
 		}
 		// Verify
 		for _, b := range blocked {
 			var port int
 			var name string
-			fmt.Sscanf(b, "%d (%s)", &port, &name)
-			if isPortInUse(port) {
-				// Don't fail immediately if it's a re-install and containers might be ours
-				warn(fmt.Sprintf("Could not free port %d (%s) via kill. Checking if it's our container...", port, name))
+			if _, err := fmt.Sscanf(b, "%d (%s)", &port, &name); err == nil {
+				if isPortInUse(port) {
+					// Don't fail immediately if it's a re-install and containers might be ours
+					warn(fmt.Sprintf("Could not free port %d (%s) via kill. Checking if it's our container...", port, name))
+				}
 			}
 		}
 	}

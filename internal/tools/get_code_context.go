@@ -21,7 +21,7 @@ func (t *GetCodeContextTool) Name() string {
 }
 
 func (t *GetCodeContextTool) Description() string {
-	return "Read code from a specific file location with surrounding context lines"
+	return "Read specific lines from a file with surrounding context - use when you have a file path and line numbers (e.g., from search results or error messages). Returns the exact code snippet with configurable context lines before/after. Works for any text file (Go, PHP, Python, HTML, config files, etc.)."
 }
 
 func (t *GetCodeContextTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {

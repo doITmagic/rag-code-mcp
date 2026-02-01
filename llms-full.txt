@@ -44,7 +44,7 @@ Built with the official [Model Context Protocol Go SDK](https://github.com/model
 - 🔍 **Semantic Code Search** - Find code by meaning, not just keywords
 - 🚀 **5-10x Faster** - Instant results vs. reading entire files
 - 💰 **98% Token Savings** - Reduce AI context usage dramatically
-- 🌐 **Multi-Language** - Go, PHP (Laravel), Python, JavaScript support
+- 🌐 **Multi-Language** - Go, PHP (Laravel), Python with full support
 - 🏢 **Multi-Workspace** - Handle multiple projects simultaneously
 - 🤖 **AI-Ready** - Works with Copilot, Cursor, Windsurf, Claude, Antigravity
 
@@ -112,27 +112,27 @@ Without RagCode, AI assistants must:
 
 ### 🔧 9 Powerful MCP Tools for AI Code Assistants
 
-1. **`search_code`** - Semantic vector search across your entire codebase
-2. **`hybrid_search`** - Combined semantic + keyword search for maximum accuracy
-3. **`get_function_details`** - Complete function signatures, parameters, and implementation
-4. **`find_type_definition`** - Locate class, struct, and interface definitions instantly
-5. **`find_implementations`** - Discover all usages and implementations of any symbol
-6. **`list_package_exports`** - Browse all exported symbols from any package/module
-7. **`search_docs`** - Semantic search through project documentation (Markdown)
-8. **`get_code_context`** - Extract code snippets with surrounding context
-9. **`index_workspace`** - Automated workspace indexing with language detection
+1. **`search_code`** - **USE FIRST** - Semantic search by MEANING. Returns complete source + file:line. Better than hybrid_search for exploration. **Go, PHP, Python, HTML.**
+2. **`hybrid_search`** - Keyword + semantic for **EXACT matches** only. Returns code + file:line + metadata. Use when search_code misses exact terms. **Go, PHP, Python, HTML.**
+3. **`get_function_details`** - **COMPLETE** function source: signature, params, return types, body. **Go, PHP, Python.**
+4. **`find_type_definition`** - Complete type source with fields, methods, inheritance chain. **Go, PHP, Python.**
+5. **`find_implementations`** - All callers/usages with code snippets + file:line. **Use before refactoring.** **Go, PHP, Python.**
+6. **`list_package_exports`** - Structured list: symbol names, types, signatures. **Go, PHP, Python.**
+7. **`search_docs`** - Doc snippets with file paths. **Markdown only. Not for code** - use search_code.
+8. **`get_code_context`** - Code snippet with configurable context lines. **Any text file.**
+9. **`index_workspace`** - Reindex codebase. **USUALLY AUTOMATIC.** Call after git pull/branch switch. **Go, PHP, Python, HTML.**
 
 ### 🌐 Multi-Language Code Intelligence
 
-- **Go** - ≈82% coverage with full AST analysis
-- **PHP** - ≈84% coverage + Laravel framework support
-- **Python** - Coming soon with full type hint support
-- **JavaScript/TypeScript** - Planned for future releases
+- **Go** - Full AST analysis with functions, types, interfaces, methods
+- **PHP** - Full support + Laravel framework (Eloquent models, routes, controllers)
+- **Python** - Full support with classes, functions, decorators, type hints, mixins, metaclasses
+- **JavaScript/TypeScript** - Planned for future releases (tree-sitter based)
 
 ### 🏗️ Advanced Architecture
 
-- **Multi-Workspace Detection** - Automatically detects project boundaries (git, go.mod, composer.json, package.json)
-- **Per-Language Collections** - Separate vector databases for each language (`ragcode-{workspace}-go`, `ragcode-{workspace}-php`)
+- **Multi-Workspace Detection** - Automatically detects project boundaries (git, go.mod, composer.json, package.json, pyproject.toml, requirements.txt)
+- **Per-Language Collections** - Separate vector databases for each language (`ragcode-{workspace}-go`, `ragcode-{workspace}-php`, `ragcode-{workspace}-python`)
 - **Automatic Indexing** - Background indexing on first use, no manual intervention needed
 - **Vector Embeddings** - Uses Ollama's `nomic-embed-text` for high-quality semantic embeddings
 - **Hybrid Search Engine** - Combines vector similarity with BM25 lexical matching
@@ -376,15 +376,15 @@ Edit `~/.config/Code/User/globalStorage/mcp-servers.json`:
 See [QUICKSTART.md](./QUICKSTART.md) for detailed VS Code setup and troubleshooting.
 
 ### Available Tools
-1. **`search_code`** – semantic code search
-2. **`hybrid_search`** – semantic + lexical search
-3. **`get_function_details`** – detailed information about a function or method
-4. **`find_type_definition`** – locate struct, interface, or type definitions
-5. **`find_implementations`** – find implementations or usages of a symbol
-6. **`list_package_exports`** – list all exported symbols in a package
-7. **`search_docs`** – search markdown documentation
-8. **`index_workspace`** – manually trigger indexing of a workspace (usually not needed)
-9. **`get_code_context`** – read code from specific file locations with context
+1. **`search_code`** – **USE FIRST** – Semantic search by MEANING. Returns complete source + file:line. Better than hybrid_search. **Go, PHP, Python, HTML.**
+2. **`hybrid_search`** – Keyword + semantic for **EXACT matches** only. Use when search_code misses exact terms. **Go, PHP, Python, HTML.**
+3. **`get_function_details`** – **COMPLETE** function source: signature, params, return types, body. **Go, PHP, Python.**
+4. **`find_type_definition`** – Complete type source with fields, methods, inheritance. **Go, PHP, Python.**
+5. **`find_implementations`** – All callers/usages with code snippets + file:line. **Use before refactoring.** **Go, PHP, Python.**
+6. **`list_package_exports`** – Structured list: symbol names, types, signatures. **Go, PHP, Python.**
+7. **`search_docs`** – Doc snippets with file paths. **Markdown only. Not for code.**
+8. **`get_code_context`** – Code snippet with configurable context lines. **Any text file.**
+9. **`index_workspace`** – Reindex codebase. **USUALLY AUTOMATIC.** Call after git pull/branch switch. **Go, PHP, Python, HTML.**
 
 **All tools require a `file_path` parameter** so that RagCode can determine the correct workspace.
 
@@ -537,7 +537,7 @@ See the [LICENSE](./LICENSE) file for full details.
 
 ## 🏷️ Keywords & Topics
 
-`semantic-code-search` `rag` `retrieval-augmented-generation` `mcp-server` `model-context-protocol` `ai-code-assistant` `vector-search` `code-navigation` `ollama` `qdrant` `github-copilot` `cursor-ai` `windsurf` `go` `php` `laravel` `code-intelligence` `ast-analysis` `embeddings` `llm-tools` `local-ai` `privacy-first` `offline-ai` `self-hosted` `on-premise` `zero-cost` `no-cloud` `private-code-search` `enterprise-ai` `secure-coding-assistant`
+`semantic-code-search` `rag` `retrieval-augmented-generation` `mcp-server` `model-context-protocol` `ai-code-assistant` `vector-search` `code-navigation` `ollama` `qdrant` `github-copilot` `cursor-ai` `windsurf` `go` `php` `laravel` `python` `django` `flask` `fastapi` `code-intelligence` `ast-analysis` `embeddings` `llm-tools` `local-ai` `privacy-first` `offline-ai` `self-hosted` `on-premise` `zero-cost` `no-cloud` `private-code-search` `enterprise-ai` `secure-coding-assistant`
 
 ---
 
@@ -888,7 +888,7 @@ You can also explicitly reference RagCode tools using the `#` symbol:
 
 #### Available Tools:
 
-1. **`search_code`** - Semantic code search
+1. **`search_code`** - **USE FIRST** - Semantic search by MEANING. Returns complete source + file:line. Better than hybrid_search for exploration. **Go, PHP, Python, HTML.**
    ```json
    {
      "query": "authentication middleware",
@@ -896,7 +896,7 @@ You can also explicitly reference RagCode tools using the `#` symbol:
    }
    ```
 
-2. **`hybrid_search`** - Hybrid search (semantic + lexical)
+2. **`hybrid_search`** - Keyword + semantic for **EXACT matches** only. Use when search_code misses exact terms. **Go, PHP, Python, HTML.**
    ```json
    {
      "query": "user login function",
@@ -904,7 +904,7 @@ You can also explicitly reference RagCode tools using the `#` symbol:
    }
    ```
 
-3. **`get_function_details`** - Complete details about a function
+3. **`get_function_details`** - **COMPLETE** function source: signature, params, return types, body. **Go, PHP, Python.**
    ```json
    {
      "function_name": "HandleLogin",
@@ -912,7 +912,7 @@ You can also explicitly reference RagCode tools using the `#` symbol:
    }
    ```
 
-4. **`find_type_definition`** - Find type/class definition
+4. **`find_type_definition`** - Complete type source with fields, methods, inheritance. **Go, PHP, Python.**
    ```json
    {
      "type_name": "User",
@@ -920,7 +920,7 @@ You can also explicitly reference RagCode tools using the `#` symbol:
    }
    ```
 
-5. **`find_implementations`** - Find where a function is used
+5. **`find_implementations`** - All callers/usages with code snippets + file:line. **Use before refactoring.** **Go, PHP, Python.**
    ```json
    {
      "symbol_name": "ProcessPayment",
@@ -928,7 +928,7 @@ You can also explicitly reference RagCode tools using the `#` symbol:
    }
    ```
 
-6. **`list_package_exports`** - List all exports of a package
+6. **`list_package_exports`** - Structured list: symbol names, types, signatures. **Go, PHP, Python.**
    ```json
    {
      "package": "github.com/myapp/auth",
@@ -936,7 +936,7 @@ You can also explicitly reference RagCode tools using the `#` symbol:
    }
    ```
 
-7. **`search_docs`** - Search in documentation (Markdown)
+7. **`search_docs`** - Doc snippets with file paths. **Markdown only. Not for code.**
    ```json
    {
      "query": "API authentication",
@@ -944,7 +944,16 @@ You can also explicitly reference RagCode tools using the `#` symbol:
    }
    ```
 
-8. **`index_workspace`** - Manually index a workspace
+8. **`get_code_context`** - Code snippet with configurable context lines. **Any text file.**
+   ```json
+   {
+     "file_path": "/path/to/your/project/auth.go",
+     "start_line": 45,
+     "end_line": 60
+   }
+   ```
+
+9. **`index_workspace`** - Reindex codebase. **USUALLY AUTOMATIC.** Call after git pull/branch switch. **Go, PHP, Python, HTML.**
    ```json
    {
      "file_path": "/path/to/your/project/main.go"

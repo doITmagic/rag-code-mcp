@@ -41,8 +41,18 @@ func NewFileWatcher(root string, manager *Manager) (*FileWatcher, error) {
 
 // Start begins watching the directory tree
 func (fw *FileWatcher) Start() {
+	// Validate root directory before starting watcher to prevent broad filesystem access
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		log.Printf("workspace: could not determine user home directory: %v", err)
+	}
+	if fw.root == "/" || fw.root == homeDir || fw.root == "/tmp" {
+		log.Printf("[ERROR] Cannot start watcher on invalid root directory: %s", fw.root)
+		return
+	}
+
 	// Recursively add directories
-	err := filepath.Walk(fw.root, func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(fw.root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}

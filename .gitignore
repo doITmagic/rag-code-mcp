@@ -9,6 +9,10 @@ barou/
 /cmd/agent-runner/agent-runner
 /rag-code-mcp
 test-*
+bin/
+ragcode-installer
+index-all
+cmd/rag-code-mcp/rag-code-mcp
 
 # Test programs
 cmd/test-*/

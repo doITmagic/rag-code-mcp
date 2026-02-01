@@ -35,7 +35,7 @@ func TestMultiLanguageDetection(t *testing.T) {
 		"setup.py",
 		"requirements.txt",
 		"composer.json",
-	}, []string{"node_modules", ".git", "vendor"})
+	}, []string{"node_modules", ".git", "vendor"}, nil, false)
 
 	// Detect workspace
 	info, err := detector.DetectFromPath(tmpDir)
@@ -153,7 +153,7 @@ func TestSingleLanguageWorkspace(t *testing.T) {
 		t.Fatalf("Failed to create go.mod: %v", err)
 	}
 
-	detector := NewDetectorWithConfig([]string{"go.mod", "package.json"}, []string{})
+	detector := NewDetectorWithConfig([]string{"go.mod", "package.json"}, []string{}, nil, false)
 
 	info, err := detector.DetectFromPath(tmpDir)
 	if err != nil {
@@ -177,7 +177,7 @@ func TestSingleLanguageWorkspace(t *testing.T) {
 func TestEmptyWorkspace(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	detector := NewDetectorWithConfig([]string{"go.mod", "package.json"}, []string{})
+	detector := NewDetectorWithConfig([]string{"go.mod", "package.json"}, []string{}, nil, false)
 
 	_, err := detector.DetectFromPath(tmpDir)
 	if err == nil {

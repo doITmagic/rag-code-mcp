@@ -20,15 +20,16 @@ import (
 	"github.com/doITmagic/rag-code-mcp/internal/llm"
 	"github.com/doITmagic/rag-code-mcp/internal/storage"
 	"github.com/doITmagic/rag-code-mcp/internal/tools"
+	"github.com/doITmagic/rag-code-mcp/internal/updater"
 	"github.com/doITmagic/rag-code-mcp/internal/workspace"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 var (
-	Version = "dev"
+	Version = "1.1.18"
 	Commit  = "none"
 	Date    = "unknown"
-	// Build trigger
+	// Build trigger: Python analyzer support
 )
 
 // Simple logger using log level from env
@@ -379,8 +380,14 @@ func main() {
 	ollamaModelFlag := flag.String("ollama-model", "", "Ollama chat model (overrides config/env)")
 	ollamaEmbedFlag := flag.String("ollama-embed", "", "Ollama embedding model (overrides config/env)")
 	qdrantURLFlag := flag.String("qdrant-url", "", "Qdrant URL (overrides config/env)")
+
 	versionFlag := flag.Bool("version", false, "Print version information and exit")
+	updateFlag := flag.Bool("update", false, "Check for updates and apply if available")
 	healthFlag := flag.Bool("health", false, "Run health check and exit")
+
+	// Workspace security flags - can be set in IDE MCP configuration
+	allowedPathsFlag := flag.String("allowed-paths", "", "Comma-separated list of allowed workspace paths (e.g., ~/projects,~/work)")
+	disableUpwardSearchFlag := flag.Bool("disable-upward-search", false, "Disable searching parent directories for workspace markers")
 
 	// Custom usage message
 	flag.Usage = printUsage
@@ -397,7 +404,10 @@ func main() {
 			altPath := filepath.Join(exeDir, "config.yaml")
 			// Always prefer the one next to binary if it exists, OR if we are in HOME dir to avoid picking up random configs
 			cwd, _ := os.Getwd()
-			home, _ := os.UserHomeDir()
+			home, err := os.UserHomeDir()
+			if err != nil {
+				// Log but continue - home check will just fail
+			}
 
 			if _, err := os.Stat(altPath); err == nil {
 				cfgPath = altPath
@@ -426,6 +436,33 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Handle update flag
+	if *updateFlag {
+		fmt.Println("Checking for updates...")
+		info, err := updater.CheckForUpdates(Version)
+		if err != nil {
+			log.Fatalf("Failed to check for updates: %v", err)
+		}
+		if info == nil {
+			fmt.Println("You are already using the latest version.")
+			os.Exit(0)
+		}
+
+		fmt.Printf("Found new version: %s\nDownloading...\n", info.LatestVersion)
+		tempFile := filepath.Join(os.TempDir(), "ragcode_update.tar.gz")
+		if err := info.DownloadAndVerify(tempFile); err != nil {
+			log.Fatalf("Update failed: %v", err)
+		}
+
+		fmt.Println("Installing update...")
+		if err := updater.ApplyUpdate(tempFile); err != nil {
+			log.Fatalf("Failed to apply update: %v", err)
+		}
+
+		fmt.Printf("Successfully updated to %s! Please restart the server.\n", info.LatestVersion)
+		os.Exit(0)
+	}
+
 	// Auto-create config.yaml if it doesn't exist
 	// Logic updated: Always check if the RESOLVED cfgPath exists. If not, create it.
 	// This ensures we create the config next to the binary even if we changed cfgPath from the default.
@@ -440,6 +477,14 @@ func main() {
 		logger.Warn("Failed to load config file %s, using defaults: %v", cfgPath, err)
 		cfg = config.DefaultConfig()
 	}
+
+	// Background update check
+	go func() {
+		info, err := updater.CheckForUpdates(Version)
+		if err == nil && info != nil {
+			logger.Info("🌟 New version available: %s. Run 'rag-code-mcp --update' to upgrade.", info.LatestVersion)
+		}
+	}()
 
 	// Apply logging settings from config unless env vars already override them
 	applyLoggingConfig(cfg.Logging)
@@ -456,6 +501,29 @@ func main() {
 	}
 	if *qdrantURLFlag != "" {
 		cfg.Storage.VectorDB.URL = *qdrantURLFlag
+	}
+
+	// Apply workspace security CLI overrides
+	if *allowedPathsFlag != "" {
+		// Parse comma-separated paths
+		paths := strings.Split(*allowedPathsFlag, ",")
+		for i, p := range paths {
+			paths[i] = strings.TrimSpace(p)
+			// Expand ~ to home directory
+			if strings.HasPrefix(paths[i], "~/") {
+				if home, err := os.UserHomeDir(); err == nil {
+					paths[i] = filepath.Join(home, paths[i][2:])
+				} else {
+					logger.Warn("Could not expand tilde in path '%s': %v", paths[i], err)
+				}
+			}
+		}
+		cfg.Workspace.AllowedWorkspacePaths = paths
+		logger.Info("Allowed workspace paths set via CLI: %v", paths)
+	}
+	if *disableUpwardSearchFlag {
+		cfg.Workspace.DisableUpwardSearch = true
+		logger.Info("Upward directory search disabled via CLI")
 	}
 
 	// Set defaults
@@ -543,7 +611,7 @@ func main() {
 
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "ragcode",
-		Version: "1.0.0",
+		Version: "1.1.16",
 	}, nil)
 
 	// All tools use workspace manager - no single collections
@@ -975,16 +1043,20 @@ func getToolSchema(toolName string) map[string]interface{} {
 		return map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"workspace_root": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional: explicit workspace root path (e.g., /home/user/projects/myapp). If provided, skips automatic detection and uses this path directly. Recommended for better security and control.",
+				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "A file path within the workspace to index (used to detect workspace root)",
+					"description": "A file path within the workspace to index (used to detect workspace root). Not needed if workspace_root is provided.",
 				},
 				"language": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional: specific language to index (e.g., 'go', 'python', 'php'). If not provided, all detected languages will be indexed.",
 				},
 			},
-			"required": []string{"file_path"},
+			"required": []string{},
 		}
 
 	case "hybrid_search":
@@ -1031,11 +1103,20 @@ EXAMPLES:
     # Override Ollama and Qdrant URLs
     rag-code-mcp -ollama-base-url http://remote:11434 -qdrant-url http://remote:6333
 
+    # Restrict to specific project directories (SECURITY)
+    rag-code-mcp -allowed-paths "~/projects,~/work"
+
+    # Combined security settings for IDE configuration
+    rag-code-mcp -allowed-paths "~/projects" -disable-upward-search
+
     # Check version
     rag-code-mcp -version
 
     # Run health check only
     rag-code-mcp -health
+
+    # Check for updates and install if available
+    rag-code-mcp -update
 
 OPTIONS:
 `)
@@ -1043,6 +1124,20 @@ OPTIONS:
 	fmt.Fprintf(os.Stderr, `
 CONFIGURATION PRECEDENCE:
     CLI flags > Environment variables > config.yaml > defaults
+
+SECURITY OPTIONS (Configurable in IDE MCP settings):
+    -allowed-paths string
+        Comma-separated list of directories where workspaces are allowed.
+        Only paths within these directories will be accepted as workspaces.
+        Useful for restricting tool to specific project folders.
+        Example: -allowed-paths "~/projects,~/work,/opt/code"
+        Can also be set in config: workspace.allowed_workspace_paths
+
+    -disable-upward-search
+        Disable automatic search of parent directories for workspace markers.
+        Tool will only check the exact directory provided.
+        Useful for strict control and preventing unintended directory traversal.
+        Can also be set in config: workspace.disable_upward_search
 
 ENVIRONMENT VARIABLES:
     OLLAMA_BASE_URL              Ollama server URL (default: http://localhost:11434)

@@ -1,28 +1,28 @@
 # Python Code Analyzer
 
-Analizor de cod Python pentru extragerea simbolurilor, structurii și relațiilor din fișiere Python. Indexează codul pentru căutare semantică în Qdrant.
+Code analyzer for extracting symbols, structure, and relationships from Python files. Indexes code for semantic search in Qdrant.
 
 ## Status: ✅ FULLY IMPLEMENTED
 
 ---
 
-## 🎯 Ce Face Acest Analizor?
+## 🎯 What This Analyzer Does
 
-Analizorul Python parsează fișierele `.py` și extrage:
-1. **Simboluri** - clase, metode, funcții, variabile, constante
-2. **Relații** - moșteniri, dependențe, apeluri de metode
-3. **Metadate** - decoratori, type hints, docstrings
+The Python analyzer parses `.py` files and extracts:
+1. **Symbols** - classes, methods, functions, variables, constants
+2. **Relationships** - inheritance, dependencies, method calls
+3. **Metadata** - decorators, type hints, docstrings
 
-Informațiile sunt convertite în `CodeChunk`-uri care sunt apoi indexate în Qdrant pentru căutare semantică.
+Information is converted to `CodeChunk`s which are then indexed in Qdrant for semantic search.
 
 ---
 
-## 📊 Fluxul de Date
+## 📊 Data Flow
 
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  Fișiere .py    │────▶│  Python Analyzer │────▶│   CodeChunks    │
-│  (cod sursă)    │     │  (regex parsing) │     │   (structurat)  │
+│   .py Files     │────▶│  Python Analyzer │────▶│   CodeChunks    │
+│  (source code)  │     │  (regex parsing) │     │  (structured)   │
 └─────────────────┘     └──────────────────┘     └────────┬────────┘
                                                           │
                                                           ▼
@@ -34,78 +34,78 @@ Informațiile sunt convertite în `CodeChunk`-uri care sunt apoi indexate în Qd
 
 ---
 
-## 🔍 Ce Indexăm
+## 🔍 What We Index
 
-### 1. Clase (`type: "class"`)
+### 1. Classes (`type: "class"`)
 
 ```python
 @dataclass
 class User(BaseModel, LoggingMixin, metaclass=ABCMeta):
-    """Reprezintă un utilizator în sistem."""
+    """Represents a user in the system."""
     name: str
     email: str
 ```
 
-**Informații extrase:**
-| Câmp | Valoare | Descriere |
-|------|---------|-----------|
-| `name` | `"User"` | Numele clasei |
-| `bases` | `["BaseModel", "LoggingMixin"]` | Clasele părinte (moștenire) |
-| `decorators` | `["dataclass"]` | Decoratorii aplicați |
-| `is_abstract` | `true` | Dacă e clasă abstractă (ABC) |
-| `is_dataclass` | `true` | Dacă e decorată cu @dataclass |
-| `is_enum` | `false` | Dacă moștenește din Enum |
-| `is_protocol` | `false` | Dacă e Protocol (typing) |
-| `is_mixin` | `true` | Dacă e/folosește mixin |
-| `metaclass` | `"ABCMeta"` | Metaclasa specificată |
-| `dependencies` | `["BaseModel", "LoggingMixin"]` | Toate dependențele clasei |
-| `docstring` | `"Reprezintă un utilizator..."` | Documentația clasei |
+**Extracted information:**
+| Field | Value | Description |
+|-------|-------|-------------|
+| `name` | `"User"` | Class name |
+| `bases` | `["BaseModel", "LoggingMixin"]` | Parent classes (inheritance) |
+| `decorators` | `["dataclass"]` | Applied decorators |
+| `is_abstract` | `true` | If it's an abstract class (ABC) |
+| `is_dataclass` | `true` | If decorated with @dataclass |
+| `is_enum` | `false` | If inherits from Enum |
+| `is_protocol` | `false` | If it's a Protocol (typing) |
+| `is_mixin` | `true` | If it is/uses a mixin |
+| `metaclass` | `"ABCMeta"` | Specified metaclass |
+| `dependencies` | `["BaseModel", "LoggingMixin"]` | All class dependencies |
+| `docstring` | `"Represents a user..."` | Class documentation |
 
-### 2. Metode (`type: "method"`)
+### 2. Methods (`type: "method"`)
 
 ```python
 class UserService:
     async def get_user(self, user_id: int) -> User:
-        """Returnează un utilizator după ID."""
+        """Returns a user by ID."""
         self.validate_id(user_id)
         user = await self.repository.find(user_id)
         return user
 ```
 
-**Informații extrase:**
-| Câmp | Valoare | Descriere |
-|------|---------|-----------|
-| `name` | `"get_user"` | Numele metodei |
-| `signature` | `"async def get_user(self, user_id: int) -> User"` | Semnătura completă |
-| `class_name` | `"UserService"` | Clasa părinte |
-| `parameters` | `[{name: "user_id", type: "int"}]` | Parametrii cu tipuri |
-| `return_type` | `"User"` | Tipul returnat |
-| `is_async` | `true` | Dacă e metodă async |
-| `is_static` | `false` | Dacă e @staticmethod |
-| `is_classmethod` | `false` | Dacă e @classmethod |
-| `calls` | `[{name: "validate_id", receiver: "self"}, ...]` | Metodele apelate |
-| `type_deps` | `["User"]` | Tipurile folosite (dependențe) |
-| `docstring` | `"Returnează un utilizator..."` | Documentația metodei |
+**Extracted information:**
+| Field | Value | Description |
+|-------|-------|-------------|
+| `name` | `"get_user"` | Method name |
+| `signature` | `"async def get_user(self, user_id: int) -> User"` | Complete signature |
+| `class_name` | `"UserService"` | Parent class |
+| `parameters` | `[{name: "user_id", type: "int"}]` | Parameters with types |
+| `return_type` | `"User"` | Return type |
+| `is_async` | `true` | If it's an async method |
+| `is_static` | `false` | If it's @staticmethod |
+| `is_classmethod` | `false` | If it's @classmethod |
+| `calls` | `[{name: "validate_id", receiver: "self"}, ...]` | Called methods |
+| `type_deps` | `["User"]` | Used types (dependencies) |
+| `docstring` | `"Returns a user..."` | Method documentation |
 
-### 3. Funcții (`type: "function"`)
+### 3. Functions (`type: "function"`)
 
 ```python
 @lru_cache(maxsize=100)
 async def fetch_data(url: str) -> dict:
-    """Descarcă date de la URL."""
+    """Downloads data from URL."""
     yield from process(url)
 ```
 
-**Informații extrase:**
-| Câmp | Valoare | Descriere |
-|------|---------|-----------|
-| `name` | `"fetch_data"` | Numele funcției |
-| `signature` | `"async def fetch_data(url: str) -> dict"` | Semnătura |
-| `is_async` | `true` | Dacă e async |
-| `is_generator` | `true` | Dacă folosește yield |
-| `decorators` | `["lru_cache"]` | Decoratorii aplicați |
+**Extracted information:**
+| Field | Value | Description |
+|-------|-------|-------------|
+| `name` | `"fetch_data"` | Function name |
+| `signature` | `"async def fetch_data(url: str) -> dict"` | Signature |
+| `is_async` | `true` | If it's async |
+| `is_generator` | `true` | If it uses yield |
+| `decorators` | `["lru_cache"]` | Applied decorators |
 
-### 4. Proprietăți (`type: "property"`)
+### 4. Properties (`type: "property"`)
 
 ```python
 class User:
@@ -118,27 +118,27 @@ class User:
         self.first_name, self.last_name = value.split()
 ```
 
-**Informații extrase:**
-| Câmp | Valoare | Descriere |
-|------|---------|-----------|
-| `name` | `"full_name"` | Numele proprietății |
-| `type` | `"str"` | Tipul returnat |
-| `has_getter` | `true` | Are getter (@property) |
-| `has_setter` | `true` | Are setter (@x.setter) |
-| `has_deleter` | `false` | Are deleter (@x.deleter) |
+**Extracted information:**
+| Field | Value | Description |
+|-------|-------|-------------|
+| `name` | `"full_name"` | Property name |
+| `type` | `"str"` | Return type |
+| `has_getter` | `true` | Has getter (@property) |
+| `has_setter` | `true` | Has setter (@x.setter) |
+| `has_deleter` | `false` | Has deleter (@x.deleter) |
 
-### 5. Constante (`type: "const"`)
+### 5. Constants (`type: "const"`)
 
 ```python
 MAX_CONNECTIONS: int = 100
 API_BASE_URL = "https://api.example.com"
 ```
 
-**Informații extrase:**
-- Detectate prin convenția UPPER_CASE
-- Tipul și valoarea sunt extrase
+**Extracted information:**
+- Detected by UPPER_CASE convention
+- Type and value are extracted
 
-### 6. Variabile (`type: "var"`)
+### 6. Variables (`type: "var"`)
 
 ```python
 logger = logging.getLogger(__name__)
@@ -147,26 +147,26 @@ default_config: Config = Config()
 
 ---
 
-## 🔗 Detectarea Relațiilor
+## 🔗 Relationship Detection
 
 ### Dependency Graph
 
-Analizorul construiește un graf de dependențe între clase:
+The analyzer builds a dependency graph between classes:
 
 ```python
 class OrderService:
     repository: OrderRepository  # → dependency
     
     def create_order(self, user: User) -> Order:  # → dependencies: User, Order
-        notification = NotificationService()  # → dependency (din calls)
+        notification = NotificationService()  # → dependency (from calls)
         return Order(...)
 ```
 
-**Dependențe detectate:**
-- `OrderRepository` - din type hint pe variabilă
-- `User` - din parametru
-- `Order` - din return type
-- `NotificationService` - din apeluri de metode
+**Detected dependencies:**
+- `OrderRepository` - from type hint on variable
+- `User` - from parameter
+- `Order` - from return type
+- `NotificationService` - from method calls
 
 ### Method Call Analysis
 
@@ -178,7 +178,7 @@ def process(self, data):
     save_to_db(result)            # → save_to_db (function call)
 ```
 
-**Apeluri detectate:**
+**Detected calls:**
 ```json
 {
   "calls": [
@@ -192,30 +192,30 @@ def process(self, data):
 
 ---
 
-## 🏗️ Structura Fișierelor
+## 🏗️ File Structure
 
 ```
 python/
-├── types.go           # Tipuri: ModuleInfo, ClassInfo, MethodInfo, MethodCall, etc.
-├── analyzer.go        # Implementare PathAnalyzer (1500+ linii)
+├── types.go           # Types: ModuleInfo, ClassInfo, MethodInfo, MethodCall, etc.
+├── analyzer.go        # PathAnalyzer implementation (1500+ lines)
 ├── api_analyzer.go    # Legacy APIAnalyzer (build-tagged out)
-├── analyzer_test.go   # 26 teste comprehensive
-└── README.md          # Această documentație
+├── analyzer_test.go   # 26 comprehensive tests
+└── README.md          # This documentation
 ```
 
 ---
 
-## 💻 Utilizare
+## 💻 Usage
 
-### Analiză Standard
+### Standard Analysis
 
 ```go
 import "github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/python"
 
-// Creare analizor (exclude test files by default)
+// Create analyzer (excludes test files by default)
 analyzer := python.NewCodeAnalyzer()
 
-// Analiză directoare/fișiere
+// Analyze directories/files
 chunks, err := analyzer.AnalyzePaths([]string{"./myproject"})
 
 for _, chunk := range chunks {
@@ -224,51 +224,51 @@ for _, chunk := range chunks {
 }
 ```
 
-### Cu Opțiuni
+### With Options
 
 ```go
-// Include și fișierele de test
+// Include test files
 analyzer := python.NewCodeAnalyzerWithOptions(true)
 ```
 
 ---
 
-## 🔌 Integrare
+## 🔌 Integration
 
 ### Language Manager
 
-Analizorul Python este selectat automat pentru:
-- `python`, `py` - proiecte Python generice
-- `django` - proiecte Django
-- `flask` - proiecte Flask
-- `fastapi` - proiecte FastAPI
+The Python analyzer is automatically selected for:
+- `python`, `py` - generic Python projects
+- `django` - Django projects
+- `flask` - Flask projects
+- `fastapi` - FastAPI projects
 
-### Detectare Workspace
+### Workspace Detection
 
-Proiectele Python sunt detectate prin:
-| Fișier | Descriere |
-|--------|-----------|
-| `pyproject.toml` | PEP 518 - Python modern |
+Python projects are detected by:
+| File | Description |
+|------|-------------|
+| `pyproject.toml` | PEP 518 - modern Python |
 | `setup.py` | Setuptools legacy |
-| `requirements.txt` | Dependențe pip |
+| `requirements.txt` | pip dependencies |
 | `Pipfile` | Pipenv |
 
 ---
 
-## 📋 Tipuri de CodeChunk
+## 📋 CodeChunk Types
 
-| Type | Descriere | Exemplu |
-|------|-----------|---------|
-| `class` | Definiție clasă | `class User(BaseModel):` |
-| `method` | Metodă de clasă | `def get_user(self):` |
-| `function` | Funcție module-level | `def helper():` |
-| `property` | Proprietate @property | `@property def name(self):` |
-| `const` | Constantă UPPER_CASE | `MAX_SIZE = 100` |
-| `var` | Variabilă module-level | `logger = getLogger()` |
+| Type | Description | Example |
+|------|-------------|---------|
+| `class` | Class definition | `class User(BaseModel):` |
+| `method` | Class method | `def get_user(self):` |
+| `function` | Module-level function | `def helper():` |
+| `property` | @property | `@property def name(self):` |
+| `const` | UPPER_CASE constant | `MAX_SIZE = 100` |
+| `var` | Module-level variable | `logger = getLogger()` |
 
 ---
 
-## 🏷️ Metadate Complete
+## 🏷️ Complete Metadata
 
 ### Class Metadata
 ```json
@@ -313,52 +313,52 @@ Proiectele Python sunt detectate prin:
 
 ---
 
-## 🧪 Testare
+## 🧪 Testing
 
 ```bash
-# Rulează toate testele (26 teste)
+# Run all tests (26 tests)
 go test ./internal/ragcode/analyzers/python/
 
-# Cu output verbose
+# With verbose output
 go test -v ./internal/ragcode/analyzers/python/
 
-# Test specific
+# Specific test
 go test -v -run TestMethodCallExtraction ./internal/ragcode/analyzers/python/
 
-# Cu coverage
+# With coverage
 go test -cover ./internal/ragcode/analyzers/python/
 ```
 
 ---
 
-## 🚫 Căi Excluse
+## 🚫 Excluded Paths
 
-Analizorul sare automat:
-- `__pycache__/` - cache Python
+The analyzer automatically skips:
+- `__pycache__/` - Python cache
 - `.venv/`, `venv/`, `env/` - virtual environments
 - `.git/` - Git
-- `.tox/`, `.pytest_cache/`, `.mypy_cache/` - cache-uri
-- `dist/`, `build/` - distribuții
-- `test_*.py`, `*_test.py` - fișiere test (implicit)
+- `.tox/`, `.pytest_cache/`, `.mypy_cache/` - caches
+- `dist/`, `build/` - distributions
+- `test_*.py`, `*_test.py` - test files (by default)
 
 ---
 
-## ⚠️ Limitări
+## ⚠️ Limitations
 
-| Limitare | Descriere |
-|----------|-----------|
-| **Regex-based** | Nu folosește AST Python complet - poate rata cazuri edge |
-| **No Type Resolution** | Type hints sunt extrase ca stringuri, nu rezolvate |
-| **Single-file** | Fiecare fișier e analizat independent |
-| **No Runtime Info** | Nu execută codul, doar analiză statică |
+| Limitation | Description |
+|------------|-------------|
+| **Regex-based** | Doesn't use full Python AST - may miss edge cases |
+| **No Type Resolution** | Type hints are extracted as strings, not resolved |
+| **Single-file** | Each file is analyzed independently |
+| **No Runtime Info** | Doesn't execute code, only static analysis |
 
 ---
 
-## 🔮 Îmbunătățiri Viitoare
+## 🔮 Future Improvements
 
-- [ ] Django: modele, views, URLs, forms
+- [ ] Django: models, views, URLs, forms
 - [ ] Flask/FastAPI: route detection, dependency injection
-- [ ] Type resolution: rezolvare type hints cross-file
-- [ ] Import graph: graf complet de importuri
-- [ ] Nested classes: clase definite în alte clase
+- [ ] Type resolution: cross-file type hint resolution
+- [ ] Import graph: complete import graph
+- [ ] Nested classes: classes defined inside other classes
 - [ ] Comprehensions: list/dict/set comprehensions

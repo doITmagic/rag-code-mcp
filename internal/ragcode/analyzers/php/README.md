@@ -1,27 +1,27 @@
 # PHP Code Analyzer
 
-Analizor de cod PHP pentru extragerea simbolurilor, structurii și relațiilor din fișiere PHP. Include suport complet pentru framework-ul Laravel. Indexează codul pentru căutare semantică în Qdrant.
+Code analyzer for extracting symbols, structure, and relationships from PHP files. Includes full support for the Laravel framework. Indexes code for semantic search in Qdrant.
 
 ## Status: ✅ PRODUCTION READY
 
 ---
 
-## 🎯 Ce Face Acest Analizor?
+## 🎯 What This Analyzer Does
 
-Analizorul PHP parsează fișierele `.php` și extrage:
-1. **Simboluri** - clase, metode, funcții, interfețe, traits, constante
-2. **Relații** - moșteniri, implementări, relații Eloquent
-3. **Metadate** - PHPDoc, vizibilitate, tipuri, Laravel-specific
+The PHP analyzer parses `.php` files and extracts:
+1. **Symbols** - classes, methods, functions, interfaces, traits, constants
+2. **Relationships** - inheritance, implementations, Eloquent relations
+3. **Metadata** - PHPDoc, visibility, types, Laravel-specific
 4. **Framework** - Eloquent models, Controllers, Routes (Laravel)
 
 ---
 
-## 📊 Fluxul de Date
+## 📊 Data Flow
 
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  Fișiere .php   │────▶│   PHP Analyzer   │────▶│   CodeChunks    │
-│  (cod sursă)    │     │  (VKCOM parser)  │     │   (structurat)  │
+│   .php Files    │────▶│   PHP Analyzer   │────▶│   CodeChunks    │
+│  (source code)  │     │  (VKCOM parser)  │     │  (structured)   │
 └─────────────────┘     └──────────────────┘     └────────┬────────┘
                                                           │
                         ┌──────────────────┐              │
@@ -36,16 +36,16 @@ Analizorul PHP parsează fișierele `.php` și extrage:
 
 ---
 
-## 🔍 Ce Indexăm
+## 🔍 What We Index
 
-### 1. Clase (`type: "class"`)
+### 1. Classes (`type: "class"`)
 
 ```php
 <?php
 namespace App\Models;
 
 /**
- * Reprezintă un utilizator în sistem.
+ * Represents a user in the system.
  */
 class User extends Model implements Authenticatable
 {
@@ -56,26 +56,26 @@ class User extends Model implements Authenticatable
 }
 ```
 
-**Informații extrase:**
-| Câmp | Valoare | Descriere |
-|------|---------|-----------|
-| `name` | `"User"` | Numele clasei |
-| `namespace` | `"App\\Models"` | Namespace-ul |
-| `full_name` | `"App\\Models\\User"` | Numele complet |
-| `extends` | `"Model"` | Clasa părinte |
-| `implements` | `["Authenticatable"]` | Interfețele implementate |
-| `traits` | `["SoftDeletes", "Notifiable"]` | Traits folosite |
-| `is_abstract` | `false` | Dacă e abstractă |
-| `is_final` | `false` | Dacă e final |
-| `docstring` | `"Reprezintă un utilizator..."` | PHPDoc |
+**Extracted information:**
+| Field | Value | Description |
+|-------|-------|-------------|
+| `name` | `"User"` | Class name |
+| `namespace` | `"App\\Models"` | Namespace |
+| `full_name` | `"App\\Models\\User"` | Fully qualified name |
+| `extends` | `"Model"` | Parent class |
+| `implements` | `["Authenticatable"]` | Implemented interfaces |
+| `traits` | `["SoftDeletes", "Notifiable"]` | Used traits |
+| `is_abstract` | `false` | If abstract |
+| `is_final` | `false` | If final |
+| `docstring` | `"Represents a user..."` | PHPDoc |
 
-### 2. Metode (`type: "method"`)
+### 2. Methods (`type: "method"`)
 
 ```php
 /**
- * Returnează comenzile utilizatorului.
+ * Returns the user's orders.
  * 
- * @param int $limit Numărul maxim de comenzi
+ * @param int $limit Maximum number of orders
  * @return Collection<Order>
  */
 public function getOrders(int $limit = 10): Collection
@@ -84,19 +84,19 @@ public function getOrders(int $limit = 10): Collection
 }
 ```
 
-**Informații extrase:**
-| Câmp | Valoare | Descriere |
-|------|---------|-----------|
-| `name` | `"getOrders"` | Numele metodei |
-| `visibility` | `"public"` | Vizibilitate |
-| `is_static` | `false` | Dacă e statică |
-| `is_abstract` | `false` | Dacă e abstractă |
-| `parameters` | `[{name: "limit", type: "int", default: "10"}]` | Parametri |
-| `return_type` | `"Collection"` | Tipul returnat |
+**Extracted information:**
+| Field | Value | Description |
+|-------|-------|-------------|
+| `name` | `"getOrders"` | Method name |
+| `visibility` | `"public"` | Visibility |
+| `is_static` | `false` | If static |
+| `is_abstract` | `false` | If abstract |
+| `parameters` | `[{name: "limit", type: "int", default: "10"}]` | Parameters |
+| `return_type` | `"Collection"` | Return type |
 | `phpdoc.params` | `[{name: "limit", type: "int", desc: "..."}]` | PHPDoc params |
 | `phpdoc.return` | `{type: "Collection<Order>", desc: ""}` | PHPDoc return |
 
-### 3. Interfețe (`type: "interface"`)
+### 3. Interfaces (`type: "interface"`)
 
 ```php
 interface PaymentGateway extends Gateway
@@ -116,13 +116,13 @@ trait Auditable
 }
 ```
 
-### 5. Funcții Globale (`type: "function"`)
+### 5. Global Functions (`type: "function"`)
 
 ```php
 /**
- * Helper pentru formatare preț.
+ * Helper for price formatting.
  */
-function format_price(float $amount, string $currency = 'RON'): string
+function format_price(float $amount, string $currency = 'USD'): string
 {
     return number_format($amount, 2) . ' ' . $currency;
 }
@@ -157,12 +157,12 @@ class Order extends Model
     
     public function getTotalFormattedAttribute(): string
     {
-        return number_format($this->total, 2) . ' RON';
+        return number_format($this->total, 2) . ' USD';
     }
 }
 ```
 
-**Metadate Laravel extrase:**
+**Extracted Laravel metadata:**
 ```json
 {
   "is_eloquent_model": true,
@@ -188,7 +188,7 @@ class OrderController extends Controller
 }
 ```
 
-**Metadate Controller:**
+**Controller metadata:**
 ```json
 {
   "is_controller": true,
@@ -211,39 +211,39 @@ Route::resource('users', UserController::class);
 
 ---
 
-## 🏗️ Structura Fișierelor
+## 🏗️ File Structure
 
 ```
 php/
-├── types.go              # Tipuri PHP: ClassInfo, MethodInfo, etc.
+├── types.go              # PHP types: ClassInfo, MethodInfo, etc.
 ├── analyzer.go           # PathAnalyzer implementation (21KB)
-├── api_analyzer.go       # APIAnalyzer pentru documentație
-├── phpdoc.go             # Parser PHPDoc
-├── analyzer_test.go      # 10 teste CodeAnalyzer
-├── api_analyzer_test.go  # 4 teste APIAnalyzer
-├── parser_test.go        # 5 teste parser
-├── README.md             # Această documentație
-└── laravel/              # Modul Laravel
-    ├── types.go          # Tipuri Laravel-specific
-    ├── analyzer.go       # Coordonator Laravel
-    ├── adapter.go        # Adapter PathAnalyzer
-    ├── eloquent.go       # Analizor Eloquent Models
-    ├── controller.go     # Analizor Controllers
-    ├── routes.go         # Analizor Routes
-    └── README.md         # Documentație Laravel
+├── api_analyzer.go       # APIAnalyzer for documentation
+├── phpdoc.go             # PHPDoc parser
+├── analyzer_test.go      # 10 CodeAnalyzer tests
+├── api_analyzer_test.go  # 4 APIAnalyzer tests
+├── parser_test.go        # 5 parser tests
+├── README.md             # This documentation
+└── laravel/              # Laravel module
+    ├── types.go          # Laravel-specific types
+    ├── analyzer.go       # Laravel coordinator
+    ├── adapter.go        # PathAnalyzer adapter
+    ├── eloquent.go       # Eloquent Models analyzer
+    ├── controller.go     # Controllers analyzer
+    ├── routes.go         # Routes analyzer
+    └── README.md         # Laravel documentation
 ```
 
 ---
 
-## 💻 Utilizare
+## 💻 Usage
 
 ```go
 import "github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/php/laravel"
 
-// Pentru proiecte Laravel (recomandat)
+// For Laravel projects (recommended)
 analyzer := laravel.NewAdapter()
 
-// Analiză directoare/fișiere
+// Analyze directories/files
 chunks, err := analyzer.AnalyzePaths([]string{"./app"})
 
 for _, chunk := range chunks {
@@ -256,19 +256,19 @@ for _, chunk := range chunks {
 
 ---
 
-## 🔌 Integrare
+## 🔌 Integration
 
 ### Language Manager
 
-Analizorul PHP/Laravel este selectat automat pentru:
-- `php` - proiecte PHP generice
-- `laravel` - proiecte Laravel
-- `php-laravel` - alternativă Laravel
+The PHP/Laravel analyzer is automatically selected for:
+- `php` - generic PHP projects
+- `laravel` - Laravel projects
+- `php-laravel` - Laravel alternative
 
-### Detectare Workspace
+### Workspace Detection
 
-| Fișier/Director | Tip Proiect |
-|-----------------|-------------|
+| File/Directory | Project Type |
+|----------------|--------------|
 | `artisan` | Laravel |
 | `composer.json` | PHP |
 | `app/Models/` | Laravel |
@@ -276,21 +276,21 @@ Analizorul PHP/Laravel este selectat automat pentru:
 
 ---
 
-## 📋 Tipuri de CodeChunk
+## 📋 CodeChunk Types
 
-| Type | Descriere | Exemplu |
-|------|-----------|---------|
-| `class` | Clasă PHP | `class User extends Model` |
-| `method` | Metodă de clasă | `public function save()` |
-| `function` | Funcție globală | `function helper()` |
-| `interface` | Interfață | `interface Payable` |
+| Type | Description | Example |
+|------|-------------|---------|
+| `class` | PHP class | `class User extends Model` |
+| `method` | Class method | `public function save()` |
+| `function` | Global function | `function helper()` |
+| `interface` | Interface | `interface Payable` |
 | `trait` | Trait | `trait Auditable` |
-| `const` | Constantă de clasă | `const STATUS_ACTIVE = 1` |
-| `property` | Proprietate | `protected $fillable` |
+| `const` | Class constant | `const STATUS_ACTIVE = 1` |
+| `property` | Property | `protected $fillable` |
 
 ---
 
-## 🏷️ Metadate Complete
+## 🏷️ Complete Metadata
 
 ### Class Metadata
 ```json
@@ -327,45 +327,45 @@ Analizorul PHP/Laravel este selectat automat pentru:
 
 ---
 
-## 🧪 Testare
+## 🧪 Testing
 
 ```bash
-# Toate testele PHP (19 teste)
+# All PHP tests (19 tests)
 go test ./internal/ragcode/analyzers/php/...
 
-# Doar Laravel (21 teste)
+# Laravel only (21 tests)
 go test ./internal/ragcode/analyzers/php/laravel/...
 
-# Cu coverage
+# With coverage
 go test -cover ./internal/ragcode/analyzers/php/...
 ```
 
-**Rezultate:**
-- ✅ 19/19 teste PHP PASS
-- ✅ 21/21 teste Laravel PASS
+**Results:**
+- ✅ 19/19 PHP tests PASS
+- ✅ 21/21 Laravel tests PASS
 - ✅ Coverage: 83.6%
 
 ---
 
-## 📦 Dependențe
+## 📦 Dependencies
 
-- **VKCOM/php-parser** v0.8.2 - Parser PHP cu suport PHP 8.0-8.2
-
----
-
-## ⚠️ Limitări
-
-| Limitare | Descriere |
-|----------|-----------|
-| **No Runtime** | Analiză statică, nu execută codul |
-| **Single-file** | Fiecare fișier e analizat independent |
-| **No Autoload** | Nu rezolvă autoload-ul Composer |
+- **VKCOM/php-parser** v0.8.2 - PHP parser with PHP 8.0-8.2 support
 
 ---
 
-## 🔮 Îmbunătățiri Viitoare
+## ⚠️ Limitations
 
-- [ ] Route groups cu middleware
+| Limitation | Description |
+|------------|-------------|
+| **No Runtime** | Static analysis, doesn't execute code |
+| **Single-file** | Each file is analyzed independently |
+| **No Autoload** | Doesn't resolve Composer autoload |
+
+---
+
+## 🔮 Future Improvements
+
+- [ ] Route groups with middleware
 - [ ] Migration analyzer
 - [ ] Symfony framework support
 - [ ] WordPress support
@@ -373,19 +373,10 @@ go test -cover ./internal/ragcode/analyzers/php/...
 
 ---
 
-## Status Anterior (pentru referință)
+## Implemented Features
 
-### Laravel Analyzer - FULLY IMPLEMENTED
+### Laravel-Specific Features ✅
 
-**Test Results:**
-- ✅ **21/21 Laravel tests PASS**
-- ✅ **Real project tested**: Barou Laravel app (38 models, 116 relations, 813 chunks)
-- ✅ **E2E integration**: Full indexing pipeline working
-- ✅ **Language manager**: Auto-detection and routing complete
-
-### Implemented Features
-
-#### PAS 8: Laravel-Specific Features ✅
 1. **Eloquent Models** (COMPLETE):
    - ✅ Model detection (`extends Model`)
    - ✅ Property extraction: `$fillable`, `$guarded`, `$casts`, `$table`, `$primaryKey`
@@ -411,76 +402,7 @@ go test -cover ./internal/ragcode/analyzers/php/...
    - ✅ Controller@action binding
    - ✅ Array syntax `[Controller::class, 'action']`
 
-#### PAS 9: End-to-End Testing ✅
-- ✅ Complete Laravel project E2E tests
-- ✅ Relationship resolution tests
-- ✅ Scopes and accessors tests
-- ✅ **Real Barou project**: 38 models, 116 relations analyzed successfully
-
-#### PAS 10: Integration ✅
-- ✅ Laravel Adapter implementing `PathAnalyzer` interface
-- ✅ Language manager integration
-- ✅ Auto-detection for `php`, `laravel`, `php-laravel` project types
-- ✅ Chunk enrichment with Laravel metadata
-- ✅ Full indexing pipeline tested
-
-## Next Steps
-
-**READY FOR PRODUCTION** - Laravel analyzer is complete and tested with real projects.
-
-Optional enhancements for future:
-1. Route groups with middleware
-2. Migration analysis
-3. Symfony framework support
-
-### Implemented Files (8 files)
-
-- ✅ `types.go` (6.1KB) - PHP-specific internal types with API support
-- ✅ `analyzer.go` (21KB) - PathAnalyzer implementation with PHPDoc extraction
-- ✅ `api_analyzer.go` (7.4KB) - APIAnalyzer implementation
-- ✅ `phpdoc.go` (5.3KB) - PHPDoc parser helper
-- ✅ `analyzer_test.go` (9.9KB, 10 tests) - CodeAnalyzer tests
-- ✅ `api_analyzer_test.go` (7.4KB, 4 tests) - APIAnalyzer tests
-- ✅ `parser_test.go` (4.4KB, 5 tests) - Parser API validation tests
-- ✅ **Integration**: language_manager.go, workspace detector
-
-### Test Results
-
-```text
-19/19 TESTS PASS ✅
-Coverage: 83.6% of statements
-Integration: COMPLETE ✅
-```
-
-**Test Categories:**
-- **CodeAnalyzer** (10 tests):
-  - Basic class extraction
-  - Global functions (2 tests)
-  - Multiple classes (2 tests)
-  - Properties (1 test)
-  - Constants (1 test)
-  - Interfaces (1 test)
-  - Traits (1 test)
-  - Complete class (1 test)
-- **APIAnalyzer** (4 tests):
-  - Full API path analysis with PHPDoc
-  - Global functions with documentation
-  - Interface documentation
-  - Trait documentation
-- **Parser API** (5 tests):
-  - Basic parsing, class/function/method/namespace extraction
-- **Integration** (6 tests):
-  - Language manager recognizes PHP/Laravel
-  - Workspace detector identifies composer.json/artisan
-  - Collection naming: ragcode-{workspaceID}-php
-
-## Dependencies
-
-- **VKCOM/php-parser** v0.8.2 (fork with PHP 8.0-8.2 support)
-
-## Features
-
-### ✅ Implemented (PAS 1-7)
+### Core PHP Features ✅
 
 1. **Namespace Support**
    - Multi-namespace per-file
@@ -511,63 +433,14 @@ Integration: COMPLETE ✅
    - Parameters and return types
    - **PHPDoc documentation**
 
-6. **PHPDoc Parsing** (PAS 6)
+6. **PHPDoc Parsing**
    - Description extraction
    - @param tags (type, name, description)
    - @return tags (type, description)
    - @throws, @var, @deprecated, @see, @example tags
    - Type hint merging with PHPDoc
 
-7. **API Documentation** (PAS 6)
-   - APIAnalyzer implementation
-   - Conversion to APIChunk format
-   - Full documentation export
-   - Multi-file API analysis
-
-8. **Multi-file Support**
-   - `AnalyzePaths()` for batch processing
-   - `AnalyzeAPIPaths()` for API documentation
-
-9. **Error Handling**
-   - Parser error recovery
-   - Graceful degradation
-
-10. **Integration** (PAS 7)
-    - language_manager.go integration ✅
-    - Multi-language collection support ✅
-    - Workspace detection (composer.json, artisan) ✅
-    - Project type normalization (php, laravel) ✅
-
-### ✅ Completed (PAS 8: Laravel-Specific Features)
-
-11. **Laravel Framework Support**
-    - **Eloquent Models Detection**:
-      - Extends `Illuminate\Database\Eloquent\Model`
-      - `$fillable` array extraction
-      - `$guarded` array extraction
-      - `$casts` array extraction
-      - `$table` property
-      - Relations: `hasOne()`, `hasMany()`, `belongsTo()`, `belongsToMany()`
-      - Scopes: `scopeMethodName()` detection
-    - **Controller Detection**:
-      - Extends `Illuminate\Routing\Controller`
-      - Resource controllers
-      - API controllers
-      - Request validation
-    - **Directory Structure Awareness**:
-      - `app/Models/` - Eloquent models
-      - `app/Http/Controllers/` - Controllers
-      - `routes/` - Route definitions
-      - `database/migrations/` - Migrations
-
-### ❌ TODO (PAS 8-9)
-
-All PAS 8–9 milestones for the Laravel analyzer are now **complete** (see the **Status** section above).
-
-Remaining future enhancements (post-PAS 10):
-- Route groups with middleware
-- Migration analyzer
-- Symfony framework support
+---
 
 ## Code Metrics
 
@@ -581,19 +454,7 @@ Remaining future enhancements (post-PAS 10):
 - **Tests**: 19 (5 parser + 10 analyzer + 4 API)
 - **Integration Tests**: 6 (language manager + workspace detector)
 
-## Laravel Support
-
-The analyzer automatically detects Laravel projects through:
-- `artisan` file (Laravel CLI tool)
-- `composer.json` (PHP dependency manager)
-- `app/Models/` directory structure
-
-Project types recognized:
-- `laravel` - Laravel framework project
-- `php-laravel` - Alternative Laravel naming
-- `php` - Generic PHP project
-
-All Laravel projects use the PHP analyzer with future Laravel-specific enhancements.
+---
 
 ## Architecture
 
@@ -628,9 +489,3 @@ This modular design allows:
 - Independent testing of framework features
 - Easy addition of new frameworks
 - Reusable base PHP analyzer
-
-## Next Steps
-
-1. **PAS 8**: Laravel-specific features (Eloquent models, Controllers)
-2. **PAS 9**: End-to-end testing with Laravel projects
-3. **PAS 10**: Production testing with Symfony projects

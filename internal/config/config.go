@@ -184,4 +184,17 @@ type WorkspaceConfig struct {
 	// If empty, uses global rag_code patterns
 	IndexInclude []string `yaml:"index_include"`
 	IndexExclude []string `yaml:"index_exclude"`
+
+	// AllowedWorkspacePaths restricts workspace detection to specific directories
+	// If set, only paths within these directories are allowed as workspaces
+	// Useful for restricting tool to ~/projects, ~/code, etc.
+	// Example: ["/home/user/projects", "/home/user/work"]
+	// Empty list = allow any path (subject to other security checks)
+	AllowedWorkspacePaths []string `yaml:"allowed_workspace_paths"`
+
+	// DisableUpwardSearch when true, disables searching parent directories for workspace markers
+	// The tool will only use the exact directory provided or current directory
+	// Useful when you want strict control and don't want automatic parent directory traversal
+	// Default: false (upward search enabled)
+	DisableUpwardSearch bool `yaml:"disable_upward_search"`
 }

@@ -93,6 +93,11 @@ func addFileForLanguage(scan *workspaceScan, language, path string) {
 }
 
 func (m *Manager) scanWorkspace(info *Info) (*workspaceScan, error) {
+	// Validate root path before scanning to prevent broad filesystem access
+	if isInvalidRoot(info.Root) {
+		return nil, fmt.Errorf("cannot scan invalid workspace root: %s", info.Root)
+	}
+
 	scan := &workspaceScan{
 		LanguageDirs:  make(map[string][]string),
 		LanguageFiles: make(map[string][]string),
@@ -205,6 +210,8 @@ func NewManager(qdrant *storage.QdrantClient, llm llm.Provider, cfg *config.Conf
 		detector = NewDetectorWithConfig(
 			cfg.Workspace.DetectionMarkers,
 			cfg.Workspace.ExcludePatterns,
+			cfg.Workspace.AllowedWorkspacePaths,
+			cfg.Workspace.DisableUpwardSearch,
 		)
 	} else {
 		detector = NewDetector()
@@ -226,6 +233,44 @@ func NewManager(qdrant *storage.QdrantClient, llm llm.Provider, cfg *config.Conf
 
 // DetectWorkspace detects workspace from tool parameters
 func (m *Manager) DetectWorkspace(params map[string]interface{}) (*Info, error) {
+	// PRIORITY 1: Check for explicit workspace_root parameter
+	if workspaceRoot, ok := params["workspace_root"]; ok {
+		if rootPath, ok := workspaceRoot.(string); ok && rootPath != "" {
+			log.Printf("🎯 Using explicit workspace_root: %s", rootPath)
+
+			// Expand tilde if present
+			if strings.HasPrefix(rootPath, "~/") {
+				if home, err := os.UserHomeDir(); err == nil {
+					rootPath = filepath.Join(home, rootPath[2:])
+				}
+			}
+
+			// Convert to absolute path
+			absPath, err := filepath.Abs(rootPath)
+			if err != nil {
+				return nil, fmt.Errorf("invalid workspace_root path: %w", err)
+			}
+
+			// Use the detector to validate and get workspace info
+			// This will still run all security checks
+			info, err := m.detector.DetectFromPath(absPath)
+			if err != nil {
+				return nil, fmt.Errorf("workspace_root validation failed: %w", err)
+			}
+
+			// Set collection prefix from config
+			if m.config != nil && m.config.Workspace.CollectionPrefix != "" {
+				info.CollectionPrefix = m.config.Workspace.CollectionPrefix
+			}
+
+			// Cache by the explicit root
+			m.cache.Set(absPath, info)
+
+			return info, nil
+		}
+	}
+
+	// PRIORITY 2: Fall back to automatic detection from file_path
 	// Try to extract file path for cache key
 	var cacheKey string
 	for _, param := range []string{"file_path", "filePath", "path", "file"} {
@@ -280,8 +325,11 @@ func (m *Manager) GetMemoryForWorkspace(ctx context.Context, info *Info) (memory
 // Creates collection and triggers indexing if needed
 func (m *Manager) GetMemoryForWorkspaceLanguage(ctx context.Context, info *Info, language string) (memory.LongTermMemory, error) {
 	// Validate workspace root - reject suspicious directories
-	homeDir, _ := os.UserHomeDir()
-	if info.Root == "/" || info.Root == homeDir || strings.HasPrefix(info.Root, "/tmp") {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		log.Printf("workspace: could not determine user home directory: %v", err)
+	}
+	if info.Root == "/" || info.Root == homeDir || info.Root == "/tmp" {
 		return nil, fmt.Errorf(
 			"invalid workspace root '%s'. "+
 				"Please provide a file path inside a valid project directory with workspace markers "+
@@ -866,6 +914,12 @@ func (m *Manager) EnsureWorkspaceIndexed(ctx context.Context, rootPath string) e
 
 // StartWatcher starts the file watcher for a workspace if not already running
 func (m *Manager) StartWatcher(root string) {
+	// Validate root directory before starting watcher to prevent broad filesystem access
+	if isInvalidRoot(root) {
+		log.Printf("[ERROR] Cannot start watcher on invalid root directory: %s", root)
+		return
+	}
+
 	m.watchersMu.Lock()
 	defer m.watchersMu.Unlock()
 

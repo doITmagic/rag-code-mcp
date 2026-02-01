@@ -36,6 +36,30 @@ Moving beyond "finding" code to "assessing" and "explaining" it.
 - **Tree-Sitter Support for All Languages**: Standardize parsing for JS/TS/Rust (currently planned).
 - **Live Diagnostics**: Integration with LSP (Language Server Protocol) diagnostics to filter search results by "code with errors".
 
+## 💡 Community & AI Feedback (Planned Tools)
+
+Based on developer and AI agent feedback, the following tools are prioritized for future versions to improve precision and cross-platform utility.
+
+### 5. Symbol References (`find_references`)
+**Concept:** Precise, LSP-style reference tracking using static analysis.
+- **Goal:** Distinguish between identical method names in different structs (e.g., `User.Save` vs `Config.Save`).
+- **Use Case:** "Where is this specific struct field used across the entire project?"
+
+### 6. Call Graph Discovery (`get_call_graph`)
+**Concept:** Visualizing the call hierarchy for a function.
+- **Output:** A Markdown tree showing callers and callees.
+- **Use Case:** Understanding the impact of a change by seeing the entire logic flow (e.g., `Auth -> Login -> ComparePasswordHash`).
+
+### 7. Template & Frontend Search (`search_templates`)
+**Concept:** Specialized analyzer for HTML, Blade, and Frontend component logic.
+- **Goal:** Index variables and logic inside `{{ ... }}` and framework attributes like Alpine.js or React props.
+- **Use Case:** "Find which template uses the 'urgent_mandate' variable."
+
+### 8. Semantic Diff & History (`compare_versions`)
+**Concept:** Git-aware semantic analysis of changes.
+- **Goal:** Explain *what* changed logically between two commits or branches, rather than just raw lines of code.
+- **Use Case:** "What were the security-related changes in the last 3 commits?"
+
 ### 4. AI Introspection & ROI Metrics (`get_session_impact`)
 **Concept:** A meta-tool that allows the AI to evaluate the utility of RagCode in the current session based on hard data.
 - **Input:** None (evaluates current session logs).

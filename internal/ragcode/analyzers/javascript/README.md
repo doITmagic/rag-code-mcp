@@ -78,6 +78,7 @@ export const UserProfile = ({ name }: Props) => {
 ### Faza 3: Framework Specialization (Production)
 - [ ] Optimizări pentru **React** (extracție props din componente).
 - [ ] Suport pentru fișiere `.vue` și `.svelte` (via tree-sitter parsers dedicate).
+- [ ] **Template Search**: Indexarea variabilelor și a logicii din template-uri HTML/Blade/JSX pentru a permite regăsirea contextului din frontend.
 - [ ] Detectarea rutelor (pentru Express, Koa, Fastify).
 
 ---

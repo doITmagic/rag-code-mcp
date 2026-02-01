@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/url"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
 	"github.com/doITmagic/rag-code-mcp/internal/healthcheck"
@@ -32,6 +34,13 @@ var (
 // Simple logger using log level from env
 type simpleLogger struct {
 	logFile *os.File
+}
+
+func (l *simpleLogger) Close() {
+	if l.logFile != nil {
+		_ = l.logFile.Close()
+		l.logFile = nil
+	}
 }
 
 func (l *simpleLogger) shouldLog(msgLevel string) bool {
@@ -69,12 +78,75 @@ func (l *simpleLogger) Warn(format string, args ...interface{}) {
 
 var logger = &simpleLogger{}
 
+func resolveLogPath(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+
+	// If path is just a filename (no separators), put it NEXT TO THE EXECUTABLE
+	if filepath.Base(path) == path {
+		exePath, err := os.Executable()
+		if err != nil {
+			// Fallback to CWD if executable path fails
+			return path, nil
+		}
+		exeDir := filepath.Dir(exePath)
+
+		debugFile := "/tmp/ragcode-path-debug.txt"
+		_ = os.WriteFile(debugFile, []byte(fmt.Sprintf("Exe: %s\nDir: %s\nPath: %s\n", exePath, exeDir, filepath.Join(exeDir, path))), 0666)
+
+		return filepath.Join(exeDir, path), nil
+	}
+
+	// Handle tilde expansion for user convenience in config files
+	if strings.HasPrefix(path, "~/") || path == "~" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return path, err
+		}
+		if path == "~" {
+			return home, nil
+		}
+		return filepath.Join(home, path[2:]), nil
+	}
+
+	// If relative path with separators, make absolute relative to CWD
+	if !filepath.IsAbs(path) {
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return path, err
+		}
+		return abs, nil
+	}
+
+	return path, nil
+}
+
 func initLoggerFromEnv() {
-	// Set default log output to stderr to avoid interfering with MCP stdio protocol
+	// Default to stderr to avoid interfering with MCP stdio protocol when no file is configured
 	log.SetOutput(os.Stderr)
-	
+
+	if logger.logFile != nil {
+		logger.Close()
+	}
+
 	path := os.Getenv("MCP_LOG_FILE")
 	if path == "" {
+		return
+	}
+
+	// Path is already resolved when setting env var in applyLoggingConfig
+	// but we check again just in case env var was set externally
+	expanded, err := resolveLogPath(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to resolve log path %s: %v\n", path, err)
+		return
+	}
+	path = expanded
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to create log directory %s: %v\n", dir, err)
 		return
 	}
 
@@ -85,6 +157,107 @@ func initLoggerFromEnv() {
 	}
 
 	logger.logFile = f
+
+	// FORCE DEBUG WRITE DIRECTLY TO FILE
+	timestamp := time.Now().Format(time.RFC3339)
+	if _, err := f.WriteString(fmt.Sprintf("--- STARTING FINAL FIX SESSION %s ---\n", timestamp)); err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to write startup line to log file: %v\n", err)
+	}
+	_ = f.Sync()
+
+	log.SetOutput(io.MultiWriter(os.Stderr, logger.logFile))
+
+	// Log startup info to verify location
+	fmt.Fprintf(os.Stderr, "[INFO] Logging to file: %s\n", path)
+	log.Printf("Logger initialized successfully writing to %s", path)
+}
+
+func rotateLogFile(path string, maxSizeMB int) {
+	if maxSizeMB <= 0 {
+		return
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return // File doesn't exist or error
+	}
+
+	maxSizeBytes := int64(maxSizeMB) * 1024 * 1024
+	if info.Size() < maxSizeBytes {
+		return
+	}
+
+	// Log rotation needed
+	fmt.Fprintf(os.Stderr, "[INFO] Log file %s exceeds %dMB (%d bytes). Rotating...\n", path, maxSizeMB, info.Size())
+
+	// Read file
+	content, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to read log file for rotation: %v\n", err)
+		return
+	}
+
+	// Calculate cutoff (remove ~10%)
+	cutSize := len(content) / 10
+	if cutSize == 0 {
+		return
+	}
+
+	// Find next newline after cutoff to keep lines intact
+	cutoffIndex := -1
+	for i := cutSize; i < len(content); i++ {
+		if content[i] == '\n' {
+			cutoffIndex = i + 1
+			break
+		}
+	}
+
+	if cutoffIndex == -1 {
+		// Fallback: if no newline found (rare), just cut at 10%
+		cutoffIndex = cutSize
+	}
+
+	if cutoffIndex >= len(content) {
+		// Should not happen if file is large, but safety check
+		// If we cut everything, just truncate
+		if err := os.Truncate(path, 0); err != nil {
+			fmt.Fprintf(os.Stderr, "[WARN] Failed to truncate log file: %v\n", err)
+		}
+		return
+	}
+
+	newContent := content[cutoffIndex:]
+
+	// Rewrite file
+	if err := os.WriteFile(path, newContent, 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to write rotated log file: %v\n", err)
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "[INFO] Log file rotated. Removed %d bytes.\n", cutoffIndex)
+}
+
+func applyLoggingConfig(logCfg config.LoggingConfig) {
+	if logCfg.Level != "" {
+		if _, ok := os.LookupEnv("MCP_LOG_LEVEL"); !ok {
+			_ = os.Setenv("MCP_LOG_LEVEL", strings.ToLower(logCfg.Level))
+		}
+	}
+
+	if _, ok := os.LookupEnv("MCP_LOG_FILE"); !ok {
+		if strings.EqualFold(logCfg.Output, "file") && logCfg.Path != "" {
+			expanded, err := resolveLogPath(logCfg.Path)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "[WARN] Failed to resolve log path %s: %v\n", logCfg.Path, err)
+			} else {
+				// Rotate log file if needed before opening
+				rotateLogFile(expanded, logCfg.MaxSizeMB)
+
+				// Set the fully resolved path in env var for initLoggerFromEnv to use
+				_ = os.Setenv("MCP_LOG_FILE", expanded)
+			}
+		}
+	}
+	initLoggerFromEnv()
 }
 
 type MCPTool interface {
@@ -132,6 +305,12 @@ storage:
   vector_db:
     url: http://localhost:6333
     api_key: ""
+
+logging:
+  level: debug
+  format: text
+  output: file
+  path: mcp.log
 
 # Multi-workspace configuration (auto-creates collections per workspace+language)
 workspace:
@@ -184,6 +363,16 @@ workspace:
 }
 
 func main() {
+	// AGGRESSIVE STARTUP DEBUG
+	f, _ := os.Create("/tmp/ragcode-startup.txt")
+	cwd, _ := os.Getwd()
+	exe, _ := os.Executable()
+	fmt.Fprintf(f, "Time: %s\n", time.Now())
+	fmt.Fprintf(f, "Exe: %s\n", exe)
+	fmt.Fprintf(f, "CWD: %s\n", cwd)
+	fmt.Fprintf(f, "Args: %v\n", os.Args)
+	f.Close()
+
 	// Define flags
 	configPath := flag.String("config", "config.yaml", "Path to configuration file")
 	ollamaBaseURLFlag := flag.String("ollama-base-url", "", "Ollama base URL (overrides config/env)")
@@ -198,6 +387,34 @@ func main() {
 
 	flag.Parse()
 
+	// Resolve config path
+	cfgPath := *configPath
+	if cfgPath == "config.yaml" {
+		// PRIORITY 1: Check executable directory (Best for MCP servers started from random CWD)
+		exePath, err := os.Executable()
+		if err == nil {
+			exeDir := filepath.Dir(exePath)
+			altPath := filepath.Join(exeDir, "config.yaml")
+			// Always prefer the one next to binary if it exists, OR if we are in HOME dir to avoid picking up random configs
+			cwd, _ := os.Getwd()
+			home, _ := os.UserHomeDir()
+
+			if _, err := os.Stat(altPath); err == nil {
+				cfgPath = altPath
+				logger.Info("Found config in executable directory: %s", cfgPath)
+			} else if cwd == home {
+				// If we are in HOME, forcing creation next to binary is safer than creating in HOME
+				cfgPath = altPath
+			} else {
+				// Fallback: check CWD
+				if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
+					// If not in CWD either, default to exe dir for creation
+					cfgPath = altPath
+				}
+			}
+		}
+	}
+
 	initLoggerFromEnv()
 
 	// Handle version flag
@@ -210,15 +427,22 @@ func main() {
 	}
 
 	// Auto-create config.yaml if it doesn't exist
-	if err := ensureConfigExists(*configPath); err != nil {
-		logger.Warn("Failed to create default config: %v", err)
+	// Logic updated: Always check if the RESOLVED cfgPath exists. If not, create it.
+	// This ensures we create the config next to the binary even if we changed cfgPath from the default.
+	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
+		if err := ensureConfigExists(cfgPath); err != nil {
+			logger.Warn("Failed to create default config: %v", err)
+		}
 	}
 
-	cfg, err := config.Load(*configPath)
+	cfg, err := config.Load(cfgPath)
 	if err != nil {
-		logger.Warn("Failed to load config file %s, using defaults: %v", *configPath, err)
+		logger.Warn("Failed to load config file %s, using defaults: %v", cfgPath, err)
 		cfg = config.DefaultConfig()
 	}
+
+	// Apply logging settings from config unless env vars already override them
+	applyLoggingConfig(cfg.Logging)
 
 	// Apply CLI overrides (highest precedence)
 	if *ollamaBaseURLFlag != "" {
@@ -396,10 +620,18 @@ func registerSearchCodeToolTyped(server *mcp.Server, tool *tools.SearchLocalInde
 			args["file_path"] = input.FilePath
 		}
 
+		start := time.Now()
+		logger.Info("🛠️ Executing tool '%s' with args: %v", tool.Name(), args)
+
 		result, err := tool.Execute(ctx, args)
+		duration := time.Since(start)
+
 		if err != nil {
+			logger.Error("❌ Tool '%s' failed after %v: %v", tool.Name(), duration, err)
 			return nil, SearchCodeOutput{}, err
 		}
+
+		logger.Info("✅ Tool '%s' completed in %v", tool.Name(), duration)
 
 		return nil, SearchCodeOutput{Results: result}, nil
 	})
@@ -418,8 +650,15 @@ func registerAgentTool(server *mcp.Server, tool MCPTool) {
 				return nil, fmt.Errorf("invalid arguments: %w", err)
 			}
 		}
+
+		start := time.Now()
+		logger.Info("🛠️ Executing tool '%s' with args: %v", tool.Name(), args)
+
 		result, err := tool.Execute(ctx, args)
+		duration := time.Since(start)
+
 		if err != nil {
+			logger.Error("❌ Tool '%s' failed after %v: %v", tool.Name(), duration, err)
 			return &mcp.CallToolResult{
 				IsError: true,
 				Content: []mcp.Content{
@@ -427,6 +666,9 @@ func registerAgentTool(server *mcp.Server, tool MCPTool) {
 				},
 			}, nil
 		}
+
+		logger.Info("✅ Tool '%s' completed in %v", tool.Name(), duration)
+
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				&mcp.TextContent{Text: result},

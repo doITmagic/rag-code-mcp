@@ -94,6 +94,14 @@ func (m *QdrantLongTermMemory) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// DeleteByMetadata deletes documents matching a metadata key-value pair
+func (m *QdrantLongTermMemory) DeleteByMetadata(ctx context.Context, key, value string) error {
+	if err := m.client.DeleteByFilter(ctx, key, value); err != nil {
+		return fmt.Errorf("failed to delete documents by metadata from qdrant: %w", err)
+	}
+	return nil
+}
+
 // Clear clears all documents (not implemented for safety - use with caution)
 func (m *QdrantLongTermMemory) Clear(ctx context.Context) error {
 	// For safety, we don't implement collection deletion

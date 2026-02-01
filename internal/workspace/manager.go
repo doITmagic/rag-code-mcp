@@ -14,10 +14,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/doITmagic/rag-code-mcp/internal/ragcode"
 	"github.com/doITmagic/rag-code-mcp/internal/config"
 	"github.com/doITmagic/rag-code-mcp/internal/llm"
 	"github.com/doITmagic/rag-code-mcp/internal/memory"
+	"github.com/doITmagic/rag-code-mcp/internal/ragcode"
 	"github.com/doITmagic/rag-code-mcp/internal/storage"
 )
 
@@ -40,13 +40,18 @@ type Manager struct {
 	// Workspace scan fingerprints to detect file changes per language
 	scanMu           sync.RWMutex
 	scanFingerprints map[string]string
+
+	// File watchers
+	watchersMu sync.Mutex
+	watchers   map[string]*FileWatcher
 }
 
 type workspaceScan struct {
-	LanguageDirs map[string][]string
-	DocFiles     []string
-	TotalFiles   int
-	GeneratedAt  time.Time
+	LanguageDirs  map[string][]string
+	LanguageFiles map[string][]string // Track individual files per language
+	DocFiles      []string
+	TotalFiles    int
+	GeneratedAt   time.Time
 }
 
 var defaultSkipDirs = map[string]struct{}{
@@ -79,11 +84,20 @@ func addDirForLanguage(scan *workspaceScan, cache map[string]map[string]struct{}
 	scan.LanguageDirs[lang] = append(scan.LanguageDirs[lang], dir)
 }
 
+func addFileForLanguage(scan *workspaceScan, language, path string) {
+	lang := strings.ToLower(language)
+	if scan.LanguageFiles == nil {
+		scan.LanguageFiles = make(map[string][]string)
+	}
+	scan.LanguageFiles[lang] = append(scan.LanguageFiles[lang], path)
+}
+
 func (m *Manager) scanWorkspace(info *Info) (*workspaceScan, error) {
 	scan := &workspaceScan{
-		LanguageDirs: make(map[string][]string),
-		DocFiles:     make([]string, 0),
-		GeneratedAt:  time.Now(),
+		LanguageDirs:  make(map[string][]string),
+		LanguageFiles: make(map[string][]string),
+		DocFiles:      make([]string, 0),
+		GeneratedAt:   time.Now(),
 	}
 	dirCache := make(map[string]map[string]struct{})
 	err := filepath.WalkDir(info.Root, func(path string, d fs.DirEntry, err error) error {
@@ -105,10 +119,13 @@ func (m *Manager) scanWorkspace(info *Info) (*workspaceScan, error) {
 		switch ext {
 		case ".go":
 			addDirForLanguage(scan, dirCache, "go", filepath.Dir(path))
+			addFileForLanguage(scan, "go", path)
 		case ".php":
 			addDirForLanguage(scan, dirCache, "php", filepath.Dir(path))
+			addFileForLanguage(scan, "php", path)
 		case ".html", ".htm":
 			addDirForLanguage(scan, dirCache, "html", filepath.Dir(path))
+			addFileForLanguage(scan, "html", path)
 		case ".md":
 			scan.DocFiles = append(scan.DocFiles, path)
 		default:
@@ -190,6 +207,8 @@ func NewManager(qdrant *storage.QdrantClient, llm llm.Provider, cfg *config.Conf
 		detector = NewDetector()
 	}
 
+	log.Printf("🔧 Workspace Manager initialized (logging verified)")
+
 	return &Manager{
 		detector: detector,
 		cache:    NewCache(5 * time.Minute),
@@ -198,6 +217,7 @@ func NewManager(qdrant *storage.QdrantClient, llm llm.Provider, cfg *config.Conf
 		config:   cfg,
 		indexing: make(map[string]bool),
 		memories: make(map[string]memory.LongTermMemory),
+		watchers: make(map[string]*FileWatcher),
 	}
 }
 
@@ -266,6 +286,9 @@ func (m *Manager) GetMemoryForWorkspaceLanguage(ctx context.Context, info *Info,
 			info.Root,
 		)
 	}
+
+	// Ensure filesystem watcher is running so future changes trigger reindex automatically
+	m.StartWatcher(info.Root)
 
 	collectionName := info.CollectionNameForLanguage(language)
 
@@ -337,9 +360,18 @@ func (m *Manager) GetMemoryForWorkspaceLanguage(ctx context.Context, info *Info,
 		if m.config != nil && m.config.Workspace.AutoIndex {
 			// Pass a long-lived context for background indexing
 			indexCtx := context.Background()
-			go m.indexWorkspaceLanguage(indexCtx, info, language, collectionName)
+			go func() {
+				if err := m.IndexLanguage(indexCtx, info, language, collectionName); err != nil {
+					log.Printf("❌ Background indexing failed: %v", err)
+				}
+			}()
 		} else {
 			log.Printf("⏸️  Auto-indexing disabled for workspace '%s' language '%s'. Run manual indexing.", info.Root, language)
+		}
+	} else {
+		// Collection exists - check if files have changed and trigger incremental re-indexing
+		if m.config != nil && m.config.Workspace.AutoIndex {
+			go m.checkAndReindexIfNeeded(context.Background(), info, language, collectionName)
 		}
 	}
 
@@ -387,15 +419,15 @@ func (m *Manager) GetMemoriesForAllLanguages(ctx context.Context, info *Info) (m
 	return memories, nil
 }
 
-// indexWorkspaceLanguage indexes a specific language in a workspace in the background
-func (m *Manager) indexWorkspaceLanguage(ctx context.Context, info *Info, language string, collectionName string) {
+// IndexLanguage indexes a specific language in a workspace
+// It runs synchronously. Use StartIndexing for background execution.
+func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string, collectionName string) error {
 	// Check if already indexing
 	indexKey := info.ID + "-" + language
 	m.indexingMu.Lock()
 	if m.indexing[indexKey] {
 		m.indexingMu.Unlock()
-		log.Printf("⚠️  Workspace '%s' language '%s' is already being indexed", info.Root, language)
-		return
+		return fmt.Errorf("workspace '%s' language '%s' is already being indexed", info.Root, language)
 	}
 	m.indexing[indexKey] = true
 	m.indexingMu.Unlock()
@@ -407,7 +439,7 @@ func (m *Manager) indexWorkspaceLanguage(ctx context.Context, info *Info, langua
 		m.indexingMu.Unlock()
 	}()
 
-	log.Printf("🚀 Starting background indexing for workspace: %s", info.Root)
+	log.Printf("🚀 Starting indexing for workspace: %s", info.Root)
 	log.Printf("   Collection: %s", collectionName)
 	log.Printf("   Language: %s", language)
 	log.Printf("   Project type: %s", info.ProjectType)
@@ -421,9 +453,14 @@ func (m *Manager) indexWorkspaceLanguage(ctx context.Context, info *Info, langua
 
 	collectionClient, err := storage.NewQdrantClient(collectionConfig)
 	if err != nil {
-		log.Printf("❌ Failed to create collection client: %v", err)
-		return
+		return fmt.Errorf("failed to create collection client: %w", err)
 	}
+	// We should close the client, but LongTermMemory might need it?
+	// QdrantLongTermMemory takes *QdrantClient.
+	// If we close it here, LTM might fail if it uses it later?
+	// But LTM is used within this function scope mostly.
+	// Actually, NewQdrantLongTermMemory just stores the reference.
+	defer collectionClient.Close()
 
 	ltm := storage.NewQdrantLongTermMemory(collectionClient)
 
@@ -431,50 +468,228 @@ func (m *Manager) indexWorkspaceLanguage(ctx context.Context, info *Info, langua
 	analyzerManager := ragcode.NewAnalyzerManager()
 	analyzer := analyzerManager.CodeAnalyzerForProjectType(language)
 	if analyzer == nil {
-		log.Printf("⚠️ No code analyzer available for language '%s', skipping indexing", language)
-		return
+		return fmt.Errorf("no code analyzer available for language '%s'", language)
 	}
 
 	// Scan workspace once to determine relevant paths per language
 	scan, err := m.scanWorkspace(info)
 	if err != nil {
-		log.Printf("❌ Failed to scan workspace '%s': %v", info.Root, err)
-		return
+		return fmt.Errorf("failed to scan workspace '%s': %w", info.Root, err)
 	}
 
 	languageDirs := scan.LanguageDirs[strings.ToLower(language)]
 	if len(languageDirs) == 0 {
-		log.Printf("⚠️ No %s source files detected in workspace '%s'", language, info.Root)
-		return
+		return fmt.Errorf("no %s source files detected in workspace '%s'", language, info.Root)
 	}
 
-	// Create indexer
-	indexer := ragcode.NewIndexer(analyzer, m.llm, ltm)
-
-	// Index the language-specific directories
-	startTime := time.Now()
-	numChunks, err := indexer.IndexPaths(ctx, languageDirs, collectionName)
-	duration := time.Since(startTime)
-
+	// Load previous state
+	stateFile := filepath.Join(info.Root, ".ragcode", "state.json")
+	state, err := LoadState(stateFile)
 	if err != nil {
-		log.Printf("❌ Indexing failed for workspace '%s' language '%s': %v", info.Root, language, err)
-		log.Printf("   You can manually index with: ./bin/index-all -paths %s", info.Root)
-		return
+		log.Printf("⚠️  Failed to load workspace state: %v", err)
+		state = NewWorkspaceState()
 	}
 
-	log.Printf("✅ Workspace language indexed successfully in %v", duration)
-	log.Printf("   Workspace: %s", info.Root)
-	log.Printf("   Language: %s", language)
-	log.Printf("   Collection: %s", collectionName)
-	log.Printf("   Code chunks indexed: %d", numChunks)
+	// Identify changes
+	var filesToIndex []string
+	var filesToDelete []string
 
-	// Index markdown documentation files automatically using scan result
-	numDocs := m.indexMarkdownFiles(ctx, scan.DocFiles, collectionName, ltm)
-	if numDocs > 0 {
-		log.Printf("   Docs chunks indexed: %d", numDocs)
+	currentFiles := scan.LanguageFiles[strings.ToLower(language)]
+
+	// Add markdown files to the list of files to check if this is the primary language
+	// or if we handle them separately. For simplicity, let's handle docs as part of the language index
+	// but with distinct metadata.
+	// Actually, indexMarkdownFiles handles them separately in collection.
+	// Let's integrate them into the state tracking.
+	currentDocs := scan.DocFiles
+
+	// Check for added or modified files (Code)
+	for _, path := range currentFiles {
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+
+		fileState, exists := state.GetFileState(path)
+		if !exists || info.ModTime().After(fileState.ModTime) || info.Size() != fileState.Size {
+			filesToIndex = append(filesToIndex, path)
+			if exists {
+				filesToDelete = append(filesToDelete, path)
+			}
+		}
+
+		// Update state
+		state.UpdateFile(path, info)
+	}
+
+	// Check for added or modified files (Docs)
+	var docsToIndex []string
+	var docsToDelete []string
+
+	for _, path := range currentDocs {
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+
+		fileState, exists := state.GetFileState(path)
+		if !exists || info.ModTime().After(fileState.ModTime) || info.Size() != fileState.Size {
+			docsToIndex = append(docsToIndex, path)
+			if exists {
+				docsToDelete = append(docsToDelete, path)
+			}
+		}
+
+		// Update state
+		state.UpdateFile(path, info)
+	}
+
+	// Check for deleted files (both code and docs)
+	// We scan the state and check if files still exist in current scan
+	// But scan only has current files.
+	// Better: iterate state.Files and check if they exist on disk.
+	state.mu.RLock()
+	for path := range state.Files {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			// It's deleted. Determine if it was code or doc based on extension
+			ext := strings.ToLower(filepath.Ext(path))
+			if ext == ".md" {
+				docsToDelete = append(docsToDelete, path)
+			} else {
+				filesToDelete = append(filesToDelete, path)
+			}
+		}
+	}
+	state.mu.RUnlock()
+
+	// Process deletions (Code)
+	if len(filesToDelete) > 0 {
+		log.Printf("🗑️  Deleting %d modified/deleted code files from index...", len(filesToDelete))
+		for _, path := range filesToDelete {
+			if err := ltm.DeleteByMetadata(ctx, "file", path); err != nil {
+				log.Printf("⚠️  Failed to delete chunks for %s: %v", path, err)
+			}
+			state.RemoveFile(path)
+		}
+	}
+
+	// Process deletions (Docs)
+	if len(docsToDelete) > 0 {
+		log.Printf("🗑️  Deleting %d modified/deleted doc files from index...", len(docsToDelete))
+		for _, path := range docsToDelete {
+			if err := ltm.DeleteByMetadata(ctx, "file", path); err != nil {
+				log.Printf("⚠️  Failed to delete chunks for %s: %v", path, err)
+			}
+			state.RemoveFile(path)
+		}
+	}
+
+	// Process indexing (Code)
+	if len(filesToIndex) > 0 {
+		log.Printf("📝 Indexing %d new/modified code files...", len(filesToIndex))
+
+		indexer := ragcode.NewIndexer(analyzer, m.llm, ltm)
+
+		startTime := time.Now()
+		numChunks, err := indexer.IndexPaths(ctx, filesToIndex, collectionName)
+		duration := time.Since(startTime)
+
+		if err != nil {
+			return fmt.Errorf("indexing failed: %w", err)
+		}
+		log.Printf("✅ Indexed %d chunks in %v", numChunks, duration)
+	} else {
+		log.Printf("✨ No code changes detected for language '%s'", language)
+	}
+
+	// Process indexing (Docs)
+	if len(docsToIndex) > 0 {
+		log.Printf("📚 Indexing %d new/modified doc files...", len(docsToIndex))
+		// We use indexMarkdownFiles but only for the changed list
+		numDocs := m.indexMarkdownFiles(ctx, docsToIndex, collectionName, ltm)
+		if numDocs > 0 {
+			log.Printf("   Docs chunks indexed: %d", numDocs)
+		}
+	} else {
+		if len(currentDocs) > 0 {
+			log.Printf("✨ No documentation changes detected")
+		}
+	}
+
+	// Save state
+	if err := state.Save(stateFile); err != nil {
+		log.Printf("⚠️  Failed to save workspace state: %v", err)
 	}
 
 	m.recordFingerprint(info, language, scan)
+	return nil
+}
+
+// checkAndReindexIfNeeded checks if any files have changed and triggers incremental re-indexing if needed
+// This is called automatically when a tool accesses an existing workspace collection
+func (m *Manager) checkAndReindexIfNeeded(ctx context.Context, info *Info, language string, collectionName string) {
+	// Load workspace state
+	stateFile := filepath.Join(info.Root, ".ragcode", "state.json")
+	state, err := LoadState(stateFile)
+	if err != nil {
+		// If state doesn't exist, we can't check for changes
+		// This is normal for first-time indexing
+		return
+	}
+
+	// Quick scan to check if any files have changed
+	scan, err := m.scanWorkspace(info)
+	if err != nil {
+		log.Printf("⚠️  Auto-reindex check failed for workspace '%s': %v", info.Root, err)
+		return
+	}
+
+	currentFiles := scan.LanguageFiles[strings.ToLower(language)]
+	if len(currentFiles) == 0 {
+		return
+	}
+
+	// Check if any files have been modified, added, or deleted
+	hasChanges := false
+
+	// Check for modifications or additions
+	for _, path := range currentFiles {
+		fileInfo, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+
+		fileState, exists := state.GetFileState(path)
+		if !exists || fileInfo.ModTime().After(fileState.ModTime) || fileInfo.Size() != fileState.Size {
+			hasChanges = true
+			break
+		}
+	}
+
+	// Check for deletions (files in state but not in current scan)
+	if !hasChanges {
+		currentFileMap := make(map[string]bool)
+		for _, p := range currentFiles {
+			currentFileMap[p] = true
+		}
+
+		state.mu.RLock()
+		for path := range state.Files {
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				hasChanges = true
+				break
+			}
+		}
+		state.mu.RUnlock()
+	}
+
+	// If changes detected, trigger incremental re-indexing
+	if hasChanges {
+		log.Printf("🔄 Auto-detected file changes in workspace '%s' (language: %s), triggering incremental re-indexing...", info.Root, language)
+		if err := m.IndexLanguage(ctx, info, language, collectionName); err != nil {
+			log.Printf("⚠️  Auto-reindex failed: %v", err)
+		}
+	}
 }
 
 // indexMarkdownFiles indexes provided markdown files (already discovered during scan)
@@ -585,19 +800,70 @@ func (m *Manager) IsIndexing(workspaceID string) bool {
 // This is used by the index_workspace tool to manually trigger indexing
 func (m *Manager) StartIndexing(ctx context.Context, info *Info, language string) error {
 	collectionName := info.CollectionNameForLanguage(language)
-	indexKey := info.ID + "-" + language
-
-	// Check if already indexing
-	m.indexingMu.RLock()
-	if m.indexing[indexKey] {
-		m.indexingMu.RUnlock()
-		return fmt.Errorf("indexing already in progress for workspace %s language %s", info.Root, language)
-	}
-	m.indexingMu.RUnlock()
 
 	// Start background indexing
-	indexCtx := context.Background()
-	go m.indexWorkspaceLanguage(indexCtx, info, language, collectionName)
+	go func() {
+		if err := m.IndexLanguage(context.Background(), info, language, collectionName); err != nil {
+			log.Printf("❌ Background indexing failed: %v", err)
+		}
+	}()
 
 	return nil
+}
+
+// EnsureWorkspaceIndexed triggers indexing for all detected languages in the workspace
+func (m *Manager) EnsureWorkspaceIndexed(ctx context.Context, rootPath string) error {
+	info, err := m.detector.DetectFromPath(rootPath)
+	if err != nil {
+		return err
+	}
+	// ID is generated by detector
+	if m.config != nil && m.config.Workspace.CollectionPrefix != "" {
+		info.CollectionPrefix = m.config.Workspace.CollectionPrefix
+	}
+
+	var errs []string
+
+	// Helper to index language
+	indexLang := func(lang string) {
+		colName := info.CollectionNameForLanguage(lang)
+		if err := m.IndexLanguage(ctx, info, lang, colName); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", lang, err))
+		}
+	}
+
+	if len(info.Languages) == 0 {
+		lang := info.ProjectType
+		if lang != "" && lang != "unknown" {
+			indexLang(lang)
+		}
+	} else {
+		for _, lang := range info.Languages {
+			indexLang(lang)
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("indexing errors: %s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+// StartWatcher starts the file watcher for a workspace if not already running
+func (m *Manager) StartWatcher(root string) {
+	m.watchersMu.Lock()
+	defer m.watchersMu.Unlock()
+
+	if _, exists := m.watchers[root]; exists {
+		return
+	}
+
+	watcher, err := NewFileWatcher(root, m)
+	if err != nil {
+		log.Printf("⚠️ Failed to create file watcher for %s: %v", root, err)
+		return
+	}
+
+	m.watchers[root] = watcher
+	watcher.Start()
 }

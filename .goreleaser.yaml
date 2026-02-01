@@ -40,12 +40,38 @@ builds:
       - -X main.Date={{.Date}}
       - -X main.BuiltBy=goreleaser
 
+  - id: ragcode-installer
+    main: ./cmd/install
+    binary: ragcode-installer
+    
+    env:
+      - CGO_ENABLED=0
+    
+    goos:
+      - linux
+      - darwin
+      - windows
+    
+    goarch:
+      - amd64
+      - arm64
+    
+    ignore:
+      - goos: windows
+        goarch: arm64
+    
+    ldflags:
+      - -s -w
+      - -X main.Version={{.Version}}
+      - -X main.Commit={{.Commit}}
+      - -X main.Date={{.Date}}
+      - -X main.BuiltBy=goreleaser
+
 archives:
   - id: default
     format: tar.gz
     name_template: >-
       {{ .ProjectName }}_
-      {{- .Version }}_
       {{- .Os }}_
       {{- .Arch }}
     
@@ -102,16 +128,23 @@ release:
   header: |
     ## RagCode MCP Server v{{.Version}}
     
-    Semantic code navigation for Go codebases using RAG (Retrieval-Augmented Generation).
+    Semantic code navigation using RAG (Retrieval-Augmented Generation).
     
     ### Installation
     
-    **Quick install (Linux/macOS):**
+    **Linux (amd64):**
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/doITmagic/rag-code-mcp/main/install.sh | bash
+    curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz
+    ./ragcode-installer -ollama=docker -qdrant=docker
     ```
     
-    **Or download the binary for your platform below.**
+    **macOS (Apple Silicon):**
+    ```bash
+    curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_arm64.tar.gz | tar xz
+    ./ragcode-installer -ollama=docker -qdrant=docker
+    ```
+    
+    **Or download the archive for your platform below.**
   
   footer: |
     ### What's Next?
@@ -121,44 +154,6 @@ release:
     3. Start the server: `rag-code-mcp`
     
     **Full documentation:** https://github.com/doITmagic/rag-code-mcp
-
-# Docker images
-dockers:
-  - image_templates:
-      - "doitmagic/rag-code-mcp:{{ .Version }}-amd64"
-      - "doitmagic/rag-code-mcp:latest-amd64"
-    use: buildx
-    dockerfile: Dockerfile
-    build_flag_templates:
-      - "--platform=linux/amd64"
-      - "--label=org.opencontainers.image.created={{.Date}}"
-      - "--label=org.opencontainers.image.title={{.ProjectName}}"
-      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
-      - "--label=org.opencontainers.image.version={{.Version}}"
-  
-  - image_templates:
-      - "doitmagic/rag-code-mcp:{{ .Version }}-arm64"
-      - "doitmagic/rag-code-mcp:latest-arm64"
-    use: buildx
-    dockerfile: Dockerfile
-    build_flag_templates:
-      - "--platform=linux/arm64"
-      - "--label=org.opencontainers.image.created={{.Date}}"
-      - "--label=org.opencontainers.image.title={{.ProjectName}}"
-      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
-      - "--label=org.opencontainers.image.version={{.Version}}"
-    goarch: arm64
-
-docker_manifests:
-  - name_template: "doitmagic/rag-code-mcp:{{ .Version }}"
-    image_templates:
-      - "doitmagic/rag-code-mcp:{{ .Version }}-amd64"
-      - "doitmagic/rag-code-mcp:{{ .Version }}-arm64"
-  
-  - name_template: "doitmagic/rag-code-mcp:latest"
-    image_templates:
-      - "doitmagic/rag-code-mcp:latest-amd64"
-      - "doitmagic/rag-code-mcp:latest-arm64"
 
 # Homebrew tap (optional, can be enabled later)
 # brews:

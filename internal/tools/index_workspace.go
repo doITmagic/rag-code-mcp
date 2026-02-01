@@ -109,16 +109,11 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 	}); ok {
 		pointCount, err := checker.GetCollectionPointCount(ctx, collectionName)
 		if err == nil && pointCount > 0 {
-			// SCENARIO 3: Collection already indexed
-			return fmt.Sprintf("✅ Workspace '%s' is already indexed for language '%s'.\n"+
-				"Collection: %s\n"+
-				"Documents indexed: %d\n\n"+
-				"ℹ️ Incremental indexing for new files is not yet implemented.\n"+
-				"The collection already contains indexed code and can be searched using search_code.\n"+
-				"If you need to re-index from scratch, please delete the collection first.",
-				workspaceInfo.Root, language, collectionName, pointCount), nil
+			// SCENARIO 3: Collection already indexed - Trigger incremental update
+			log.Printf("🔄 Workspace '%s' is already indexed. Triggering incremental update...", workspaceInfo.Root)
+
+			// Continue to StartIndexing which now handles incremental updates
 		}
-		// If pointCount == 0 or error getting count, continue to start indexing
 	}
 
 	// SCENARIO 2: Start indexing (collection doesn't exist or is empty)

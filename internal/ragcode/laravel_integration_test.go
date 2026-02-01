@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/php/laravel"
 	"github.com/doITmagic/rag-code-mcp/internal/llm"
 	"github.com/doITmagic/rag-code-mcp/internal/memory"
+	"github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/php/laravel"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -103,6 +103,17 @@ func (m *mockMemoryStore) Clear(ctx context.Context) error {
 
 func (m *mockMemoryStore) Delete(ctx context.Context, id string) error {
 	delete(m.docs, id)
+	return nil
+}
+
+func (m *mockMemoryStore) DeleteByMetadata(ctx context.Context, key, value string) error {
+	for id, doc := range m.docs {
+		if val, ok := doc.Metadata[key]; ok {
+			if strVal, ok := val.(string); ok && strVal == value {
+				delete(m.docs, id)
+			}
+		}
+	}
 	return nil
 }
 

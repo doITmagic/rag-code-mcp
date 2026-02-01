@@ -14,11 +14,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/doITmagic/rag-code-mcp/internal/ragcode"
 	"github.com/doITmagic/rag-code-mcp/internal/config"
 	"github.com/doITmagic/rag-code-mcp/internal/llm"
 	"github.com/doITmagic/rag-code-mcp/internal/memory"
 	"github.com/doITmagic/rag-code-mcp/internal/storage"
+	"github.com/doITmagic/rag-code-mcp/internal/workspace"
 )
 
 func main() {
@@ -30,7 +30,6 @@ func main() {
 		dim        = flag.Int("dim", 768, "Vector dimension for collections (depends on model)")
 		timeoutSec = flag.Int("timeout", 300, "Indexing timeout in seconds")
 		configPath = flag.String("config", "config.yaml", "Path to config.yaml to read settings")
-		sourceCode = flag.String("code-source", "do-ai-code", "Source tag for code metadata")
 		sourceDocs = flag.String("docs-source", "docs", "Source tag for docs metadata")
 		recreate   = flag.Bool("recreate-collections", false, "If set, delete and recreate code/docs collections before indexing (DANGEROUS)")
 	)
@@ -86,6 +85,8 @@ func main() {
 	}
 	llmCfg.Provider = "ollama"
 
+	//fmt.Printf("ℹ️ config: %+v\n", llmCfg)
+
 	provider, err := llm.NewOllamaLLMProvider(llmCfg)
 	if err != nil {
 		log.Fatalf("ollama provider: %v", err)
@@ -118,41 +119,36 @@ func main() {
 		log.Fatalf("create code collection: %v", err)
 	}
 
-	ltmCode := storage.NewQdrantLongTermMemory(qclientCode)
-	var _ memory.LongTermMemory = ltmCode
+	// Create workspace manager
+	mgr := workspace.NewManager(qclientCode, provider, cfg)
 
-	mgr := ragcode.NewAnalyzerManager()
+	// Create workspace info manually
+	info := &workspace.Info{
+		ID:          fmt.Sprintf("cli-%s", codeCollection),
+		Root:        filepath.Clean(paths[0]), // Use first path as root for state tracking
+		ProjectType: "mixed",
+		Languages:   []string{"go", "php"}, // We could detect this, but for now hardcode supported langs
+	}
 
-	// Index files by language (Go and PHP)
-	fmt.Printf("🔎 Indexing %d path(s) into code collection '%s' (model=%s, dim=%d) ...\n", len(paths), codeCollection, llmCfg.OllamaEmbed, *dim)
-
-	totalIndexed := 0
+	// If multiple paths are provided, we might need a better strategy for Root.
+	// For now, assume paths[0] is the workspace root.
+	if len(paths) > 1 {
+		log.Printf("⚠️ Multiple paths provided. Using '%s' as workspace root for state tracking.", info.Root)
+	}
 
 	// Index Go files
-	goAnalyzer := mgr.CodeAnalyzerForProjectType("go")
-	if goAnalyzer != nil {
-		goIndexer := ragcode.NewIndexer(goAnalyzer, provider, ltmCode)
-		nGo, err := goIndexer.IndexPaths(ctx, paths, *sourceCode)
-		if err != nil {
-			log.Fatalf("Go code indexing failed after %d chunks: %v", nGo, err)
-		}
-		fmt.Printf("  ✓ Indexed %d Go code chunk(s)\n", nGo)
-		totalIndexed += nGo
+	fmt.Printf("🔎 Indexing Go files in '%s' (incremental)...\n", info.Root)
+	if err := mgr.IndexLanguage(ctx, info, "go", codeCollection); err != nil {
+		log.Printf("⚠️ Go indexing warning: %v", err)
 	}
 
 	// Index PHP files
-	phpAnalyzer := mgr.CodeAnalyzerForProjectType("php")
-	if phpAnalyzer != nil {
-		phpIndexer := ragcode.NewIndexer(phpAnalyzer, provider, ltmCode)
-		nPHP, err := phpIndexer.IndexPaths(ctx, paths, *sourceCode)
-		if err != nil {
-			log.Fatalf("PHP code indexing failed after %d chunks: %v", nPHP, err)
-		}
-		fmt.Printf("  ✓ Indexed %d PHP code chunk(s)\n", nPHP)
-		totalIndexed += nPHP
+	fmt.Printf("🔎 Indexing PHP files in '%s' (incremental)...\n", info.Root)
+	if err := mgr.IndexLanguage(ctx, info, "php", codeCollection); err != nil {
+		log.Printf("⚠️ PHP indexing warning: %v", err)
 	}
 
-	fmt.Printf("✅ Indexed %d total code chunk(s)\n", totalIndexed)
+	fmt.Println("✅ Code indexing completed.")
 
 	var ltmDocs memory.LongTermMemory
 	if docsCollection == "" {

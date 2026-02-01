@@ -9,7 +9,6 @@ barou/
 /cmd/agent-runner/agent-runner
 /rag-code-mcp
 test-*
-bin/
 
 # Test programs
 cmd/test-*/
@@ -52,3 +51,7 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
+
+# Scripts
+scripts/
+.ragcode/

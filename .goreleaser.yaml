@@ -1,0 +1,170 @@
+# GoReleaser configuration for CodeRAG MCP Server
+# See https://goreleaser.com for documentation
+
+version: 2
+
+project_name: coderag-mcp
+
+before:
+  hooks:
+    # Ensure dependencies are up to date
+    - go mod tidy
+    - go mod download
+
+builds:
+  - id: coderag-mcp
+    main: ./cmd/coderag-mcp
+    binary: coderag-mcp
+    
+    env:
+      - CGO_ENABLED=0
+    
+    goos:
+      - linux
+      - darwin
+      - windows
+    
+    goarch:
+      - amd64
+      - arm64
+    
+    # Ignore certain combinations
+    ignore:
+      - goos: windows
+        goarch: arm64
+    
+    ldflags:
+      - -s -w
+      - -X main.Version={{.Version}}
+      - -X main.Commit={{.Commit}}
+      - -X main.Date={{.Date}}
+      - -X main.BuiltBy=goreleaser
+
+archives:
+  - id: default
+    format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+    
+    # Use zip for Windows
+    format_overrides:
+      - goos: windows
+        format: zip
+    
+    files:
+      - LICENSE
+      - README.md
+      - config.yaml
+      - .env.example
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'
+      - Merge pull request
+      - Merge branch
+  groups:
+    - title: 'New Features'
+      regexp: "^.*feat[(\\w)]*:+.*$"
+      order: 0
+    - title: 'Bug Fixes'
+      regexp: "^.*fix[(\\w)]*:+.*$"
+      order: 1
+    - title: 'Performance Improvements'
+      regexp: "^.*perf[(\\w)]*:+.*$"
+      order: 2
+    - title: 'Other Changes'
+      order: 999
+
+release:
+  github:
+    owner: doITmagic
+    name: do-ai
+  
+  draft: false
+  prerelease: auto
+  
+  name_template: "{{.ProjectName}} v{{.Version}}"
+  
+  header: |
+    ## CodeRAG MCP Server v{{.Version}}
+    
+    Semantic code navigation for Go codebases using RAG (Retrieval-Augmented Generation).
+    
+    ### Installation
+    
+    **Quick install (Linux/macOS):**
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/doITmagic/do-ai/main/install.sh | bash
+    ```
+    
+    **Or download the binary for your platform below.**
+  
+  footer: |
+    ### What's Next?
+    
+    1. Install dependencies: Ollama and Qdrant
+    2. Configure your environment (see README.md)
+    3. Start the server: `coderag-mcp`
+    
+    **Full documentation:** https://github.com/doITmagic/coderag-mcp
+
+# Docker images
+dockers:
+  - image_templates:
+      - "doitmagic/coderag-mcp:{{ .Version }}-amd64"
+      - "doitmagic/coderag-mcp:latest-amd64"
+    use: buildx
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+  
+  - image_templates:
+      - "doitmagic/coderag-mcp:{{ .Version }}-arm64"
+      - "doitmagic/coderag-mcp:latest-arm64"
+    use: buildx
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+    goarch: arm64
+
+docker_manifests:
+  - name_template: "doitmagic/coderag-mcp:{{ .Version }}"
+    image_templates:
+      - "doitmagic/coderag-mcp:{{ .Version }}-amd64"
+      - "doitmagic/coderag-mcp:{{ .Version }}-arm64"
+  
+  - name_template: "doitmagic/coderag-mcp:latest"
+    image_templates:
+      - "doitmagic/coderag-mcp:latest-amd64"
+      - "doitmagic/coderag-mcp:latest-arm64"
+
+# Homebrew tap (optional, can be enabled later)
+# brews:
+#   - repository:
+#       owner: doITmagic
+#       name: homebrew-tap
+#     homepage: https://github.com/doITmagic/coderag-mcp
+#     description: Semantic code navigation for Go codebases using RAG
+#     license: MIT

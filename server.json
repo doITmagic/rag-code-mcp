@@ -1,0 +1,111 @@
+{
+  "name": "coderag",
+  "version": "1.0.0",
+  "description": "Semantic code navigation using RAG (Retrieval-Augmented Generation) with multi-language support (Go, PHP, Python, JavaScript)",
+  "homepage": "https://github.com/doITmagic/coderag-mcp",
+  "license": "MIT",
+  "runtime": "binary",
+  "command": "coderag-mcp",
+  "capabilities": {
+    "tools": true,
+    "resources": true,
+    "prompts": false,
+    "sampling": false
+  },
+  "dependencies": {
+    "ollama": {
+      "required": true,
+      "url": "https://ollama.ai",
+      "description": "Local LLM for embeddings and chat"
+    },
+    "qdrant": {
+      "required": true,
+      "url": "https://qdrant.tech",
+      "description": "Vector database for code indexing"
+    }
+  },
+  "tools": [
+    {
+      "name": "search_code",
+      "description": "Semantic search across indexed codebase"
+    },
+    {
+      "name": "hybrid_search",
+      "description": "Combined semantic and lexical search"
+    },
+    {
+      "name": "get_function_details",
+      "description": "Get detailed information about a function or method"
+    },
+    {
+      "name": "find_type_definition",
+      "description": "Find the definition of a struct or interface"
+    },
+    {
+      "name": "get_code_context",
+      "description": "Extract code context for specific line ranges"
+    },
+    {
+      "name": "list_package_exports",
+      "description": "List exported symbols from a package"
+    },
+    {
+      "name": "find_implementations",
+      "description": "Find implementations and usages of a symbol"
+    },
+    {
+      "name": "search_docs",
+      "description": "Search indexed documentation"
+    },
+    {
+      "name": "index_workspace",
+      "description": "Manually trigger indexing of a workspace (auto-indexing is enabled by default)"
+    }
+  ],
+  "resources": [
+    {
+      "name": "project-readme",
+      "description": "Project README file"
+    },
+    {
+      "name": "coderag-readme",
+      "description": "MCP CodeRAG guide"
+    },
+    {
+      "name": "config",
+      "description": "Server configuration file"
+    }
+  ],
+  "configuration": {
+    "env": {
+      "OLLAMA_BASE_URL": {
+        "description": "Ollama server URL",
+        "default": "http://localhost:11434"
+      },
+      "OLLAMA_MODEL": {
+        "description": "Ollama chat model",
+        "default": "phi3:medium"
+      },
+      "OLLAMA_EMBED": {
+        "description": "Ollama embedding model",
+        "default": "nomic-embed-text"
+      },
+      "QDRANT_URL": {
+        "description": "Qdrant server URL",
+        "default": "http://localhost:6333"
+      },
+      "QDRANT_COLLECTION": {
+        "description": "Qdrant collection name for code index",
+        "default": "do-ai-code"
+      },
+      "MCP_LOG_LEVEL": {
+        "description": "Logging level (debug, info, warn, error)",
+        "default": "info"
+      },
+      "MCP_LOG_FILE": {
+        "description": "Path to log file for debugging (optional)",
+        "default": ""
+      }
+    }
+  }
+}

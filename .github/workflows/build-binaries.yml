@@ -1,0 +1,64 @@
+name: Build and Commit Binaries
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'cmd/**'
+      - 'internal/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'  # Use stable version compatible with 1.25.1
+          cache: true
+          
+      - name: Build binaries
+        run: |
+          echo "Building coderag-mcp..."
+          go build -o bin/coderag-mcp ./cmd/coderag-mcp
+          
+          echo "Building index-all..."
+          go build -o bin/index-all ./cmd/index-all
+          
+          echo "Building install..."
+          go build -o bin/install ./cmd/install
+          
+          chmod +x bin/*
+          
+      - name: Check if binaries changed
+        id: check_changes
+        run: |
+          git add -f bin/
+          if git diff --cached --quiet; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Commit and push binaries
+        if: steps.check_changes.outputs.changed == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add -f bin/
+          git commit -m "chore: auto-build binaries [skip ci]"
+          git push

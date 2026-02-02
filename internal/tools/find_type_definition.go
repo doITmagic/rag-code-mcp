@@ -63,11 +63,8 @@ func (t *FindTypeDefinitionTool) Execute(ctx context.Context, args map[string]in
 		outputFormat = strings.ToLower(of)
 	}
 
-	// file_path is required for workspace detection
+	// file_path is optional but recommended
 	filePath := extractFilePathFromParams(args)
-	if filePath == "" {
-		return "", fmt.Errorf("file_path parameter is required for rag_find_type_definition. Please provide a file path from your workspace")
-	}
 
 	// Try workspace detection if workspace manager is available
 	var searchMemory memory.LongTermMemory
@@ -80,7 +77,10 @@ func (t *FindTypeDefinitionTool) Execute(ctx context.Context, args map[string]in
 			workspacePath = workspaceInfo.Root
 
 			// Detect language from file path or use first detected language
-			language := inferLanguageFromPath(filePath)
+			language := ""
+			if filePath != "" {
+				language = inferLanguageFromPath(filePath)
+			}
 			if language == "" && len(workspaceInfo.Languages) > 0 {
 				language = workspaceInfo.Languages[0]
 			}
@@ -320,7 +320,11 @@ processResults:
 
 	// Markdown output using Go TypeInfo metadata when available
 	var response strings.Builder
-	response.WriteString(fmt.Sprintf("# %s\n\n", chunk.Name))
+	if workspacePath != "" {
+		response.WriteString(fmt.Sprintf("# %s (Workspace: %s)\n\n", chunk.Name, workspacePath))
+	} else {
+		response.WriteString(fmt.Sprintf("# %s\n\n", chunk.Name))
+	}
 	response.WriteString(fmt.Sprintf("**Kind:** %s\n", chunk.Type))
 	response.WriteString(fmt.Sprintf("**Package:** %s\n", chunk.Package))
 

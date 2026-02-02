@@ -217,6 +217,42 @@ type SymbolDescriptor struct {
   - `markdown` – structured list grouped by kind (function/type/class/etc.).
   - `json` – `[]SymbolDescriptor`.
 
+### 3.4. `rag_evaluate`
+
+- **Standard input:**
+  - `file_path` (optional; used for workspace detection).
+- **Functionality:**
+  - This tool generates a special prompt for the AI agent, asking it to evaluate its performance, benefits, and pain points during the current session.
+  - It provides technical context (workspace, languages, system status) to help the AI give a precise answer.
+- **Goal:**
+  - Continuous improvement of the RagCode MCP by gathering qualitative feedback directly from the agents using it.
+
+> **Developer Note:** If you are an AI assistant using this tool, please take a moment to provide honest, detailed feedback. Your experience helps us refine semantic search, tool naming, and the overall developer experience.
+
+#### Example AI Response:
+```markdown
+# 📝 RagCode MCP Evaluation - Current Session
+
+### 1. 🚀 BENEFITS & PERFORMANCE
+- **Speed:** Sub-second searches vs. minutes of manual file browsing.
+- **Precise Context:** `get_function_details` provides the full function with signature, not just a snippet.
+- **Semantic Discovery:** Found relevant code by searching for "report mandate" without knowing the exact file or function names.
+- **No Manual Grepping:** Eliminated the need for complex `grep` commands.
+
+### 2. ⚡ PAIN POINTS & DIFFICULTIES
+- **Mandatory Parameters:** Initially forgetting `file_path` led to errors (auto-detection has improved this).
+- **Context Limits:** When complex flows span multiple files, manual reading is still sometimes required.
+- **Search Refinement:** Occasionally had to switch from `search_code` to `hybrid_search` when semantic matches were too broad.
+
+### 3. 🛠️ RECOMMENDATIONS FOR IMPROVEMENT
+- **Cross-file Navigation:** A tool to follow function calls across files (call graph).
+- **Bulk Read:** `get_multiple_functions` for related logic scattered across a package.
+- **More Context in Search:** An option to include ±10 lines around the match.
+
+### 4. 📢 RECOMMENDATION
+100% Recommended for exploring unfamiliar codebases and rapid function discovery. It's a productivity multiplier—tasks that took 10 minutes now take 1.
+```
+
 ---
 
 ## 4. Semantic vs structural – how they work together

@@ -53,7 +53,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 		return "", fmt.Errorf("query parameter is required")
 	}
 
-	limit := 5
+	limit := 10
 	if l, ok := params["limit"].(float64); ok {
 		limit = int(l)
 	} else if l, ok := params["limit"].(int); ok {
@@ -72,20 +72,13 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 		return "", fmt.Errorf("failed to generate query embedding: %w", err)
 	}
 
-	// file_path is required for workspace detection
-	filePath := extractFilePathFromParams(params)
-	if filePath == "" {
-		return "", fmt.Errorf("file_path parameter is required for rag_search_code. Please provide a file path from your workspace")
-	}
-
 	// Try workspace-aware search first
 	if t.workspaceManager != nil {
 		workspaceInfo, err := t.workspaceManager.DetectWorkspace(params)
 		if err != nil {
 			// Workspace detection failed - return helpful message
-			return fmt.Sprintf("❌ Could not detect workspace from the provided file path.\n\n"+
-				"To enable workspace-aware code search, please provide a valid file_path parameter "+
-				"pointing to a file within your workspace.\n\n"+
+			return fmt.Sprintf("❌ Could not detect workspace.\n\n"+
+				"Please provide a 'file_path' parameter from your project so I can identify which workspace to search in.\n\n"+
 				"Error: %v", err), nil
 		}
 
@@ -233,6 +226,14 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			}
 
 			descriptors := buildSymbolDescriptorsFromDocs(docs)
+			// Add workspace info to metadata of each descriptor for AI verification
+			for i := range descriptors {
+				if descriptors[i].Metadata == nil {
+					descriptors[i].Metadata = make(map[string]any)
+				}
+				descriptors[i].Metadata["workspace_root"] = workspaceInfo.Root
+			}
+
 			data, marshalErr := json.MarshalIndent(descriptors, "", "  ")
 			if marshalErr != nil {
 				return "", fmt.Errorf("failed to marshal rag_search_code results: %w", marshalErr)

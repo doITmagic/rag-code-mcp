@@ -23,7 +23,7 @@
 
 RagCode is a **Model Context Protocol (MCP) server** that instantly makes your project **AI-ready**. It enables AI assistants like **GitHub Copilot**, **Cursor**, **Windsurf**, and **Claude** to understand your entire codebase through **semantic vector search**, bridging the gap between your code and Large Language Models (LLMs).
 
-Built with the official [Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk), RagCode provides **9 powerful tools** to index, search, and analyze code, making it the ultimate solution for **AI-ready software development**.
+Built with the official [Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk), RagCode provides **10 powerful tools** to index, search, and analyze code, making it the ultimate solution for **AI-ready software development**.
 
 ## 🔒 Privacy-First: 100% Local AI
 
@@ -36,6 +36,7 @@ Built with the official [Model Context Protocol Go SDK](https://github.com/model
 - ✅ **Complete Privacy** - Your proprietary code stays private and secure
 - ✅ **Offline Capable** - Works without internet connection (after initial model download)
 - ✅ **Full Control** - You own the data, models, and infrastructure
+- ✅ **Evaluation** - Request AI self-evaluation on performance and quality. **Use to share feedback.**
 
 **Perfect for:** Enterprise codebases, proprietary projects, security-conscious teams, and developers who value privacy.
 
@@ -110,7 +111,7 @@ Without RagCode, AI assistants must:
 
 ## ✨ Core Features & Capabilities
 
-### 🔧 9 Powerful MCP Tools for AI Code Assistants
+### 🔧 10 Powerful MCP Tools for AI Code Assistants
 
 1. **`rag_search_code`** - **USE FIRST** - Semantic search by MEANING. Returns complete source + file:line. Better than rag_hybrid_search for exploration. **Go, PHP, Python, HTML.**
 2. **`rag_hybrid_search`** - Keyword + semantic for **EXACT matches** only. Returns code + file:line + metadata. Use when rag_search_code misses exact terms. **Go, PHP, Python, HTML.**
@@ -121,6 +122,7 @@ Without RagCode, AI assistants must:
 7. **`rag_search_docs`** - Doc snippets with file paths. **Markdown only. Not for code** - use rag_search_code.
 8. **`rag_get_code_context`** - Code snippet with configurable context lines. **Any text file.**
 9. **`rag_index_workspace`** - Reindex codebase. **USUALLY AUTOMATIC.** Call after git pull/branch switch. **Go, PHP, Python, HTML.**
+10. **`rag_evaluate`** - Request AI self-evaluation on performance and quality. **Use to share feedback.**
 
 ### 🌐 Multi-Language Code Intelligence
 
@@ -385,6 +387,7 @@ See [QUICKSTART.md](./QUICKSTART.md) for detailed VS Code setup and troubleshoot
 7. **`rag_search_docs`** – Doc snippets with file paths. **Markdown only. Not for code.**
 8. **`rag_get_code_context`** – Code snippet with configurable context lines. **Any text file.**
 9. **`rag_index_workspace`** – Reindex codebase. **USUALLY AUTOMATIC.** Call after git pull/branch switch. **Go, PHP, Python, HTML.**
+10. **`rag_evaluate`** – Request AI self-evaluation on performance and quality. **Use to share feedback.**
 
 **All tools require a `file_path` parameter** so that RagCode can determine the correct workspace.
 
@@ -1175,7 +1178,7 @@ internal/
 │   ├── README.md          # Workspace documentation
 │   └── *_test.go          # Comprehensive test suite (manager_multilang_test.go, etc.)
 │
-├── tools/                 # MCP tool implementations (9 tools)
+├── tools/                 # MCP tool implementations (10 tools)
 │   ├── search_local_index.go
 │   ├── hybrid_search.go
 │   ├── get_function_details.go
@@ -1185,6 +1188,7 @@ internal/
 │   ├── find_implementations.go
 │   ├── search_docs.go
 │   ├── index_workspace.go    # Manual indexing tool
+│   ├── evaluate_ragcode.go   # AI self-evaluation tool
 │   ├── workspace_helpers.go  # Helper functions for tools
 │   ├── utils.go
 │   └── *_test.go             # Tool tests
@@ -1773,7 +1777,7 @@ For advanced users (not recommended for typical use):
 - Concurrent multi-workspace indexing
 - Comprehensive test suite (15+ integration tests)
 
-**MCP Tools:** ✅ 8 tools fully implemented
+**MCP Tools:** ✅ 10 tools fully implemented
 - All tools support multi-workspace and multi-language queries
 - Workspace-aware collection selection
 

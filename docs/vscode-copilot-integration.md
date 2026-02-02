@@ -162,6 +162,7 @@ In the MCP Servers view, expand the `ragcode` server to see available tools:
 - `rag_search_docs`
 - `rag_get_code_context`
 - `rag_index_workspace`
+- `rag_evaluate`
 
 ---
 
@@ -217,6 +218,19 @@ You can explicitly reference RagCode tools using the `#` symbol:
 ```
 #ragcode list all exports from the auth package
 ```
+
+### Available Tools
+
+1. **`rag_search_code`** – **USE FIRST** – Semantic search by MEANING. Returns complete source + file:line. Better than rag_hybrid_search. **Go, PHP, Python, HTML.**
+2. **`rag_hybrid_search`** – Keyword + semantic for **EXACT matches** only. Use when rag_search_code misses exact terms. **Go, PHP, Python, HTML.**
+3. **`rag_get_function_details`** – **COMPLETE** function source: signature, params, return types, body. **Go, PHP, Python.**
+4. **`rag_find_type_definition`** – Complete type source with fields, methods, inheritance. **Go, PHP, Python.**
+5. **`rag_find_implementations`** – All callers/usages with code snippets + file:line. **Use before refactoring.** **Go, PHP, Python.**
+6. **`rag_list_package_exports`** – Structured list: symbol names, types, signatures. **Go, PHP, Python.**
+7. **`rag_search_docs`** – Doc snippets with file paths. **Markdown only. Not for code.**
+8. **`rag_get_code_context`** – Code snippet with configurable context lines. **Any text file.**
+9. **`rag_index_workspace`** – Reindex codebase. **USUALLY AUTOMATIC.** Call after git pull/branch switch. **Go, PHP, Python, HTML.**
+10. **`rag_evaluate`** – Request AI self-evaluation on performance and quality. **Use to share feedback.**
 
 ### Example Workflow
 

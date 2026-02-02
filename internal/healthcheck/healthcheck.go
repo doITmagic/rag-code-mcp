@@ -100,6 +100,11 @@ func CheckOllamaWithModels(baseURL string, requiredModels []string) CheckResult 
 			result.Message = fmt.Sprintf("Missing models: %s", strings.Join(missing, ", "))
 			return result
 		}
+
+		// Success: include verified models in message
+		result.Status = "ok"
+		result.Message = fmt.Sprintf("Connected to Ollama at %s (Verified: %s)", baseURL, strings.Join(requiredModels, ", "))
+		return result
 	}
 
 	result.Status = "ok"

@@ -557,25 +557,27 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Run health check on startup (non-fatal)
-	logger.Info("Checking dependencies...")
-	models := []string{cfg.LLM.OllamaModel, cfg.LLM.OllamaEmbed}
-	results := healthcheck.CheckAllWithModels(cfg.LLM.OllamaBaseURL, cfg.Storage.VectorDB.URL, models)
+	/*
+		// Run health check on startup (non-fatal)
+		logger.Info("Checking dependencies...")
+		models := []string{cfg.LLM.OllamaModel, cfg.LLM.OllamaEmbed}
+		results := healthcheck.CheckAllWithModels(cfg.LLM.OllamaBaseURL, cfg.Storage.VectorDB.URL, models)
 
-	hasErrors := false
-	for _, result := range results {
-		if result.Status == "ok" {
-			logger.Info("✓ %s: %s", result.Service, result.Message)
-		} else {
-			logger.Error("✗ %s: %s", result.Service, result.Message)
-			hasErrors = true
+		hasErrors := false
+		for _, result := range results {
+			if result.Status == "ok" {
+				logger.Info("✓ %s: %s", result.Service, result.Message)
+			} else {
+				logger.Error("✗ %s: %s", result.Service, result.Message)
+				hasErrors = true
+			}
 		}
-	}
 
-	if hasErrors {
-		fmt.Fprintln(os.Stderr, healthcheck.GetRemediation(results))
-		log.Fatal("Dependency check failed. Please fix the issues above and try again.")
-	}
+		if hasErrors {
+			fmt.Fprintln(os.Stderr, healthcheck.GetRemediation(results))
+			logger.Warn("Dependency check failed, but continuing server startup. Some features may be unavailable.")
+		}
+	*/
 
 	embeddingModel := "mxbai-embed-large"
 	if cfg.LLM.OllamaEmbed != "" {
@@ -650,6 +652,7 @@ func main() {
 	registerSearchCodeToolTyped(server, searchTool, cfg)
 
 	// Other tools still use the generic MCPTool handler
+	logger.Info("Registering tools...")
 	registerAgentTool(server, getFunctionTool, cfg)
 	registerAgentTool(server, findTypeTool, cfg)
 	registerAgentTool(server, getContextTool, cfg)
@@ -659,6 +662,7 @@ func main() {
 	registerAgentTool(server, hybridTool, cfg)
 	registerAgentTool(server, indexWorkspaceTool, cfg)
 	registerAgentTool(server, evaluateTool, cfg)
+	logger.Info("All tools registered successfully")
 
 	if err := registerFileResources(server); err != nil {
 		log.Fatalf("Failed to register resources: %v", err)
@@ -672,9 +676,17 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil {
+	logger.Info("Entering MCP server run loop (stdio transport)...")
+	err = server.Run(ctx, &mcp.StdioTransport{})
+	if err != nil {
+		if ctx.Err() != nil {
+			logger.Warn("Server terminated due to context cancellation/signal: %v", ctx.Err())
+		} else {
+			logger.Error("Server terminated with error: %v", err)
+		}
 		log.Fatalf("Server terminated: %v", err)
 	}
+	logger.Info("Server exited cleanly")
 }
 
 // registerSearchCodeToolTyped registers the rag_search_code tool using the typed
@@ -919,15 +931,15 @@ func getToolSchema(toolName string) map[string]interface{} {
 			"properties": map[string]interface{}{
 				"query": map[string]interface{}{
 					"type":        "string",
-					"description": "The search query to find relevant code. MANDATORY: Use this as your first step to understand unfamiliar code or find logic across the project.",
+					"description": "The search query to find relevant code. Use this as your first step to understand unfamiliar code or find logic across the project.",
 				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "MANDATORY: The absolute path of the current file you are editing (or any file in the project). This is required to identify the correct project/workspace to search in.",
+					"description": "RECOMMENDED: The absolute path of the current file you are editing (or any file in the project). This helps to identify the correct project/workspace to search in.",
 				},
 				"limit": map[string]interface{}{
 					"type":        "number",
-					"description": "Maximum number of results to return (default: 5)",
+					"description": "Maximum number of results to return (default: 10)",
 				},
 			},
 			"required": []string{"query"},
@@ -939,18 +951,18 @@ func getToolSchema(toolName string) map[string]interface{} {
 			"properties": map[string]interface{}{
 				"function_name": map[string]interface{}{
 					"type":        "string",
-					"description": "The name of the function or method to look up. MANDATORY: Use this to get the ACTUAL source code instead of guessing its implementation.",
+					"description": "The name of the function or method to look up. Use this to get the ACTUAL source code instead of guessing its implementation.",
 				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "MANDATORY: The absolute path of the current file you are editing. Required to identify the correct project/workspace context.",
+					"description": "RECOMMENDED: The absolute path of the current file you are editing. Helps to identify the correct project/workspace context.",
 				},
 				"package": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional: filter by package path (e.g., 'internal/agents')",
 				},
 			},
-			"required": []string{"function_name", "file_path"},
+			"required": []string{"function_name"},
 		}
 
 	case "rag_find_type_definition":
@@ -963,14 +975,14 @@ func getToolSchema(toolName string) map[string]interface{} {
 				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "MANDATORY: The absolute path of the current file you are editing. Required to identify the correct project/workspace context.",
+					"description": "RECOMMENDED: The absolute path of the current file you are editing. Helps to identify the correct project/workspace context.",
 				},
 				"package": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional: filter by package path (e.g., 'internal/ragcode')",
 				},
 			},
-			"required": []string{"type_name", "file_path"},
+			"required": []string{"type_name"},
 		}
 
 	case "rag_get_code_context":
@@ -979,7 +991,7 @@ func getToolSchema(toolName string) map[string]interface{} {
 			"properties": map[string]interface{}{
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Path to the source file (relative or absolute)",
+					"description": "MANDATORY: Path to the source file (relative or absolute)",
 				},
 				"start_line": map[string]interface{}{
 					"type":        "number",
@@ -1007,14 +1019,14 @@ func getToolSchema(toolName string) map[string]interface{} {
 				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "MANDATORY: The absolute path of the current file you are editing. Required to identify the correct project/workspace context.",
+					"description": "RECOMMENDED: The absolute path of the current file you are editing. Helps to identify the correct project/workspace context.",
 				},
 				"symbol_type": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional: filter by symbol type (function, method, type, const, var)",
 				},
 			},
-			"required": []string{"package", "file_path"},
+			"required": []string{"package"},
 		}
 
 	case "rag_find_implementations":
@@ -1027,14 +1039,14 @@ func getToolSchema(toolName string) map[string]interface{} {
 				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "MANDATORY: The absolute path of the current file you are editing. Required to identify the correct project/workspace context.",
+					"description": "RECOMMENDED: The absolute path of the current file you are editing. Helps to identify the correct project/workspace context.",
 				},
 				"package": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional: filter results by package path",
 				},
 			},
-			"required": []string{"symbol_name", "file_path"},
+			"required": []string{"symbol_name"},
 		}
 
 	case "rag_search_docs":
@@ -1047,14 +1059,14 @@ func getToolSchema(toolName string) map[string]interface{} {
 				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "MANDATORY: The absolute path of the current file you are editing. Required to identify the correct project/workspace context.",
+					"description": "RECOMMENDED: The absolute path of the current file you are editing. Helps to identify the correct project/workspace context.",
 				},
 				"limit": map[string]interface{}{
 					"type":        "number",
-					"description": "Maximum number of results to return (default: 5)",
+					"description": "Maximum number of results to return (default: 10)",
 				},
 			},
-			"required": []string{"query", "file_path"},
+			"required": []string{"query"},
 		}
 
 	case "rag_index_workspace":
@@ -1091,14 +1103,14 @@ func getToolSchema(toolName string) map[string]interface{} {
 				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "MANDATORY: The absolute path of the current file you are editing. Required to identify the correct project/workspace context.",
+					"description": "RECOMMENDED: The absolute path of the current file you are editing. Helps to identify the correct project/workspace context.",
 				},
 				"limit": map[string]interface{}{
 					"type":        "number",
-					"description": "Maximum number of results to return (default: 5)",
+					"description": "Maximum number of results to return (default: 10)",
 				},
 			},
-			"required": []string{"query", "file_path"},
+			"required": []string{"query"},
 		}
 
 	case "rag_evaluate":
@@ -1107,10 +1119,10 @@ func getToolSchema(toolName string) map[string]interface{} {
 			"properties": map[string]interface{}{
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "MANDATORY: The absolute path of the current file you are editing. Required to identify the correct project/workspace context.",
+					"description": "RECOMMENDED: The absolute path of the current file you are editing. Helps to identify the correct project/workspace context.",
 				},
 			},
-			"required": []string{"file_path"},
+			"required": []string{},
 		}
 
 	default:

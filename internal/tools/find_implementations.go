@@ -53,11 +53,8 @@ func (t *FindImplementationsTool) Execute(ctx context.Context, args map[string]i
 		packagePath = pkg
 	}
 
-	// file_path is required for workspace detection
+	// file_path is optional but recommended
 	filePath := extractFilePathFromParams(args)
-	if filePath == "" {
-		return "", fmt.Errorf("file_path parameter is required for rag_find_implementations. Please provide a file path from your workspace")
-	}
 
 	// Try workspace detection if workspace manager is available
 	var searchMemory memory.LongTermMemory
@@ -70,7 +67,10 @@ func (t *FindImplementationsTool) Execute(ctx context.Context, args map[string]i
 			workspacePath = workspaceInfo.Root
 
 			// Detect language from file path or use first detected language
-			language := inferLanguageFromPath(filePath)
+			language := ""
+			if filePath != "" {
+				language = inferLanguageFromPath(filePath)
+			}
 			if language == "" && len(workspaceInfo.Languages) > 0 {
 				language = workspaceInfo.Languages[0]
 			}

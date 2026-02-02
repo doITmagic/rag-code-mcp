@@ -63,11 +63,8 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 		outputFormat = strings.ToLower(of)
 	}
 
-	// file_path is required for workspace detection
+	// file_path is optional but recommended
 	filePath := extractFilePathFromParams(args)
-	if filePath == "" {
-		return "", fmt.Errorf("file_path parameter is required for rag_list_package_exports. Please provide a file path from your workspace")
-	}
 
 	// Try workspace detection if workspace manager is available
 	var searchMemory memory.LongTermMemory
@@ -80,7 +77,10 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 			workspaceInfo = wi
 
 			// Detect language from file path or use first detected language
-			language := inferLanguageFromPath(filePath)
+			language := ""
+			if filePath != "" {
+				language = inferLanguageFromPath(filePath)
+			}
 			if language == "" && len(wi.Languages) > 0 {
 				language = wi.Languages[0]
 			}

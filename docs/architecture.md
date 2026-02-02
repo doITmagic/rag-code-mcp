@@ -56,7 +56,7 @@ internal/
 │   ├── README.md          # Workspace documentation
 │   └── *_test.go          # Comprehensive test suite (manager_multilang_test.go, etc.)
 │
-├── tools/                 # MCP tool implementations (9 tools)
+├── tools/                 # MCP tool implementations (10 tools)
 │   ├── search_local_index.go
 │   ├── hybrid_search.go
 │   ├── rag_search_local_index.go
@@ -68,6 +68,7 @@ internal/
 │   ├── rag_find_implementations.go
 │   ├── rag_search_docs.go
 │   ├── rag_index_workspace.go    # Manual indexing tool
+│   ├── evaluate_ragcode.go       # AI self-evaluation tool
 │   ├── workspace_helpers.go  # Helper functions for tools
 │   ├── utils.go
 │   └── *_test.go             # Tool tests
@@ -414,7 +415,7 @@ paths → analyzer.AnalyzePaths() → []CodeChunk → embeddings → Qdrant
 - Vector similarity search
 - Filtering and text search integration
 
-### 8. Tools: 8 MCP Tools (`internal/tools`)
+### 8. Tools: 10 MCP Tools (`internal/tools`)
 
 **Purpose:** Implements semantic code navigation and search tools for IDE integration.
 
@@ -427,6 +428,8 @@ paths → analyzer.AnalyzePaths() → []CodeChunk → embeddings → Qdrant
 6. `rag_list_package_exports.go` - List exported symbols
 7. `rag_find_implementations.go` - Find interface implementations
 8. `rag_search_docs.go` - Search markdown documentation
+9. `rag_index_workspace.go` - Manually trigger indexing
+10. `evaluate_ragcode.go` - AI performance evaluation
 
 **All tools support:**
 - Workspace-specific queries
@@ -656,7 +659,7 @@ For advanced users (not recommended for typical use):
 - Concurrent multi-workspace indexing
 - Comprehensive test suite (15+ integration tests)
 
-**MCP Tools:** ✅ 8 tools fully implemented
+**MCP Tools:** ✅ 10 tools fully implemented
 - All tools support multi-workspace and multi-language queries
 - Workspace-aware collection selection
 

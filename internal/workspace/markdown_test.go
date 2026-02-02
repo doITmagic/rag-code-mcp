@@ -27,8 +27,8 @@ func (m *MockLLMProvider) GenerateStream(ctx context.Context, prompt string, opt
 }
 
 func (m *MockLLMProvider) Embed(ctx context.Context, text string) ([]float64, error) {
-	// Return 768-dim zero vector
-	return make([]float64, 768), nil
+	// Return 1024-dim zero vector
+	return make([]float64, 1024), nil
 }
 
 func (m *MockLLMProvider) GetEmbeddingDimension() uint64 {

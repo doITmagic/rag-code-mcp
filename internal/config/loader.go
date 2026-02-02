@@ -70,7 +70,7 @@ func DefaultConfig() *Config {
 		LLM: LLMConfig{
 			Provider:         "ollama",
 			OllamaBaseURL:    "http://localhost:11434",
-			OllamaModel:      "llama3",
+			OllamaModel:      "phi3:medium",
 			OllamaEmbed:      "mxbai-embed-large",
 			LlamafileBaseURL: "http://localhost:8080",
 			Temperature:      0.7,
@@ -79,7 +79,7 @@ func DefaultConfig() *Config {
 			MaxRetries:       3,
 			// Legacy fields for backward compatibility
 			BaseURL:    "http://localhost:11434",
-			Model:      "llama3",
+			Model:      "phi3:medium",
 			EmbedModel: "mxbai-embed-large",
 		},
 		Memory: MemoryConfig{

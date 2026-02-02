@@ -575,7 +575,7 @@ func main() {
 		log.Fatal("Dependency check failed. Please fix the issues above and try again.")
 	}
 
-	embeddingModel := "nomic-embed-text"
+	embeddingModel := "mxbai-embed-large"
 	if cfg.LLM.OllamaEmbed != "" {
 		embeddingModel = cfg.LLM.OllamaEmbed
 	}
@@ -1160,7 +1160,7 @@ SECURITY OPTIONS (Configurable in IDE MCP settings):
 ENVIRONMENT VARIABLES:
     OLLAMA_BASE_URL              Ollama server URL (default: http://localhost:11434)
     OLLAMA_MODEL                 Chat model name (default: phi3:medium)
-    OLLAMA_EMBED                 Embedding model name (default: nomic-embed-text)
+    OLLAMA_EMBED                 Embedding model name (default: mxbai-embed-large)
     QDRANT_URL                   Qdrant server URL (default: http://localhost:6333)
     QDRANT_COLLECTION            Collection name for code index (legacy mode only)
     QDRANT_API_KEY               Qdrant API key (optional)

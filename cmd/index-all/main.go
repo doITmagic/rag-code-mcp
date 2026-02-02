@@ -27,7 +27,7 @@ func main() {
 		model      = flag.String("model", "", "Embedding model id (overrides config; empty = use config)")
 		codeColl   = flag.String("code-collection", "", "Qdrant collection name for code (default: rag_code.collection)")
 		docsColl   = flag.String("docs-collection", "", "Qdrant collection name for docs (default: docs.collection)")
-		dim        = flag.Int("dim", 768, "Vector dimension for collections (depends on model)")
+		dim        = flag.Int("dim", 1024, "Vector dimension for collections (depends on model)")
 		timeoutSec = flag.Int("timeout", 300, "Indexing timeout in seconds")
 		configPath = flag.String("config", "config.yaml", "Path to config.yaml to read settings")
 		sourceDocs = flag.String("docs-source", "docs", "Source tag for docs metadata")

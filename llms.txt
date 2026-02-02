@@ -81,7 +81,7 @@ Config file: `~/.local/share/ragcode/config.yaml`
 llm:
   provider: "ollama"
   model: "phi3:medium"
-  embed_model: "nomic-embed-text"
+  embed_model: "mxbai-embed-large"
 
 storage:
   vector_db:

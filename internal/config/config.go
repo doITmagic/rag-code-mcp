@@ -48,7 +48,7 @@ type LLMConfig struct {
 	// Ollama settings
 	OllamaBaseURL string `yaml:"ollama_base_url"` // Default: http://localhost:11434
 	OllamaModel   string `yaml:"ollama_model"`    // e.g., phi3:medium, granite3.1-dense:8b
-	OllamaEmbed   string `yaml:"ollama_embed"`    // e.g., nomic-embed-text
+	OllamaEmbed   string `yaml:"ollama_embed"`    // e.g., mxbai-embed-large
 
 	// Llamafile settings (local GGUF models via llama.cpp server)
 	LlamafileBaseURL string `yaml:"llamafile_base_url"` // Default: http://localhost:8080

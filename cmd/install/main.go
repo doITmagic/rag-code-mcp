@@ -71,6 +71,8 @@ func installRuntimeBinaries() {
 		fail(fmt.Sprintf("Could not create install dir %s: %v", binDir, err))
 	}
 
+	stopRunningBinaries()
+
 	binaries := []struct {
 		name string
 		pkg  string
@@ -158,6 +160,19 @@ func log(msg string)     { fmt.Printf("%s==> %s%s\n", blue, msg, reset) }
 func success(msg string) { fmt.Printf("%s✓ %s%s\n", green, msg, reset) }
 func warn(msg string)    { fmt.Printf("%s! %s%s\n", yellow, msg, reset) }
 func fail(msg string)    { fmt.Printf("%s✗ %s%s\n", red, msg, reset); os.Exit(1) }
+
+func stopRunningBinaries() {
+	log("Stopping any running RagCode processes...")
+	if runtime.GOOS == "windows" {
+		_ = exec.Command("taskkill", "/F", "/IM", "rag-code-mcp.exe", "/T").Run()
+	} else {
+		// Stop any running rag-code-mcp processes
+		// We use pkill -f to match the process name or full command line
+		_ = exec.Command("pkill", "-f", "rag-code-mcp").Run()
+		// Give it a short moment to release file handles
+		time.Sleep(500 * time.Millisecond)
+	}
+}
 
 func checkDockerAvailable() {
 	log("Checking Docker availability...")

@@ -57,16 +57,11 @@ logging:
 | Model | Size | Speed | Quality | Use Case |
 |-------|------|-------|---------|----------|
 | `phi3:medium` | 7.9 GB | Fast | Good | **Recommended default** |
-| `phi3:mini` | 2.3 GB | Very Fast | Basic | Low-resource systems |
-| `llama3.1:8b` | 4.7 GB | Fast | Very Good | Better reasoning |
-| `qwen2.5:7b` | 4.4 GB | Fast | Very Good | Multi-language |
-| `codellama:7b` | 3.8 GB | Fast | Good | Code-specific |
 
 ### Embedding Models
 | Model | Size | Dimensions | Use Case |
 |-------|------|------------|----------|
 | `mxbai-embed-large` | 670 MB | 1024 | **Recommended default** |
-| `nomic-embed-text` | 274 MB | 768 | High quality |
 | `all-minilm` | 45 MB | 384 | Faster, lower quality |
 
 ---
@@ -168,7 +163,7 @@ The `ragcode-installer` supports various configurations:
 | Component | Requirement | Notes |
 |-----------|-------------|-------|
 | **CPU** | 4 cores | For running Ollama models |
-| **RAM** | 16 GB | 8 GB for `phi3:medium`, 4 GB for `mxbai-embed-large`, 4 GB system |
+| **RAM** | 16 GB | 8 GB for `phi3:medium`, 1 GB for `mxbai-embed-large`, 7 GB system |
 | **Disk** | 10 GB free | ~8 GB for models + 2 GB for data |
 | **OS** | Linux, macOS, Windows | Docker required for Qdrant |
 

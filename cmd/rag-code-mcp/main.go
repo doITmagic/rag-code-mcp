@@ -919,7 +919,7 @@ func getToolSchema(toolName string) map[string]interface{} {
 				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional: file path to help detect workspace context. Highly recommended to use the current file path.",
+					"description": "MANDATORY: The absolute path of the current file you are editing (or any file in the project). This is required to identify the correct project/workspace to search in.",
 				},
 				"limit": map[string]interface{}{
 					"type":        "number",
@@ -939,14 +939,14 @@ func getToolSchema(toolName string) map[string]interface{} {
 				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional: file path to help detect workspace context",
+					"description": "MANDATORY: The absolute path of the current file you are editing. Required to identify the correct project/workspace context.",
 				},
 				"package": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional: filter by package path (e.g., 'internal/agents')",
 				},
 			},
-			"required": []string{"function_name"},
+			"required": []string{"function_name", "file_path"},
 		}
 
 	case "find_type_definition":
@@ -959,14 +959,14 @@ func getToolSchema(toolName string) map[string]interface{} {
 				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional: file path to help detect workspace context",
+					"description": "MANDATORY: The absolute path of the current file you are editing. Required to identify the correct project/workspace context.",
 				},
 				"package": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional: filter by package path (e.g., 'internal/ragcode')",
 				},
 			},
-			"required": []string{"type_name"},
+			"required": []string{"type_name", "file_path"},
 		}
 
 	case "get_code_context":
@@ -1003,14 +1003,14 @@ func getToolSchema(toolName string) map[string]interface{} {
 				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional: file path to help detect workspace context",
+					"description": "MANDATORY: The absolute path of the current file you are editing. Required to identify the correct project/workspace context.",
 				},
 				"symbol_type": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional: filter by symbol type (function, method, type, const, var)",
 				},
 			},
-			"required": []string{"package"},
+			"required": []string{"package", "file_path"},
 		}
 
 	case "find_implementations":
@@ -1023,14 +1023,14 @@ func getToolSchema(toolName string) map[string]interface{} {
 				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional: file path to help detect workspace context",
+					"description": "MANDATORY: The absolute path of the current file you are editing. Required to identify the correct project/workspace context.",
 				},
 				"package": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional: filter results by package path",
 				},
 			},
-			"required": []string{"symbol_name"},
+			"required": []string{"symbol_name", "file_path"},
 		}
 
 	case "search_docs":
@@ -1043,14 +1043,14 @@ func getToolSchema(toolName string) map[string]interface{} {
 				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional: file path to help detect workspace context",
+					"description": "MANDATORY: The absolute path of the current file you are editing. Required to identify the correct project/workspace context.",
 				},
 				"limit": map[string]interface{}{
 					"type":        "number",
 					"description": "Maximum number of results to return (default: 5)",
 				},
 			},
-			"required": []string{"query"},
+			"required": []string{"query", "file_path"},
 		}
 
 	case "index_workspace":
@@ -1087,14 +1087,14 @@ func getToolSchema(toolName string) map[string]interface{} {
 				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional: file path to help detect workspace context",
+					"description": "MANDATORY: The absolute path of the current file you are editing. Required to identify the correct project/workspace context.",
 				},
 				"limit": map[string]interface{}{
 					"type":        "number",
 					"description": "Maximum number of results to return (default: 5)",
 				},
 			},
-			"required": []string{"query"},
+			"required": []string{"query", "file_path"},
 		}
 
 	default:

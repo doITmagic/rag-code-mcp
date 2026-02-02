@@ -538,7 +538,8 @@ func main() {
 
 	// Handle health check flag
 	if *healthFlag {
-		results := healthcheck.CheckAll(cfg.LLM.OllamaBaseURL, cfg.Storage.VectorDB.URL)
+		models := []string{cfg.LLM.OllamaModel, cfg.LLM.OllamaEmbed}
+		results := healthcheck.CheckAllWithModels(cfg.LLM.OllamaBaseURL, cfg.Storage.VectorDB.URL, models)
 		fmt.Fprint(os.Stderr, healthcheck.FormatResults(results))
 
 		allHealthy := true
@@ -558,7 +559,8 @@ func main() {
 
 	// Run health check on startup (non-fatal)
 	logger.Info("Checking dependencies...")
-	results := healthcheck.CheckAll(cfg.LLM.OllamaBaseURL, cfg.Storage.VectorDB.URL)
+	models := []string{cfg.LLM.OllamaModel, cfg.LLM.OllamaEmbed}
+	results := healthcheck.CheckAllWithModels(cfg.LLM.OllamaBaseURL, cfg.Storage.VectorDB.URL, models)
 
 	hasErrors := false
 	for _, result := range results {

@@ -42,6 +42,10 @@ func Load(path string) (*Config, error) {
 	// Apply environment variable overrides
 	applyEnvOverrides(&cfg)
 
+	// Auto-migrate again after env overrides (in memory) to ensure any deprecated models
+	// from environment variables are also updated
+	migrateEmbeddingModel(&cfg)
+
 	// Validate configuration
 	if err := validate(&cfg); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
@@ -276,11 +280,6 @@ func migrateEmbeddingModel(cfg *Config) bool {
 
 // validate checks if the configuration is valid
 func validate(cfg *Config) error {
-	// Auto-migrate deprecated embedding models
-	if migrateEmbeddingModel(cfg) {
-		log.Printf("✓ Configuration migrated to stable embedding model")
-	}
-
 	// Default to ollama if provider is not set
 	if cfg.LLM.Provider == "" {
 		cfg.LLM.Provider = "ollama"

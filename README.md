@@ -26,7 +26,7 @@ Built with the official [Model Context Protocol Go SDK](https://github.com/model
 ## ⚖️ The Golden Rule
 > **"FOR ANY INFORMATION ABOUT YOUR CODE (location, structure, logic, or usage), YOU MUST USE RAGCODE MCP TOOLS."**
 > 
-> *By using semantic search instead of simple keyword lookups, your AI assistant gains true context, avoiding hallucinations and and missing details even in massive legacy mono-repos.*
+> *By using semantic search instead of simple keyword lookups, your AI assistant gains true context, avoiding hallucinations and missing details even in massive legacy mono-repos.*
 
 ---
 

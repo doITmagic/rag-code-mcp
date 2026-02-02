@@ -185,8 +185,9 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 
 		if searchErr != nil {
 			// Check for vector dimension mismatch (common when changing models)
-			if strings.Contains(strings.ToLower(searchErr.Error()), "dimension mismatch") ||
-				strings.Contains(strings.ToLower(searchErr.Error()), "expected:") {
+			errLower := strings.ToLower(searchErr.Error())
+			if strings.Contains(errLower, "dimension mismatch") ||
+				(strings.Contains(errLower, "expected:") && (strings.Contains(errLower, "vector") || strings.Contains(errLower, "dimension"))) {
 				return fmt.Sprintf("❌ Vector dimension mismatch in collection '%s'.\n\n"+
 					"This usually happens when you change the embedding model (e.g., from nomic to mxbai).\n"+
 					"To fix this, please delete and recreate the index by running:\n"+

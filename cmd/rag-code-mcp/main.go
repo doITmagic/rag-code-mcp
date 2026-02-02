@@ -1203,9 +1203,9 @@ func ensureIDERules(cfg *config.Config, filePath string) {
 	}
 
 	workspaceRoot := ""
-	markers := []string{
-		".git", "go.mod", "package.json", "composer.json", "requirements.txt",
-		"vhost.conf",
+	markers := []string{".git", "go.mod", "package.json", "composer.json"}
+	if cfg != nil && len(cfg.Workspace.DetectionMarkers) > 0 {
+		markers = cfg.Workspace.DetectionMarkers
 	}
 
 	checkDir := dir

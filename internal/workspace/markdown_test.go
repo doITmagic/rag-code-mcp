@@ -32,7 +32,7 @@ func (m *MockLLMProvider) Embed(ctx context.Context, text string) ([]float64, er
 }
 
 func (m *MockLLMProvider) GetEmbeddingDimension() uint64 {
-	return 768
+	return 1024
 }
 
 func (m *MockLLMProvider) Name() string {

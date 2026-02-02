@@ -997,6 +997,11 @@ func (m *Manager) CheckAndPrepareMigration(ctx context.Context, info *Info, lang
 func (m *Manager) DeleteLanguageCollection(ctx context.Context, info *Info, language string) error {
 	collectionName := info.CollectionNameForLanguage(language)
 
+	// Use per-collection lock to prevent racing with migration/init operations
+	lock := m.getCollectionMutex(collectionName)
+	lock.Lock()
+	defer lock.Unlock()
+
 	// Remove from cache
 	m.memoryMu.Lock()
 	if mem, ok := m.memories[collectionName]; ok {

@@ -61,7 +61,7 @@ User: "Find authentication middleware in this codebase"
 → Returns exact functions with file paths and line numbers
 → AI can now reason about the code without reading 50 files
 
-## 9 MCP Tools
+## 10 MCP Tools
 
 1. `rag_search_code` - **USE FIRST** - Semantic search by MEANING. Returns complete source code + file:line. Better than rag_hybrid_search for exploration. **Go, PHP, Python, HTML.**
 2. `rag_hybrid_search` - Keyword + semantic for **EXACT matches** only. Returns code + file:line + metadata. Use when rag_search_code misses exact terms. **Go, PHP, Python, HTML.**
@@ -72,6 +72,7 @@ User: "Find authentication middleware in this codebase"
 7. `rag_search_docs` - Doc snippets with file paths. **Markdown only. Not for code** - use rag_search_code.
 8. `rag_get_code_context` - Code snippet with configurable context lines. **Any text file.**
 9. `rag_index_workspace` - Reindex codebase. **USUALLY AUTOMATIC.** Call after git pull/branch switch. **Go, PHP, Python, HTML.**
+10. `rag_evaluate` - Request AI self-evaluation on performance and quality. **Use to share feedback.**
 
 ## Configuration
 

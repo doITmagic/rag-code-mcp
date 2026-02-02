@@ -41,11 +41,8 @@ func (t *SearchDocsTool) Description() string {
 
 // Execute executes a search in the docs index
 func (t *SearchDocsTool) Execute(ctx context.Context, params map[string]interface{}) (string, error) {
-	// file_path is required for workspace detection
+	// file_path is optional but recommended
 	filePath := extractFilePathFromParams(params)
-	if filePath == "" {
-		return "", fmt.Errorf("file_path parameter is required for rag_search_docs. Please provide a file path from your workspace")
-	}
 
 	// Try workspace detection
 	var searchMemory memory.LongTermMemory
@@ -58,7 +55,10 @@ func (t *SearchDocsTool) Execute(ctx context.Context, params map[string]interfac
 			workspacePath = workspaceInfo.Root
 
 			// Detect language from file path or use first detected language
-			language := inferLanguageFromPath(filePath)
+			language := ""
+			if filePath != "" {
+				language = inferLanguageFromPath(filePath)
+			}
 			if language == "" && len(workspaceInfo.Languages) > 0 {
 				language = workspaceInfo.Languages[0]
 			}

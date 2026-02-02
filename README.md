@@ -21,7 +21,7 @@
 
 RagCode is a **Model Context Protocol (MCP) server** that instantly makes your project **AI-ready**. It enables AI assistants like **GitHub Copilot**, **Cursor**, **Windsurf**, and **Claude** to understand your entire codebase through **semantic vector search**, bridging the gap between your code and Large Language Models (LLMs).
 
-Built with the official [Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk), RagCode provides **9 powerful tools** to index, search, and analyze code, making it the ultimate solution for **AI-ready software development**.
+Built with the official [Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk), RagCode provides **10 powerful tools** to index, search, and analyze code, making it the ultimate solution for **AI-ready software development**.
 
 <!--
 ## ⚖️ The Golden Rule
@@ -110,7 +110,7 @@ First query triggers background indexing. Subsequent queries are instant.
 |---------|-------------|
 | [🔒 Privacy & Security](#-privacy-first-100-local-ai) | 100% local, zero cloud dependencies |
 | [🚀 Why RagCode?](#-why-ragcode-performance-benefits) | Performance benefits, comparisons |
-| [🛠️ MCP Tools](#️-9-powerful-mcp-tools) | All 9 tools explained |
+| [🛠️ MCP Tools](#️-10-powerful-mcp-tools) | All 10 tools explained |
 | [🌐 Supported Languages](#-multi-language-code-intelligence) | Go, PHP, Python support |
 | [💻 IDE Integration](#-ide-integration) | Windsurf, Cursor, VS Code, Claude |
 | [⚙️ Configuration](./docs/CONFIGURATION.md) | Advanced settings, models, env vars |
@@ -167,7 +167,7 @@ First query triggers background indexing. Subsequent queries are instant.
 
 ---
 
-## 🛠️ 9 Powerful MCP Tools
+## 🛠️ 10 Powerful MCP Tools
 
 | Tool | Description | Use When |
 |------|-------------|----------|
@@ -180,6 +180,7 @@ First query triggers background indexing. Subsequent queries are instant.
 | `rag_search_docs` | Search Markdown documentation | Setup, architecture info |
 | `rag_get_code_context` | Code snippet with context | Have file:line reference |
 | `rag_index_workspace` | Reindex codebase | After major changes |
+| `rag_evaluate` | AI-to-Developer feedback tool | Request AI self-evaluation |
 
 📖 **[Full Tool Reference →](./docs/tool_schema_v2.md)**
 

@@ -45,6 +45,11 @@ type Manager struct {
 	watchersMu sync.Mutex
 	watchers   map[string]*FileWatcher
 
+	// Known workspaces to support fallback detection when file_path is missing
+	// Maps workspace ID -> Info
+	knownWorkspacesMu sync.RWMutex
+	knownWorkspaces   map[string]*Info
+
 	// Mutexes per collection for migration/init operations to prevent race conditions
 	collLocksMu sync.Mutex
 	collLocks   map[string]*sync.Mutex
@@ -259,7 +264,20 @@ func NewManager(qdrant *storage.QdrantClient, llm llm.Provider, cfg *config.Conf
 		scanFingerprints: make(map[string]string),
 		watchers:         make(map[string]*FileWatcher),
 		collLocks:        make(map[string]*sync.Mutex),
+		knownWorkspaces:  make(map[string]*Info),
 	}
+}
+
+// GetKnownWorkspaces returns a list of all workspaces detected in the current session
+func (m *Manager) GetKnownWorkspaces() []*Info {
+	m.knownWorkspacesMu.RLock()
+	defer m.knownWorkspacesMu.RUnlock()
+
+	workspaces := make([]*Info, 0, len(m.knownWorkspaces))
+	for _, ws := range m.knownWorkspaces {
+		workspaces = append(workspaces, ws)
+	}
+	return workspaces
 }
 
 // getCollectionMutex returns a mutex for a specific collection name, creating it if needed
@@ -341,6 +359,41 @@ func (m *Manager) DetectWorkspace(params map[string]interface{}) (*Info, error) 
 	// Detect workspace
 	info, err := m.detector.DetectFromParams(params)
 	if err != nil {
+		// If detection failed, check if we have exactly ONE known workspace to fall back to
+		// but ONLY if the user didn't provide an explicit path that failed
+		m.knownWorkspacesMu.RLock()
+		var fallback *Info
+		knownCount := len(m.knownWorkspaces)
+		activeRoots := make([]string, 0, knownCount)
+		if knownCount > 0 {
+			for _, ws := range m.knownWorkspaces {
+				activeRoots = append(activeRoots, ws.Root)
+				fallback = ws
+			}
+		}
+		m.knownWorkspacesMu.RUnlock()
+
+		// If exactly one workspace, use as fallback
+		if knownCount == 1 && fallback != nil {
+			// Check if we have any path parameter that actually failed
+			hasPath := false
+			for _, p := range []string{"file_path", "filePath", "path", "file", "workspace_root"} {
+				if v, ok := params[p]; ok && v != "" {
+					hasPath = true
+					break
+				}
+			}
+
+			if !hasPath {
+				return fallback, nil
+			}
+		}
+
+		// If multiple workspaces, return helpful error
+		if knownCount > 1 {
+			return nil, fmt.Errorf("could not detect workspace and multiple workspaces are active: %v. Please provide 'file_path' to specify the context", activeRoots)
+		}
+
 		return nil, err
 	}
 
@@ -348,6 +401,11 @@ func (m *Manager) DetectWorkspace(params map[string]interface{}) (*Info, error) 
 	if m.config != nil && m.config.Workspace.CollectionPrefix != "" {
 		info.CollectionPrefix = m.config.Workspace.CollectionPrefix
 	}
+
+	// Update known workspaces
+	m.knownWorkspacesMu.Lock()
+	m.knownWorkspaces[info.ID] = info
+	m.knownWorkspacesMu.Unlock()
 
 	// Cache result
 	if cacheKey != "" {

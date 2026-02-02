@@ -56,26 +56,20 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 		return "", fmt.Errorf("query parameter is required")
 	}
 
-	limit := 5
+	limit := 10
 	if v, ok := params["limit"].(float64); ok {
 		limit = int(v)
 	} else if v, ok := params["limit"].(int); ok {
 		limit = v
 	}
 	if limit <= 0 {
-		limit = 5
+		limit = 10
 	}
 
 	// Optional output format: json (default) or markdown
 	outputFormat := "json"
 	if of, ok := params["output_format"].(string); ok && of != "" {
 		outputFormat = strings.ToLower(of)
-	}
-
-	// file_path is required for workspace detection
-	filePath := extractFilePathFromParams(params)
-	if filePath == "" {
-		return "", fmt.Errorf("file_path parameter is required for rag_hybrid_search. Please provide a file path from your workspace")
 	}
 
 	// Try workspace detection
@@ -89,7 +83,11 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 			workspacePath = workspaceInfo.Root
 
 			// Detect language from file path or use first detected language
-			language := inferLanguageFromPath(filePath)
+			language := ""
+			filePath := extractFilePathFromParams(params)
+			if filePath != "" {
+				language = inferLanguageFromPath(filePath)
+			}
 			if language == "" && len(workspaceInfo.Languages) > 0 {
 				language = workspaceInfo.Languages[0]
 			}
@@ -259,6 +257,16 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 	}
 
 	descriptors := buildSymbolDescriptorsFromDocs(finalDocs)
+	// Add workspace info to metadata of each descriptor for AI verification
+	for i := range descriptors {
+		if descriptors[i].Metadata == nil {
+			descriptors[i].Metadata = make(map[string]any)
+		}
+		if workspacePath != "" {
+			descriptors[i].Metadata["workspace_root"] = workspacePath
+		}
+	}
+
 	data, err := json.MarshalIndent(descriptors, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal rag_hybrid_search results: %w", err)

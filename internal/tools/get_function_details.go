@@ -61,11 +61,8 @@ func (t *GetFunctionDetailsTool) Execute(ctx context.Context, args map[string]in
 		outputFormat = strings.ToLower(of)
 	}
 
-	// file_path is required for workspace detection
+	// file_path is optional but recommended
 	filePath := extractFilePathFromParams(args)
-	if filePath == "" {
-		return "", fmt.Errorf("file_path parameter is required for rag_get_function_details. Please provide a file path from your workspace")
-	}
 
 	// Try workspace detection if workspace manager is available
 	var searchMemory memory.LongTermMemory
@@ -78,7 +75,10 @@ func (t *GetFunctionDetailsTool) Execute(ctx context.Context, args map[string]in
 			workspacePath = workspaceInfo.Root
 
 			// Detect language from file path or use first detected language
-			language := inferLanguageFromPath(filePath)
+			language := ""
+			if filePath != "" {
+				language = inferLanguageFromPath(filePath)
+			}
 			if language == "" && len(workspaceInfo.Languages) > 0 {
 				language = workspaceInfo.Languages[0]
 			}
@@ -256,16 +256,28 @@ processResults:
 				Code: codeBody,
 			}
 		}
+
+		if workspacePath != "" {
+			if desc.Metadata == nil {
+				desc.Metadata = make(map[string]any)
+			}
+			desc.Metadata["workspace_root"] = workspacePath
+		}
+
 		data, err := json.MarshalIndent(desc, "", "  ")
 		if err != nil {
-			return "", fmt.Errorf("failed to marshal Go function descriptor: %w", err)
+			return "", fmt.Errorf("failed to marshal function descriptor: %w", err)
 		}
 		return string(data), nil
 	}
 
 	// Markdown behaviour (Go and others)
 	var response strings.Builder
-	response.WriteString(fmt.Sprintf("# %s\n\n", chunk.Name))
+	if workspacePath != "" {
+		response.WriteString(fmt.Sprintf("# %s (Workspace: %s)\n\n", chunk.Name, workspacePath))
+	} else {
+		response.WriteString(fmt.Sprintf("# %s\n\n", chunk.Name))
+	}
 	response.WriteString(fmt.Sprintf("**Type:** %s\n", chunk.Type))
 	response.WriteString(fmt.Sprintf("**Package:** %s\n", chunk.Package))
 	response.WriteString(fmt.Sprintf("**Signature:** `%s`\n\n", chunk.Signature))

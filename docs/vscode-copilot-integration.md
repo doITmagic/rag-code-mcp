@@ -153,15 +153,15 @@ If you installed RagCode in WSL but use VS Code on Windows:
 ### Check Available Tools
 
 In the MCP Servers view, expand the `ragcode` server to see available tools:
-- `search_code`
-- `hybrid_search`
-- `get_function_details`
-- `find_type_definition`
-- `find_implementations`
-- `list_package_exports`
-- `search_docs`
-- `get_code_context`
-- `index_workspace`
+- `rag_search_code`
+- `rag_hybrid_search`
+- `rag_get_function_details`
+- `rag_find_type_definition`
+- `rag_find_implementations`
+- `rag_list_package_exports`
+- `rag_search_docs`
+- `rag_get_code_context`
+- `rag_index_workspace`
 
 ---
 
@@ -404,7 +404,7 @@ tail -f /tmp/ragcode-mcp.log
 **Solutions:**
 1. **Index the workspace:**
    - In Copilot Chat: "Please index this workspace using RagCode"
-   - Or manually: Ask Copilot to call `index_workspace` with a file path from your project
+   - Or manually: Ask Copilot to call `rag_index_workspace` with a file path from your project
 
 2. **Verify file_path is correct:**
    - Tools require a `file_path` parameter from your project
@@ -487,8 +487,8 @@ You can create `.github/copilot-instructions.md` in your project to guide Copilo
 
 When searching for code:
 - Always use RagCode semantic search first
-- Prefer `hybrid_search` for finding specific function names
-- Use `get_function_details` to understand implementation details
+- Prefer `rag_hybrid_search` for finding specific function names
+- Use `rag_get_function_details` to understand implementation details
 - Index the workspace on first use
 ```
 

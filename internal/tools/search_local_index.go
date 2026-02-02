@@ -38,12 +38,12 @@ func (t *SearchLocalIndexTool) SetWorkspaceManager(wm *workspace.Manager) {
 
 // Name returns the tool name
 func (t *SearchLocalIndexTool) Name() string {
-	return "search_code"
+	return "rag_search_code"
 }
 
 // Description returns the tool description
 func (t *SearchLocalIndexTool) Description() string {
-	return "Semantic code search - finds functions, classes, and methods by MEANING, not just keywords. USE THIS FIRST when exploring unfamiliar code. Returns complete source code with file path and line numbers. Better than hybrid_search for general exploration; use hybrid_search only when you need EXACT identifier matches. Supports Go, PHP, Python, HTML."
+	return "Semantic code search - finds functions, classes, and methods by MEANING, not just keywords. USE THIS FIRST when exploring unfamiliar code. Returns complete source code with file path and line numbers. Better than rag_hybrid_search for general exploration; use rag_hybrid_search only when you need EXACT identifier matches. Supports Go, PHP, Python, HTML.\nExample: { \"query\": \"auth middleware\", \"file_path\": \"/path/to/project/server.go\" }"
 }
 
 // Execute executes a search in the local index
@@ -75,7 +75,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 	// file_path is required for workspace detection
 	filePath := extractFilePathFromParams(params)
 	if filePath == "" {
-		return "", fmt.Errorf("file_path parameter is required for search_code. Please provide a file path from your workspace")
+		return "", fmt.Errorf("file_path parameter is required for rag_search_code. Please provide a file path from your workspace")
 	}
 
 	// Try workspace-aware search first
@@ -111,7 +111,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			// Collection doesn't exist - tell AI to index first
 			collectionName := workspaceInfo.CollectionNameForLanguage(language)
 			return fmt.Sprintf("❌ Workspace '%s' is not indexed yet.\n\n"+
-				"To enable code search, please call the 'index_workspace' tool first with:\n"+
+				"To enable code search, please call the 'rag_index_workspace' tool first with:\n"+
 				"{\n"+
 				"  \"file_path\": \"%s\"\n"+
 				"}\n\n"+
@@ -151,7 +151,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			if checkErr != nil || !exists {
 				// Collection doesn't exist - tell AI to index first
 				return fmt.Sprintf("❌ Workspace '%s' is not indexed yet.\n\n"+
-					"To enable code search, please call the 'index_workspace' tool first with:\n"+
+					"To enable code search, please call the 'rag_index_workspace' tool first with:\n"+
 					"{\n"+
 					"  \"file_path\": \"%s\"\n"+
 					"}\n\n"+
@@ -206,7 +206,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			// Collection might be empty - tell AI to index
 			collectionName := workspaceInfo.CollectionNameForLanguage(language)
 			return fmt.Sprintf("❌ Workspace '%s' appears to be empty or not indexed yet.\n\n"+
-				"To enable code search, please call the 'index_workspace' tool with:\n"+
+				"To enable code search, please call the 'rag_index_workspace' tool with:\n"+
 				"{\n"+
 				"  \"file_path\": \"%s\"\n"+
 				"}\n\n"+
@@ -234,7 +234,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			descriptors := buildSymbolDescriptorsFromDocs(docs)
 			data, marshalErr := json.MarshalIndent(descriptors, "", "  ")
 			if marshalErr != nil {
-				return "", fmt.Errorf("failed to marshal search_code results: %w", marshalErr)
+				return "", fmt.Errorf("failed to marshal rag_search_code results: %w", marshalErr)
 			}
 			return string(data), nil
 		}
@@ -279,7 +279,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 	descriptors := buildSymbolDescriptorsFromDocs(collected)
 	data, err := json.MarshalIndent(descriptors, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal search_code results: %w", err)
+		return "", fmt.Errorf("failed to marshal rag_search_code results: %w", err)
 	}
 	return string(data), nil
 }

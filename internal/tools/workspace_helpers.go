@@ -24,7 +24,7 @@ func CheckCollectionStatus(ctx context.Context, mem memory.LongTermMemory, colle
 		if !exists {
 			// Collection doesn't exist - tell AI to index first
 			return fmt.Sprintf("❌ Workspace '%s' is not indexed yet.\n\n"+
-				"To enable this operation, please call the 'index_workspace' tool first with:\n"+
+				"To enable this operation, please call the 'rag_index_workspace' tool first with:\n"+
 				"{\n"+
 				"  \"file_path\": \"%s\"\n"+
 				"}\n\n"+
@@ -47,7 +47,7 @@ func CheckSearchResults(resultCount int, collectionName, workspacePath string) (
 	if resultCount == 0 {
 		// Collection exists but is empty - tell AI to index
 		return fmt.Sprintf("❌ Workspace '%s' appears to be empty or not fully indexed.\n\n"+
-			"To enable this operation, please call the 'index_workspace' tool with:\n"+
+			"To enable this operation, please call the 'rag_index_workspace' tool with:\n"+
 			"{\n"+
 			"  \"file_path\": \"%s\"\n"+
 			"}\n\n"+

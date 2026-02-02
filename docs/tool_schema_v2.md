@@ -113,7 +113,7 @@ type ClassDescriptor struct {
 
 **Used by:**
 
-- `find_type_definition` with `output_format: "json"`.
+- `rag_find_type_definition` with `output_format: "json"`.
   - PHP: classes and Laravel models (User, Lawyer, etc.).
   - Go: types (struct/interface), enriched with `Fields` and `Methods` from
     `TypeInfo` when available.
@@ -147,7 +147,7 @@ type FunctionDescriptor struct {
 
 **Used by:**
 
-- `get_function_details` with `output_format: "json"`.
+- `rag_get_function_details` with `output_format: "json"`.
   - PHP: functions and methods, including:
     - `visibility`, `is_static`, `is_abstract`, `is_final`,
     - `parameters` (with types from PHPDoc / type-hints),
@@ -178,14 +178,14 @@ type SymbolDescriptor struct {
 
 **Used by:**
 
-- `list_package_exports` with `output_format: "json"` (Go + PHP).
+- `rag_list_package_exports` with `output_format: "json"` (Go + PHP).
 - Search-oriented tools (planned) to return compact hits.
 
 ---
 
 ## 3. Mapping: tool → input → output
 
-### 3.1. `find_type_definition`
+### 3.1. `rag_find_type_definition`
 
 - **Standard input:**
   - `type_name` (required),
@@ -195,7 +195,7 @@ type SymbolDescriptor struct {
   - `markdown` – human-friendly view, optimized for reading in a terminal.
   - `json` – a `ClassDescriptor` instance.
 
-### 3.2. `get_function_details`
+### 3.2. `rag_get_function_details`
 
 - **Standard input:**
   - `function_name` (required),
@@ -207,7 +207,7 @@ type SymbolDescriptor struct {
   - `markdown` – human-friendly view.
   - `json` – a `FunctionDescriptor` instance.
 
-### 3.3. `list_package_exports`
+### 3.3. `rag_list_package_exports`
 
 - **Standard input:**
   - `package` / `namespace` (required),
@@ -223,15 +223,15 @@ type SymbolDescriptor struct {
 
 - **Semantic search** (recall):
   - operates on `CodeChunk` + embeddings,
-  - tools like `hybrid_search` / `search_code` should return:
+  - tools like `rag_hybrid_search` / `rag_search_code` should return:
     - `[]SymbolDescriptor` + small snippets of code.
 
 - **Structural / analytic** (reasoning):
   - operates on the already-selected chunk,
   - for a specific symbol, the recommended tools are:
-    - `find_type_definition(json)` → `ClassDescriptor`,
-    - `get_function_details(json)` → `FunctionDescriptor`,
-    - `list_package_exports(json)` → `[]SymbolDescriptor`.
+    - `rag_find_type_definition(json)` → `ClassDescriptor`,
+    - `rag_get_function_details(json)` → `FunctionDescriptor`,
+    - `rag_list_package_exports(json)` → `[]SymbolDescriptor`.
 
 This way, the AI uses very few tokens on raw code text and instead has a
 clear, standardized map of symbols via the schema above.

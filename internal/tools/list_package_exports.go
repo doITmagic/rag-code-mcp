@@ -38,11 +38,11 @@ func (t *ListPackageExportsTool) SetWorkspaceManager(wm *workspace.Manager) {
 }
 
 func (t *ListPackageExportsTool) Name() string {
-	return "list_package_exports"
+	return "rag_list_package_exports"
 }
 
 func (t *ListPackageExportsTool) Description() string {
-	return "List all public functions, classes, and types in a package/module. Returns a structured list with symbol names, types, and signatures. Use to explore an unfamiliar package or find the right function to call. Works for Go packages, PHP namespaces, Python modules."
+	return "List all public functions, classes, and types in a package/module. Returns a structured list with symbol names, types, and signatures. Use to explore an unfamiliar package or find the right function to call. Works for Go packages, PHP namespaces, Python modules.\nExample: { \"package\": \"fmt\", \"file_path\": \"/path/to/project/main.go\" }"
 }
 
 func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -66,7 +66,7 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 	// file_path is required for workspace detection
 	filePath := extractFilePathFromParams(args)
 	if filePath == "" {
-		return "", fmt.Errorf("file_path parameter is required for list_package_exports. Please provide a file path from your workspace")
+		return "", fmt.Errorf("file_path parameter is required for rag_list_package_exports. Please provide a file path from your workspace")
 	}
 
 	// Try workspace detection if workspace manager is available

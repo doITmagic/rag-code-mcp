@@ -26,39 +26,39 @@
   },
   "tools": [
     {
-      "name": "search_code",
+      "name": "rag_search_code",
       "description": "Semantic search across indexed codebase"
     },
     {
-      "name": "hybrid_search",
+      "name": "rag_hybrid_search",
       "description": "Combined semantic and lexical search"
     },
     {
-      "name": "get_function_details",
+      "name": "rag_get_function_details",
       "description": "Get detailed information about a function or method"
     },
     {
-      "name": "find_type_definition",
+      "name": "rag_find_type_definition",
       "description": "Find the definition of a struct or interface"
     },
     {
-      "name": "get_code_context",
+      "name": "rag_get_code_context",
       "description": "Extract code context for specific line ranges"
     },
     {
-      "name": "list_package_exports",
+      "name": "rag_list_package_exports",
       "description": "List exported symbols from a package"
     },
     {
-      "name": "find_implementations",
+      "name": "rag_find_implementations",
       "description": "Find implementations and usages of a symbol"
     },
     {
-      "name": "search_docs",
+      "name": "rag_search_docs",
       "description": "Search indexed documentation"
     },
     {
-      "name": "index_workspace",
+      "name": "rag_index_workspace",
       "description": "Manually trigger indexing of a workspace (auto-indexing is enabled by default)"
     }
   ],

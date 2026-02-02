@@ -36,11 +36,11 @@ func (t *GetFunctionDetailsTool) SetWorkspaceManager(wm *workspace.Manager) {
 }
 
 func (t *GetFunctionDetailsTool) Name() string {
-	return "get_function_details"
+	return "rag_get_function_details"
 }
 
 func (t *GetFunctionDetailsTool) Description() string {
-	return "Get COMPLETE function/method source code - returns full implementation with signature, parameters, return types, and body. Use when you know the exact function name. Returns the entire function ready to read or modify. Works for Go, PHP, Python."
+	return "Get COMPLETE function/method source code - returns full implementation with signature, parameters, return types, and body. Use when you know the exact function name. Returns the entire function ready to read or modify. Works for Go, PHP, Python.\nExample: { \"function_name\": \"LoginUser\", \"file_path\": \"/path/to/project/main.go\" }"
 }
 
 func (t *GetFunctionDetailsTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -64,7 +64,7 @@ func (t *GetFunctionDetailsTool) Execute(ctx context.Context, args map[string]in
 	// file_path is required for workspace detection
 	filePath := extractFilePathFromParams(args)
 	if filePath == "" {
-		return "", fmt.Errorf("file_path parameter is required for get_function_details. Please provide a file path from your workspace")
+		return "", fmt.Errorf("file_path parameter is required for rag_get_function_details. Please provide a file path from your workspace")
 	}
 
 	// Try workspace detection if workspace manager is available

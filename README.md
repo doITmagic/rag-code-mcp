@@ -139,7 +139,7 @@ First query triggers background indexing. Subsequent queries are instant.
 |------|----------------|--------------|---------|
 | Find authentication logic | 30-60s (read 10+ files) | 2-3s (semantic search) | **10-20x** |
 | Understand function signature | 15-30s (grep + read) | 1-2s (direct lookup) | **15x** |
-| Find all API endpoints | 60-120s (manual search) | 3-5s (hybrid search) | **20-40x** |
+| Find all API endpoints | 60-120s (manual search) | 3-5s (rag_hybrid_search) | **20-40x** |
 
 ### 98% Token Savings
 
@@ -169,15 +169,15 @@ First query triggers background indexing. Subsequent queries are instant.
 
 | Tool | Description | Use When |
 |------|-------------|----------|
-| `search_code` | Semantic search by meaning | **First choice** for exploration |
-| `hybrid_search` | Keyword + semantic for exact matches | Need exact identifiers |
-| `get_function_details` | Complete function source code | Know exact function name |
-| `find_type_definition` | Type/class with fields and methods | Understand data models |
-| `find_implementations` | All usages and callers | Before refactoring |
-| `list_package_exports` | All exported symbols | Explore unfamiliar packages |
-| `search_docs` | Search Markdown documentation | Setup, architecture info |
-| `get_code_context` | Code snippet with context | Have file:line reference |
-| `index_workspace` | Reindex codebase | After major changes |
+| `rag_search_code` | Semantic search by meaning | **First choice** for exploration |
+| `rag_hybrid_search` | Keyword + semantic for exact matches | Need exact identifiers |
+| `rag_get_function_details` | Complete function source code | Know exact function name |
+| `rag_find_type_definition` | Type/class with fields and methods | Understand data models |
+| `rag_find_implementations` | All usages and callers | Before refactoring |
+| `rag_list_package_exports` | All exported symbols | Explore unfamiliar packages |
+| `rag_search_docs` | Search Markdown documentation | Setup, architecture info |
+| `rag_get_code_context` | Code snippet with context | Have file:line reference |
+| `rag_index_workspace` | Reindex codebase | After major changes |
 
 📖 **[Full Tool Reference →](./docs/tool_schema_v2.md)**
 

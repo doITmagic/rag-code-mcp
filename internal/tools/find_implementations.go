@@ -34,11 +34,11 @@ func (t *FindImplementationsTool) SetWorkspaceManager(wm *workspace.Manager) {
 }
 
 func (t *FindImplementationsTool) Name() string {
-	return "find_implementations"
+	return "rag_find_implementations"
 }
 
 func (t *FindImplementationsTool) Description() string {
-	return "Find where a function/method/interface is USED - shows all callers and implementations. Use to understand impact before refactoring, or to find usage examples. Returns list of code snippets with file paths and line numbers. Works for Go, PHP, Python."
+	return "Find where a function/method/interface is USED - shows all callers and implementations. Use to understand impact before refactoring, or to find usage examples. Returns list of code snippets with file paths and line numbers. Works for Go, PHP, Python.\nExample: { \"symbol_name\": \"NewUser\", \"file_path\": \"/path/to/project/user.go\" }"
 }
 
 func (t *FindImplementationsTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -56,7 +56,7 @@ func (t *FindImplementationsTool) Execute(ctx context.Context, args map[string]i
 	// file_path is required for workspace detection
 	filePath := extractFilePathFromParams(args)
 	if filePath == "" {
-		return "", fmt.Errorf("file_path parameter is required for find_implementations. Please provide a file path from your workspace")
+		return "", fmt.Errorf("file_path parameter is required for rag_find_implementations. Please provide a file path from your workspace")
 	}
 
 	// Try workspace detection if workspace manager is available

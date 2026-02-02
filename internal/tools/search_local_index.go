@@ -221,7 +221,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 				collectionName), nil
 		}
 
-		if searchErr == nil && len(docs) > 0 {
+		if len(docs) > 0 {
 			if outputFormat == "markdown" {
 				result := fmt.Sprintf("🔍 Found %d relevant code snippets in workspace '%s':\n\n",
 					len(docs), workspaceInfo.Root)

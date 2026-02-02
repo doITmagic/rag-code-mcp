@@ -1,37 +1,37 @@
 # JavaScript & TypeScript Analyzer (Planned)
 
-Planul de implementare pentru analizorul de cod JavaScript, TypeScript și framework-urile bazate pe acestea (React, Vue, NestJS). Acest analizor va folosi **Tree-sitter** pentru o parsare rapidă, incrementală și precisă, indiferent de complexitatea codului.
+Implementation plan for the JavaScript and TypeScript code analyzer and based frameworks (React, Vue, NestJS). This analyzer will use **Tree-sitter** for fast, incremental, and precise parsing, regardless of code complexity.
 
 ## Status: 🔜 PLANNED / ROADMAP
 
 ---
 
-## 🎯 Obiective de Implementare
+## 🎯 Implementation Objectives
 
-Spre deosebire de Go, unde folosim AST-ul nativ, pentru ecosistemul JS/TS vom adopta **Tree-sitter** pentru a asigura:
-1. **Multilingvism**: Suport unitar pentru `.js`, `.ts`, `.jsx`, `.tsx`.
-2. **Performanță**: Parsare ultra-rapidă și posibilitatea de indexare incrementală.
-3. **Robustțe**: Tree-sitter poate parsa cod chiar și în timpul editării (error recovery), util pentru integrările IDE viitoare.
-
----
-
-## 🏗️ Arhitectură Tehnică
-
-### Dependențe
-- `github.com/smacker/go-tree-sitter`: Binding-urile de Go pentru Tree-sitter.
-- `github.com/tree-sitter/tree-sitter-javascript`: Parserul pentru JS.
-- `github.com/tree-sitter/tree-sitter-typescript`: Parserul pentru TS și TSX.
-
-### Integrare în RagCode
-- Implementarea interfeței `PathAnalyzer` din `internal/ragcode/analyzers`.
-- Maparea nodurilor Tree-sitter către structura canonică `CodeChunk` (v2).
-- Detectarea automată a tipului de proiect (Node.js, React, Next.js) prin `package.json`.
+Unlike Go, where we use the native AST, for the JS/TS ecosystem we will adopt **Tree-sitter** to ensure:
+1. **Multilingualism**: Unified support for `.js`, `.ts`, `.jsx`, `.tsx`.
+2. **Performance**: Ultra-fast parsing and possibility for incremental indexing.
+3. **Robustness**: Tree-sitter can parse code even during editing (error recovery), useful for future IDE integrations.
 
 ---
 
-## 🔍 Ce Vom Indexa
+## 🏗️ Technical Architecture
 
-### 1. Funcții și Arrow Functions
+### Dependencies
+- `github.com/smacker/go-tree-sitter`: Go bindings for Tree-sitter.
+- `github.com/tree-sitter/tree-sitter-javascript`: JS Parser.
+- `github.com/tree-sitter/tree-sitter-typescript`: TS and TSX Parser.
+
+### RagCode Integration
+- Implementation of `PathAnalyzer` interface in `internal/ragcode/analyzers`.
+- Mapping Tree-sitter nodes to the canonical `CodeChunk` (v2) structure.
+- Automatic detection of project type (Node.js, React, Next.js) via `package.json`.
+
+---
+
+## 🔍 What We Will Index
+
+### 1. Functions and Arrow Functions
 ```javascript
 // Function Declaration
 function calculateTotal(items) { ... }
@@ -39,58 +39,58 @@ function calculateTotal(items) { ... }
 // Arrow Function
 const filterActive = (user) => user.active;
 ```
-**Metadate**: Semnătură, parametri, JSDoc, tipuri (dacă e TS).
+**Metadata**: Signature, parameters, JSDoc, types (if TS).
 
-### 2. Clase și Metode
+### 2. Classes and Methods
 ```typescript
 class UserService {
     /** @param id user uid */
     async getUser(id: string): Promise<User> { ... }
 }
 ```
-**Metadate**: Nume clasă, vizibilitate (public/private), async/await, decoratori.
+**Metadata**: Class name, visibility (public/private), async/await, decorators.
 
-### 3. Componente React (JSX/TSX)
+### 3. React Components (JSX/TSX)
 ```tsx
 export const UserProfile = ({ name }: Props) => {
     return <div>{name}</div>;
 };
 ```
-**Metadate**: Props, hook-uri utilizate (useState, useEffect), tipul componentei.
+**Metadata**: Props, used hooks (useState, useEffect), component type.
 
-### 4. Importuri și Exporturi
-- Identificarea dependențelor între fișiere pentru a ajuta modelul LLM să înțeleagă contextul global.
-
----
-
-## 🗺️ Roadmap de Implementare
-
-### Faza 1: Infrastructură (Alpha)
-- [ ] Integrarea librăriei `go-tree-sitter`.
-- [ ] Crearea structurii de foldere în `internal/ragcode/analyzers/javascript`.
-- [ ] Implementarea parsării de bază pentru **funcții globale** și **clase**.
-
-### Faza 2: TypeScript & Metadate (Beta)
-- [ ] Suport complet pentru definiții de tipuri (`interface`, `type`).
-- [ ] Extracția documentației din JSDoc/TSDoc.
-- [ ] Suport pentru decoratori (esențial pentru NestJS/Angular).
-
-### Faza 3: Framework Specialization (Production)
-- [ ] Optimizări pentru **React** (extracție props din componente).
-- [ ] Suport pentru fișiere `.vue` și `.svelte` (via tree-sitter parsers dedicate).
-- [ ] **Template Search**: Indexarea variabilelor și a logicii din template-uri HTML/Blade/JSX pentru a permite regăsirea contextului din frontend.
-- [ ] Detectarea rutelor (pentru Express, Koa, Fastify).
+### 4. Imports and Exports
+- Identification of dependencies between files to help the LLM model understand the global context.
 
 ---
 
-## 🛠️ Cum se va utiliza (Viitor)
+## 🗺️ Implementation Roadmap
 
-Odată implementat, procesul va fi automat:
-1. RagCode scanează workspace-ul.
-2. Detectează `package.json` -> activează `javascript/typescript` analyzer.
-3. Trimite fișierele către `CodeAnalyzerForProjectType("nodejs")`.
-4. Generează vectori în colecția `ragcode-{workspace}-js`.
+### Phase 1: Infrastructure (Alpha)
+- [ ] Integration of `go-tree-sitter` library.
+- [ ] Creation of folder structure in `internal/ragcode/analyzers/javascript`.
+- [ ] Implementation of basic parsing for **global functions** and **classes**.
+
+### Phase 2: TypeScript & Metadata (Beta)
+- [ ] Full support for type definitions (`interface`, `type`).
+- [ ] Documentation extraction from JSDoc/TSDoc.
+- [ ] Support for decorators (essential for NestJS/Angular).
+
+### Phase 3: Framework Specialization (Production)
+- [ ] Optimizations for **React** (props extraction from components).
+- [ ] Support for `.vue` and `.svelte` files (via dedicated tree-sitter parsers).
+- [ ] **Template Search**: Indexing variables and logic from HTML/Blade/JSX templates to allow context retrieval from frontend.
+- [ ] Route detection (for Express, Koa, Fastify).
 
 ---
 
-> **Notă**: Acest document servește ca specificație tehnică. Implementarea va începe după consolidarea stabilității v1.1.21.
+## 🛠️ How it will be used (Future)
+
+Once implemented, the process will be automatic:
+1. RagCode scans the workspace.
+2. Detects `package.json` -> activates `javascript/typescript` analyzer.
+3. Sends files to `CodeAnalyzerForProjectType("nodejs")`.
+4. Generates vectors in the `ragcode-{workspace}-js` collection.
+
+---
+
+> **Note**: This document serves as a technical specification. Implementation will begin after consolidating the stability of v1.1.21.

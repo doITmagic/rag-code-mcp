@@ -26,7 +26,7 @@ RagCode is a Model Context Protocol (MCP) server that provides semantic code sea
 - `index_workspace`: Triggered automatically on first query per workspace, but can be manually invoked for major changes.
 
 ## Integration Points
-- **Ollama**: Requires `phi3:medium` (reasoning) and `nomic-embed-text` (embeddings) by default.
+- **Ollama**: Requires `phi3:medium` (reasoning) and `mxbai-embed-large` (embeddings) by default.
 - **Qdrant**: Runs in Docker as `ragcode-qdrant` on port 6333.
 
 ## Romania/Hungarian Support (Note)

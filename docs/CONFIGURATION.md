@@ -28,7 +28,7 @@ llm:
   provider: "ollama"
   base_url: "http://localhost:11434"
   model: "phi3:medium"        # LLM for code analysis
-  embed_model: "nomic-embed-text"  # Embedding model
+  embed_model: "mxbai-embed-large"  # Embedding model
 
 storage:
   vector_db:
@@ -65,9 +65,9 @@ logging:
 ### Embedding Models
 | Model | Size | Dimensions | Use Case |
 |-------|------|------------|----------|
-| `nomic-embed-text` | 274 MB | 768 | **Recommended default** |
+| `mxbai-embed-large` | 670 MB | 1024 | **Recommended default** |
+| `nomic-embed-text` | 274 MB | 768 | High quality |
 | `all-minilm` | 45 MB | 384 | Faster, lower quality |
-| `mxbai-embed-large` | 670 MB | 1024 | Higher quality |
 
 ---
 
@@ -168,7 +168,7 @@ The `ragcode-installer` supports various configurations:
 | Component | Requirement | Notes |
 |-----------|-------------|-------|
 | **CPU** | 4 cores | For running Ollama models |
-| **RAM** | 16 GB | 8 GB for `phi3:medium`, 4 GB for `nomic-embed-text`, 4 GB system |
+| **RAM** | 16 GB | 8 GB for `phi3:medium`, 4 GB for `mxbai-embed-large`, 4 GB system |
 | **Disk** | 10 GB free | ~8 GB for models + 2 GB for data |
 | **OS** | Linux, macOS, Windows | Docker required for Qdrant |
 
@@ -182,9 +182,9 @@ The `ragcode-installer` supports various configurations:
 | **Disk** | 20 GB free SSD | Faster indexing and search |
 
 ### Model Sizes
-- `nomic-embed-text`: ~274 MB
+- `mxbai-embed-large`: ~670 MB
 - `phi3:medium`: ~7.9 GB
-- **Total**: ~8.2 GB for models
+- **Total**: ~8.6 GB for models
 
 ---
 

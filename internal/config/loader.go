@@ -29,6 +29,16 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
+	// Auto-migrate file-based config BEFORE env overrides to see if we should save
+	if migrateEmbeddingModel(&cfg) {
+		log.Printf("🔄 Auto-migrating configuration file '%s' to stable embedding models...", path)
+		if err := Save(path, &cfg); err != nil {
+			log.Printf("⚠️  Failed to persist migrated configuration to '%s': %v", path, err)
+		} else {
+			log.Printf("✅ Configuration file successfully updated.")
+		}
+	}
+
 	// Apply environment variable overrides
 	applyEnvOverrides(&cfg)
 
@@ -38,6 +48,20 @@ func Load(path string) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// Save writes the configuration to a file
+func Save(path string, cfg *Config) error {
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	return nil
 }
 
 // DefaultConfig returns a default configuration
@@ -106,14 +130,15 @@ func DefaultConfig() *Config {
 			Collection: "do-ai-api-docs",
 		},
 		Workspace: WorkspaceConfig{
-			Enabled:          true,
-			AutoIndex:        true,
-			MaxWorkspaces:    10,
-			DetectionMarkers: []string{".git", "go.mod", "package.json", "Cargo.toml", "pyproject.toml", "pom.xml"},
-			ExcludePatterns:  []string{"node_modules", ".git", "vendor", "target", "build", "dist", ".venv"},
-			CollectionPrefix: "ragcode",
-			IndexInclude:     []string{}, // Empty means use global rag_code.include
-			IndexExclude:     []string{}, // Empty means use global rag_code.exclude
+			Enabled:            true,
+			AutoIndex:          true,
+			MaxWorkspaces:      10,
+			DetectionMarkers:   []string{".git", "go.mod", "package.json", "Cargo.toml", "pyproject.toml", "pom.xml"},
+			ExcludePatterns:    []string{"node_modules", ".git", "vendor", "target", "build", "dist", ".venv"},
+			CollectionPrefix:   "ragcode",
+			IndexInclude:       []string{}, // Empty means use global rag_code.include
+			IndexExclude:       []string{}, // Empty means use global rag_code.exclude
+			AutoCreateIDERules: true,
 		},
 	}
 }
@@ -210,6 +235,11 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if wsPrefix := os.Getenv("WORKSPACE_COLLECTION_PREFIX"); wsPrefix != "" {
 		cfg.Workspace.CollectionPrefix = wsPrefix
+	}
+	if wsIDERules := os.Getenv("WORKSPACE_AUTO_CREATE_IDE_RULES"); wsIDERules != "" {
+		if v, err := strconv.ParseBool(wsIDERules); err == nil {
+			cfg.Workspace.AutoCreateIDERules = v
+		}
 	}
 }
 

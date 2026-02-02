@@ -53,6 +53,14 @@ func (m *MockLongTermMemory) Search(ctx context.Context, query []float64, limit 
 	return m.docs, nil
 }
 
+func (m *MockLongTermMemory) SearchDocsOnly(ctx context.Context, query []float64, limit int) ([]memory.Document, error) {
+	return m.docs, nil
+}
+
+func (m *MockLongTermMemory) SearchCodeOnly(ctx context.Context, query []float64, limit int) ([]memory.Document, error) {
+	return m.docs, nil
+}
+
 func (m *MockLongTermMemory) Delete(ctx context.Context, id string) error {
 	for i, doc := range m.docs {
 		if doc.ID == id {

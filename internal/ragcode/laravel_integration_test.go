@@ -88,6 +88,14 @@ func (m *mockMemoryStore) Search(ctx context.Context, query []float64, limit int
 	return nil, nil
 }
 
+func (m *mockMemoryStore) SearchDocsOnly(ctx context.Context, query []float64, limit int) ([]memory.Document, error) {
+	return nil, nil
+}
+
+func (m *mockMemoryStore) SearchCodeOnly(ctx context.Context, query []float64, limit int) ([]memory.Document, error) {
+	return nil, nil
+}
+
 func (m *mockMemoryStore) GetAll() []memory.Document {
 	docs := make([]memory.Document, 0, len(m.docs))
 	for _, doc := range m.docs {

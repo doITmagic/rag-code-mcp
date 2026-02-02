@@ -48,6 +48,10 @@ type Manager struct {
 	// File watchers
 	watchersMu sync.Mutex
 	watchers   map[string]*FileWatcher
+
+	// Mutexes per collection for migration/init operations to prevent race conditions
+	collLocksMu sync.Mutex
+	collLocks   map[string]*sync.Mutex
 }
 
 type workspaceScan struct {
@@ -234,7 +238,26 @@ func NewManager(qdrant *storage.QdrantClient, llm llm.Provider, cfg *config.Conf
 		migrations:       make(map[string]string),
 		scanFingerprints: make(map[string]string),
 		watchers:         make(map[string]*FileWatcher),
+		collLocks:        make(map[string]*sync.Mutex),
 	}
+}
+
+// getCollectionMutex returns a mutex for a specific collection name, creating it if needed
+func (m *Manager) getCollectionMutex(name string) *sync.Mutex {
+	m.collLocksMu.Lock()
+	defer m.collLocksMu.Unlock()
+
+	if m.collLocks == nil {
+		m.collLocks = make(map[string]*sync.Mutex)
+	}
+
+	if lock, ok := m.collLocks[name]; ok {
+		return lock
+	}
+
+	lock := &sync.Mutex{}
+	m.collLocks[name] = lock
+	return lock
 }
 
 // DetectWorkspace detects workspace from tool parameters
@@ -817,9 +840,16 @@ func (m *Manager) indexMarkdownFile(ctx context.Context, path string, collection
 
 	isHeading := func(line string) bool {
 		trimmed := strings.TrimSpace(line)
-		return strings.HasPrefix(trimmed, "#") ||
-			strings.HasPrefix(trimmed, "##") ||
-			strings.HasPrefix(trimmed, "###")
+		if !strings.HasPrefix(trimmed, "#") {
+			return false
+		}
+		// Count leading hashes
+		i := 0
+		for i < len(trimmed) && trimmed[i] == '#' {
+			i++
+		}
+		// Valid markdown heading: 1-6 hashes followed by a space or end of string
+		return i >= 1 && i <= 6 && (i == len(trimmed) || trimmed[i] == ' ')
 	}
 
 	for scanner.Scan() {
@@ -907,6 +937,11 @@ func (m *Manager) IsIndexing(workspaceID string) bool {
 // Returns: (newCollectionName, oldCollectionName, needsMigration, error)
 func (m *Manager) CheckAndPrepareMigration(ctx context.Context, info *Info, language string) (string, string, bool, error) {
 	collectionName := info.CollectionNameForLanguage(language)
+
+	// Use per-collection lock to prevent concurrent reset/migration of the same collection
+	lock := m.getCollectionMutex(collectionName)
+	lock.Lock()
+	defer lock.Unlock()
 
 	// Check if collection exists
 	exists, err := m.qdrant.CollectionExists(ctx, collectionName)
@@ -1016,12 +1051,6 @@ func (m *Manager) DeleteLanguageCollection(ctx context.Context, info *Info, lang
 	// Delete from Qdrant
 	if err := m.qdrant.DeleteCollection(ctx, collectionName); err != nil {
 		log.Printf("⚠️ Failed to delete collection %s from Qdrant: %v", collectionName, err)
-	}
-
-	// Delete workspace state file
-	stateFile := filepath.Join(info.Root, ".ragcode", "state.json")
-	if err := os.Remove(stateFile); err != nil && !os.IsNotExist(err) {
-		log.Printf("⚠️ Failed to delete state file %s: %v", stateFile, err)
 	}
 
 	return nil

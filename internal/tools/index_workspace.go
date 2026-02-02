@@ -76,6 +76,9 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 			for _, lang := range workspaceInfo.Languages {
 				t.workspaceManager.DeleteLanguageCollection(ctx, workspaceInfo, lang)
 			}
+
+			// Delete workspace state file ONCE for the entire workspace
+			deleteWorkspaceState(workspaceInfo.Root)
 		}
 
 		memories, err := t.workspaceManager.GetMemoriesForAllLanguages(ctx, workspaceInfo)
@@ -105,11 +108,8 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 		log.Printf("🗑️ Recreating collection for language '%s'...", language)
 		t.workspaceManager.DeleteLanguageCollection(ctx, workspaceInfo, language)
 
-		// Also remove state file to force re-indexing of all files
-		stateFile := filepath.Join(workspaceInfo.Root, ".ragcode", "state.json")
-		if err := os.Remove(stateFile); err == nil {
-			log.Printf("🗑️ Removed state file: %s", stateFile)
-		}
+		// Delete workspace state file ONCE
+		deleteWorkspaceState(workspaceInfo.Root)
 	}
 
 	mem, err := t.workspaceManager.GetMemoryForWorkspaceLanguage(ctx, workspaceInfo, language)
@@ -178,4 +178,14 @@ func getCollectionNames(info *workspace.Info, memories map[string]memory.LongTer
 		result += info.CollectionNameForLanguage(lang)
 	}
 	return result
+}
+
+// deleteWorkspaceState removes the .ragcode/state.json file
+func deleteWorkspaceState(root string) {
+	stateFile := filepath.Join(root, ".ragcode", "state.json")
+	if err := os.Remove(stateFile); err == nil {
+		log.Printf("🗑️ Removed state file: %s", stateFile)
+	} else if !os.IsNotExist(err) {
+		log.Printf("⚠️ Failed to delete state file %s: %v", stateFile, err)
+	}
 }

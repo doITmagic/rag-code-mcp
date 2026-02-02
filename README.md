@@ -56,7 +56,7 @@ Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/lates
 **That's it!** The installer automatically:
 - ✅ Downloads and installs the `rag-code-mcp` binary
 - ✅ Sets up Ollama and Qdrant in Docker containers
-- ✅ Downloads required AI models (`phi3:medium`, `nomic-embed-text`)
+- ✅ Downloads required AI models (`phi3:medium`, `mxbai-embed-large`)
 - ✅ Configures your IDE (VS Code, Cursor, Windsurf, Claude Desktop)
 - ✅ Adds binaries to your PATH
 
@@ -224,7 +224,7 @@ RagCode works with all major AI-powered IDEs:
 | Component | Requirement | Notes |
 |-----------|-------------|-------|
 | **CPU** | 4 cores | For running Ollama models |
-| **RAM** | 16 GB | 8 GB for `phi3:medium`, 4 GB for `nomic-embed-text`, 4 GB system |
+| **RAM** | 16 GB | 8 GB for `phi3:medium`, 4 GB for `mxbai-embed-large`, 4 GB system |
 | **Disk** | 10 GB free | ~8 GB for models + 2 GB for data |
 | **OS** | Linux, macOS, Windows | Docker required for Qdrant |
 

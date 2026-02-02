@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
+	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
 	"github.com/tmc/langchaingo/llms"
@@ -17,6 +19,8 @@ type OllamaLLMProvider struct {
 	chatName   string
 	embedName  string
 	config     config.LLMConfig
+	cachedDim  uint64
+	dimOnce    sync.Once
 }
 
 // NewOllamaLLMProvider creates a new Ollama provider with separate chat and embedding models
@@ -90,7 +94,40 @@ func (p *OllamaLLMProvider) Generate(ctx context.Context, prompt string, opts ..
 
 // GetEmbeddingDimension returns the dimension of the embedding model
 func (p *OllamaLLMProvider) GetEmbeddingDimension() uint64 {
-	// Common Ollama embedding models and their dimensions
+	// 1. Return cached dimension if already known
+	if p.cachedDim > 0 {
+		return p.cachedDim
+	}
+
+	// 2. Try hardcoded lookup for known common models
+	dim := p.lookupHardcodedDimension()
+	if dim > 0 {
+		p.cachedDim = dim
+		return dim
+	}
+
+	// 3. Fallback: Probe Ollama API dynamically
+	p.dimOnce.Do(func() {
+		log.Printf("🔍 Probing Ollama API for embedding dimension of model '%s'...", p.embedName)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		// Generate a dummy embedding to check its length
+		vec, err := p.Embed(ctx, "probe")
+		if err == nil && len(vec) > 0 {
+			p.cachedDim = uint64(len(vec))
+			log.Printf("✅ Auto-detected embedding dimension for '%s': %d", p.embedName, p.cachedDim)
+		} else {
+			log.Printf("⚠️  WARNING: Failed to probe dimension for '%s': %v. Defaulting to 1024.", p.embedName, err)
+			p.cachedDim = 1024 // Final fallback
+		}
+	})
+
+	return p.cachedDim
+}
+
+func (p *OllamaLLMProvider) lookupHardcodedDimension() uint64 {
+	// Reference: https://ollama.com/library
 	switch p.embedName {
 	case "mxbai-embed-large":
 		return 1024
@@ -98,9 +135,22 @@ func (p *OllamaLLMProvider) GetEmbeddingDimension() uint64 {
 		return 768
 	case "all-minilm":
 		return 384
+	case "bge-m3":
+		return 1024
+	case "bge-small-en-v1.5":
+		return 384
+	case "phi3", "phi3:medium", "phi3:14b":
+		return 3072
+	case "phi3:mini", "phi3:4b":
+		return 3072
+	case "llama3", "llama3:8b":
+		return 4096
+	case "mistral", "mistral:7b":
+		return 4096
+	case "granite3.1-dense:8b":
+		return 4096
 	default:
-		log.Printf("⚠️  Unknown embedding model '%s', assuming 1024 dimensions", p.embedName)
-		return 1024 // Default to mxbai-embed-large dimension
+		return 0 // Unknown
 	}
 }
 

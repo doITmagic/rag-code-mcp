@@ -37,10 +37,6 @@ type Manager struct {
 	memoryMu sync.RWMutex
 	memories map[string]memory.LongTermMemory // collection name -> memory
 
-	// Migration state: canonical name -> active temporary name during migration
-	migrationMu sync.RWMutex
-	migrations  map[string]string
-
 	// Workspace scan fingerprints to detect file changes per language
 	scanMu           sync.RWMutex
 	scanFingerprints map[string]string
@@ -235,7 +231,6 @@ func NewManager(qdrant *storage.QdrantClient, llm llm.Provider, cfg *config.Conf
 		config:           cfg,
 		indexing:         make(map[string]bool),
 		memories:         make(map[string]memory.LongTermMemory),
-		migrations:       make(map[string]string),
 		scanFingerprints: make(map[string]string),
 		watchers:         make(map[string]*FileWatcher),
 		collLocks:        make(map[string]*sync.Mutex),
@@ -372,14 +367,6 @@ func (m *Manager) GetMemoryForWorkspaceLanguage(ctx context.Context, info *Info,
 
 	collectionName := info.CollectionNameForLanguage(language)
 
-	// Check for active migration redirect
-	m.migrationMu.RLock()
-	if targetCollection, ok := m.migrations[collectionName]; ok {
-		collectionName = targetCollection
-		log.Printf("↪️ Redirecting search from '%s' to active migration collection '%s'", info.CollectionNameForLanguage(language), collectionName)
-	}
-	m.migrationMu.RUnlock()
-
 	// Check memory cache
 	m.memoryMu.RLock()
 	if mem, ok := m.memories[collectionName]; ok {
@@ -510,6 +497,22 @@ func (m *Manager) GetMemoriesForAllLanguages(ctx context.Context, info *Info) (m
 // IndexLanguage indexes a specific language in a workspace
 // It runs synchronously. Use StartIndexing for background execution.
 func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string, collectionName string, force bool) error {
+	// Guard against concurrent indexing for same workspace/language
+	indexKey := info.ID + "-" + language
+	m.indexingMu.Lock()
+	if m.indexing[indexKey] {
+		m.indexingMu.Unlock()
+		return fmt.Errorf("already indexing workspace '%s' language '%s'", info.Root, language)
+	}
+	m.indexing[indexKey] = true
+	m.indexingMu.Unlock()
+
+	defer func() {
+		m.indexingMu.Lock()
+		delete(m.indexing, indexKey)
+		m.indexingMu.Unlock()
+	}()
+
 	log.Printf("🚀 Starting indexing for workspace: %s", info.Root)
 	log.Printf("   Collection: %s", collectionName)
 	log.Printf("   Language: %s", language)
@@ -990,50 +993,6 @@ func (m *Manager) CheckAndPrepareMigration(ctx context.Context, info *Info, lang
 	return collectionName, "", false, nil
 }
 
-// CompleteMigration finalizes the migration by deleting old collection and updating cache
-func (m *Manager) CompleteMigration(ctx context.Context, info *Info, language string, newCollectionName string, oldCollectionName string) error {
-	if oldCollectionName == "" {
-		return nil // No migration to complete
-	}
-
-	log.Printf("✅ Migration successful! Cleaning up old collection: %s", oldCollectionName)
-
-	// Clear redirection
-	m.migrationMu.Lock()
-	delete(m.migrations, oldCollectionName)
-	m.migrationMu.Unlock()
-
-	// Remove old collection from cache
-	m.memoryMu.Lock()
-	if mem, ok := m.memories[oldCollectionName]; ok {
-		if closer, ok := mem.(interface{ Close() error }); ok {
-			closer.Close()
-		}
-		delete(m.memories, oldCollectionName)
-	}
-	m.memoryMu.Unlock()
-
-	// Delete old collection from Qdrant
-	if err := m.qdrant.DeleteCollection(ctx, oldCollectionName); err != nil {
-		log.Printf("⚠️ Failed to delete old collection %s: %v", oldCollectionName, err)
-	}
-
-	// Rename new collection to original name
-	log.Printf("🔄 Renaming new collection to original name...")
-
-	// Qdrant doesn't support rename, so we update our cache mapping
-	m.memoryMu.Lock()
-	if mem, ok := m.memories[newCollectionName]; ok {
-		// Move memory reference to original collection name
-		m.memories[info.CollectionNameForLanguage(language)] = mem
-		delete(m.memories, newCollectionName)
-	}
-	m.memoryMu.Unlock()
-
-	log.Printf("✨ Migration completed successfully")
-	return nil
-}
-
 // DeleteLanguageCollection deletes the Qdrant collection and associated state for a language
 func (m *Manager) DeleteLanguageCollection(ctx context.Context, info *Info, language string) error {
 	collectionName := info.CollectionNameForLanguage(language)
@@ -1060,25 +1019,18 @@ func (m *Manager) DeleteLanguageCollection(ctx context.Context, info *Info, lang
 func (m *Manager) StartIndexing(ctx context.Context, info *Info, language string, force bool) error {
 	collectionName := info.CollectionNameForLanguage(language)
 
-	// Check if already indexing BEFORE starting goroutine
+	// Check if already indexing BEFORE starting goroutine for immediate feedback
 	indexKey := info.ID + "-" + language
-	m.indexingMu.Lock()
+	m.indexingMu.RLock()
 	if m.indexing[indexKey] {
-		m.indexingMu.Unlock()
+		m.indexingMu.RUnlock()
 		return fmt.Errorf("workspace '%s' language '%s' is already being indexed", info.Root, language)
 	}
-	m.indexing[indexKey] = true
-	m.indexingMu.Unlock()
+	m.indexingMu.RUnlock()
 
 	// Start background indexing
 	go func() {
-		// Clear indexing flag when done
-		defer func() {
-			m.indexingMu.Lock()
-			delete(m.indexing, indexKey)
-			m.indexingMu.Unlock()
-		}()
-
+		// IndexLanguage now handles its own concurrency guarding and lock management
 		if err := m.IndexLanguage(context.Background(), info, language, collectionName, force); err != nil {
 			log.Printf("❌ Background indexing failed: %v", err)
 		}

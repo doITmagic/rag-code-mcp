@@ -94,7 +94,7 @@ docker exec ragcode-ollama ollama pull phi3:medium
    ```yaml
    # In config.yaml
    llm:
-     model: "phi3:medium"  # Instead of phi3:medium
+     model: "phi3:mini"  # Instead of phi3:medium
    ```
 
 2. **Exclude large directories:**
@@ -168,7 +168,7 @@ curl http://localhost:11434/api/embeddings -d '{
 **Solutions:**
 
 1. **Use smaller models:**
-   - `phi3:medium` instead of `phi3:medium`
+   - `phi3:mini` instead of `phi3:medium`
    - `all-minilm` instead of `mxbai-embed-large`
 
 2. **Limit concurrent operations:**

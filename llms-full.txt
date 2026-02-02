@@ -414,7 +414,7 @@ llm:
   embed_model: "mxbai-embed-large"
 ```
 Recommended models:
-- **LLM:** `phi3:medium`, `phi3:medium`, `phi3:medium`
+- **LLM:** `phi3:medium`, `llama3.1:8b`, `qwen2.5:7b`
 - **Embeddings:** `mxbai-embed-large`, `all-minilm`
 
 ### Qdrant Configuration
@@ -466,7 +466,7 @@ ollama pull phi3:medium
 ### Indexing is too slow
 **Cause:** Large workspace or a heavy model.
 **Fix:**
-- Use a smaller model (`phi3:medium`)
+- Use a smaller model (`phi3:mini`)
 - Exclude large directories in `config.yaml`
 - Wait – indexing runs in the background.
 
@@ -995,7 +995,7 @@ llm:
 ```
 
 Recommended models:
-- **LLM:** `phi3:medium`, `phi3:medium`, `phi3:medium`
+- **LLM:** `phi3:medium`, `llama3.1:8b`, `qwen2.5:7b`
 - **Embeddings:** `mxbai-embed-large`, `all-minilm`
 
 ### Configure Qdrant
@@ -1062,7 +1062,7 @@ ollama pull mxbai-embed-large
 **Cause:** Large workspace or slow AI model.
 
 **Solution:**
-- Use a smaller model: `phi3:medium` instead of `phi3:medium`
+- Use a smaller model: `phi3:mini` instead of `phi3:medium`
 - Exclude large directories in `config.yaml`
 - Wait - indexing runs in background
 

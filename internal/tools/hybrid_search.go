@@ -154,6 +154,15 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 		docs, err = searchMemory.Search(ctx, queryEmbedding, fetchLimit)
 	}
 	if err != nil {
+		errLower := strings.ToLower(err.Error())
+		if strings.Contains(errLower, "dimension mismatch") ||
+			(strings.Contains(errLower, "expected:") && (strings.Contains(errLower, "vector") || strings.Contains(errLower, "dimension"))) {
+			return "", fmt.Errorf("❌ Vector dimension mismatch in collection '%s'.\n\n"+
+				"This usually happens when you change the embedding model (e.g., from nomic to mxbai).\n"+
+				"To fix this, please delete and recreate the index by running the 'index_workspace' tool with 'recreate': true.\n\n"+
+				"Error details: %v",
+				collectionName, err)
+		}
 		return "", fmt.Errorf("search failed: %w", err)
 	}
 

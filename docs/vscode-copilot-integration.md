@@ -262,7 +262,7 @@ Edit the MCP configuration to use different models:
 ```
 
 **Recommended Models:**
-- **LLM:** `phi3:medium`, `phi3:medium`, `phi3:medium`, `phi3:medium`
+- **LLM:** `phi3:medium`
 - **Embeddings:** `mxbai-embed-large`, `all-minilm`
 
 ### Remote Ollama/Qdrant
@@ -422,7 +422,7 @@ tail -f /tmp/ragcode-mcp.log
 **Solutions:**
 1. **Use a smaller/faster model:**
    ```json
-   "OLLAMA_MODEL": "phi3:medium"  // Instead of phi3:medium
+   "OLLAMA_MODEL": "phi3:mini"  // Instead of phi3:medium
    ```
 
 2. **Exclude large directories:**

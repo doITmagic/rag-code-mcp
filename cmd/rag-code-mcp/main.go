@@ -267,14 +267,14 @@ type MCPTool interface {
 	Execute(ctx context.Context, args map[string]interface{}) (string, error)
 }
 
-// SearchCodeInput defines the typed input for the search_code tool.
+// SearchCodeInput defines the typed input for the rag_search_code tool.
 type SearchCodeInput struct {
 	Query    string `json:"query"`
 	Limit    int    `json:"limit,omitempty"`
 	FilePath string `json:"file_path,omitempty"`
 }
 
-// SearchCodeOutput defines the typed output for the search_code tool.
+// SearchCodeOutput defines the typed output for the rag_search_code tool.
 type SearchCodeOutput struct {
 	Results string `json:"results"`
 }
@@ -643,7 +643,7 @@ func main() {
 
 	indexWorkspaceTool := tools.NewIndexWorkspaceTool(workspaceManager)
 
-	// Example: use typed ToolHandlerFor for search_code
+	// Example: use typed ToolHandlerFor for rag_search_code
 	registerSearchCodeToolTyped(server, searchTool, cfg)
 
 	// Other tools still use the generic MCPTool handler
@@ -673,7 +673,7 @@ func main() {
 	}
 }
 
-// registerSearchCodeToolTyped registers the search_code tool using the typed
+// registerSearchCodeToolTyped registers the rag_search_code tool using the typed
 // ToolHandlerFor API from the MCP Go SDK.
 func registerSearchCodeToolTyped(server *mcp.Server, tool *tools.SearchLocalIndexTool, cfg *config.Config) {
 	mcp.AddTool[SearchCodeInput, SearchCodeOutput](server, &mcp.Tool{
@@ -909,7 +909,7 @@ func fileURI(absPath string) string {
 
 func getToolSchema(toolName string) map[string]interface{} {
 	switch toolName {
-	case "search_code":
+	case "rag_search_code":
 		return map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -929,7 +929,7 @@ func getToolSchema(toolName string) map[string]interface{} {
 			"required": []string{"query"},
 		}
 
-	case "get_function_details":
+	case "rag_get_function_details":
 		return map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -949,7 +949,7 @@ func getToolSchema(toolName string) map[string]interface{} {
 			"required": []string{"function_name", "file_path"},
 		}
 
-	case "find_type_definition":
+	case "rag_find_type_definition":
 		return map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -969,7 +969,7 @@ func getToolSchema(toolName string) map[string]interface{} {
 			"required": []string{"type_name", "file_path"},
 		}
 
-	case "get_code_context":
+	case "rag_get_code_context":
 		return map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -993,7 +993,7 @@ func getToolSchema(toolName string) map[string]interface{} {
 			"required": []string{"file_path", "start_line", "end_line"},
 		}
 
-	case "list_package_exports":
+	case "rag_list_package_exports":
 		return map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1013,7 +1013,7 @@ func getToolSchema(toolName string) map[string]interface{} {
 			"required": []string{"package", "file_path"},
 		}
 
-	case "find_implementations":
+	case "rag_find_implementations":
 		return map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1033,7 +1033,7 @@ func getToolSchema(toolName string) map[string]interface{} {
 			"required": []string{"symbol_name", "file_path"},
 		}
 
-	case "search_docs":
+	case "rag_search_docs":
 		return map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1053,7 +1053,7 @@ func getToolSchema(toolName string) map[string]interface{} {
 			"required": []string{"query", "file_path"},
 		}
 
-	case "index_workspace":
+	case "rag_index_workspace":
 		return map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1077,7 +1077,7 @@ func getToolSchema(toolName string) map[string]interface{} {
 			"required": []string{},
 		}
 
-	case "hybrid_search":
+	case "rag_hybrid_search":
 		return map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1242,16 +1242,16 @@ func ensureIDERules(cfg *config.Config, filePath string) {
 **For any information about the code (location, structure, logic, or usage), you MUST use RagCode MCP tools. Never guess code details from memory; always search the local index first.**
 
 ## Available Tools
-- search_code: Primary entry point for semantic search.
-- get_function_details: Get full implementation of a function.
-- find_type_definition: Get struct/interface definitions.
-- list_package_exports: See what a module offers.
-- search_docs: Find project documentation.
+- rag_search_code: Primary entry point for semantic search.
+- rag_get_function_details: Get full implementation of a function.
+- rag_find_type_definition: Get struct/interface definitions.
+- rag_list_package_exports: See what a module offers.
+- rag_search_docs: Find project documentation.
 
 ## Usage Guidelines
 - Always provide 'file_path' to tools to ensure they detect the correct project context.
-- Use 'hybrid_search' if looking for exact variable names or error messages.
-- If the tool says "workspace not indexed", use 'index_workspace' once.
+- Use 'rag_hybrid_search' if looking for exact variable names or error messages.
+- If the tool says "workspace not indexed", use 'rag_index_workspace' once.
 `
 
 	// 3. Define target rule files

@@ -257,7 +257,7 @@ func migrateEmbeddingModel(cfg *Config) bool {
 			log.Printf("⚠️  MIGRATION: Detected deprecated embedding model '%s'", deprecated)
 			log.Printf("   Automatically upgrading to stable model '%s'", newStableModel)
 			log.Printf("   Note: Existing indexed data will need to be re-indexed.")
-			log.Printf("   Use 'index_workspace' tool with 'recreate: true' to rebuild indexes.")
+			log.Printf("   Use 'rag_index_workspace' tool with 'recreate: true' to rebuild indexes.")
 
 			cfg.LLM.OllamaEmbed = newStableModel
 			migrated = true

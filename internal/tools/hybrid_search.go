@@ -35,11 +35,11 @@ func (t *HybridSearchTool) SetWorkspaceManager(wm *workspace.Manager) {
 }
 
 // Name returns the MCP tool name.
-func (t *HybridSearchTool) Name() string { return "hybrid_search" }
+func (t *HybridSearchTool) Name() string { return "rag_hybrid_search" }
 
 // Description provides a description for the tool.
 func (t *HybridSearchTool) Description() string {
-	return "Combined keyword + semantic search - use ONLY when you need EXACT matches (variable names, error messages, specific identifiers). Returns complete source code with file path, line numbers, and metadata. Use search_code FIRST for general exploration; use this when search_code misses exact terms. Supports Go, PHP, Python, HTML."
+	return "Combined keyword + semantic search - use ONLY when you need EXACT matches (variable names, error messages, specific identifiers). Returns complete source code with file path, line numbers, and metadata. Use rag_search_code FIRST for general exploration; use this when rag_search_code misses exact terms. Supports Go, PHP, Python, HTML.\nExample: { \"query\": \"func ProcessOrder\", \"file_path\": \"/path/to/project/orders.go\" }"
 }
 
 type hybridScore struct {
@@ -75,7 +75,7 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 	// file_path is required for workspace detection
 	filePath := extractFilePathFromParams(params)
 	if filePath == "" {
-		return "", fmt.Errorf("file_path parameter is required for hybrid_search. Please provide a file path from your workspace")
+		return "", fmt.Errorf("file_path parameter is required for rag_hybrid_search. Please provide a file path from your workspace")
 	}
 
 	// Try workspace detection
@@ -211,7 +211,7 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 		descriptors := buildSymbolDescriptorsFromDocs(topSemantic)
 		data, err := json.MarshalIndent(descriptors, "", "  ")
 		if err != nil {
-			return "", fmt.Errorf("failed to marshal hybrid_search results: %w", err)
+			return "", fmt.Errorf("failed to marshal rag_hybrid_search results: %w", err)
 		}
 		return string(data), nil
 	}
@@ -252,7 +252,7 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 	descriptors := buildSymbolDescriptorsFromDocs(finalDocs)
 	data, err := json.MarshalIndent(descriptors, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal hybrid_search results: %w", err)
+		return "", fmt.Errorf("failed to marshal rag_hybrid_search results: %w", err)
 	}
 	return string(data), nil
 }

@@ -31,12 +31,12 @@ func (t *SearchDocsTool) SetWorkspaceManager(wm *workspace.Manager) {
 
 // Name returns the tool name
 func (t *SearchDocsTool) Name() string {
-	return "search_docs"
+	return "rag_search_docs"
 }
 
 // Description returns the tool description
 func (t *SearchDocsTool) Description() string {
-	return "Search project documentation (README, guides, API docs) - use when you need to understand project setup, architecture decisions, or usage examples. Returns relevant documentation snippets with file paths. Searches Markdown files ONLY, not code - use search_code for code."
+	return "Search project documentation (README, guides, API docs) - use when you need to understand project setup, architecture decisions, or usage examples. Returns relevant documentation snippets with file paths. Searches Markdown files ONLY, not code - use rag_search_code for code.\nExample: { \"query\": \"deployment\", \"file_path\": \"/path/to/project/README.md\" }"
 }
 
 // Execute executes a search in the docs index
@@ -44,7 +44,7 @@ func (t *SearchDocsTool) Execute(ctx context.Context, params map[string]interfac
 	// file_path is required for workspace detection
 	filePath := extractFilePathFromParams(params)
 	if filePath == "" {
-		return "", fmt.Errorf("file_path parameter is required for search_docs. Please provide a file path from your workspace")
+		return "", fmt.Errorf("file_path parameter is required for rag_search_docs. Please provide a file path from your workspace")
 	}
 
 	// Try workspace detection

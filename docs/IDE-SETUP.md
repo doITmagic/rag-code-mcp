@@ -35,7 +35,7 @@ Add this to your IDE's MCP configuration file (create the file if it doesn't exi
       "env": {
         "OLLAMA_BASE_URL": "http://localhost:11434",
         "OLLAMA_MODEL": "phi3:medium",
-        "OLLAMA_EMBED": "nomic-embed-text",
+        "OLLAMA_EMBED": "mxbai-embed-large",
         "QDRANT_URL": "http://localhost:6333"
       }
     }
@@ -58,7 +58,7 @@ Add this to your IDE's MCP configuration file (create the file if it doesn't exi
       "env": {
         "OLLAMA_BASE_URL": "http://localhost:11434",
         "OLLAMA_MODEL": "phi3:medium",
-        "OLLAMA_EMBED": "nomic-embed-text",
+        "OLLAMA_EMBED": "mxbai-embed-large",
         "QDRANT_URL": "http://localhost:6333"
       }
     }
@@ -79,7 +79,7 @@ If you run RagCode inside WSL but use Windows IDEs:
       "env": {
         "OLLAMA_BASE_URL": "http://localhost:11434",
         "OLLAMA_MODEL": "phi3:medium",
-        "OLLAMA_EMBED": "nomic-embed-text",
+        "OLLAMA_EMBED": "mxbai-embed-large",
         "QDRANT_URL": "http://localhost:6333"
       },
       "disabled": false

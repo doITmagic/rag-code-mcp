@@ -79,7 +79,7 @@ If you need to configure manually or customize the setup:
          "env": {
            "OLLAMA_BASE_URL": "http://localhost:11434",
            "OLLAMA_MODEL": "phi3:medium",
-           "OLLAMA_EMBED": "nomic-embed-text",
+           "OLLAMA_EMBED": "mxbai-embed-large",
            "QDRANT_URL": "http://localhost:6333"
          }
        }
@@ -108,7 +108,7 @@ Example configuration:
       "env": {
         "OLLAMA_BASE_URL": "http://localhost:11434",
         "OLLAMA_MODEL": "phi3:medium",
-        "OLLAMA_EMBED": "nomic-embed-text",
+        "OLLAMA_EMBED": "mxbai-embed-large",
         "QDRANT_URL": "http://localhost:6333"
       }
     }
@@ -129,7 +129,7 @@ If you installed RagCode in WSL but use VS Code on Windows:
       "env": {
         "OLLAMA_BASE_URL": "http://localhost:11434",
         "OLLAMA_MODEL": "phi3:medium",
-        "OLLAMA_EMBED": "nomic-embed-text",
+        "OLLAMA_EMBED": "mxbai-embed-large",
         "QDRANT_URL": "http://localhost:6333"
       }
     }
@@ -252,7 +252,7 @@ Edit the MCP configuration to use different models:
       "args": [],
       "env": {
         "OLLAMA_BASE_URL": "http://localhost:11434",
-        "OLLAMA_MODEL": "llama3.1:8b",          // ← Changed
+        "OLLAMA_MODEL": "phi3:medium",          // ← Changed
         "OLLAMA_EMBED": "all-minilm",           // ← Changed
         "QDRANT_URL": "http://localhost:6333"
       }
@@ -262,8 +262,8 @@ Edit the MCP configuration to use different models:
 ```
 
 **Recommended Models:**
-- **LLM:** `phi3:medium`, `llama3.1:8b`, `qwen2.5:7b`, `phi3:mini`
-- **Embeddings:** `nomic-embed-text`, `all-minilm`
+- **LLM:** `phi3:medium`
+- **Embeddings:** `mxbai-embed-large`, `all-minilm`
 
 ### Remote Ollama/Qdrant
 
@@ -278,7 +278,7 @@ If running Ollama or Qdrant on a different machine:
       "env": {
         "OLLAMA_BASE_URL": "http://192.168.1.100:11434",  // ← Remote Ollama
         "OLLAMA_MODEL": "phi3:medium",
-        "OLLAMA_EMBED": "nomic-embed-text",
+        "OLLAMA_EMBED": "mxbai-embed-large",
         "QDRANT_URL": "http://192.168.1.101:6333"         // ← Remote Qdrant
       }
     }
@@ -299,7 +299,7 @@ Enable detailed logging for troubleshooting:
       "env": {
         "OLLAMA_BASE_URL": "http://localhost:11434",
         "OLLAMA_MODEL": "phi3:medium",
-        "OLLAMA_EMBED": "nomic-embed-text",
+        "OLLAMA_EMBED": "mxbai-embed-large",
         "QDRANT_URL": "http://localhost:6333",
         "MCP_LOG_LEVEL": "debug",                         // ← Enable debug logs
         "MCP_LOG_FILE": "/tmp/ragcode-mcp.log"           // ← Log file path

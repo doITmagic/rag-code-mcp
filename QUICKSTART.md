@@ -50,7 +50,7 @@ Then configure your Windows IDE manually (e.g., Windsurf at `%USERPROFILE%\.code
       "env": {
         "OLLAMA_BASE_URL": "http://localhost:11434",
         "OLLAMA_MODEL": "phi3:medium",
-        "OLLAMA_EMBED": "nomic-embed-text",
+        "OLLAMA_EMBED": "mxbai-embed-large",
         "QDRANT_URL": "http://localhost:6333"
       },
       "disabled": false
@@ -116,7 +116,7 @@ That's it! The AI will use RagCode's semantic search to find relevant code.
 | Problem | Solution |
 |---------|----------|
 | "Could not connect to Qdrant" | Run `docker start ragcode-qdrant` |
-| "Ollama model not found" | Run `ollama pull phi3:medium && ollama pull nomic-embed-text` |
+| "Ollama model not found" | Run `ollama pull phi3:medium && ollama pull mxbai-embed-large` |
 | IDE doesn't see RagCode | Re-run `./ragcode-installer -skip-build` |
 
 For more help, see [README.md#troubleshooting](./README.md#-troubleshooting) or open an [Issue](https://github.com/doITmagic/rag-code-mcp/issues).

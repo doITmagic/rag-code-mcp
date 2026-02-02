@@ -88,7 +88,7 @@
       },
       "OLLAMA_EMBED": {
         "description": "Ollama embedding model",
-        "default": "nomic-embed-text"
+        "default": "mxbai-embed-large"
       },
       "QDRANT_URL": {
         "description": "Qdrant server URL",

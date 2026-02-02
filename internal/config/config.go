@@ -48,7 +48,7 @@ type LLMConfig struct {
 	// Ollama settings
 	OllamaBaseURL string `yaml:"ollama_base_url"` // Default: http://localhost:11434
 	OllamaModel   string `yaml:"ollama_model"`    // e.g., phi3:medium, granite3.1-dense:8b
-	OllamaEmbed   string `yaml:"ollama_embed"`    // e.g., nomic-embed-text
+	OllamaEmbed   string `yaml:"ollama_embed"`    // e.g., mxbai-embed-large
 
 	// Llamafile settings (local GGUF models via llama.cpp server)
 	LlamafileBaseURL string `yaml:"llamafile_base_url"` // Default: http://localhost:8080
@@ -197,4 +197,9 @@ type WorkspaceConfig struct {
 	// Useful when you want strict control and don't want automatic parent directory traversal
 	// Default: false (upward search enabled)
 	DisableUpwardSearch bool `yaml:"disable_upward_search"`
+
+	// AutoCreateIDERules when true, automatically creates rule files (.cursorrules, etc.)
+	// in workspace roots to ensure AI follows the "Golden Rule"
+	// Default: true
+	AutoCreateIDERules bool `yaml:"auto_create_ide_rules"`
 }

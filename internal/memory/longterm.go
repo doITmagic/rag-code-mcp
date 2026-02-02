@@ -21,6 +21,12 @@ type LongTermMemory interface {
 	// Search searches for similar documents
 	Search(ctx context.Context, query []float64, limit int) ([]Document, error)
 
+	// SearchDocsOnly searches for similar documents, including only markdown documentation
+	SearchDocsOnly(ctx context.Context, query []float64, limit int) ([]Document, error)
+
+	// SearchCodeOnly searches for similar documents, excluding markdown documentation
+	SearchCodeOnly(ctx context.Context, query []float64, limit int) ([]Document, error)
+
 	// Delete deletes a document by ID
 	Delete(ctx context.Context, id string) error
 
@@ -64,6 +70,16 @@ func (m *InMemoryLongTermMemory) Search(ctx context.Context, query []float64, li
 		}
 	}
 	return results, nil
+}
+
+// SearchDocsOnly searches for documents (placeholder)
+func (m *InMemoryLongTermMemory) SearchDocsOnly(ctx context.Context, query []float64, limit int) ([]Document, error) {
+	return m.Search(ctx, query, limit)
+}
+
+// SearchCodeOnly searches for documents (placeholder)
+func (m *InMemoryLongTermMemory) SearchCodeOnly(ctx context.Context, query []float64, limit int) ([]Document, error) {
+	return m.Search(ctx, query, limit)
 }
 
 // Delete deletes a document

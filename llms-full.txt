@@ -134,7 +134,7 @@ Without RagCode, AI assistants must:
 - **Multi-Workspace Detection** - Automatically detects project boundaries (git, go.mod, composer.json, package.json, pyproject.toml, requirements.txt)
 - **Per-Language Collections** - Separate vector databases for each language (`ragcode-{workspace}-go`, `ragcode-{workspace}-php`, `ragcode-{workspace}-python`)
 - **Automatic Indexing** - Background indexing on first use, no manual intervention needed
-- **Vector Embeddings** - Uses Ollama's `nomic-embed-text` for high-quality semantic embeddings
+- **Vector Embeddings** - Uses Ollama's `mxbai-embed-large` for high-quality semantic embeddings
 - **Hybrid Search Engine** - Combines vector similarity with BM25 lexical matching
 - **Direct File Access** - Read code without indexing for quick lookups
 - **Smart Caching** - Efficient re-indexing only for changed files
@@ -148,7 +148,7 @@ Without RagCode, AI assistants must:
 | Component | Requirement | Notes |
 |-----------|-------------|-------|
 | **CPU**   | 4 cores     | For running Ollama models |
-| **RAM**   | 16 GB       | 8 GB for `phi3:medium`, 4 GB for `nomic-embed-text`, 4 GB system |
+| **RAM**   | 16 GB       | 8 GB for `phi3:medium`, 4 GB for `mxbai-embed-large`, 4 GB system |
 | **Disk**  | 10 GB free  | ~8 GB for models + 2 GB for data |
 | **OS**    | Linux, macOS, Windows | Docker required for Qdrant |
 
@@ -163,7 +163,7 @@ Without RagCode, AI assistants must:
 
 ### Model Sizes
 
-- `nomic-embed-text`: ~274 MB (embeddings model)
+- `mxbai-embed-large`: ~274 MB (embeddings model)
 - `phi3:medium`: ~7.9 GB (LLM for code analysis)
 - **Total**: ~8.2 GB for models
 
@@ -214,7 +214,7 @@ Then manually configure your Windows IDE (e.g., Windsurf at `%USERPROFILE%\.code
       "env": {
         "OLLAMA_BASE_URL": "http://localhost:11434",
         "OLLAMA_MODEL": "phi3:medium",
-        "OLLAMA_EMBED": "nomic-embed-text",
+        "OLLAMA_EMBED": "mxbai-embed-large",
         "QDRANT_URL": "http://localhost:6333"
       },
       "disabled": false
@@ -229,7 +229,7 @@ The installer is end-to-end:
 1. ✅ Installs the `rag-code-mcp` and `index-all` binaries into `~/.local/share/ragcode/bin`
 2. ✅ Configures Windsurf, Cursor, Claude, VS Code, etc.
 3. ✅ Starts Docker and launches the Ollama + Qdrant containers
-4. ✅ Downloads the required models (`phi3:medium`, `nomic-embed-text`)
+4. ✅ Downloads the required models (`phi3:medium`, `mxbai-embed-large`)
 5. ✅ Runs health-check and starts the MCP server
 
 ### Customization Options
@@ -359,7 +359,7 @@ Edit `~/.config/Code/User/globalStorage/mcp-servers.json`:
       "env": {
         "OLLAMA_BASE_URL": "http://localhost:11434",
         "OLLAMA_MODEL": "phi3:medium",
-        "OLLAMA_EMBED": "nomic-embed-text",
+        "OLLAMA_EMBED": "mxbai-embed-large",
         "QDRANT_URL": "http://localhost:6333"
       }
     }
@@ -411,11 +411,11 @@ llm:
   provider: "ollama"
   base_url: "http://localhost:11434"
   model: "phi3:medium"        # change to another model if desired
-  embed_model: "nomic-embed-text"
+  embed_model: "mxbai-embed-large"
 ```
 Recommended models:
 - **LLM:** `phi3:medium`, `llama3.1:8b`, `qwen2.5:7b`
-- **Embeddings:** `nomic-embed-text`, `all-minilm`
+- **Embeddings:** `mxbai-embed-large`, `all-minilm`
 
 ### Qdrant Configuration
 ```yaml
@@ -459,7 +459,7 @@ sudo systemctl start docker   # Linux
 **Cause:** Required models have not been downloaded.
 **Fix:**
 ```bash
-ollama pull nomic-embed-text
+ollama pull mxbai-embed-large
 ollama pull phi3:medium
 ```
 
@@ -601,7 +601,7 @@ The installer will:
 2. ✅ Add the binaries to your PATH
 3. ✅ Configure Windsurf, Cursor, Antigravity, VS Code, etc. (MCP config)
 4. ✅ Start Docker (if needed) and launch the Ollama + Qdrant containers
-5. ✅ Download required AI models (`nomic-embed-text`, `phi3:medium`)
+5. ✅ Download required AI models (`mxbai-embed-large`, `phi3:medium`)
 6. ✅ Run health checks and start the MCP server in the background
 
 **Installer Flags (examples):**
@@ -805,7 +805,7 @@ Create or edit `~/.config/Code/User/globalStorage/mcp-servers.json`:
       "env": {
         "OLLAMA_BASE_URL": "http://localhost:11434",
         "OLLAMA_MODEL": "phi3:medium",
-        "OLLAMA_EMBED": "nomic-embed-text",
+        "OLLAMA_EMBED": "mxbai-embed-large",
         "QDRANT_URL": "http://localhost:6333"
       }
     }
@@ -991,12 +991,12 @@ llm:
   provider: "ollama"
   base_url: "http://localhost:11434"
   model: "phi3:medium"        # Change to another model
-  embed_model: "nomic-embed-text"  # Change embedding model
+  embed_model: "mxbai-embed-large"  # Change embedding model
 ```
 
 Recommended models:
 - **LLM:** `phi3:medium`, `llama3.1:8b`, `qwen2.5:7b`
-- **Embeddings:** `nomic-embed-text`, `all-minilm`
+- **Embeddings:** `mxbai-embed-large`, `all-minilm`
 
 ### Configure Qdrant
 
@@ -1054,7 +1054,7 @@ sudo systemctl start docker
 **Solution:**
 ```bash
 ollama pull phi3:medium
-ollama pull nomic-embed-text
+ollama pull mxbai-embed-large
 ```
 
 ### Indexing is too slow

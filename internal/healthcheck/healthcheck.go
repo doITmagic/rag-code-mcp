@@ -148,7 +148,7 @@ func GetRemediation(results []CheckResult) string {
     ollama serve
 
   Pull required models:
-    ollama pull nomic-embed-text
+    ollama pull mxbai-embed-large
     ollama pull phi3:medium
 `
 			case "Qdrant":

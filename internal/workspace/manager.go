@@ -44,6 +44,10 @@ type Manager struct {
 	// File watchers
 	watchersMu sync.Mutex
 	watchers   map[string]*FileWatcher
+
+	// Mutexes per collection for migration/init operations to prevent race conditions
+	collLocksMu sync.Mutex
+	collLocks   map[string]*sync.Mutex
 }
 
 type workspaceScan struct {
@@ -220,15 +224,35 @@ func NewManager(qdrant *storage.QdrantClient, llm llm.Provider, cfg *config.Conf
 	log.Printf("🔧 Workspace Manager initialized (logging verified)")
 
 	return &Manager{
-		detector: detector,
-		cache:    NewCache(5 * time.Minute),
-		qdrant:   qdrant,
-		llm:      llm,
-		config:   cfg,
-		indexing: make(map[string]bool),
-		memories: make(map[string]memory.LongTermMemory),
-		watchers: make(map[string]*FileWatcher),
+		detector:         detector,
+		cache:            NewCache(5 * time.Minute),
+		qdrant:           qdrant,
+		llm:              llm,
+		config:           cfg,
+		indexing:         make(map[string]bool),
+		memories:         make(map[string]memory.LongTermMemory),
+		scanFingerprints: make(map[string]string),
+		watchers:         make(map[string]*FileWatcher),
+		collLocks:        make(map[string]*sync.Mutex),
 	}
+}
+
+// getCollectionMutex returns a mutex for a specific collection name, creating it if needed
+func (m *Manager) getCollectionMutex(name string) *sync.Mutex {
+	m.collLocksMu.Lock()
+	defer m.collLocksMu.Unlock()
+
+	if m.collLocks == nil {
+		m.collLocks = make(map[string]*sync.Mutex)
+	}
+
+	if lock, ok := m.collLocks[name]; ok {
+		return lock
+	}
+
+	lock := &sync.Mutex{}
+	m.collLocks[name] = lock
+	return lock
 }
 
 // DetectWorkspace detects workspace from tool parameters
@@ -412,7 +436,7 @@ func (m *Manager) GetMemoryForWorkspaceLanguage(ctx context.Context, info *Info,
 			// Pass a long-lived context for background indexing
 			indexCtx := context.Background()
 			go func() {
-				if err := m.IndexLanguage(indexCtx, info, language, collectionName); err != nil {
+				if err := m.IndexLanguage(indexCtx, info, language, collectionName, false); err != nil {
 					log.Printf("❌ Background indexing failed: %v", err)
 				}
 			}()
@@ -472,18 +496,17 @@ func (m *Manager) GetMemoriesForAllLanguages(ctx context.Context, info *Info) (m
 
 // IndexLanguage indexes a specific language in a workspace
 // It runs synchronously. Use StartIndexing for background execution.
-func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string, collectionName string) error {
-	// Check if already indexing
+func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string, collectionName string, force bool) error {
+	// Guard against concurrent indexing for same workspace/language
 	indexKey := info.ID + "-" + language
 	m.indexingMu.Lock()
 	if m.indexing[indexKey] {
 		m.indexingMu.Unlock()
-		return fmt.Errorf("workspace '%s' language '%s' is already being indexed", info.Root, language)
+		return fmt.Errorf("already indexing workspace '%s' language '%s'", info.Root, language)
 	}
 	m.indexing[indexKey] = true
 	m.indexingMu.Unlock()
 
-	// Ensure we clear indexing flag when done
 	defer func() {
 		m.indexingMu.Lock()
 		delete(m.indexing, indexKey)
@@ -494,6 +517,12 @@ func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string
 	log.Printf("   Collection: %s", collectionName)
 	log.Printf("   Language: %s", language)
 	log.Printf("   Project type: %s", info.ProjectType)
+
+	// Check if we need to migrate due to dimension mismatch
+	collectionName, _, needsMigration, err := m.CheckAndPrepareMigration(ctx, info, language)
+	if err != nil {
+		return fmt.Errorf("failed to check collection migration: %w", err)
+	}
 
 	// Create collection-specific memory
 	collectionConfig := storage.QdrantConfig{
@@ -506,11 +535,6 @@ func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string
 	if err != nil {
 		return fmt.Errorf("failed to create collection client: %w", err)
 	}
-	// We should close the client, but LongTermMemory might need it?
-	// QdrantLongTermMemory takes *QdrantClient.
-	// If we close it here, LTM might fail if it uses it later?
-	// But LTM is used within this function scope mostly.
-	// Actually, NewQdrantLongTermMemory just stores the reference.
 	defer collectionClient.Close()
 
 	ltm := storage.NewQdrantLongTermMemory(collectionClient)
@@ -539,6 +563,20 @@ func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string
 	if err != nil {
 		log.Printf("⚠️  Failed to load workspace state: %v", err)
 		state = NewWorkspaceState()
+	}
+
+	// Double check if collection is actually empty in Qdrant. If it is, we MUST re-index regardless of state.
+	// This handles cases where the collection was deleted but state.json remains.
+	pointsCount, err := m.qdrant.GetCollectionPointCount(ctx, collectionName)
+	if err == nil && pointsCount == 0 && !needsMigration {
+		log.Printf("📭 Collection '%s' is empty, forcing full re-index (ignoring state.json)", collectionName)
+		state = NewWorkspaceState()
+	}
+
+	// If migration is needed OR force is true, we MUST perform a full re-index regardless of state
+	if needsMigration || force {
+		log.Printf("🧹 Force indexing: re-indexing all files in collection '%s'", collectionName)
+		state = NewWorkspaceState() // Start with fresh state
 	}
 
 	// Identify changes
@@ -679,7 +717,17 @@ func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string
 // checkAndReindexIfNeeded checks if any files have changed and triggers incremental re-indexing if needed
 // This is called automatically when a tool accesses an existing workspace collection
 func (m *Manager) checkAndReindexIfNeeded(ctx context.Context, info *Info, language string, collectionName string) {
-	// Load workspace state
+	// 1. Check if we need to migrate/re-index due to dimension mismatch or empty collection
+	_, _, needsMigration, err := m.CheckAndPrepareMigration(ctx, info, language)
+	if err == nil && needsMigration {
+		log.Printf("ℹ️ Migration or re-index needed for '%s', triggering IndexLanguage", collectionName)
+		if err := m.IndexLanguage(ctx, info, language, collectionName, false); err != nil {
+			log.Printf("⚠️  Migration/Re-index failed: %v", err)
+		}
+		return
+	}
+
+	// 2. Load workspace state
 	stateFile := filepath.Join(info.Root, ".ragcode", "state.json")
 	state, err := LoadState(stateFile)
 	if err != nil {
@@ -737,7 +785,7 @@ func (m *Manager) checkAndReindexIfNeeded(ctx context.Context, info *Info, langu
 	// If changes detected, trigger incremental re-indexing
 	if hasChanges {
 		log.Printf("🔄 Auto-detected file changes in workspace '%s' (language: %s), triggering incremental re-indexing...", info.Root, language)
-		if err := m.IndexLanguage(ctx, info, language, collectionName); err != nil {
+		if err := m.IndexLanguage(ctx, info, language, collectionName, false); err != nil {
 			log.Printf("⚠️  Auto-reindex failed: %v", err)
 		}
 	}
@@ -776,9 +824,11 @@ func (m *Manager) indexMarkdownFile(ctx context.Context, path string, collection
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	var (
-		chunks   []string
-		current  strings.Builder
-		maxChars = 1000
+		chunks          []string
+		current         strings.Builder
+		maxChars        = 2000 // Increased for better context
+		emptyLineCount  = 0
+		lastLineHeading = false
 	)
 
 	flushChunk := func() {
@@ -787,22 +837,61 @@ func (m *Manager) indexMarkdownFile(ctx context.Context, path string, collection
 			chunks = append(chunks, text)
 		}
 		current.Reset()
+		emptyLineCount = 0
+		lastLineHeading = false
+	}
+
+	isHeading := func(line string) bool {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "#") {
+			return false
+		}
+		// Count leading hashes
+		i := 0
+		for i < len(trimmed) && trimmed[i] == '#' {
+			i++
+		}
+		// Valid markdown heading: 1-6 hashes followed by a space or end of string
+		return i >= 1 && i <= 6 && (i == len(trimmed) || trimmed[i] == ' ')
 	}
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.TrimSpace(line) == "" && current.Len() > 0 {
-			flushChunk()
+		trimmedLine := strings.TrimSpace(line)
+
+		// Empty line handling
+		if trimmedLine == "" {
+			emptyLineCount++
+			// Only flush if we have multiple empty lines AND we're not after a heading
+			if emptyLineCount >= 2 && !lastLineHeading && current.Len() > 0 {
+				flushChunk()
+				continue
+			}
+			// Keep single empty line for formatting
+			if current.Len() > 0 {
+				current.WriteString("\n")
+			}
 			continue
 		}
 
+		// Reset empty line counter on content
+		emptyLineCount = 0
+
+		// New section: flush on heading unless it's the first content
+		if isHeading(line) && current.Len() > 500 { // Keep headings together if chunk is small for better context
+			flushChunk()
+		}
+
+		// Size check
 		if current.Len()+len(line)+1 > maxChars {
 			flushChunk()
 		}
+
 		if current.Len() > 0 {
 			current.WriteString("\n")
 		}
 		current.WriteString(line)
+		lastLineHeading = isHeading(line)
 	}
 	if err := scanner.Err(); err != nil {
 		return 0, fmt.Errorf("scan %s: %w", path, err)
@@ -847,14 +936,107 @@ func (m *Manager) IsIndexing(workspaceID string) bool {
 	return m.indexing[workspaceID]
 }
 
-// StartIndexing explicitly starts background indexing for a workspace language
-// This is used by the index_workspace tool to manually trigger indexing
-func (m *Manager) StartIndexing(ctx context.Context, info *Info, language string) error {
+// CheckAndPrepareMigration checks if collection needs migration due to dimension mismatch
+// Returns: (newCollectionName, oldCollectionName, needsMigration, error)
+func (m *Manager) CheckAndPrepareMigration(ctx context.Context, info *Info, language string) (string, string, bool, error) {
 	collectionName := info.CollectionNameForLanguage(language)
+
+	// Use per-collection lock to prevent concurrent reset/migration of the same collection
+	lock := m.getCollectionMutex(collectionName)
+	lock.Lock()
+	defer lock.Unlock()
+
+	// Check if collection exists
+	exists, err := m.qdrant.CollectionExists(ctx, collectionName)
+	if err != nil {
+		return collectionName, "", false, fmt.Errorf("failed to check collection: %w", err)
+	}
+
+	if !exists {
+		// Collection doesn't exist, no migration needed
+		return collectionName, "", false, nil
+	}
+
+	// Try to get collection info to check vector dimensions
+	collectionInfo, err := m.qdrant.GetCollectionInfo(ctx, collectionName)
+	if err != nil {
+		log.Printf("⚠️ Could not get collection info, proceeding without migration: %v", err)
+		return collectionName, "", false, nil
+	}
+
+	// Get current embedding dimension from LLM config
+	currentDimension := m.llm.GetEmbeddingDimension()
+	existingDimension := collectionInfo.VectorSize
+
+	// Case 1: Dimension mismatch - hard reset
+	if existingDimension > 0 && currentDimension > 0 && existingDimension != currentDimension {
+		log.Printf("🔄 Dimension mismatch detected in collection '%s': %d vs %d", collectionName, existingDimension, currentDimension)
+		log.Printf("🧹 Resetting collection '%s' to use %d dimensions", collectionName, currentDimension)
+
+		if err := m.qdrant.DeleteCollection(ctx, collectionName); err != nil {
+			log.Printf("⚠️ Failed to delete old collection during reset: %v", err)
+		}
+
+		if err := m.qdrant.CreateCollection(ctx, collectionName, int(currentDimension)); err != nil {
+			return collectionName, "", false, fmt.Errorf("failed to recreate collection with new dimension: %w", err)
+		}
+
+		return collectionName, "", true, nil
+	}
+
+	// Case 2: Collection exists but is empty - trigger full re-index to be safe
+	if collectionInfo.PointsCount == 0 {
+		log.Printf("ℹ️ Collection '%s' exists but is empty. Triggering full re-index.", collectionName)
+		return collectionName, "", true, nil
+	}
+
+	return collectionName, "", false, nil
+}
+
+// DeleteLanguageCollection deletes the Qdrant collection and associated state for a language
+func (m *Manager) DeleteLanguageCollection(ctx context.Context, info *Info, language string) error {
+	collectionName := info.CollectionNameForLanguage(language)
+
+	// Use per-collection lock to prevent racing with migration/init operations
+	lock := m.getCollectionMutex(collectionName)
+	lock.Lock()
+	defer lock.Unlock()
+
+	// Remove from cache
+	m.memoryMu.Lock()
+	if mem, ok := m.memories[collectionName]; ok {
+		if closer, ok := mem.(interface{ Close() error }); ok {
+			closer.Close()
+		}
+		delete(m.memories, collectionName)
+	}
+	m.memoryMu.Unlock()
+
+	// Delete from Qdrant
+	if err := m.qdrant.DeleteCollection(ctx, collectionName); err != nil {
+		log.Printf("⚠️ Failed to delete collection %s from Qdrant: %v", collectionName, err)
+	}
+
+	return nil
+}
+
+// StartIndexing explicitly starts background indexing for a workspace language
+func (m *Manager) StartIndexing(ctx context.Context, info *Info, language string, force bool) error {
+	collectionName := info.CollectionNameForLanguage(language)
+
+	// Check if already indexing BEFORE starting goroutine for immediate feedback
+	indexKey := info.ID + "-" + language
+	m.indexingMu.RLock()
+	if m.indexing[indexKey] {
+		m.indexingMu.RUnlock()
+		return fmt.Errorf("workspace '%s' language '%s' is already being indexed", info.Root, language)
+	}
+	m.indexingMu.RUnlock()
 
 	// Start background indexing
 	go func() {
-		if err := m.IndexLanguage(context.Background(), info, language, collectionName); err != nil {
+		// IndexLanguage now handles its own concurrency guarding and lock management
+		if err := m.IndexLanguage(context.Background(), info, language, collectionName, force); err != nil {
 			log.Printf("❌ Background indexing failed: %v", err)
 		}
 	}()
@@ -890,7 +1072,7 @@ func (m *Manager) EnsureWorkspaceIndexed(ctx context.Context, rootPath string) e
 			return
 		}
 		colName := info.CollectionNameForLanguage(lang)
-		if err := m.IndexLanguage(ctx, info, lang, colName); err != nil {
+		if err := m.IndexLanguage(ctx, info, lang, colName, false); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", lang, err))
 		}
 	}

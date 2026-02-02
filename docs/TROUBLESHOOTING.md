@@ -9,7 +9,7 @@ Solutions for common issues with RagCode MCP server.
 | Problem | Quick Solution |
 |---------|----------------|
 | "Could not connect to Qdrant" | `docker start ragcode-qdrant` |
-| "Ollama model not found" | `ollama pull phi3:medium && ollama pull nomic-embed-text` |
+| "Ollama model not found" | `ollama pull phi3:medium && ollama pull mxbai-embed-large` |
 | IDE doesn't see RagCode | Re-run `./ragcode-installer -skip-build` |
 | Indexing stuck | Check logs: `tail -f ~/.local/share/ragcode/bin/mcp.log` |
 
@@ -64,7 +64,7 @@ docker ps | grep qdrant
 **Solution:**
 ```bash
 # Download embedding model
-ollama pull nomic-embed-text
+ollama pull mxbai-embed-large
 
 # Download LLM model
 ollama pull phi3:medium
@@ -75,7 +75,7 @@ ollama list
 
 **If using Docker Ollama:**
 ```bash
-docker exec ragcode-ollama ollama pull nomic-embed-text
+docker exec ragcode-ollama ollama pull mxbai-embed-large
 docker exec ragcode-ollama ollama pull phi3:medium
 ```
 
@@ -154,7 +154,7 @@ systemctl restart ollama
 
 # Test embedding model
 curl http://localhost:11434/api/embeddings -d '{
-  "model": "nomic-embed-text",
+  "model": "mxbai-embed-large",
   "prompt": "test"
 }'
 ```
@@ -169,7 +169,7 @@ curl http://localhost:11434/api/embeddings -d '{
 
 1. **Use smaller models:**
    - `phi3:mini` instead of `phi3:medium`
-   - `all-minilm` instead of `nomic-embed-text`
+   - `all-minilm` instead of `mxbai-embed-large`
 
 2. **Limit concurrent operations:**
    - Index one workspace at a time

@@ -177,14 +177,33 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			SearchCodeOnly(ctx context.Context, query []float64, limit int) ([]memory.Document, error)
 		}
 
-		if codeSearcher, ok := workspaceMem.(CodeSearcher); ok {
-			docs, searchErr = codeSearcher.SearchCodeOnly(ctx, queryEmbedding, limit)
+		if searcher, ok := workspaceMem.(CodeSearcher); ok {
+			docs, searchErr = searcher.SearchCodeOnly(ctx, queryEmbedding, limit)
 		} else {
 			docs, searchErr = workspaceMem.Search(ctx, queryEmbedding, limit)
 		}
 
+		if searchErr != nil {
+			// Check for vector dimension mismatch (common when changing models)
+			errLower := strings.ToLower(searchErr.Error())
+			if strings.Contains(errLower, "dimension mismatch") ||
+				(strings.Contains(errLower, "expected:") && (strings.Contains(errLower, "vector") || strings.Contains(errLower, "dimension"))) {
+				return fmt.Sprintf("❌ Vector dimension mismatch in collection '%s'.\n\n"+
+					"This usually happens when you change the embedding model (e.g., from nomic to mxbai).\n"+
+					"To fix this, please delete and recreate the index by running:\n"+
+					"{\n"+
+					"  \"file_path\": \"%s\",\n"+
+					"  \"recreate\": true\n"+
+					"}\n\n"+
+					"Error details: %v",
+					collectionName, workspaceInfo.Root, searchErr), nil
+			}
+			// IMPORTANT: Return the actual error instead of falling through to the fallback
+			return "", fmt.Errorf("search failed in workspace-specific collection '%s': %w", collectionName, searchErr)
+		}
+
 		// If search succeeds but returns no results, check if collection is empty
-		if searchErr == nil && len(docs) == 0 {
+		if len(docs) == 0 {
 			// Collection might be empty - tell AI to index
 			collectionName := workspaceInfo.CollectionNameForLanguage(language)
 			return fmt.Sprintf("❌ Workspace '%s' appears to be empty or not indexed yet.\n\n"+
@@ -203,7 +222,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 				collectionName), nil
 		}
 
-		if searchErr == nil && len(docs) > 0 {
+		if len(docs) > 0 {
 			if outputFormat == "markdown" {
 				result := fmt.Sprintf("🔍 Found %d relevant code snippets in workspace '%s':\n\n",
 					len(docs), workspaceInfo.Root)

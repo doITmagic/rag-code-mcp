@@ -31,7 +31,7 @@ First off, thank you for considering contributing to RagCode MCP! It's people li
    
    # Pull models
    ollama pull phi3:medium
-   ollama pull nomic-embed-text
+   ollama pull mxbai-embed-large
    ```
 
 4. **Run the server locally**

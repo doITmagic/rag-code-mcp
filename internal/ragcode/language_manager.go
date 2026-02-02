@@ -14,10 +14,12 @@ import (
 type Language string
 
 const (
-	LanguageGo     Language = "go"
-	LanguagePHP    Language = "php"
-	LanguageHTML   Language = "html"
-	LanguagePython Language = "python"
+	LanguageGo         Language = "go"
+	LanguagePHP        Language = "php"
+	LanguageHTML       Language = "html"
+	LanguagePython     Language = "python"
+	LanguageJavascript Language = "javascript"
+	LanguageTypescript Language = "typescript"
 )
 
 // AnalyzerManager selects analyzers based on language or workspace project type.
@@ -41,6 +43,10 @@ func normalizeProjectType(projectType string) Language {
 		return LanguageHTML
 	case "python", "py", "django", "flask", "fastapi":
 		return LanguagePython
+	case "node", "nodejs", "javascript", "js", "react":
+		return LanguageJavascript
+	case "typescript", "ts", "tsx":
+		return LanguageTypescript
 	default:
 		return Language(pt)
 	}
@@ -59,6 +65,10 @@ func (m *AnalyzerManager) CodeAnalyzerForProjectType(projectType string) codetyp
 		return htmlanalyzer.NewCodeAnalyzer()
 	case LanguagePython:
 		return python.NewCodeAnalyzer()
+	case LanguageJavascript, LanguageTypescript:
+		// TODO: Implement Tree-sitter basic analyzer for JS/TS
+		// See: internal/ragcode/analyzers/javascript/README.md for implementation plan
+		return nil
 	default:
 		return nil
 	}

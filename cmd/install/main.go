@@ -19,13 +19,14 @@ import (
 
 // Configuration Flags
 var (
-	ollamaMode  = flag.String("ollama", "local", "Mode for Ollama: 'local' (use existing) or 'docker' (run container)")
-	qdrantMode  = flag.String("qdrant", "docker", "Mode for Qdrant: 'docker' (run container) or 'remote' (use existing URL)")
-	modelsDir   = flag.String("models-dir", "", "Path to local Ollama models directory (for Docker mapping). Defaults to ~/.ollama")
-	gpu         = flag.Bool("gpu", false, "Enable GPU support for Docker containers (requires nvidia-container-toolkit)")
-	skipBuild   = flag.Bool("skip-build", false, "Skip building the binary (use existing if available)")
-	idesFlag    = flag.String("ides", "auto", "Comma-separated IDE list to configure (auto, vs-code, claude, cursor, windsurf, antigravity)")
-	upgradeFlag = flag.Bool("upgrade", false, "Upgrade existing installation")
+	ollamaMode    = flag.String("ollama", "local", "Mode for Ollama: 'local' (use existing) or 'docker' (run container)")
+	qdrantMode    = flag.String("qdrant", "docker", "Mode for Qdrant: 'docker' (run container) or 'remote' (use existing URL)")
+	modelsDir     = flag.String("models-dir", "", "Path to local Ollama models directory (for Docker mapping). Defaults to ~/.ollama")
+	gpu           = flag.Bool("gpu", false, "Enable GPU support for Docker containers (requires nvidia-container-toolkit)")
+	skipBuild     = flag.Bool("skip-build", false, "Skip building the binary (use existing if available)")
+	idesFlag      = flag.String("ides", "auto", "Comma-separated IDE list to configure (auto, vs-code, claude, cursor, windsurf, antigravity)")
+	upgradeFlag   = flag.Bool("upgrade", false, "Upgrade existing installation")
+	uninstallFlag = flag.Bool("uninstall", false, "Uninstall the application and clean up configurations")
 )
 
 // Constants
@@ -35,7 +36,7 @@ const (
 	ollamaContainer = "ragcode-ollama"
 	qdrantContainer = "ragcode-qdrant"
 	defaultModel    = "phi3:medium"
-	defaultEmbed    = "nomic-embed-text"
+	defaultEmbed    = "mxbai-embed-large"
 	installDirName  = ".local/share/ragcode"
 )
 
@@ -56,6 +57,9 @@ func init() {
 }
 
 func installRuntimeBinaries() {
+	// Stop any running servers before attempting to replace binaries
+	stopRunningServers()
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fail(fmt.Sprintf("Could not determine user home directory: %v", err))
@@ -67,76 +71,58 @@ func installRuntimeBinaries() {
 		fail(fmt.Sprintf("Could not create install dir %s: %v", binDir, err))
 	}
 
+	stopRunningBinaries()
+
 	binaries := []struct {
 		name string
 		pkg  string
 	}{
 		{"rag-code-mcp", "./cmd/rag-code-mcp"},
 		{"index-all", "./cmd/index-all"},
-	}
-
-	// Check which binaries are missing from the install directory
-	var missingBinaries []struct {
-		name string
-		pkg  string
-	}
-	for _, bin := range binaries {
-		binName := bin.name
-		if runtime.GOOS == "windows" {
-			binName += ".exe"
-		}
-		if _, err := os.Stat(filepath.Join(binDir, binName)); os.IsNotExist(err) {
-			missingBinaries = append(missingBinaries, bin)
-		}
-	}
-
-	if len(missingBinaries) == 0 {
-		success(fmt.Sprintf("Runtime binaries already installed in %s", binDir))
-		return
+		{"ragcode-installer", "./cmd/install"},
 	}
 
 	log(fmt.Sprintf("Installing runtime binaries into %s...", binDir))
-	for _, bin := range missingBinaries {
+	for _, bin := range binaries { // Install/update all to ensure latest version
 		binName := bin.name
 		if runtime.GOOS == "windows" {
 			binName += ".exe"
 		}
 		output := filepath.Join(binDir, binName)
 
-		// Option 1: Check if pre-built binary exists in current directory (from release archive)
+		// Option 1: Check if pre-built binary exists in current directory
 		if _, err := os.Stat(binName); err == nil {
 			log(fmt.Sprintf(" - Found %s in current directory, copying...", binName))
 			if err := copyFile(binName, output); err != nil {
 				fail(fmt.Sprintf("Failed to copy %s: %v", binName, err))
 			}
-			if err := os.Chmod(output, 0755); err != nil {
-				warn(fmt.Sprintf("Could not set executable flag on %s: %v", binName, err))
+		} else if _, err := os.Stat(bin.pkg); err == nil {
+			// Option 2: Build from source
+			if _, err := exec.LookPath("go"); err == nil {
+				log(fmt.Sprintf(" - Building %s from source...", bin.name))
+				cmd := exec.Command("go", "build", "-o", output, bin.pkg)
+				if err := cmd.Run(); err != nil {
+					warn(fmt.Sprintf("Failed to build %s: %v", bin.name, err))
+					continue
+				}
 			}
-			success(fmt.Sprintf("Installed %s", output))
-			continue
 		}
 
-		// Option 2: Fallback to building from source if Go is available and source exists
-		if _, err := os.Stat(bin.pkg); err == nil {
-			if _, err := exec.LookPath("go"); err != nil {
-				fail(fmt.Sprintf("Binary %s not found and Go toolchain is not available. Please download the complete release archive from:\nhttps://github.com/doITmagic/rag-code-mcp/releases/latest", binName))
-			}
-			log(fmt.Sprintf(" - Building %s from source...", bin.name))
-			cmd := exec.Command("go", "build", "-o", output, bin.pkg)
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			if err := cmd.Run(); err != nil {
-				fail(fmt.Sprintf("Failed to build %s: %v", bin.name, err))
-			}
+		if _, err := os.Stat(output); err == nil {
 			if err := os.Chmod(output, 0755); err != nil {
-				fail(fmt.Sprintf("Failed to set executable bit on %s: %v", output, err))
+				warn(fmt.Sprintf("Could not set executable flag for %s: %v", output, err))
 			}
-			success(fmt.Sprintf("Built and installed %s", output))
-			continue
-		}
 
-		// Neither pre-built binary nor source found
-		fail(fmt.Sprintf("Binary %s not found in current directory and source not available. Please download the complete release archive from:\nhttps://github.com/doITmagic/rag-code-mcp/releases/latest", binName))
+			// CLI Tool Support: Symlink to ~/.local/bin if it exists
+			localBin := filepath.Join(home, ".local", "bin")
+			if _, err := os.Stat(localBin); err == nil {
+				linkPath := filepath.Join(localBin, binName)
+				os.Remove(linkPath) // Remove old link
+				if err := os.Symlink(output, linkPath); err == nil {
+					success(fmt.Sprintf("Linked %s to %s", binName, linkPath))
+				}
+			}
+		}
 	}
 }
 
@@ -174,6 +160,19 @@ func log(msg string)     { fmt.Printf("%s==> %s%s\n", blue, msg, reset) }
 func success(msg string) { fmt.Printf("%s✓ %s%s\n", green, msg, reset) }
 func warn(msg string)    { fmt.Printf("%s! %s%s\n", yellow, msg, reset) }
 func fail(msg string)    { fmt.Printf("%s✗ %s%s\n", red, msg, reset); os.Exit(1) }
+
+func stopRunningBinaries() {
+	log("Stopping any running RagCode processes...")
+	if runtime.GOOS == "windows" {
+		_ = exec.Command("taskkill", "/F", "/IM", "rag-code-mcp.exe", "/T").Run()
+	} else {
+		// Stop any running rag-code-mcp processes
+		// We use pkill -f to match the process name or full command line
+		_ = exec.Command("pkill", "-f", "rag-code-mcp").Run()
+		// Give it a short moment to release file handles
+		time.Sleep(500 * time.Millisecond)
+	}
+}
 
 func checkDockerAvailable() {
 	log("Checking Docker availability...")
@@ -249,6 +248,27 @@ func killProcessOnPort(port int) {
 	}
 }
 
+// stopRunningServers stops any running rag-code-mcp processes
+func stopRunningServers() {
+	log("Checking for running rag-code-mcp processes...")
+
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.Command("taskkill", "/F", "/IM", "rag-code-mcp.exe")
+	} else {
+		cmd = exec.Command("pkill", "-f", "rag-code-mcp")
+	}
+
+	err := cmd.Run()
+	if err == nil {
+		success("Stopped running MCP server processes")
+		time.Sleep(500 * time.Millisecond) // Give processes time to clean up
+	} else {
+		// Not an error if no processes found - just means nothing was running
+		log("No running MCP server processes found (this is normal)")
+	}
+}
+
 func freeRequiredPorts() {
 	ports := map[int]string{}
 
@@ -257,59 +277,58 @@ func freeRequiredPorts() {
 	}
 	if *qdrantMode == "docker" {
 		ports[6333] = "Qdrant"
-		ports[6334] = "Qdrant gRPC"
 	}
 
-	var blocked []string
 	for port, name := range ports {
 		if isPortInUse(port) {
-			// Check if it's already the service we want
+			// 1. Check if it's already our named container (shorthand check)
+			containerName := ""
+			if port == 11434 {
+				containerName = ollamaContainer
+			} else if port == 6333 {
+				containerName = qdrantContainer
+			}
+
+			if containerName != "" {
+				cmd := exec.Command("docker", "ps", "--filter", "name="+containerName, "--filter", "status=running", "--format", "{{.Names}}")
+				output, _ := cmd.CombinedOutput()
+				if strings.Contains(string(output), containerName) {
+					success(fmt.Sprintf("Service %s (%s) is already running in Docker", name, containerName))
+					continue
+				}
+			}
+
+			// 2. Check if it's already the service we want responding on the port
 			isOurs := false
+			client := &http.Client{Timeout: 2 * time.Second}
 			switch port {
 			case 11434:
-				resp, err := http.Get("http://localhost:11434/api/tags")
+				resp, err := client.Get("http://127.0.0.1:11434/api/tags")
 				if err == nil {
 					resp.Body.Close()
 					isOurs = true
 				}
 			case 6333:
-				resp, err := http.Get("http://localhost:6333/readyz")
+				// Qdrant check
+				resp, err := client.Get("http://127.0.0.1:6333/readyz")
 				if err == nil {
 					resp.Body.Close()
 					isOurs = true
 				}
-			case 6334:
-				// Qdrant gRPC, if 6333 is ours, 6334 likely is too if it's qdrant
-				isOurs = true // Conservative assumption if 6333 passed
 			}
 
 			if isOurs {
 				success(fmt.Sprintf("Service %s is already running on port %d", name, port))
 				continue
 			}
-			blocked = append(blocked, fmt.Sprintf("%d (%s)", port, name))
-		}
-	}
 
-	if len(blocked) > 0 {
-		warn(fmt.Sprintf("Ports in use by unknown processes: %s", strings.Join(blocked, ", ")))
-		log("Stopping processes on required ports...")
-		for _, b := range blocked {
-			var port int
-			if _, err := fmt.Sscanf(b, "%d", &port); err == nil {
-				killProcessOnPort(port)
-				time.Sleep(500 * time.Millisecond)
-			}
-		}
-		// Verify
-		for _, b := range blocked {
-			var port int
-			var name string
-			if _, err := fmt.Sscanf(b, "%d (%s)", &port, &name); err == nil {
-				if isPortInUse(port) {
-					// Don't fail immediately if it's a re-install and containers might be ours
-					warn(fmt.Sprintf("Could not free port %d (%s) via kill. Checking if it's our container...", port, name))
-				}
+			// 3. It's an unknown process, try to kill it
+			log(fmt.Sprintf("Port %d (%s) is in use by an unknown process. Trying to free it...", port, name))
+			killProcessOnPort(port)
+			time.Sleep(1 * time.Second)
+
+			if isPortInUse(port) {
+				fail(fmt.Sprintf("Could not free port %d (%s). Please stop the process manually.", port, name))
 			}
 		}
 	}
@@ -317,6 +336,11 @@ func freeRequiredPorts() {
 
 func main() {
 	flag.Parse()
+
+	if *uninstallFlag {
+		runUninstall()
+		return
+	}
 
 	printBanner()
 
@@ -353,6 +377,113 @@ func main() {
 	printSummary()
 }
 
+func runUninstall() {
+	log("Starting uninstallation process...")
+
+	// 1. Stop and remove Docker containers
+	if commandExists("docker") {
+		log("Cleaning up Docker containers...")
+		_ = exec.Command("docker", "stop", ollamaContainer, qdrantContainer).Run()
+		_ = exec.Command("docker", "rm", ollamaContainer, qdrantContainer).Run()
+	}
+
+	home, _ := os.UserHomeDir()
+
+	// 2. Remove configuration from IDEs
+	log("Removing configurations from IDEs...")
+	allIDEs := resolveIDEPaths(home)
+	for key, ide := range allIDEs {
+		removeConfigFromIDE(key, ide.path, ide.displayName)
+	}
+
+	// 3. Remove symlinks/binaries from ~/.local/bin or go/bin
+	log("Removing binaries...")
+	binaries := []string{"rag-code-mcp", "index-all", "ragcode-installer"}
+
+	var binPath string
+	if runtime.GOOS == "windows" {
+		binPath = filepath.Join(home, "go", "bin")
+	} else {
+		binPath = "/usr/local/bin" // Traditional path
+		if userBin, err := os.UserHomeDir(); err == nil {
+			userBin = filepath.Join(userBin, ".local", "bin")
+			if _, err := os.Stat(userBin); err == nil {
+				binPath = userBin
+			}
+		}
+	}
+
+	for _, bin := range binaries {
+		p := filepath.Join(binPath, bin)
+		if runtime.GOOS == "windows" {
+			p += ".exe"
+		}
+		if _, err := os.Stat(p); err == nil {
+			os.Remove(p)
+			log(fmt.Sprintf("Removed %s", p))
+		}
+	}
+
+	// 4. Remove runtime binaries and metadata
+	log("Removing application files...")
+	installDir := filepath.Join(home, installDirName)
+	os.RemoveAll(installDir)
+
+	success("RagCode MCP has been uninstalled successfully.")
+}
+
+func commandExists(cmd string) bool {
+	_, err := exec.LookPath(cmd)
+	return err == nil
+}
+
+func removeConfigFromIDE(ideKey, path, displayName string) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+
+	var config map[string]interface{}
+	if err := json.Unmarshal(data, &config); err != nil {
+		return
+	}
+
+	// Determine the collection key (mcpServers or mcp-servers)
+	collectionKey := "mcpServers"
+	if ideKey == "vs-code" || ideKey == "copilot" || ideKey == "cursor" {
+		// These IDEs use mcpServers
+	} else {
+		// Check if mcp-servers exists
+		if _, ok := config["mcp-servers"]; ok {
+			collectionKey = "mcp-servers"
+		}
+	}
+
+	serversRaw, ok := config[collectionKey]
+	if !ok {
+		return
+	}
+
+	servers, ok := serversRaw.(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	if _, ok := servers["ragcode"]; ok {
+		delete(servers, "ragcode")
+		updated, _ := json.MarshalIndent(config, "", "  ")
+		if err := os.WriteFile(path, updated, 0644); err != nil {
+			warn(fmt.Sprintf("Failed to write updated config to %s: %v", path, err))
+		} else {
+			log(fmt.Sprintf("Removed config from %s", displayName))
+		}
+	}
+}
+
 func printBanner() {
 	fmt.Println(`
     ____              ______          __   
@@ -369,6 +500,9 @@ func printBanner() {
 
 func installBinary() {
 	log("Installing RagCode binary...")
+
+	// Stop any running servers before attempting to replace binary
+	stopRunningServers()
 
 	// Determine install path
 	home, err := os.UserHomeDir()
@@ -587,9 +721,11 @@ func addToPath(binDir string) {
 func setupServices() {
 	log("Configuring services...")
 
+	client := &http.Client{Timeout: 2 * time.Second}
+
 	// Setup Qdrant
 	qdrantReady := false
-	resp, err := http.Get("http://localhost:6333/readyz")
+	resp, err := client.Get("http://127.0.0.1:6333/readyz")
 	if err == nil {
 		resp.Body.Close()
 		qdrantReady = true
@@ -618,7 +754,7 @@ func setupServices() {
 
 	// Setup Ollama
 	ollamaReady := false
-	resp, err = http.Get("http://localhost:11434/api/tags")
+	resp, err = client.Get("http://127.0.0.1:11434/api/tags")
 	if err == nil {
 		resp.Body.Close()
 		ollamaReady = true
@@ -878,9 +1014,17 @@ func resolveIDEPaths(home string) map[string]idePath {
 			path:        filepath.Join(home, ".cursor", "mcp.config.json"),
 			displayName: "Cursor",
 		},
+		"copilot": {
+			path:        filepath.Join(home, ".aitk", "mcp.json"),
+			displayName: "GitHub Copilot",
+		},
 		"antigravity": {
 			path:        filepath.Join(home, ".gemini", "antigravity", "mcp_config.json"),
 			displayName: "Antigravity",
+		},
+		"mcp-cli": {
+			path:        filepath.Join(home, ".config", "mcp-servers.json"),
+			displayName: "MCP CLI / Generic",
 		},
 	}
 
@@ -979,13 +1123,22 @@ func updateMCPConfig(ideKey, displayName, path, binPath string) {
 	}
 
 	collectionKey := "mcpServers"
-	if ideKey == "vs-code" {
+	if ideKey == "vs-code" || ideKey == "copilot" {
 		collectionKey = "servers"
 	}
 
 	servers := make(map[string]interface{})
 	if existing, ok := config[collectionKey].(map[string]interface{}); ok {
 		servers = existing
+	}
+
+	// Migration: Clean up legacy server keys
+	legacyKeys := []string{"coderag", "do-ai", "ragcond"}
+	for _, lk := range legacyKeys {
+		if _, exists := servers[lk]; exists {
+			delete(servers, lk)
+			log(fmt.Sprintf("Migrating legacy config: removed %s", lk))
+		}
 	}
 
 	servers["ragcode"] = buildMCPServerEntry(ideKey, binPath)
@@ -1014,7 +1167,7 @@ func buildMCPServerEntry(ideKey, binPath string) map[string]interface{} {
 
 	// add specific fields for each ide
 	switch ideKey {
-	case "vs-code":
+	case "vs-code", "copilot":
 		entry["alwaysAllow"] = []string{
 			"search_code",
 			"search_local_index",

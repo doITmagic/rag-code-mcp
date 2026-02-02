@@ -608,6 +608,8 @@ func downloadAndExtractBinary(dest string) bool {
 	default:
 		return false
 	}
+	// Check if archive exists locally - REMOVED as per user feedback (binaries should be used directly)
+
 	url := fmt.Sprintf("https://github.com/doITmagic/rag-code-mcp/releases/latest/download/%s", archiveName)
 	log(fmt.Sprintf("Downloading from %s...", url))
 
@@ -633,7 +635,8 @@ func downloadAndExtractBinary(dest string) bool {
 		warn(fmt.Sprintf("Could not create temp file: %v", err))
 		return false
 	}
-	defer os.Remove(tmpFile.Name())
+	archivePath := tmpFile.Name()
+	defer os.Remove(archivePath)
 	defer tmpFile.Close()
 
 	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
@@ -648,6 +651,12 @@ func downloadAndExtractBinary(dest string) bool {
 		binaryName += ".exe"
 	}
 
+	return extractBinary(archivePath, binaryName, dest)
+}
+
+// extractBinary extracts a specific file from the archive.
+func extractBinary(archivePath, fileName, dest string) bool {
+
 	if runtime.GOOS == "windows" {
 		// Handle zip for Windows
 		warn("Windows archive extraction not yet implemented")
@@ -655,7 +664,7 @@ func downloadAndExtractBinary(dest string) bool {
 	}
 
 	// Extract tar.gz
-	cmd := exec.Command("tar", "-xzf", tmpFile.Name(), "-O", binaryName)
+	cmd := exec.Command("tar", "-xzf", archivePath, "-O", fileName)
 	outFile, err := os.Create(dest)
 	if err != nil {
 		warn(fmt.Sprintf("Could not create destination file: %v", err))

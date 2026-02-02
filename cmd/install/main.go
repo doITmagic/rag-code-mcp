@@ -80,21 +80,6 @@ func installRuntimeBinaries() {
 		{"ragcode-installer", "./cmd/install"},
 	}
 
-	// Check which binaries are missing from the install directory
-	var missingBinaries []struct {
-		name string
-		pkg  string
-	}
-	for _, bin := range binaries {
-		binName := bin.name
-		if runtime.GOOS == "windows" {
-			binName += ".exe"
-		}
-		if _, err := os.Stat(filepath.Join(binDir, binName)); os.IsNotExist(err) {
-			missingBinaries = append(missingBinaries, bin)
-		}
-	}
-
 	log(fmt.Sprintf("Installing runtime binaries into %s...", binDir))
 	for _, bin := range binaries { // Install/update all to ensure latest version
 		binName := bin.name
@@ -122,7 +107,9 @@ func installRuntimeBinaries() {
 		}
 
 		if _, err := os.Stat(output); err == nil {
-			os.Chmod(output, 0755)
+			if err := os.Chmod(output, 0755); err != nil {
+				warn(fmt.Sprintf("Could not set executable flag for %s: %v", output, err))
+			}
 
 			// CLI Tool Support: Symlink to ~/.local/bin if it exists
 			localBin := filepath.Join(home, ".local", "bin")
@@ -381,8 +368,8 @@ func runUninstall() {
 	// 1. Stop and remove Docker containers
 	if commandExists("docker") {
 		log("Cleaning up Docker containers...")
-		exec.Command("docker", "stop", ollamaContainer, qdrantContainer).Run()
-		exec.Command("docker", "rm", ollamaContainer, qdrantContainer).Run()
+		_ = exec.Command("docker", "stop", ollamaContainer, qdrantContainer).Run()
+		_ = exec.Command("docker", "rm", ollamaContainer, qdrantContainer).Run()
 	}
 
 	home, _ := os.UserHomeDir()
@@ -474,8 +461,11 @@ func removeConfigFromIDE(ideKey, path, displayName string) {
 	if _, ok := servers["ragcode"]; ok {
 		delete(servers, "ragcode")
 		updated, _ := json.MarshalIndent(config, "", "  ")
-		os.WriteFile(path, updated, 0644)
-		log(fmt.Sprintf("Removed config from %s", displayName))
+		if err := os.WriteFile(path, updated, 0644); err != nil {
+			warn(fmt.Sprintf("Failed to write updated config to %s: %v", path, err))
+		} else {
+			log(fmt.Sprintf("Removed config from %s", displayName))
+		}
 	}
 }
 

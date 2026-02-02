@@ -74,7 +74,9 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 		if recreate {
 			// Delete collections first
 			for _, lang := range workspaceInfo.Languages {
-				t.workspaceManager.DeleteLanguageCollection(ctx, workspaceInfo, lang)
+				if err := t.workspaceManager.DeleteLanguageCollection(ctx, workspaceInfo, lang); err != nil {
+					log.Printf("⚠️ Failed to delete collection for %s: %v", lang, err)
+				}
 			}
 
 			// Delete workspace state file ONCE for the entire workspace
@@ -106,7 +108,9 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 	// Index specific language
 	if recreate {
 		log.Printf("🗑️ Recreating collection for language '%s'...", language)
-		t.workspaceManager.DeleteLanguageCollection(ctx, workspaceInfo, language)
+		if err := t.workspaceManager.DeleteLanguageCollection(ctx, workspaceInfo, language); err != nil {
+			log.Printf("⚠️ Failed to delete collection for %s: %v", language, err)
+		}
 
 		// Delete workspace state file ONCE
 		deleteWorkspaceState(workspaceInfo.Root)

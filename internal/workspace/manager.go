@@ -50,6 +50,31 @@ type Manager struct {
 	collLocks   map[string]*sync.Mutex
 }
 
+// GetConfig returns the workspace manager configuration
+func (m *Manager) GetConfig() *config.Config {
+	return m.config
+}
+
+// GetDetectedLanguages returns the list of programming languages detected in the workspace
+func (m *Manager) GetDetectedLanguages(info *Info) []string {
+	if len(info.Languages) > 0 {
+		return info.Languages
+	}
+
+	// If not already detected, run a scan
+	scan, err := m.scanWorkspace(info)
+	if err != nil {
+		return []string{}
+	}
+
+	langs := make([]string, 0, len(scan.LanguageDirs))
+	for lang := range scan.LanguageDirs {
+		langs = append(langs, lang)
+	}
+	sort.Strings(langs)
+	return langs
+}
+
 type workspaceScan struct {
 	LanguageDirs  map[string][]string
 	LanguageFiles map[string][]string // Track individual files per language

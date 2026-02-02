@@ -644,6 +644,7 @@ func main() {
 	searchDocsTool.SetWorkspaceManager(workspaceManager)
 
 	indexWorkspaceTool := tools.NewIndexWorkspaceTool(workspaceManager)
+	evaluateTool := tools.NewEvaluateRagCodeTool(workspaceManager)
 
 	// Example: use typed ToolHandlerFor for rag_search_code
 	registerSearchCodeToolTyped(server, searchTool, cfg)
@@ -657,6 +658,7 @@ func main() {
 	registerAgentTool(server, searchDocsTool, cfg)
 	registerAgentTool(server, hybridTool, cfg)
 	registerAgentTool(server, indexWorkspaceTool, cfg)
+	registerAgentTool(server, evaluateTool, cfg)
 
 	if err := registerFileResources(server); err != nil {
 		log.Fatalf("Failed to register resources: %v", err)
@@ -1097,6 +1099,18 @@ func getToolSchema(toolName string) map[string]interface{} {
 				},
 			},
 			"required": []string{"query", "file_path"},
+		}
+
+	case "rag_evaluate":
+		return map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"file_path": map[string]interface{}{
+					"type":        "string",
+					"description": "MANDATORY: The absolute path of the current file you are editing. Required to identify the correct project/workspace context.",
+				},
+			},
+			"required": []string{"file_path"},
 		}
 
 	default:

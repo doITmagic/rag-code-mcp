@@ -124,7 +124,7 @@ func (t *SearchDocsTool) Execute(ctx context.Context, params map[string]interfac
 		return "", fmt.Errorf("failed to generate query embedding: %w", err)
 	}
 
-	docs, err := searchMemory.Search(ctx, queryEmbedding, limit)
+	docs, err := searchMemory.SearchDocsOnly(ctx, queryEmbedding, limit)
 	if err != nil {
 		return "", fmt.Errorf("search failed: %w", err)
 	}
@@ -146,14 +146,22 @@ func (t *SearchDocsTool) Execute(ctx context.Context, params map[string]interfac
 	if workspacePath != "" {
 		result := fmt.Sprintf("🔍 Found %d relevant documentation snippets in workspace '%s':\n\n", len(docs), workspacePath)
 		for i, doc := range docs {
-			result += fmt.Sprintf("--- Result %d ---\n%s\n\n", i+1, doc.Content)
+			filePath := ""
+			if file, ok := doc.Metadata["file"].(string); ok {
+				filePath = fmt.Sprintf("\n📄 File: %s\n", file)
+			}
+			result += fmt.Sprintf("--- Result %d ---%s\n%s\n\n", i+1, filePath, doc.Content)
 		}
 		return result, nil
 	}
 
 	result := fmt.Sprintf("Found %d relevant documentation snippets:\n\n", len(docs))
 	for i, doc := range docs {
-		result += fmt.Sprintf("--- Result %d ---\n%s\n\n", i+1, doc.Content)
+		filePath := ""
+		if file, ok := doc.Metadata["file"].(string); ok {
+			filePath = fmt.Sprintf("\n📄 File: %s\n", file)
+		}
+		result += fmt.Sprintf("--- Result %d ---%s\n%s\n\n", i+1, filePath, doc.Content)
 	}
 
 	return result, nil

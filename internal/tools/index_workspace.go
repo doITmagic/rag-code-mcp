@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/doITmagic/rag-code-mcp/internal/memory"
@@ -50,6 +52,11 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 		language = lang
 	}
 
+	recreate := false
+	if r, ok := params["recreate"].(bool); ok {
+		recreate = r
+	}
+
 	// If no language specified, index all detected languages
 	if language == "" {
 		if len(workspaceInfo.Languages) == 0 {
@@ -64,6 +71,18 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 	// If still no specific language, index all languages
 	if language == "" {
 		// Index all detected languages
+		if recreate {
+			// Delete collections first
+			for _, lang := range workspaceInfo.Languages {
+				if err := t.workspaceManager.DeleteLanguageCollection(ctx, workspaceInfo, lang); err != nil {
+					log.Printf("⚠️ Failed to delete collection for %s: %v", lang, err)
+				}
+			}
+
+			// Delete workspace state file ONCE for the entire workspace
+			deleteWorkspaceState(workspaceInfo.Root)
+		}
+
 		memories, err := t.workspaceManager.GetMemoriesForAllLanguages(ctx, workspaceInfo)
 		if err != nil {
 			return "", fmt.Errorf("failed to initialize indexing for workspace: %w", err)
@@ -87,6 +106,16 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 	}
 
 	// Index specific language
+	if recreate {
+		log.Printf("🗑️ Recreating collection for language '%s'...", language)
+		if err := t.workspaceManager.DeleteLanguageCollection(ctx, workspaceInfo, language); err != nil {
+			log.Printf("⚠️ Failed to delete collection for %s: %v", language, err)
+		}
+
+		// Delete workspace state file ONCE
+		deleteWorkspaceState(workspaceInfo.Root)
+	}
+
 	mem, err := t.workspaceManager.GetMemoryForWorkspaceLanguage(ctx, workspaceInfo, language)
 	if err != nil {
 		return "", fmt.Errorf("failed to initialize indexing for language '%s': %w", language, err)
@@ -118,23 +147,19 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 
 	// SCENARIO 2: Start indexing (collection doesn't exist or is empty)
 	// Force indexing to start (or restart if stopped)
-	if err := t.workspaceManager.StartIndexing(ctx, workspaceInfo, language); err != nil {
-		// If error is "already indexing", that's fine
-		if !t.workspaceManager.IsIndexing(indexKey) {
-			return "", fmt.Errorf("failed to start indexing: %w", err)
+	if err := t.workspaceManager.StartIndexing(ctx, workspaceInfo, language, recreate); err != nil {
+		// If error is "already indexing", that's fine - just return status
+		if strings.Contains(err.Error(), "already being indexed") {
+			return fmt.Sprintf("⏳ Workspace '%s' language '%s' is already being indexed in the background.\n"+
+				"Collection: %s\n"+
+				"You can use search_code immediately - results will appear as indexing progresses.",
+				workspaceInfo.Root, language, collectionName), nil
 		}
+		return "", fmt.Errorf("failed to start indexing: %w", err)
 	}
 
 	log.Printf("📦 Tool triggered indexing for workspace: %s, language: %s, collection: %s",
 		workspaceInfo.Root, language, collectionName)
-
-	// Explicitly start indexing using StartIndexing method
-	if err := t.workspaceManager.StartIndexing(ctx, workspaceInfo, language); err != nil {
-		// If error is "already in progress", that's okay (race condition)
-		if !strings.Contains(err.Error(), "already in progress") {
-			return "", fmt.Errorf("failed to start indexing: %w", err)
-		}
-	}
 
 	return fmt.Sprintf("✓ Indexing started for workspace '%s'\n"+
 		"Language: %s\n"+
@@ -157,4 +182,14 @@ func getCollectionNames(info *workspace.Info, memories map[string]memory.LongTer
 		result += info.CollectionNameForLanguage(lang)
 	}
 	return result
+}
+
+// deleteWorkspaceState removes the .ragcode/state.json file
+func deleteWorkspaceState(root string) {
+	stateFile := filepath.Join(root, ".ragcode", "state.json")
+	if err := os.Remove(stateFile); err == nil {
+		log.Printf("🗑️ Removed state file: %s", stateFile)
+	} else if !os.IsNotExist(err) {
+		log.Printf("⚠️ Failed to delete state file %s: %v", stateFile, err)
+	}
 }

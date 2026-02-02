@@ -197,4 +197,9 @@ type WorkspaceConfig struct {
 	// Useful when you want strict control and don't want automatic parent directory traversal
 	// Default: false (upward search enabled)
 	DisableUpwardSearch bool `yaml:"disable_upward_search"`
+
+	// AutoCreateIDERules when true, automatically creates rule files (.cursorrules, etc.)
+	// in workspace roots to ensure AI follows the "Golden Rule"
+	// Default: true
+	AutoCreateIDERules bool `yaml:"auto_create_ide_rules"`
 }

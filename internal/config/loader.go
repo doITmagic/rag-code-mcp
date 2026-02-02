@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -28,6 +29,16 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
+	// Auto-migrate file-based config BEFORE env overrides to see if we should save
+	if migrateEmbeddingModel(&cfg) {
+		log.Printf("🔄 Auto-migrating configuration file '%s' to stable embedding models...", path)
+		if err := Save(path, &cfg); err != nil {
+			log.Printf("⚠️  Failed to persist migrated configuration to '%s': %v", path, err)
+		} else {
+			log.Printf("✅ Configuration file successfully updated.")
+		}
+	}
+
 	// Apply environment variable overrides
 	applyEnvOverrides(&cfg)
 
@@ -39,6 +50,20 @@ func Load(path string) (*Config, error) {
 	return &cfg, nil
 }
 
+// Save writes the configuration to a file
+func Save(path string, cfg *Config) error {
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	return nil
+}
+
 // DefaultConfig returns a default configuration
 func DefaultConfig() *Config {
 	return &Config{
@@ -46,7 +71,7 @@ func DefaultConfig() *Config {
 			Provider:         "ollama",
 			OllamaBaseURL:    "http://localhost:11434",
 			OllamaModel:      "llama3",
-			OllamaEmbed:      "nomic-embed-text",
+			OllamaEmbed:      "mxbai-embed-large",
 			LlamafileBaseURL: "http://localhost:8080",
 			Temperature:      0.7,
 			MaxTokens:        2048,
@@ -55,7 +80,7 @@ func DefaultConfig() *Config {
 			// Legacy fields for backward compatibility
 			BaseURL:    "http://localhost:11434",
 			Model:      "llama3",
-			EmbedModel: "nomic-embed-text",
+			EmbedModel: "mxbai-embed-large",
 		},
 		Memory: MemoryConfig{
 			ShortTermSize:  10,
@@ -105,14 +130,15 @@ func DefaultConfig() *Config {
 			Collection: "do-ai-api-docs",
 		},
 		Workspace: WorkspaceConfig{
-			Enabled:          true,
-			AutoIndex:        true,
-			MaxWorkspaces:    10,
-			DetectionMarkers: []string{".git", "go.mod", "package.json", "Cargo.toml", "pyproject.toml", "pom.xml"},
-			ExcludePatterns:  []string{"node_modules", ".git", "vendor", "target", "build", "dist", ".venv"},
-			CollectionPrefix: "ragcode",
-			IndexInclude:     []string{}, // Empty means use global rag_code.include
-			IndexExclude:     []string{}, // Empty means use global rag_code.exclude
+			Enabled:            true,
+			AutoIndex:          true,
+			MaxWorkspaces:      10,
+			DetectionMarkers:   []string{".git", "go.mod", "package.json", "Cargo.toml", "pyproject.toml", "pom.xml"},
+			ExcludePatterns:    []string{"node_modules", ".git", "vendor", "target", "build", "dist", ".venv"},
+			CollectionPrefix:   "ragcode",
+			IndexInclude:       []string{}, // Empty means use global rag_code.include
+			IndexExclude:       []string{}, // Empty means use global rag_code.exclude
+			AutoCreateIDERules: true,
 		},
 	}
 }
@@ -210,10 +236,51 @@ func applyEnvOverrides(cfg *Config) {
 	if wsPrefix := os.Getenv("WORKSPACE_COLLECTION_PREFIX"); wsPrefix != "" {
 		cfg.Workspace.CollectionPrefix = wsPrefix
 	}
+	if wsIDERules := os.Getenv("WORKSPACE_AUTO_CREATE_IDE_RULES"); wsIDERules != "" {
+		if v, err := strconv.ParseBool(wsIDERules); err == nil {
+			cfg.Workspace.AutoCreateIDERules = v
+		}
+	}
+}
+
+// migrateEmbeddingModel automatically migrates from old unstable embedding model
+func migrateEmbeddingModel(cfg *Config) bool {
+	migrated := false
+
+	// List of deprecated/unstable models that should be migrated
+	deprecatedModels := []string{"nomic-embed-text"}
+	newStableModel := "mxbai-embed-large"
+
+	// Check if current model is deprecated
+	for _, deprecated := range deprecatedModels {
+		if cfg.LLM.OllamaEmbed == deprecated {
+			log.Printf("⚠️  MIGRATION: Detected deprecated embedding model '%s'", deprecated)
+			log.Printf("   Automatically upgrading to stable model '%s'", newStableModel)
+			log.Printf("   Note: Existing indexed data will need to be re-indexed.")
+			log.Printf("   Use 'index_workspace' tool with 'recreate: true' to rebuild indexes.")
+
+			cfg.LLM.OllamaEmbed = newStableModel
+			migrated = true
+			break
+		}
+
+		// Also check legacy field
+		if cfg.LLM.EmbedModel == deprecated {
+			cfg.LLM.EmbedModel = newStableModel
+			migrated = true
+		}
+	}
+
+	return migrated
 }
 
 // validate checks if the configuration is valid
 func validate(cfg *Config) error {
+	// Auto-migrate deprecated embedding models
+	if migrateEmbeddingModel(cfg) {
+		log.Printf("✓ Configuration migrated to stable embedding model")
+	}
+
 	// Default to ollama if provider is not set
 	if cfg.LLM.Provider == "" {
 		cfg.LLM.Provider = "ollama"

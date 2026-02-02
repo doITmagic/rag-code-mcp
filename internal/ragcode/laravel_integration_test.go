@@ -88,6 +88,14 @@ func (m *mockMemoryStore) Search(ctx context.Context, query []float64, limit int
 	return nil, nil
 }
 
+func (m *mockMemoryStore) SearchDocsOnly(ctx context.Context, query []float64, limit int) ([]memory.Document, error) {
+	return nil, nil
+}
+
+func (m *mockMemoryStore) SearchCodeOnly(ctx context.Context, query []float64, limit int) ([]memory.Document, error) {
+	return nil, nil
+}
+
 func (m *mockMemoryStore) GetAll() []memory.Document {
 	docs := make([]memory.Document, 0, len(m.docs))
 	for _, doc := range m.docs {
@@ -155,6 +163,10 @@ type mockProvider struct{}
 func (m *mockProvider) Embed(ctx context.Context, text string) ([]float64, error) {
 	// Return a dummy embedding vector
 	return make([]float64, 384), nil
+}
+
+func (m *mockProvider) GetEmbeddingDimension() uint64 {
+	return 384
 }
 
 func (m *mockProvider) Generate(ctx context.Context, prompt string, opts ...llm.GenerateOption) (string, error) {

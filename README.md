@@ -23,6 +23,11 @@ RagCode is a **Model Context Protocol (MCP) server** that instantly makes your p
 
 Built with the official [Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk), RagCode provides **9 powerful tools** to index, search, and analyze code, making it the ultimate solution for **AI-ready software development**.
 
+## ⚖️ The Golden Rule
+> **"FOR ANY INFORMATION ABOUT YOUR CODE (location, structure, logic, or usage), YOU MUST USE RAGCODE MCP TOOLS."**
+> 
+> *By using semantic search instead of simple keyword lookups, your AI assistant gains true context, avoiding hallucinations and and missing details even in massive legacy mono-repos.*
+
 ---
 
 ## ⚡ One-Command Installation
@@ -51,7 +56,7 @@ Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/lates
 **That's it!** The installer automatically:
 - ✅ Downloads and installs the `rag-code-mcp` binary
 - ✅ Sets up Ollama and Qdrant in Docker containers
-- ✅ Downloads required AI models (`phi3:medium`, `nomic-embed-text`)
+- ✅ Downloads required AI models (`phi3:medium`, `mxbai-embed-large`)
 - ✅ Configures your IDE (VS Code, Cursor, Windsurf, Claude Desktop)
 - ✅ Adds binaries to your PATH
 
@@ -219,7 +224,7 @@ RagCode works with all major AI-powered IDEs:
 | Component | Requirement | Notes |
 |-----------|-------------|-------|
 | **CPU** | 4 cores | For running Ollama models |
-| **RAM** | 16 GB | 8 GB for `phi3:medium`, 4 GB for `nomic-embed-text`, 4 GB system |
+| **RAM** | 16 GB | 8 GB for `phi3:medium`, 4 GB for `mxbai-embed-large`, 4 GB system |
 | **Disk** | 10 GB free | ~8 GB for models + 2 GB for data |
 | **OS** | Linux, macOS, Windows | Docker required for Qdrant |
 

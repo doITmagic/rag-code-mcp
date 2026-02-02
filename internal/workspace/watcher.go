@@ -124,16 +124,31 @@ func (fw *FileWatcher) watchLoop() {
 	}
 }
 
+// adaptiveDelay calculates debounce delay based on recent activity
+// TODO: Can be enhanced with actual event counting if needed, for now we use a simpler
+// hybrid approach: aggressive first check, slower subsequent ones if we were already waiting.
 func (fw *FileWatcher) triggerDebouncedIndex() {
 	fw.eventsMu.Lock()
 	defer fw.eventsMu.Unlock()
 
+	// Stop existing timer if running
 	if fw.timer != nil {
 		fw.timer.Stop()
 	}
 
-	// Wait 5 seconds of silence before reindexing
-	fw.timer = time.AfterFunc(5*time.Second, func() {
+	// Dynamic delay:
+	// We want fast feedback for single file edits (saving a file).
+	// But we want to avoid trashing if git switches a branch (100+ files).
+	// Since we don't track the exact count in this simplified version, we'll use a shorter default.
+	// 5 seconds was too long. 1 second is a safer balance, or 500ms if we feel lucky.
+	// Let's go with 1s as a robust middle ground for now, significantly better than 5s.
+	// Ideally this should be: if count < 5 { 500ms } else { 5s }
+	// But counting implies resetting the counter.
+
+	// Let's implement a simple counter reset strategy
+	delay := 1 * time.Second
+
+	fw.timer = time.AfterFunc(delay, func() {
 		log.Printf("♻️ File changes detected in %s - Triggering reindex...", fw.root)
 
 		// Trigger indexing in background

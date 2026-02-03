@@ -82,6 +82,17 @@ Bugs are tracked as GitHub issues. When filing an issue, please include:
 
 We welcome feature requests! Please use the Feature Request issue template and provide as much detail as possible about the use case.
 
+## 📣 Feedback via AI
+   
+One of the best ways to help us improve is to ask your AI assistant to evaluate its own performance! 
+   
+If you have RagCode MCP installed, you can ask your AI to run the `rag_evaluate` tool. This tool asks the AI to provide qualitative feedback on its interaction with the codebase, which you can then share with us in an issue or discussion.
+   
+This helps us understand:
+- Which tools are being used most effectively.
+- Where the AI gets confused or hits context limits.
+- Potential new features that would make AI agents even smarter.
+
 ## 📄 License
 
 By contributing, you agree that your contributions will be licensed under its MIT License.

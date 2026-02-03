@@ -267,14 +267,14 @@ type MCPTool interface {
 	Execute(ctx context.Context, args map[string]interface{}) (string, error)
 }
 
-// SearchCodeInput defines the typed input for the search_code tool.
+// SearchCodeInput defines the typed input for the rag_search_code tool.
 type SearchCodeInput struct {
 	Query    string `json:"query"`
 	Limit    int    `json:"limit,omitempty"`
 	FilePath string `json:"file_path,omitempty"`
 }
 
-// SearchCodeOutput defines the typed output for the search_code tool.
+// SearchCodeOutput defines the typed output for the rag_search_code tool.
 type SearchCodeOutput struct {
 	Results string `json:"results"`
 }
@@ -342,6 +342,9 @@ workspace:
   collection_prefix: ragcode
   index_include: []
   index_exclude: []
+
+health_check:
+  enable_on_startup: true
 `
 
 	// Ensure directory exists
@@ -538,7 +541,8 @@ func main() {
 
 	// Handle health check flag
 	if *healthFlag {
-		results := healthcheck.CheckAll(cfg.LLM.OllamaBaseURL, cfg.Storage.VectorDB.URL)
+		models := []string{cfg.LLM.OllamaModel, cfg.LLM.OllamaEmbed}
+		results := healthcheck.CheckAllWithModels(cfg.LLM.OllamaBaseURL, cfg.Storage.VectorDB.URL, models)
 		fmt.Fprint(os.Stderr, healthcheck.FormatResults(results))
 
 		allHealthy := true
@@ -556,23 +560,26 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Run health check on startup (non-fatal)
-	logger.Info("Checking dependencies...")
-	results := healthcheck.CheckAll(cfg.LLM.OllamaBaseURL, cfg.Storage.VectorDB.URL)
+	// Run health check on startup (non-fatal) if enabled
+	if cfg.HealthCheck.EnableOnStartup {
+		logger.Info("Checking dependencies...")
+		models := []string{cfg.LLM.OllamaModel, cfg.LLM.OllamaEmbed}
+		results := healthcheck.CheckAllWithModels(cfg.LLM.OllamaBaseURL, cfg.Storage.VectorDB.URL, models)
 
-	hasErrors := false
-	for _, result := range results {
-		if result.Status == "ok" {
-			logger.Info("✓ %s: %s", result.Service, result.Message)
-		} else {
-			logger.Error("✗ %s: %s", result.Service, result.Message)
-			hasErrors = true
+		hasErrors := false
+		for _, result := range results {
+			if result.Status == "ok" {
+				logger.Info("✓ %s: %s", result.Service, result.Message)
+			} else {
+				logger.Error("✗ %s: %s", result.Service, result.Message)
+				hasErrors = true
+			}
 		}
-	}
 
-	if hasErrors {
-		fmt.Fprintln(os.Stderr, healthcheck.GetRemediation(results))
-		log.Fatal("Dependency check failed. Please fix the issues above and try again.")
+		if hasErrors {
+			fmt.Fprintln(os.Stderr, healthcheck.GetRemediation(results))
+			log.Fatalf("Critical dependency check failed. Server cannot start without Ollama and Qdrant. See remediation steps above.")
+		}
 	}
 
 	embeddingModel := "mxbai-embed-large"
@@ -611,14 +618,46 @@ func main() {
 		cfg,
 	)
 
+	mcpInstructions := "RagCode MCP requires project context to function. " +
+		"If the AI is working in a specific file, please ensure that the 'file_path' parameter " +
+		"for any tool call contains the absolute path to that file. This allows RagCode to " +
+		"identify the correct workspace and provide relevant code context."
+
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "ragcode",
 		Version: Version,
-	}, nil)
+	}, &mcp.ServerOptions{
+		Instructions: mcpInstructions,
+		InitializedHandler: func(ctx context.Context, req *mcp.InitializedRequest) {
+			logger.Info("MCP Initialized - listing roots...")
+			roots, err := req.Session.ListRoots(ctx, nil)
+			if err != nil {
+				logger.Warn("Failed to list roots during init: %v", err)
+				return
+			}
+			rootPaths := extractFilePathsFromRoots(roots.Roots)
+			if len(rootPaths) > 0 {
+				workspaceManager.AddWorkspaceRoots(rootPaths)
+			}
+		},
+		RootsListChangedHandler: func(ctx context.Context, req *mcp.RootsListChangedRequest) {
+			logger.Info("Roots list changed - updating...")
+			roots, err := req.Session.ListRoots(ctx, nil)
+			if err != nil {
+				logger.Warn("Failed to list roots after change: %v", err)
+				return
+			}
+			rootPaths := extractFilePathsFromRoots(roots.Roots)
+			if len(rootPaths) > 0 {
+				workspaceManager.AddWorkspaceRoots(rootPaths)
+			}
+		},
+	})
 
 	// All tools use workspace manager - no single collections
 	searchTool := tools.NewSearchLocalIndexTool(nil, ollamaProvider)
 	searchTool.SetWorkspaceManager(workspaceManager)
+	searchTool.SetSearchLimit(cfg.RagCode.SearchLimit)
 
 	getFunctionTool := tools.NewGetFunctionDetailsTool(nil, ollamaProvider)
 	getFunctionTool.SetWorkspaceManager(workspaceManager)
@@ -637,16 +676,19 @@ func main() {
 
 	hybridTool := tools.NewHybridSearchTool(nil, ollamaProvider)
 	hybridTool.SetWorkspaceManager(workspaceManager)
+	hybridTool.SetSearchLimit(cfg.RagCode.SearchLimit)
 
 	searchDocsTool := tools.NewSearchDocsTool(nil, ollamaProvider)
 	searchDocsTool.SetWorkspaceManager(workspaceManager)
 
 	indexWorkspaceTool := tools.NewIndexWorkspaceTool(workspaceManager)
+	evaluateTool := tools.NewEvaluateRagCodeTool(workspaceManager)
 
-	// Example: use typed ToolHandlerFor for search_code
+	// Example: use typed ToolHandlerFor for rag_search_code
 	registerSearchCodeToolTyped(server, searchTool, cfg)
 
 	// Other tools still use the generic MCPTool handler
+	logger.Info("Registering tools...")
 	registerAgentTool(server, getFunctionTool, cfg)
 	registerAgentTool(server, findTypeTool, cfg)
 	registerAgentTool(server, getContextTool, cfg)
@@ -655,6 +697,8 @@ func main() {
 	registerAgentTool(server, searchDocsTool, cfg)
 	registerAgentTool(server, hybridTool, cfg)
 	registerAgentTool(server, indexWorkspaceTool, cfg)
+	registerAgentTool(server, evaluateTool, cfg)
+	logger.Info("All tools registered successfully")
 
 	if err := registerFileResources(server); err != nil {
 		log.Fatalf("Failed to register resources: %v", err)
@@ -668,12 +712,20 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil {
+	logger.Info("Entering MCP server run loop (stdio transport)...")
+	err = server.Run(ctx, &mcp.StdioTransport{})
+	if err != nil {
+		if ctx.Err() != nil {
+			logger.Warn("Server terminated due to context cancellation/signal: %v", ctx.Err())
+		} else {
+			logger.Error("Server terminated with error: %v", err)
+		}
 		log.Fatalf("Server terminated: %v", err)
 	}
+	logger.Info("Server exited cleanly")
 }
 
-// registerSearchCodeToolTyped registers the search_code tool using the typed
+// registerSearchCodeToolTyped registers the rag_search_code tool using the typed
 // ToolHandlerFor API from the MCP Go SDK.
 func registerSearchCodeToolTyped(server *mcp.Server, tool *tools.SearchLocalIndexTool, cfg *config.Config) {
 	mcp.AddTool[SearchCodeInput, SearchCodeOutput](server, &mcp.Tool{
@@ -909,37 +961,37 @@ func fileURI(absPath string) string {
 
 func getToolSchema(toolName string) map[string]interface{} {
 	switch toolName {
-	case "search_code":
+	case "rag_search_code":
 		return map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"query": map[string]interface{}{
 					"type":        "string",
-					"description": "The search query to find relevant code. MANDATORY: Use this as your first step to understand unfamiliar code or find logic across the project.",
+					"description": "The search query to find relevant code. Use this as your first step to understand unfamiliar code or find logic across the project.",
 				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional: file path to help detect workspace context. Highly recommended to use the current file path.",
+					"description": "RECOMMENDED: The absolute path of the current file you are editing (or any file in the project). This helps to identify the correct project/workspace to search in.",
 				},
 				"limit": map[string]interface{}{
 					"type":        "number",
-					"description": "Maximum number of results to return (default: 5)",
+					"description": "Maximum number of results to return (default: 10)",
 				},
 			},
 			"required": []string{"query"},
 		}
 
-	case "get_function_details":
+	case "rag_get_function_details":
 		return map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"function_name": map[string]interface{}{
 					"type":        "string",
-					"description": "The name of the function or method to look up. MANDATORY: Use this to get the ACTUAL source code instead of guessing its implementation.",
+					"description": "The name of the function or method to look up. Use this to get the ACTUAL source code instead of guessing its implementation.",
 				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional: file path to help detect workspace context",
+					"description": "RECOMMENDED: The absolute path of the current file you are editing. Helps to identify the correct project/workspace context.",
 				},
 				"package": map[string]interface{}{
 					"type":        "string",
@@ -949,7 +1001,7 @@ func getToolSchema(toolName string) map[string]interface{} {
 			"required": []string{"function_name"},
 		}
 
-	case "find_type_definition":
+	case "rag_find_type_definition":
 		return map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -959,7 +1011,7 @@ func getToolSchema(toolName string) map[string]interface{} {
 				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional: file path to help detect workspace context",
+					"description": "RECOMMENDED: The absolute path of the current file you are editing. Helps to identify the correct project/workspace context.",
 				},
 				"package": map[string]interface{}{
 					"type":        "string",
@@ -969,13 +1021,13 @@ func getToolSchema(toolName string) map[string]interface{} {
 			"required": []string{"type_name"},
 		}
 
-	case "get_code_context":
+	case "rag_get_code_context":
 		return map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Path to the source file (relative or absolute)",
+					"description": "MANDATORY: Path to the source file (relative or absolute)",
 				},
 				"start_line": map[string]interface{}{
 					"type":        "number",
@@ -993,7 +1045,7 @@ func getToolSchema(toolName string) map[string]interface{} {
 			"required": []string{"file_path", "start_line", "end_line"},
 		}
 
-	case "list_package_exports":
+	case "rag_list_package_exports":
 		return map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1003,7 +1055,7 @@ func getToolSchema(toolName string) map[string]interface{} {
 				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional: file path to help detect workspace context",
+					"description": "RECOMMENDED: The absolute path of the current file you are editing. Helps to identify the correct project/workspace context.",
 				},
 				"symbol_type": map[string]interface{}{
 					"type":        "string",
@@ -1013,7 +1065,7 @@ func getToolSchema(toolName string) map[string]interface{} {
 			"required": []string{"package"},
 		}
 
-	case "find_implementations":
+	case "rag_find_implementations":
 		return map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1023,7 +1075,7 @@ func getToolSchema(toolName string) map[string]interface{} {
 				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional: file path to help detect workspace context",
+					"description": "RECOMMENDED: The absolute path of the current file you are editing. Helps to identify the correct project/workspace context.",
 				},
 				"package": map[string]interface{}{
 					"type":        "string",
@@ -1033,7 +1085,7 @@ func getToolSchema(toolName string) map[string]interface{} {
 			"required": []string{"symbol_name"},
 		}
 
-	case "search_docs":
+	case "rag_search_docs":
 		return map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1043,17 +1095,17 @@ func getToolSchema(toolName string) map[string]interface{} {
 				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional: file path to help detect workspace context",
+					"description": "RECOMMENDED: The absolute path of the current file you are editing. Helps to identify the correct project/workspace context.",
 				},
 				"limit": map[string]interface{}{
 					"type":        "number",
-					"description": "Maximum number of results to return (default: 5)",
+					"description": "Maximum number of results to return (default: 10)",
 				},
 			},
 			"required": []string{"query"},
 		}
 
-	case "index_workspace":
+	case "rag_index_workspace":
 		return map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1077,7 +1129,7 @@ func getToolSchema(toolName string) map[string]interface{} {
 			"required": []string{},
 		}
 
-	case "hybrid_search":
+	case "rag_hybrid_search":
 		return map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1087,14 +1139,26 @@ func getToolSchema(toolName string) map[string]interface{} {
 				},
 				"file_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional: file path to help detect workspace context",
+					"description": "RECOMMENDED: The absolute path of the current file you are editing. Helps to identify the correct project/workspace context.",
 				},
 				"limit": map[string]interface{}{
 					"type":        "number",
-					"description": "Maximum number of results to return (default: 5)",
+					"description": "Maximum number of results to return (default: 10)",
 				},
 			},
 			"required": []string{"query"},
+		}
+
+	case "rag_evaluate":
+		return map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"file_path": map[string]interface{}{
+					"type":        "string",
+					"description": "RECOMMENDED: The absolute path of the current file you are editing. Helps to identify the correct project/workspace context.",
+				},
+			},
+			"required": []string{},
 		}
 
 	default:
@@ -1242,16 +1306,16 @@ func ensureIDERules(cfg *config.Config, filePath string) {
 **For any information about the code (location, structure, logic, or usage), you MUST use RagCode MCP tools. Never guess code details from memory; always search the local index first.**
 
 ## Available Tools
-- search_code: Primary entry point for semantic search.
-- get_function_details: Get full implementation of a function.
-- find_type_definition: Get struct/interface definitions.
-- list_package_exports: See what a module offers.
-- search_docs: Find project documentation.
+- rag_search_code: Primary entry point for semantic search.
+- rag_get_function_details: Get full implementation of a function.
+- rag_find_type_definition: Get struct/interface definitions.
+- rag_list_package_exports: See what a module offers.
+- rag_search_docs: Find project documentation.
 
 ## Usage Guidelines
 - Always provide 'file_path' to tools to ensure they detect the correct project context.
-- Use 'hybrid_search' if looking for exact variable names or error messages.
-- If the tool says "workspace not indexed", use 'index_workspace' once.
+- Use 'rag_hybrid_search' if looking for exact variable names or error messages.
+- If the tool says "workspace not indexed", use 'rag_index_workspace' once.
 `
 
 	// 3. Define target rule files
@@ -1286,4 +1350,29 @@ func ensureIDERules(cfg *config.Config, filePath string) {
 			logger.Warn("Failed to write rule file %s: %v", absPath, err)
 		}
 	}
+}
+
+// extractFilePathsFromRoots converts MCP roots to a slice of absolute file paths
+func extractFilePathsFromRoots(roots []*mcp.Root) []string {
+	var rootPaths []string
+	for _, r := range roots {
+		u, err := url.Parse(r.URI)
+		if err != nil {
+			logger.Warn("Failed to parse workspace root URI %s: %v", r.URI, err)
+			continue
+		}
+
+		if u.Scheme == "file" {
+			path := u.Path
+			// On Windows, the path might be /C:/path or /c:/path; if so, trim the leading slash.
+			if len(path) > 2 && path[0] == '/' && path[2] == ':' &&
+				((path[1] >= 'A' && path[1] <= 'Z') || (path[1] >= 'a' && path[1] <= 'z')) {
+				path = path[1:]
+			}
+			rootPaths = append(rootPaths, path)
+		} else {
+			logger.Warn("Workspace root URI scheme %q is not supported: %s. Only 'file://' roots are registered automatically for local indexing.", u.Scheme, r.URI)
+		}
+	}
+	return rootPaths
 }

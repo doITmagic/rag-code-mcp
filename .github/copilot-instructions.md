@@ -22,8 +22,8 @@ RagCode is a Model Context Protocol (MCP) server that provides semantic code sea
 - **Logging**: MCP server logs to `mcp.log` next to the executable. Check `MCP_LOG_LEVEL=debug` for issues.
 
 ## MCP Tools Usage
-- `search_code`: Use as the primary entry point for exploration. **Crucial**: Always provide the `file_path` parameter as it's used for workspace and language detection.
-- `index_workspace`: Triggered automatically on first query per workspace, but can be manually invoked for major changes.
+- `rag_search_code`: Use as the primary entry point for exploration. **Crucial**: Always provide the `file_path` parameter as it's used for workspace and language detection.
+- `rag_index_workspace`: Triggered automatically on first query per workspace, but can be manually invoked for major changes.
 
 ## Integration Points
 - **Ollama**: Requires `phi3:medium` (reasoning) and `mxbai-embed-large` (embeddings) by default.

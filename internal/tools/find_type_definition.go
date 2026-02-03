@@ -4,7 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/codetypes"
 	"github.com/doITmagic/rag-code-mcp/internal/llm"
@@ -12,14 +16,38 @@ import (
 	"github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/golang"
 	"github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/php"
 	laravel "github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/php/laravel"
+	"github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/python"
 	"github.com/doITmagic/rag-code-mcp/internal/workspace"
 )
+
+// Cache constants
+const (
+	jitCacheTTL     = 5 * time.Second
+	jitMaxCacheSize = 50
+)
+
+type cachedGoPackage struct {
+	info          *golang.PackageInfo
+	lastValidated time.Time
+	lastModTime   time.Time
+}
+
+type cachedPyModules struct {
+	modules       []*python.ModuleInfo
+	lastValidated time.Time
+	lastModTime   time.Time
+}
 
 // FindTypeDefinitionTool finds and returns complete type definitions (struct/interface)
 type FindTypeDefinitionTool struct {
 	longTermMemory   memory.LongTermMemory
 	embedder         llm.Provider
 	workspaceManager *workspace.Manager
+
+	// JIT Analysis Caches
+	goPkgCache    map[string]cachedGoPackage
+	pyModuleCache map[string]cachedPyModules
+	cacheMu       sync.RWMutex
 }
 
 // NewFindTypeDefinitionTool creates a new type definition finder tool
@@ -27,6 +55,8 @@ func NewFindTypeDefinitionTool(ltm memory.LongTermMemory, embedder llm.Provider)
 	return &FindTypeDefinitionTool{
 		longTermMemory: ltm,
 		embedder:       embedder,
+		goPkgCache:     make(map[string]cachedGoPackage),
+		pyModuleCache:  make(map[string]cachedPyModules),
 	}
 }
 
@@ -36,11 +66,11 @@ func (t *FindTypeDefinitionTool) SetWorkspaceManager(wm *workspace.Manager) {
 }
 
 func (t *FindTypeDefinitionTool) Name() string {
-	return "find_type_definition"
+	return "rag_find_type_definition"
 }
 
 func (t *FindTypeDefinitionTool) Description() string {
-	return "Find class/struct/interface definition - returns complete type source code with all fields, methods, and inheritance chain. Use when you need to understand a data model or see what methods a type has. Returns the full type definition ready to read. Works for Go structs/interfaces, PHP classes, Python classes."
+	return "Find class/struct/interface definition - returns complete type source code with all fields, methods, and inheritance chain. Use when you need to understand a data model or see what methods a type has. Returns the full type definition ready to read. Works for Go structs/interfaces, PHP classes, Python classes. IMPORTANT: Always provide the 'file_path' of the file you are currently working on for better context detection.\nExample: { \"type_name\": \"User\", \"file_path\": \"/path/to/project/main.go\" }"
 }
 
 func (t *FindTypeDefinitionTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -61,24 +91,30 @@ func (t *FindTypeDefinitionTool) Execute(ctx context.Context, args map[string]in
 		outputFormat = strings.ToLower(of)
 	}
 
-	// file_path is required for workspace detection
+	// file_path is optional but recommended
 	filePath := extractFilePathFromParams(args)
-	if filePath == "" {
-		return "", fmt.Errorf("file_path parameter is required for find_type_definition. Please provide a file path from your workspace")
-	}
 
 	// Try workspace detection if workspace manager is available
 	var searchMemory memory.LongTermMemory
 	var workspacePath string
 	var collectionName string
 
+	var workspaceInfo *workspace.Info
 	if t.workspaceManager != nil {
-		workspaceInfo, err := t.workspaceManager.DetectWorkspace(args)
-		if err == nil && workspaceInfo != nil {
+		var err error
+		workspaceInfo, err = DetectAndRegisterWorkspace(t.workspaceManager, args)
+		if err != nil {
+			return HandleWorkspaceDetectionError(err, "")
+		}
+
+		if workspaceInfo != nil {
 			workspacePath = workspaceInfo.Root
 
 			// Detect language from file path or use first detected language
-			language := inferLanguageFromPath(filePath)
+			language := ""
+			if filePath != "" {
+				language = inferLanguageFromPath(filePath)
+			}
 			if language == "" && len(workspaceInfo.Languages) > 0 {
 				language = workspaceInfo.Languages[0]
 			}
@@ -92,12 +128,12 @@ func (t *FindTypeDefinitionTool) Execute(ctx context.Context, args map[string]in
 				// Check if indexing is in progress
 				indexKey := workspaceInfo.ID + "-" + language
 				if t.workspaceManager.IsIndexing(indexKey) {
-					return fmt.Sprintf("⏳ Workspace '%s' language '%s' is currently being indexed in the background.\n"+
+					return AttachAIWarning(fmt.Sprintf("⏳ Workspace '%s' language '%s' is currently being indexed in the background.\n"+
 						"Please try again in a few moments.\n"+
 						"Workspace: %s\n"+
 						"Language: %s\n"+
 						"Collection: %s",
-						workspaceInfo.Root, language, workspaceInfo.Root, language, collectionName), nil
+						workspaceInfo.Root, language, workspaceInfo.Root, language, collectionName), workspaceInfo), nil
 				}
 
 				// Check if collection exists before proceeding
@@ -105,7 +141,7 @@ func (t *FindTypeDefinitionTool) Execute(ctx context.Context, args map[string]in
 					if err != nil {
 						return "", err
 					}
-					return msg, nil
+					return AttachAIWarning(msg, workspaceInfo), nil
 				}
 
 				searchMemory = mem
@@ -187,11 +223,11 @@ processResults:
 				if err != nil {
 					return "", err
 				}
-				return msg, nil
+				return AttachAIWarning(msg, workspaceInfo), nil
 			}
-			return fmt.Sprintf("Type '%s' not found in workspace '%s'", typeName, workspacePath), nil
+			return AttachAIWarning(fmt.Sprintf("Type '%s' not found in workspace '%s'", typeName, workspacePath), workspaceInfo), nil
 		}
-		return fmt.Sprintf("Type '%s' not found", typeName), nil
+		return AttachAIWarning(fmt.Sprintf("Type '%s' not found", typeName), workspaceInfo), nil
 	}
 
 	// Find exact match (must be type chunk)
@@ -225,7 +261,7 @@ processResults:
 	}
 
 	if bestMatch == nil {
-		return fmt.Sprintf("Type '%s' not found (searched %d chunks)", typeName, len(results)), nil
+		return AttachAIWarning(fmt.Sprintf("Type '%s' not found (searched %d chunks)", typeName, len(results)), workspaceInfo), nil
 	}
 
 	var chunk codetypes.CodeChunk
@@ -242,12 +278,30 @@ processResults:
 		}
 	}
 
-	// PHP: use PHP analyzer directly on the source file to build a rich type view
-	if chunk.Language == "php" {
-		return t.buildPHPTypeResponse(&chunk, codeBody, outputFormat)
+	// JIT Parsing: Use language-specific analyzers to get fresh data from disk
+	// This guarantees "Compiler Accuracy" by ignoring potentially stale vector metadata
+	switch chunk.Language {
+	case "php":
+		res, err := t.buildPHPTypeResponse(&chunk, codeBody, outputFormat)
+		if err != nil {
+			return "", err
+		}
+		return AttachAIWarning(res, workspaceInfo), nil
+	case "go":
+		res, err := t.buildGoTypeResponse(&chunk, codeBody, outputFormat)
+		if err != nil {
+			return "", err
+		}
+		return AttachAIWarning(res, workspaceInfo), nil
+	case "python":
+		res, err := t.buildPythonTypeResponse(&chunk, codeBody, outputFormat)
+		if err != nil {
+			return "", err
+		}
+		return AttachAIWarning(res, workspaceInfo), nil
 	}
 
-	// Parse TypeInfo from chunk metadata if available (Go path)
+	// Parse TypeInfo from chunk metadata if available (Legacy/Fallback path)
 	var typeInfo *golang.TypeInfo
 	if metaJSON, ok := bestMatch.Metadata["type_info"].(string); ok {
 		var ti golang.TypeInfo
@@ -307,12 +361,16 @@ processResults:
 		if err != nil {
 			return "", fmt.Errorf("failed to marshal Go type descriptor: %w", err)
 		}
-		return string(data), nil
+		return AttachAIWarning(string(data), workspaceInfo), nil
 	}
 
 	// Markdown output using Go TypeInfo metadata when available
 	var response strings.Builder
-	response.WriteString(fmt.Sprintf("# %s\n\n", chunk.Name))
+	if workspacePath != "" {
+		response.WriteString(fmt.Sprintf("# %s (Workspace: %s)\n\n", chunk.Name, workspacePath))
+	} else {
+		response.WriteString(fmt.Sprintf("# %s\n\n", chunk.Name))
+	}
 	response.WriteString(fmt.Sprintf("**Kind:** %s\n", chunk.Type))
 	response.WriteString(fmt.Sprintf("**Package:** %s\n", chunk.Package))
 
@@ -359,7 +417,7 @@ processResults:
 		response.WriteString("\n```\n")
 	}
 
-	return response.String(), nil
+	return AttachAIWarning(response.String(), workspaceInfo), nil
 }
 
 // findEloquentModelForClass looks up the EloquentModel for a given PHP class name within a PackageInfo.
@@ -862,4 +920,476 @@ func (t *FindTypeDefinitionTool) buildPHPTypeResponse(chunk *codetypes.CodeChunk
 	}
 
 	return response.String(), nil
+}
+
+// buildGoTypeResponse builds a rich type definition view for a Go struct/interface
+// by re-analyzing the source file with the Go CodeAnalyzer.
+func (t *FindTypeDefinitionTool) buildGoTypeResponse(chunk *codetypes.CodeChunk, codeBody, outputFormat string) (string, error) {
+	format := strings.ToLower(outputFormat)
+	if format == "" {
+		format = "markdown"
+	}
+
+	// Helper for degraded mode (if analysis fails)
+	fallback := func() (string, error) {
+		if format == "json" {
+			desc := codetypes.ClassDescriptor{
+				Language:  chunk.Language,
+				Kind:      chunk.Type,
+				Name:      chunk.Name,
+				Namespace: chunk.Package,
+				Location: codetypes.SymbolLocation{
+					FilePath:  chunk.FilePath,
+					StartLine: chunk.StartLine,
+					EndLine:   chunk.EndLine,
+				},
+				Description: chunk.Docstring,
+				Signature:   chunk.Signature,
+			}
+			data, err := json.MarshalIndent(desc, "", "  ")
+			if err != nil {
+				return "", err
+			}
+			return string(data), nil
+		}
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("# %s\n\n", chunk.Name))
+		sb.WriteString(fmt.Sprintf("**Kind:** %s\n", chunk.Type))
+		sb.WriteString(fmt.Sprintf("**Package:** %s\n", chunk.Package))
+		if chunk.Docstring != "" {
+			sb.WriteString(fmt.Sprintf("\n**Description:**\n%s\n", chunk.Docstring))
+		}
+		sb.WriteString(fmt.Sprintf("\n**Location:** `%s:%d-%d`\n\n", chunk.FilePath, chunk.StartLine, chunk.EndLine))
+		if codeBody != "" {
+			sb.WriteString("**Code:**\n```go\n")
+			sb.WriteString(codeBody)
+			sb.WriteString("\n```\n")
+		}
+		return sb.String(), nil
+	}
+
+	if chunk.FilePath == "" {
+		return fallback()
+	}
+
+	// JIT Analysis with Caching
+	var pkgInfo *golang.PackageInfo
+	pkgDir := filepath.Dir(chunk.FilePath)
+
+	// Check cache
+	t.cacheMu.RLock()
+	cached, found := t.goPkgCache[pkgDir]
+	t.cacheMu.RUnlock()
+
+	var useCache bool
+	if found {
+		// Valid if within TTL
+		if time.Since(cached.lastValidated) < jitCacheTTL {
+			useCache = true
+		} else {
+			// TTL expired, check file system modulation
+			currentMod, err := getDirLastMod(pkgDir)
+			if err == nil && !currentMod.After(cached.lastModTime) {
+				// No changes, update validation time and use cache
+				cached.lastValidated = time.Now()
+				t.cacheMu.Lock()
+				t.goPkgCache[pkgDir] = cached
+				t.cacheMu.Unlock()
+				useCache = true
+			}
+		}
+	}
+
+	if useCache {
+		pkgInfo = cached.info
+	} else {
+		// Miss or invalid: re-analyze
+		analyzer := golang.NewCodeAnalyzer()
+		var err error
+		pkgInfo, err = analyzer.AnalyzePackage(pkgDir)
+		if err != nil {
+			return fallback()
+		}
+
+		currentMod, _ := getDirLastMod(pkgDir)
+
+		t.cacheMu.Lock()
+		// Simple eviction policy: prevent unbounded growth
+		if len(t.goPkgCache) >= jitMaxCacheSize {
+			t.goPkgCache = make(map[string]cachedGoPackage)
+		}
+		t.goPkgCache[pkgDir] = cachedGoPackage{
+			info:          pkgInfo,
+			lastValidated: time.Now(),
+			lastModTime:   currentMod,
+		}
+		t.cacheMu.Unlock()
+	}
+
+	// Find the type in the package
+	var typeInfo *golang.TypeInfo
+	for _, t := range pkgInfo.Types {
+		if t.Name == chunk.Name {
+			typeInfo = &t
+			break
+		}
+	}
+
+	if typeInfo == nil {
+		return fallback()
+	}
+
+	// Build JSON response
+	if format == "json" {
+		// Construct signature since it's not in TypeInfo
+		signature := fmt.Sprintf("type %s %s", typeInfo.Name, typeInfo.Kind)
+
+		desc := codetypes.ClassDescriptor{
+			Language:    chunk.Language,
+			Kind:        typeInfo.Kind,
+			Name:        typeInfo.Name,
+			Namespace:   pkgInfo.Name,
+			Package:     pkgInfo.Path, // Fixed: ImportPath -> Path
+			Signature:   signature,
+			Description: typeInfo.Description,
+			Location: codetypes.SymbolLocation{
+				FilePath:  typeInfo.FilePath,
+				StartLine: typeInfo.StartLine,
+				EndLine:   typeInfo.EndLine,
+			},
+		}
+
+		// Fields
+		if typeInfo.Kind == "struct" {
+			for _, f := range typeInfo.Fields {
+				desc.Fields = append(desc.Fields, codetypes.FieldDescriptor{
+					Name:        f.Name,
+					Type:        f.Type,
+					Tag:         f.Tag,
+					Description: f.Description,
+				})
+			}
+		}
+
+		// Methods
+		for _, m := range typeInfo.Methods {
+			desc.Methods = append(desc.Methods, codetypes.FunctionDescriptor{
+				Language:    chunk.Language,
+				Kind:        "method",
+				Name:        m.Name,
+				Receiver:    typeInfo.Name,
+				Signature:   m.Signature,
+				Description: m.Description,
+				Location: codetypes.SymbolLocation{
+					FilePath:  m.FilePath,
+					StartLine: m.StartLine,
+					EndLine:   m.EndLine,
+				},
+				Code: m.Code,
+			})
+		}
+
+		data, err := json.MarshalIndent(desc, "", "  ")
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	}
+
+	// Build Markdown response
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("# %s\n\n", typeInfo.Name))
+	sb.WriteString(fmt.Sprintf("**Kind:** %s\n", typeInfo.Kind))
+	sb.WriteString(fmt.Sprintf("**Package:** %s (`%s`)\n", pkgInfo.Name, pkgInfo.Path)) // Fixed: ImportPath -> Path
+
+	if typeInfo.Description != "" {
+		sb.WriteString(fmt.Sprintf("\n**Description:**\n%s\n", typeInfo.Description))
+	}
+
+	sb.WriteString(fmt.Sprintf("\n**Location:** `%s:%d-%d`\n\n", typeInfo.FilePath, typeInfo.StartLine, typeInfo.EndLine))
+
+	// Fields
+	if typeInfo.Kind == "struct" && len(typeInfo.Fields) > 0 {
+		sb.WriteString("**Fields:**\n")
+		for _, f := range typeInfo.Fields {
+			sb.WriteString(fmt.Sprintf("- `%s %s`", f.Name, f.Type))
+			if f.Tag != "" {
+				sb.WriteString(fmt.Sprintf(" `%s`", f.Tag))
+			}
+			if f.Description != "" {
+				sb.WriteString(fmt.Sprintf(" - %s", f.Description))
+			}
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	// Methods
+	if len(typeInfo.Methods) > 0 {
+		sb.WriteString("**Methods:**\n")
+		for _, m := range typeInfo.Methods {
+			sb.WriteString(fmt.Sprintf("- `%s`", m.Signature))
+			if m.Description != "" {
+				sb.WriteString(fmt.Sprintf(" - %s", m.Description))
+			}
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	// Code
+	if typeInfo.Code != "" {
+		sb.WriteString("**Code:**\n```go\n")
+		sb.WriteString(typeInfo.Code)
+		sb.WriteString("\n```\n")
+	} else if codeBody != "" {
+		sb.WriteString("**Code:**\n```go\n")
+		sb.WriteString(codeBody)
+		sb.WriteString("\n```\n")
+	}
+
+	return sb.String(), nil
+}
+
+// buildPythonTypeResponse builds a rich type definition view for a Python class
+// by re-analyzing the source file with the Python CodeAnalyzer.
+func (t *FindTypeDefinitionTool) buildPythonTypeResponse(chunk *codetypes.CodeChunk, codeBody, outputFormat string) (string, error) {
+	format := strings.ToLower(outputFormat)
+	if format == "" {
+		format = "markdown"
+	}
+
+	fallback := func() (string, error) {
+		if format == "json" {
+			desc := codetypes.ClassDescriptor{
+				Language:  chunk.Language,
+				Kind:      chunk.Type,
+				Name:      chunk.Name,
+				Namespace: chunk.Package,
+				Location: codetypes.SymbolLocation{
+					FilePath:  chunk.FilePath,
+					StartLine: chunk.StartLine,
+					EndLine:   chunk.EndLine,
+				},
+				Description: chunk.Docstring,
+				Signature:   chunk.Signature,
+			}
+			data, err := json.MarshalIndent(desc, "", "  ")
+			if err != nil {
+				return "", err
+			}
+			return string(data), nil
+		}
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("# %s\n\n", chunk.Name))
+		sb.WriteString(fmt.Sprintf("**Kind:** %s\n", chunk.Type))
+		sb.WriteString(fmt.Sprintf("**Module:** %s\n", chunk.Package))
+		if chunk.Docstring != "" {
+			sb.WriteString(fmt.Sprintf("\n**Description:**\n%s\n", chunk.Docstring))
+		}
+		sb.WriteString(fmt.Sprintf("\n**Location:** `%s:%d-%d`\n\n", chunk.FilePath, chunk.StartLine, chunk.EndLine))
+		if codeBody != "" {
+			sb.WriteString("**Code:**\n```python\n")
+			sb.WriteString(codeBody)
+			sb.WriteString("\n```\n")
+		}
+		return sb.String(), nil
+	}
+
+	if chunk.FilePath == "" {
+		return fallback()
+	}
+
+	// JIT Analysis with Caching
+	var modules []*python.ModuleInfo
+
+	// Check cache
+	t.cacheMu.RLock()
+	cached, found := t.pyModuleCache[chunk.FilePath]
+	t.cacheMu.RUnlock()
+
+	var useCache bool
+	if found {
+		// Valid if within TTL
+		if time.Since(cached.lastValidated) < jitCacheTTL {
+			useCache = true
+		} else {
+			// TTL expired, check file modulation
+			currentMod, err := getFileLastMod(chunk.FilePath)
+			if err == nil && !currentMod.After(cached.lastModTime) {
+				cached.lastValidated = time.Now()
+				t.cacheMu.Lock()
+				t.pyModuleCache[chunk.FilePath] = cached
+				t.cacheMu.Unlock()
+				useCache = true
+			}
+		}
+	}
+
+	if useCache {
+		modules = cached.modules
+	} else {
+		analyzer := python.NewCodeAnalyzer()
+		if _, err := analyzer.AnalyzeFile(chunk.FilePath); err != nil {
+			return fallback()
+		}
+		modules = analyzer.GetModules()
+
+		currentMod, _ := getFileLastMod(chunk.FilePath)
+
+		t.cacheMu.Lock()
+		// Simple eviction policy
+		if len(t.pyModuleCache) >= jitMaxCacheSize {
+			t.pyModuleCache = make(map[string]cachedPyModules)
+		}
+		t.pyModuleCache[chunk.FilePath] = cachedPyModules{
+			modules:       modules,
+			lastValidated: time.Now(),
+			lastModTime:   currentMod,
+		}
+		t.cacheMu.Unlock()
+	}
+	var classInfo *python.ClassInfo
+	var moduleInfo *python.ModuleInfo
+
+	// Find the class in modules
+	for _, m := range modules {
+		for _, c := range m.Classes {
+			if c.Name == chunk.Name {
+				classInfo = &c
+				moduleInfo = m
+				break
+			}
+		}
+		if classInfo != nil {
+			break
+		}
+	}
+
+	if classInfo == nil {
+		return fallback()
+	}
+
+	// Build JSON response
+	if format == "json" {
+		desc := codetypes.ClassDescriptor{
+			Language:    chunk.Language,
+			Kind:        "class",
+			Name:        classInfo.Name,
+			Namespace:   moduleInfo.Name,
+			Signature:   fmt.Sprintf("class %s", classInfo.Name),
+			Description: classInfo.Description,
+			Location: codetypes.SymbolLocation{
+				FilePath:  classInfo.FilePath,
+				StartLine: classInfo.StartLine,
+				EndLine:   classInfo.EndLine,
+			},
+		}
+		if len(classInfo.Bases) > 0 {
+			desc.Signature += fmt.Sprintf("(%s)", strings.Join(classInfo.Bases, ", "))
+		}
+
+		// Methods
+		for _, m := range classInfo.Methods {
+			desc.Methods = append(desc.Methods, codetypes.FunctionDescriptor{
+				Language:    chunk.Language,
+				Kind:        "method",
+				Name:        m.Name,
+				Receiver:    classInfo.Name,
+				Signature:   m.Signature,
+				Description: m.Description,
+				Location: codetypes.SymbolLocation{
+					FilePath:  m.FilePath,
+					StartLine: m.StartLine,
+					EndLine:   m.EndLine,
+				},
+				Code: m.Code,
+			})
+		}
+
+		data, err := json.MarshalIndent(desc, "", "  ")
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	}
+
+	// Build Markdown response
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("# %s\n\n", classInfo.Name))
+	sb.WriteString("**Kind:** class\n")
+	sb.WriteString(fmt.Sprintf("**Module:** %s\n", moduleInfo.Name))
+
+	// Construct signature
+	sig := fmt.Sprintf("class %s", classInfo.Name)
+	if len(classInfo.Bases) > 0 {
+		sig += fmt.Sprintf("(%s)", strings.Join(classInfo.Bases, ", "))
+	}
+	sb.WriteString(fmt.Sprintf("**Signature:** `%s`\n", sig))
+
+	if classInfo.Description != "" {
+		sb.WriteString(fmt.Sprintf("\n**Description:**\n%s\n", classInfo.Description))
+	}
+
+	sb.WriteString(fmt.Sprintf("\n**Location:** `%s:%d-%d`\n\n", classInfo.FilePath, classInfo.StartLine, classInfo.EndLine))
+
+	// Methods
+	if len(classInfo.Methods) > 0 {
+		sb.WriteString("**Methods:**\n")
+		for _, m := range classInfo.Methods {
+			msig := m.Signature
+			if msig == "" {
+				msig = fmt.Sprintf("def %s(...)", m.Name)
+			}
+			sb.WriteString(fmt.Sprintf("- `%s`", msig))
+			if m.Description != "" {
+				sb.WriteString(fmt.Sprintf(" - %s", m.Description))
+			}
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	// Code
+	if classInfo.Code != "" {
+		sb.WriteString("**Code:**\n```python\n")
+		sb.WriteString(classInfo.Code)
+		sb.WriteString("\n```\n")
+	} else if codeBody != "" {
+		sb.WriteString("**Code:**\n```python\n")
+		sb.WriteString(codeBody)
+		sb.WriteString("\n```\n")
+	}
+
+	return sb.String(), nil
+}
+
+// Helper functions for cache validation
+
+// getDirLastMod returns the latest modification time of any file in the directory
+func getDirLastMod(dir string) (time.Time, error) {
+	var latest time.Time
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return latest, err
+	}
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().After(latest) {
+			latest = info.ModTime()
+		}
+	}
+	return latest, nil
+}
+
+// getFileLastMod returns the modification time of a single file
+func getFileLastMod(path string) (time.Time, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return info.ModTime(), nil
 }

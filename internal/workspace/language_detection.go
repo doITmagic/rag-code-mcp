@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -18,24 +19,39 @@ func NewLanguageDetector() *LanguageDetector {
 // DetectLanguages scans a workspace and returns detected programming languages
 // Returns a slice of language identifiers (e.g., "go", "python", "php")
 func (ld *LanguageDetector) DetectLanguages(rootPath string) ([]string, error) {
+	languageCounts, err := ld.DetectLanguagesWithCounts(rootPath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert map to sorted slice
+	languages := make([]string, 0, len(languageCounts))
+	for lang := range languageCounts {
+		languages = append(languages, lang)
+	}
+
+	sort.Strings(languages)
+	return languages, nil
+}
+
+// DetectLanguagesWithCounts returns a map of detected languages and their file counts
+func (ld *LanguageDetector) DetectLanguagesWithCounts(rootPath string) (map[string]int, error) {
 	// Validate root path before scanning to prevent broad filesystem access
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		log.Printf("workspace: could not determine user home directory: %v", err)
 	}
 	if rootPath == "/" || rootPath == homeDir || rootPath == "/tmp" {
-		return nil, nil // Return empty list instead of scanning invalid paths
+		return make(map[string]int), nil
 	}
 
-	languageMap := make(map[string]bool)
+	languageCounts := make(map[string]int)
 
-	// Walk the directory tree
 	err = filepath.Walk(rootPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return nil // Skip errors, continue walking
+			return nil
 		}
 
-		// Skip hidden directories and common exclusions
 		if info.IsDir() {
 			name := info.Name()
 			if strings.HasPrefix(name, ".") ||
@@ -46,53 +62,69 @@ func (ld *LanguageDetector) DetectLanguages(rootPath string) ([]string, error) {
 				name == "dist" ||
 				name == "__pycache__" ||
 				name == ".venv" ||
-				name == "venv" {
+				name == "venv" ||
+				name == "storage" ||
+				name == "public" {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 
-		// Detect language by file extension
 		ext := strings.ToLower(filepath.Ext(path))
+		lang := ""
 		switch ext {
 		case ".go":
-			languageMap["go"] = true
+			lang = "go"
 		case ".py":
-			languageMap["python"] = true
+			lang = "python"
 		case ".php":
-			languageMap["php"] = true
+			lang = "php"
 		case ".js", ".jsx", ".mjs":
-			languageMap["javascript"] = true
+			lang = "javascript"
 		case ".ts", ".tsx":
-			languageMap["typescript"] = true
+			lang = "typescript"
 		case ".java":
-			languageMap["java"] = true
+			lang = "java"
 		case ".rs":
-			languageMap["rust"] = true
+			lang = "rust"
 		case ".rb":
-			languageMap["ruby"] = true
+			lang = "ruby"
 		case ".c", ".h":
-			languageMap["c"] = true
+			lang = "c"
 		case ".cpp", ".cc", ".cxx", ".hpp":
-			languageMap["cpp"] = true
+			lang = "cpp"
 		case ".cs":
-			languageMap["csharp"] = true
+			lang = "csharp"
+		case ".vue":
+			lang = "vue"
+		case ".svelte":
+			lang = "svelte"
+		case ".sh", ".bash", ".zsh":
+			lang = "shell"
+		case ".sql":
+			lang = "sql"
+		case ".html", ".htm":
+			lang = "html"
+		case ".css", ".scss", ".sass", ".less":
+			lang = "css"
+		case ".md", ".markdown":
+			lang = "markdown"
+		case ".yaml", ".yml":
+			lang = "yaml"
+		case ".json":
+			lang = "json"
+		case ".toml":
+			lang = "toml"
+		}
+
+		if lang != "" {
+			languageCounts[lang]++
 		}
 
 		return nil
 	})
 
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert map to sorted slice
-	languages := make([]string, 0, len(languageMap))
-	for lang := range languageMap {
-		languages = append(languages, lang)
-	}
-
-	return languages, nil
+	return languageCounts, err
 }
 
 // GetPrimaryLanguage returns the primary language based on project markers
@@ -122,15 +154,22 @@ func (ld *LanguageDetector) GetPrimaryLanguage(rootPath string, markers []string
 		}
 	}
 
-	// Fallback: detect by scanning files
-	languages, err := ld.DetectLanguages(rootPath)
-	if err != nil || len(languages) == 0 {
+	// Fallback: detect by scanning files and picking the one with the highest count
+	counts, err := ld.DetectLanguagesWithCounts(rootPath)
+	if err != nil || len(counts) == 0 {
 		return ""
 	}
 
-	// Return first detected language
-	// TODO: Could be improved with file counting heuristics
-	return languages[0]
+	maxCount := -1
+	primary := ""
+	for lang, count := range counts {
+		if count > maxCount {
+			maxCount = count
+			primary = lang
+		}
+	}
+
+	return primary
 }
 
 // LanguageFileExtensions returns the file extensions for a given language
@@ -158,6 +197,26 @@ func LanguageFileExtensions(language string) []string {
 		return []string{".cpp", ".cc", ".cxx", ".hpp", ".h"}
 	case "csharp", "c#":
 		return []string{".cs"}
+	case "vue":
+		return []string{".vue"}
+	case "svelte":
+		return []string{".svelte"}
+	case "shell", "sh", "bash":
+		return []string{".sh", ".bash", ".zsh"}
+	case "sql":
+		return []string{".sql"}
+	case "html":
+		return []string{".html", ".htm"}
+	case "css":
+		return []string{".css", ".scss", ".sass", ".less"}
+	case "markdown":
+		return []string{".md", ".markdown"}
+	case "yaml":
+		return []string{".yaml", ".yml"}
+	case "json":
+		return []string{".json"}
+	case "toml":
+		return []string{".toml"}
 	default:
 		return []string{}
 	}

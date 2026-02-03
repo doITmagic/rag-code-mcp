@@ -32,18 +32,30 @@ type Detector struct {
 func NewDetector() *Detector {
 	return &Detector{
 		markers: []string{
-			".git",           // Git repository (highest priority)
-			"go.mod",         // Go project
-			"composer.json",  // PHP/Laravel project
-			"artisan",        // Laravel project (specific)
-			"package.json",   // Node.js project
-			"Cargo.toml",     // Rust project
-			"pyproject.toml", // Python project (PEP 518)
-			"setup.py",       // Python project (legacy)
-			"pom.xml",        // Maven project (Java)
-			"build.gradle",   // Gradle project (Java/Kotlin)
-			".project",       // Generic project marker
-			".vscode",        // VS Code workspace
+			".git",               // Git repository (highest priority)
+			"go.mod",             // Go project
+			"composer.json",      // PHP/Laravel project
+			"artisan",            // Laravel project (specific)
+			"package.json",       // Node.js project
+			"Cargo.toml",         // Rust project
+			"pyproject.toml",     // Python project (PEP 518)
+			"setup.py",           // Python project (legacy)
+			"pom.xml",            // Maven project (Java)
+			"build.gradle",       // Gradle project (Java/Kotlin)
+			"tsconfig.json",      // TypeScript project
+			"tailwind.config.js", // Tailwind CSS
+			"tailwind.config.ts", // Tailwind CSS (TS)
+			"vite.config.js",     // Vite project
+			"vite.config.ts",     // Vite project (TS)
+			"next.config.js",     // Next.js project
+			"deno.json",          // Deno project
+			"Makefile",           // Generic automated build
+			"Dockerfile",         // Docker project
+			"docker-compose.yml", // Docker compose project
+			"Gemfile",            // Ruby project
+			"mix.exs",            // Elixir project
+			".project",           // Generic project marker
+			".vscode",            // VS Code workspace
 		},
 		excludePatterns: []string{
 			// Only exclude common cache/temp directories in home or system paths
@@ -327,13 +339,8 @@ func (d *Detector) DetectFromParams(params map[string]interface{}) (*Info, error
 		}
 	}
 
-	// Fallback: use current working directory of the server
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, fmt.Errorf("no file path in params and failed to get cwd: %w", err)
-	}
-
-	return d.DetectFromPath(cwd)
+	// No path found in parameters - don't fall back to CWD as it might be a sensitive directory (like home)
+	return nil, fmt.Errorf("missing required 'file_path' or 'workspace_root' parameter for workspace detection")
 }
 
 // findMarkers checks for workspace markers in a directory
@@ -398,6 +405,20 @@ func inferProjectType(marker string) string {
 		return "maven"
 	case "build.gradle":
 		return "gradle"
+	case "tsconfig.json":
+		return "typescript"
+	case "next.config.js":
+		return "nextjs"
+	case "vite.config.js", "vite.config.ts":
+		return "vite"
+	case "deno.json":
+		return "deno"
+	case "Gemfile":
+		return "ruby"
+	case "mix.exs":
+		return "elixir"
+	case "Dockerfile", "docker-compose.yml":
+		return "docker"
 	case ".git":
 		return "git"
 	default:
@@ -424,6 +445,12 @@ func inferLanguageFromMarker(marker string) string {
 		return "ruby"
 	case "Package.swift":
 		return "swift"
+	case "tsconfig.json":
+		return "typescript"
+	case "mix.exs":
+		return "elixir"
+	case "deno.json":
+		return "typescript"
 	default:
 		return ""
 	}

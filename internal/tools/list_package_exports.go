@@ -73,7 +73,11 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 
 	if t.workspaceManager != nil {
 		wi, err := t.workspaceManager.DetectWorkspace(args)
-		if err == nil && wi != nil {
+		if err != nil {
+			return HandleWorkspaceDetectionError(err, "")
+		}
+
+		if wi != nil {
 			workspaceInfo = wi
 
 			// Detect language from file path or use first detected language

@@ -27,7 +27,7 @@ func (ld *LanguageDetector) DetectLanguages(rootPath string) ([]string, error) {
 		return nil, nil // Return empty list instead of scanning invalid paths
 	}
 
-	languageMap := make(map[string]bool)
+	languageCounts := make(map[string]int)
 
 	// Walk the directory tree
 	err = filepath.Walk(rootPath, func(path string, info os.FileInfo, err error) error {
@@ -46,7 +46,9 @@ func (ld *LanguageDetector) DetectLanguages(rootPath string) ([]string, error) {
 				name == "dist" ||
 				name == "__pycache__" ||
 				name == ".venv" ||
-				name == "venv" {
+				name == "venv" ||
+				name == "storage" ||
+				name == "public" {
 				return filepath.SkipDir
 			}
 			return nil
@@ -56,27 +58,47 @@ func (ld *LanguageDetector) DetectLanguages(rootPath string) ([]string, error) {
 		ext := strings.ToLower(filepath.Ext(path))
 		switch ext {
 		case ".go":
-			languageMap["go"] = true
+			languageCounts["go"]++
 		case ".py":
-			languageMap["python"] = true
+			languageCounts["python"]++
 		case ".php":
-			languageMap["php"] = true
+			languageCounts["php"]++
 		case ".js", ".jsx", ".mjs":
-			languageMap["javascript"] = true
+			languageCounts["javascript"]++
 		case ".ts", ".tsx":
-			languageMap["typescript"] = true
+			languageCounts["typescript"]++
 		case ".java":
-			languageMap["java"] = true
+			languageCounts["java"]++
 		case ".rs":
-			languageMap["rust"] = true
+			languageCounts["rust"]++
 		case ".rb":
-			languageMap["ruby"] = true
+			languageCounts["ruby"]++
 		case ".c", ".h":
-			languageMap["c"] = true
+			languageCounts["c"]++
 		case ".cpp", ".cc", ".cxx", ".hpp":
-			languageMap["cpp"] = true
+			languageCounts["cpp"]++
 		case ".cs":
-			languageMap["csharp"] = true
+			languageCounts["csharp"]++
+		case ".vue":
+			languageCounts["vue"]++
+		case ".svelte":
+			languageCounts["svelte"]++
+		case ".sh", ".bash", ".zsh":
+			languageCounts["shell"]++
+		case ".sql":
+			languageCounts["sql"]++
+		case ".html", ".htm":
+			languageCounts["html"]++
+		case ".css", ".scss", ".sass", ".less":
+			languageCounts["css"]++
+		case ".md", ".markdown":
+			languageCounts["markdown"]++
+		case ".yaml", ".yml":
+			languageCounts["yaml"]++
+		case ".json":
+			languageCounts["json"]++
+		case ".toml":
+			languageCounts["toml"]++
 		}
 
 		return nil
@@ -87,12 +109,94 @@ func (ld *LanguageDetector) DetectLanguages(rootPath string) ([]string, error) {
 	}
 
 	// Convert map to sorted slice
-	languages := make([]string, 0, len(languageMap))
-	for lang := range languageMap {
+	languages := make([]string, 0, len(languageCounts))
+	for lang := range languageCounts {
 		languages = append(languages, lang)
 	}
 
 	return languages, nil
+}
+
+// DetectLanguagesWithCounts returns a map of detected languages and their file counts
+func (ld *LanguageDetector) DetectLanguagesWithCounts(rootPath string) (map[string]int, error) {
+	languageCounts := make(map[string]int)
+
+	err := filepath.Walk(rootPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+
+		if info.IsDir() {
+			name := info.Name()
+			if strings.HasPrefix(name, ".") ||
+				name == "node_modules" ||
+				name == "vendor" ||
+				name == "target" ||
+				name == "build" ||
+				name == "dist" ||
+				name == "__pycache__" ||
+				name == ".venv" ||
+				name == "venv" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		ext := strings.ToLower(filepath.Ext(path))
+		lang := ""
+		switch ext {
+		case ".go":
+			lang = "go"
+		case ".py":
+			lang = "python"
+		case ".php":
+			lang = "php"
+		case ".js", ".jsx", ".mjs":
+			lang = "javascript"
+		case ".ts", ".tsx":
+			lang = "typescript"
+		case ".java":
+			lang = "java"
+		case ".rs":
+			lang = "rust"
+		case ".rb":
+			lang = "ruby"
+		case ".c", ".h":
+			lang = "c"
+		case ".cpp", ".cc", ".cxx", ".hpp":
+			lang = "cpp"
+		case ".cs":
+			lang = "csharp"
+		case ".vue":
+			lang = "vue"
+		case ".svelte":
+			lang = "svelte"
+		case ".sh", ".bash", ".zsh":
+			lang = "shell"
+		case ".sql":
+			lang = "sql"
+		case ".html", ".htm":
+			lang = "html"
+		case ".css", ".scss", ".sass", ".less":
+			lang = "css"
+		case ".md", ".markdown":
+			lang = "markdown"
+		case ".yaml", ".yml":
+			lang = "yaml"
+		case ".json":
+			lang = "json"
+		case ".toml":
+			lang = "toml"
+		}
+
+		if lang != "" {
+			languageCounts[lang]++
+		}
+
+		return nil
+	})
+
+	return languageCounts, err
 }
 
 // GetPrimaryLanguage returns the primary language based on project markers
@@ -122,15 +226,22 @@ func (ld *LanguageDetector) GetPrimaryLanguage(rootPath string, markers []string
 		}
 	}
 
-	// Fallback: detect by scanning files
-	languages, err := ld.DetectLanguages(rootPath)
-	if err != nil || len(languages) == 0 {
+	// Fallback: detect by scanning files and picking the one with the highest count
+	counts, err := ld.DetectLanguagesWithCounts(rootPath)
+	if err != nil || len(counts) == 0 {
 		return ""
 	}
 
-	// Return first detected language
-	// TODO: Could be improved with file counting heuristics
-	return languages[0]
+	maxCount := -1
+	primary := ""
+	for lang, count := range counts {
+		if count > maxCount {
+			maxCount = count
+			primary = lang
+		}
+	}
+
+	return primary
 }
 
 // LanguageFileExtensions returns the file extensions for a given language
@@ -158,6 +269,26 @@ func LanguageFileExtensions(language string) []string {
 		return []string{".cpp", ".cc", ".cxx", ".hpp", ".h"}
 	case "csharp", "c#":
 		return []string{".cs"}
+	case "vue":
+		return []string{".vue"}
+	case "svelte":
+		return []string{".svelte"}
+	case "shell", "sh", "bash":
+		return []string{".sh", ".bash", ".zsh"}
+	case "sql":
+		return []string{".sql"}
+	case "html":
+		return []string{".html", ".htm"}
+	case "css":
+		return []string{".css", ".scss", ".sass", ".less"}
+	case "markdown":
+		return []string{".md", ".markdown"}
+	case "yaml":
+		return []string{".yaml", ".yml"}
+	case "json":
+		return []string{".json"}
+	case "toml":
+		return []string{".toml"}
 	default:
 		return []string{}
 	}

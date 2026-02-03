@@ -79,7 +79,11 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 
 	if t.workspaceManager != nil {
 		workspaceInfo, err := t.workspaceManager.DetectWorkspace(params)
-		if err == nil && workspaceInfo != nil {
+		if err != nil {
+			return HandleWorkspaceDetectionError(err, "")
+		}
+
+		if workspaceInfo != nil {
 			workspacePath = workspaceInfo.Root
 
 			// Detect language from file path or use first detected language

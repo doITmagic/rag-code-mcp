@@ -43,7 +43,7 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 	// Detect workspace from params
 	workspaceInfo, err := t.workspaceManager.DetectWorkspace(params)
 	if err != nil {
-		return "", fmt.Errorf("failed to detect workspace: %w", err)
+		return HandleWorkspaceDetectionError(err, "")
 	}
 
 	// Optional: allow specifying specific language to index

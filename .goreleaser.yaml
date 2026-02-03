@@ -67,6 +67,33 @@ builds:
       - -X main.Date={{.Date}}
       - -X main.BuiltBy=goreleaser
 
+  - id: index-all
+    main: ./cmd/index-all
+    binary: index-all
+    
+    env:
+      - CGO_ENABLED=0
+    
+    goos:
+      - linux
+      - darwin
+      - windows
+    
+    goarch:
+      - amd64
+      - arm64
+    
+    ignore:
+      - goos: windows
+        goarch: arm64
+    
+    ldflags:
+      - -s -w
+      - -X main.Version={{.Version}}
+      - -X main.Commit={{.Commit}}
+      - -X main.Date={{.Date}}
+      - -X main.BuiltBy=goreleaser
+
 archives:
   - id: default
     format: tar.gz

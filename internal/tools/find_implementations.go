@@ -64,7 +64,7 @@ func (t *FindImplementationsTool) Execute(ctx context.Context, args map[string]i
 	var workspaceInfo *workspace.Info
 	if t.workspaceManager != nil {
 		var err error
-		workspaceInfo, err = t.workspaceManager.DetectWorkspace(args)
+		workspaceInfo, err = DetectAndRegisterWorkspace(t.workspaceManager, args)
 		if err != nil {
 			return HandleWorkspaceDetectionError(err, "")
 		}

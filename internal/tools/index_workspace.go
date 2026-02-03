@@ -41,7 +41,7 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 	}
 
 	// Detect workspace from params
-	workspaceInfo, err := t.workspaceManager.DetectWorkspace(params)
+	workspaceInfo, err := DetectAndRegisterWorkspace(t.workspaceManager, params)
 	if err != nil {
 		return HandleWorkspaceDetectionError(err, "")
 	}

@@ -187,7 +187,7 @@ brews:
   - repository:
       owner: doITmagic
       name: homebrew-tap
-      # Use a dedicated token if available, otherwise fallback to GITHUB_TOKEN
+      # REQUIRED: A dedicated token (HOMEBREW_TAP_TOKEN) with write access to the tap repository.
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     
     directory: Formula

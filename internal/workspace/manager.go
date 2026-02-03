@@ -60,6 +60,19 @@ func (m *Manager) GetConfig() *config.Config {
 	return m.config
 }
 
+// RegisterWorkspace explicitly adds a workspace to the list of known workspaces for fallback detection
+func (m *Manager) RegisterWorkspace(info *Info) {
+	if info == nil {
+		return
+	}
+	m.knownWorkspacesMu.Lock()
+	if m.knownWorkspaces == nil {
+		m.knownWorkspaces = make(map[string]*Info)
+	}
+	m.knownWorkspaces[info.ID] = info
+	m.knownWorkspacesMu.Unlock()
+}
+
 // AddWorkspaceRoots registers multiple workspace roots at once
 func (m *Manager) AddWorkspaceRoots(roots []string) {
 	for _, root := range roots {
@@ -78,12 +91,7 @@ func (m *Manager) AddWorkspaceRoots(roots []string) {
 		}
 
 		// Update known workspaces
-		m.knownWorkspacesMu.Lock()
-		if m.knownWorkspaces == nil {
-			m.knownWorkspaces = make(map[string]*Info)
-		}
-		m.knownWorkspaces[info.ID] = info
-		m.knownWorkspacesMu.Unlock()
+		m.RegisterWorkspace(info)
 
 		log.Printf("📂 Registered workspace root via protocol: %s", info.Root)
 	}
@@ -126,7 +134,6 @@ var defaultSkipDirs = map[string]struct{}{
 	"dist":         {},
 	"build":        {},
 	"storage":      {},
-	"public":       {},
 }
 
 func addDirForLanguage(scan *workspaceScan, cache map[string]map[string]struct{}, language, dir string) {
@@ -460,11 +467,7 @@ func (m *Manager) DetectWorkspace(params map[string]interface{}) (*Info, error) 
 	if m.config != nil && m.config.Workspace.CollectionPrefix != "" {
 		info.CollectionPrefix = m.config.Workspace.CollectionPrefix
 	}
-
-	// Update known workspaces
-	m.knownWorkspacesMu.Lock()
-	m.knownWorkspaces[info.ID] = info
-	m.knownWorkspacesMu.Unlock()
+	// NOTE: Registration is now explicit via RegisterWorkspace() to avoid side effects in pure detection.
 
 	// Cache result
 	if cacheKey != "" {

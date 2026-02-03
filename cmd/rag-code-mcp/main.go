@@ -1357,8 +1357,20 @@ func extractFilePathsFromRoots(roots []*mcp.Root) []string {
 	var rootPaths []string
 	for _, r := range roots {
 		u, err := url.Parse(r.URI)
-		if err == nil && u.Scheme == "file" {
-			rootPaths = append(rootPaths, u.Path)
+		if err != nil {
+			logger.Warn("Failed to parse workspace root URI %s: %v", r.URI, err)
+			continue
+		}
+
+		if u.Scheme == "file" {
+			path := u.Path
+			// On Windows, the path might be /C:/path, trim the leading slash
+			if len(path) > 2 && path[0] == '/' && path[2] == ':' {
+				path = path[1:]
+			}
+			rootPaths = append(rootPaths, path)
+		} else {
+			logger.Warn("Workspace root URI scheme %q is not supported: %s. Only 'file://' roots are registered automatically for local indexing.", u.Scheme, r.URI)
 		}
 	}
 	return rootPaths

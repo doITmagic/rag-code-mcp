@@ -30,6 +30,11 @@ llm:
   model: "phi3:medium"        # LLM for code analysis
   embed_model: "mxbai-embed-large"  # Embedding model
 
+> [!WARNING]
+> **Model Naming:** When specifying models, use the exact name as shown in `ollama list`.
+> RagCode automatically handles the implicit `:latest` tag (e.g., `model` matches `model:latest`).
+> If you use a specific tag like `:v1`, ensure it is included both in your config and in your `ollama pull` command.
+
 storage:
   vector_db:
     url: "http://localhost:6333"

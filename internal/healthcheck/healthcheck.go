@@ -79,25 +79,36 @@ func CheckOllamaWithModels(baseURL string, requiredModels []string) CheckResult 
 			return result
 		}
 
-		installed := make(map[string]bool)
-		for _, m := range tags.Models {
-			installed[m.Name] = true
-			// Also track without :latest tag
-			if strings.HasSuffix(m.Name, ":latest") {
-				installed[strings.TrimSuffix(m.Name, ":latest")] = true
+		// Normalize helper: returns model name and tag
+		normalize := func(name string) (string, string) {
+			if !strings.Contains(name, ":") {
+				return name, "latest"
 			}
+			parts := strings.SplitN(name, ":", 2)
+			return parts[0], parts[1]
 		}
 
 		var missing []string
 		for _, req := range requiredModels {
-			if !installed[req] {
+			reqBase, reqTag := normalize(req)
+			found := false
+
+			for _, m := range tags.Models {
+				mBase, mTag := normalize(m.Name)
+				if reqBase == mBase && reqTag == mTag {
+					found = true
+					break
+				}
+			}
+
+			if !found {
 				missing = append(missing, req)
 			}
 		}
 
 		if len(missing) > 0 {
 			result.Status = "error"
-			result.Message = fmt.Sprintf("Missing models: %s", strings.Join(missing, ", "))
+			result.Message = fmt.Sprintf("Missing models: %s (Ollama implicit :latest tag might cause mismatch if you have specific versions installed)", strings.Join(missing, ", "))
 			return result
 		}
 

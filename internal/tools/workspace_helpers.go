@@ -71,3 +71,13 @@ func AttachAIWarning(result string, wsInfo *workspace.Info) string {
 	}
 	return result
 }
+
+// DetectAndRegisterWorkspace is a convenience helper for tools that want to detect the workspace
+// based on params and also register it as an active workspace for future context-less fallback detection.
+func DetectAndRegisterWorkspace(wm *workspace.Manager, params map[string]interface{}) (*workspace.Info, error) {
+	info, err := wm.DetectWorkspace(params)
+	if err == nil && info != nil {
+		wm.RegisterWorkspace(info)
+	}
+	return info, err
+}

@@ -20,6 +20,7 @@ Unlike generic RAG that splits code into arbitrary text chunks, RagCode:
 - **AST parsing** - understands Go, PHP, Python syntax (not regex/heuristics)
 - **Exact + semantic search** - find "UserController" exactly, not just similar text
 - **Complete code units** - AI sees runnable code, not fragments
+- **Evaluation** - Request AI self-evaluation on performance and quality. **Use to share feedback.**
 
 ## Compatibility
 

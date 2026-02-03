@@ -144,6 +144,9 @@ func DefaultConfig() *Config {
 			IndexExclude:       []string{}, // Empty means use global rag_code.exclude
 			AutoCreateIDERules: true,
 		},
+		HealthCheck: HealthCheckConfig{
+			EnableOnStartup: true,
+		},
 	}
 }
 
@@ -243,6 +246,13 @@ func applyEnvOverrides(cfg *Config) {
 	if wsIDERules := os.Getenv("WORKSPACE_AUTO_CREATE_IDE_RULES"); wsIDERules != "" {
 		if v, err := strconv.ParseBool(wsIDERules); err == nil {
 			cfg.Workspace.AutoCreateIDERules = v
+		}
+	}
+
+	// HealthCheck configuration overrides
+	if healthOnStartup := os.Getenv("HEALTH_CHECK_ON_STARTUP"); healthOnStartup != "" {
+		if v, err := strconv.ParseBool(healthOnStartup); err == nil {
+			cfg.HealthCheck.EnableOnStartup = v
 		}
 	}
 }

@@ -32,6 +32,9 @@ type Config struct {
 	// used as an additional LongTermMemory for pre-indexed structured content.
 	APIDocs APIDocsConfig `yaml:"api_docs"`
 
+	// HealthCheck configuration
+	HealthCheck HealthCheckConfig `yaml:"health_check"`
+
 	// Workspace configuration (multi-workspace support)
 	Workspace WorkspaceConfig `yaml:"workspace"`
 }
@@ -202,4 +205,10 @@ type WorkspaceConfig struct {
 	// in workspace roots to ensure AI follows the "Golden Rule"
 	// Default: true
 	AutoCreateIDERules bool `yaml:"auto_create_ide_rules"`
+}
+
+// HealthCheckConfig contains health check settings
+type HealthCheckConfig struct {
+	// EnableOnStartup controls whether health checks are run when the server starts
+	EnableOnStartup bool `yaml:"enable_on_startup"`
 }

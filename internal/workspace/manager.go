@@ -404,16 +404,20 @@ func (m *Manager) DetectWorkspace(params map[string]interface{}) (*Info, error) 
 
 		// If exactly one workspace, use as fallback
 		if knownCount == 1 && fallback != nil {
-			// Check if we have any path parameter that actually failed
+			// Check if we have any path parameter that actually failed.
+			// Only consider actual string values for path parameters.
 			hasPath := false
 			for _, p := range []string{"file_path", "filePath", "path", "file", "workspace_root"} {
-				if v, ok := params[p]; ok && v != "" {
-					hasPath = true
-					break
+				if v, ok := params[p]; ok {
+					if s, ok := v.(string); ok && s != "" {
+						hasPath = true
+						break
+					}
 				}
 			}
 
 			if !hasPath {
+				log.Printf("⚠️ No path provided for workspace detection. Falling back to the only active workspace: %s", fallback.Root)
 				return fallback, nil
 			}
 		}

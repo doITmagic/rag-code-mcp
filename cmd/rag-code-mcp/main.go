@@ -342,6 +342,9 @@ workspace:
   collection_prefix: ragcode
   index_include: []
   index_exclude: []
+
+health_check:
+  enable_on_startup: true
 `
 
 	// Ensure directory exists
@@ -557,8 +560,8 @@ func main() {
 		os.Exit(0)
 	}
 
-	/*
-		// Run health check on startup (non-fatal)
+	// Run health check on startup (non-fatal) if enabled
+	if cfg.HealthCheck.EnableOnStartup {
 		logger.Info("Checking dependencies...")
 		models := []string{cfg.LLM.OllamaModel, cfg.LLM.OllamaEmbed}
 		results := healthcheck.CheckAllWithModels(cfg.LLM.OllamaBaseURL, cfg.Storage.VectorDB.URL, models)
@@ -577,7 +580,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, healthcheck.GetRemediation(results))
 			logger.Warn("Dependency check failed, but continuing server startup. Some features may be unavailable.")
 		}
-	*/
+	}
 
 	embeddingModel := "mxbai-embed-large"
 	if cfg.LLM.OllamaEmbed != "" {

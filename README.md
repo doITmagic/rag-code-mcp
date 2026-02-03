@@ -291,6 +291,16 @@ cd rag-code-mcp
 go mod download
 go run ./cmd/rag-code-mcp
 ```
+### Release Process
+
+Releases are automated via GitHub Actions and GoReleaser. To create a new release:
+
+1. Update the version in `server.json`.
+2. Push a new tag: `git tag -a v1.x.x -m "Release v1.x.x" && git push origin v1.x.x`.
+3. The GitHub Action will automatically build binaries, create a GitHub Release, and update the Homebrew Tap.
+
+**Note on Homebrew Tap:**
+The `GITHUB_TOKEN` used in the release workflow must have `repo` scope permissions for the [doITmagic/homebrew-tap](https://github.com/doITmagic/homebrew-tap) repository to successfully update the formula. If using the default `GITHUB_TOKEN`, ensure it has cross-repo write permissions, otherwise use a Personal Access Token (PAT).
 
 ---
 

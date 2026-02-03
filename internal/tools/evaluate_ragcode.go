@@ -53,7 +53,7 @@ func (t *EvaluateRagCodeTool) Execute(ctx context.Context, args map[string]inter
 	builder.WriteString("You have been asked to provide a comprehensive evaluation of your experience using RagCode MCP in this session. Please analyze your interaction and provide a detailed response addressing the following points:\n\n")
 
 	builder.WriteString("### 1. 🚀 BENEFITS & PERFORMANCE\n")
-	builder.WriteString("- How did semantic search and specialized tools (like `get_function_details`) help your reasoning process?\n")
+	builder.WriteString("- How did semantic search and specialized tools (like `rag_get_function_details`) help your reasoning process?\n")
 	builder.WriteString("- Compare this experience with standard file reading (`read_file`). What did you gain in terms of speed or context?\n\n")
 
 	builder.WriteString("### 2. ⚡ PAIN POINTS & DIFFICULTIES\n")

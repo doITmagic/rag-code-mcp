@@ -95,8 +95,10 @@ func inferLanguageFromPath(filePath string) string {
 		return "go"
 	case ".py":
 		return "python"
-	case ".js", ".ts", ".jsx", ".tsx", ".mjs":
+	case ".js", ".jsx", ".mjs":
 		return "javascript"
+	case ".ts", ".tsx":
+		return "typescript"
 	case ".php":
 		return "php"
 	case ".html", ".htm":
@@ -113,6 +115,24 @@ func inferLanguageFromPath(filePath string) string {
 		return "cpp"
 	case ".cs":
 		return "csharp"
+	case ".vue":
+		return "vue"
+	case ".svelte":
+		return "svelte"
+	case ".sh", ".bash", ".zsh":
+		return "shell"
+	case ".sql":
+		return "sql"
+	case ".css", ".scss", ".sass", ".less":
+		return "css"
+	case ".md", ".markdown":
+		return "markdown"
+	case ".yaml", ".yml":
+		return "yaml"
+	case ".json":
+		return "json"
+	case ".toml":
+		return "toml"
 	default:
 		return ""
 	}
@@ -138,4 +158,15 @@ func extractFilePathFromParams(params map[string]interface{}) string {
 	}
 
 	return ""
+}
+
+// HandleWorkspaceDetectionError returns a helpful error message when workspace detection fails
+func HandleWorkspaceDetectionError(err error, workspacePath string) (string, error) {
+	if workspacePath == "" {
+		workspacePath = "your project"
+	}
+	return fmt.Sprintf("❌ Could not detect workspace context.\n\n"+
+		"To fix this, please provide the 'file_path' of the file you are currently working on in %s.\n"+
+		"Providing a valid file path allows RagCode to automatically identify the project root.\n\n"+
+		"Technical Error: %v", workspacePath, err), nil
 }

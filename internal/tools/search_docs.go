@@ -31,20 +31,20 @@ func (t *SearchDocsTool) SetWorkspaceManager(wm *workspace.Manager) {
 
 // Name returns the tool name
 func (t *SearchDocsTool) Name() string {
-	return "search_docs"
+	return "rag_search_docs"
 }
 
 // Description returns the tool description
 func (t *SearchDocsTool) Description() string {
-	return "Search project documentation (README, guides, API docs) - use when you need to understand project setup, architecture decisions, or usage examples. Returns relevant documentation snippets with file paths. Searches Markdown files ONLY, not code - use search_code for code."
+	return "Search project documentation (README, guides, API docs) - use when you need to understand project setup, architecture decisions, or usage examples. Returns relevant documentation snippets with file paths. Searches Markdown files ONLY, not code - use rag_search_code for code. MANDATORY: You must provide the 'file_path' of the current file to allow the tool to detect the correct workspace and context.\nExample: { \"query\": \"deployment\", \"file_path\": \"/path/to/project/README.md\" }"
 }
 
 // Execute executes a search in the docs index
 func (t *SearchDocsTool) Execute(ctx context.Context, params map[string]interface{}) (string, error) {
-	// file_path is required for workspace detection
+	// file_path is mandatory
 	filePath := extractFilePathFromParams(params)
 	if filePath == "" {
-		return "", fmt.Errorf("file_path parameter is required for search_docs. Please provide a file path from your workspace")
+		return "", fmt.Errorf("MANDATORY parameter 'file_path' is missing. You must provide the absolute path of the file you are currently working on.")
 	}
 
 	// Try workspace detection
@@ -53,12 +53,19 @@ func (t *SearchDocsTool) Execute(ctx context.Context, params map[string]interfac
 	var collectionName string
 
 	if t.workspaceManager != nil {
-		workspaceInfo, err := t.workspaceManager.DetectWorkspace(params)
-		if err == nil && workspaceInfo != nil {
+		workspaceInfo, err := DetectAndRegisterWorkspace(t.workspaceManager, params)
+		if err != nil {
+			return HandleWorkspaceDetectionError(err, "")
+		}
+
+		if workspaceInfo != nil {
 			workspacePath = workspaceInfo.Root
 
 			// Detect language from file path or use first detected language
-			language := inferLanguageFromPath(filePath)
+			language := ""
+			if filePath != "" {
+				language = inferLanguageFromPath(filePath)
+			}
 			if language == "" && len(workspaceInfo.Languages) > 0 {
 				language = workspaceInfo.Languages[0]
 			}

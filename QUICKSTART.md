@@ -82,9 +82,18 @@ docker ps | grep ragcode
    ```
    Find all authentication functions in this codebase
    ```
-3. **RagCode automatically indexes** your project on first use
+3. **RagCode automatically indexes** your project on the first query. You don't need to do anything!
+   - Searching starts immediately.
+   - Results improve as the background indexing progresses.
 
-That's it! The AI will use RagCode's semantic search to find relevant code.
+---
+
+## 💡 Manual Indexing (Optional)
+
+If you have a very large project and want to ensure everything is indexed before your first search:
+```
+Please use the 'rag_index_workspace' tool on this project.
+```
 
 ---
 
@@ -119,7 +128,7 @@ That's it! The AI will use RagCode's semantic search to find relevant code.
 | "Ollama model not found" | Run `ollama pull phi3:medium && ollama pull mxbai-embed-large` |
 | IDE doesn't see RagCode | Re-run `./ragcode-installer -skip-build` |
 
-For more help, see [README.md#troubleshooting](./README.md#-troubleshooting) or open an [Issue](https://github.com/doITmagic/rag-code-mcp/issues).
+For more help, see [Troubleshooting Guide](./docs/TROUBLESHOOTING.md) or open an [Issue](https://github.com/doITmagic/rag-code-mcp/issues).
 
 ---
 

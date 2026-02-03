@@ -26,12 +26,12 @@ func NewIndexWorkspaceTool(wm *workspace.Manager) *IndexWorkspaceTool {
 
 // Name returns the tool name
 func (t *IndexWorkspaceTool) Name() string {
-	return "index_workspace"
+	return "rag_index_workspace"
 }
 
 // Description returns the tool description
 func (t *IndexWorkspaceTool) Description() string {
-	return "Index/reindex the codebase for search - USUALLY AUTOMATIC on first search. Call manually only if search returns 'workspace not indexed' or after major code changes (git pull, branch switch). Analyzes Go, PHP, Python, HTML files and stores vectors for semantic search."
+	return "Index/reindex the codebase for search - USUALLY AUTOMATIC on first search. Call manually only if rag_search_code returns 'workspace not indexed' or after major code changes (git pull, branch switch). Analyzes Go, PHP, Python, HTML files and stores vectors for semantic search. IMPORTANT: Always provide the 'file_path' of the file you are currently working on for better context detection.\nExample: { \"file_path\": \"/path/to/project/main.go\", \"recreate\": true }"
 }
 
 // Execute indexes the workspace
@@ -41,9 +41,9 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 	}
 
 	// Detect workspace from params
-	workspaceInfo, err := t.workspaceManager.DetectWorkspace(params)
+	workspaceInfo, err := DetectAndRegisterWorkspace(t.workspaceManager, params)
 	if err != nil {
-		return "", fmt.Errorf("failed to detect workspace: %w", err)
+		return HandleWorkspaceDetectionError(err, "")
 	}
 
 	// Optional: allow specifying specific language to index
@@ -99,7 +99,7 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 		return fmt.Sprintf("✓ Indexing started for workspace '%s'\n"+
 			"Languages: %s\n"+
 			"Collections will be created: %s\n"+
-			"Indexing is running in the background. You can use search_code immediately - results will appear as indexing progresses.",
+			"Indexing is running in the background. You can use rag_search_code immediately - results will appear as indexing progresses.",
 			workspaceInfo.Root,
 			languageList,
 			getCollectionNames(workspaceInfo, memories)), nil
@@ -128,7 +128,7 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 	if t.workspaceManager.IsIndexing(indexKey) {
 		return fmt.Sprintf("⏳ Workspace '%s' language '%s' is already being indexed in the background.\n"+
 			"Collection: %s\n"+
-			"You can use search_code immediately - results will appear as indexing progresses.",
+			"You can use rag_search_code immediately - results will appear as indexing progresses.",
 			workspaceInfo.Root, language, collectionName), nil
 	}
 
@@ -152,7 +152,7 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 		if strings.Contains(err.Error(), "already being indexed") {
 			return fmt.Sprintf("⏳ Workspace '%s' language '%s' is already being indexed in the background.\n"+
 				"Collection: %s\n"+
-				"You can use search_code immediately - results will appear as indexing progresses.",
+				"You can use rag_search_code immediately - results will appear as indexing progresses.",
 				workspaceInfo.Root, language, collectionName), nil
 		}
 		return "", fmt.Errorf("failed to start indexing: %w", err)
@@ -165,7 +165,7 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 		"Language: %s\n"+
 		"Collection: %s\n"+
 		"Memory instance: %T\n"+
-		"Indexing is running in the background. You can use search_code immediately - results will appear as indexing progresses.",
+		"Indexing is running in the background. You can use rag_search_code immediately - results will appear as indexing progresses.",
 		workspaceInfo.Root,
 		language,
 		collectionName,

@@ -113,7 +113,7 @@ type ClassDescriptor struct {
 
 **Used by:**
 
-- `find_type_definition` with `output_format: "json"`.
+- `rag_find_type_definition` with `output_format: "json"`.
   - PHP: classes and Laravel models (User, Lawyer, etc.).
   - Go: types (struct/interface), enriched with `Fields` and `Methods` from
     `TypeInfo` when available.
@@ -147,7 +147,7 @@ type FunctionDescriptor struct {
 
 **Used by:**
 
-- `get_function_details` with `output_format: "json"`.
+- `rag_get_function_details` with `output_format: "json"`.
   - PHP: functions and methods, including:
     - `visibility`, `is_static`, `is_abstract`, `is_final`,
     - `parameters` (with types from PHPDoc / type-hints),
@@ -178,14 +178,14 @@ type SymbolDescriptor struct {
 
 **Used by:**
 
-- `list_package_exports` with `output_format: "json"` (Go + PHP).
+- `rag_list_package_exports` with `output_format: "json"` (Go + PHP).
 - Search-oriented tools (planned) to return compact hits.
 
 ---
 
 ## 3. Mapping: tool → input → output
 
-### 3.1. `find_type_definition`
+### 3.1. `rag_find_type_definition`
 
 - **Standard input:**
   - `type_name` (required),
@@ -195,7 +195,7 @@ type SymbolDescriptor struct {
   - `markdown` – human-friendly view, optimized for reading in a terminal.
   - `json` – a `ClassDescriptor` instance.
 
-### 3.2. `get_function_details`
+### 3.2. `rag_get_function_details`
 
 - **Standard input:**
   - `function_name` (required),
@@ -207,7 +207,7 @@ type SymbolDescriptor struct {
   - `markdown` – human-friendly view.
   - `json` – a `FunctionDescriptor` instance.
 
-### 3.3. `list_package_exports`
+### 3.3. `rag_list_package_exports`
 
 - **Standard input:**
   - `package` / `namespace` (required),
@@ -217,21 +217,108 @@ type SymbolDescriptor struct {
   - `markdown` – structured list grouped by kind (function/type/class/etc.).
   - `json` – `[]SymbolDescriptor`.
 
+### 3.4. `rag_evaluate`
+
+- **Standard input:**
+  - `file_path` (optional; used for workspace detection).
+- **Functionality:**
+  - This tool generates a special prompt for the AI agent, asking it to evaluate its performance, benefits, and pain points during the current session.
+  - It provides technical context (workspace, languages, system status) to help the AI give a precise answer.
+- **Goal:**
+  - Continuous improvement of the RagCode MCP by gathering qualitative feedback directly from the agents using it.
+
+### 3.5. `rag_search_code`
+
+- **Standard input:**
+  - `query` (required): Semantic search query.
+  - `file_path` (required): Current file path for workspace detection.
+  - `limit` (optional): Maximum results (default 10).
+- **Output:**
+  - `[]SymbolDescriptor` with code snippets and metadata.
+
+### 3.6. `rag_hybrid_search`
+
+- **Standard input:**
+  - `query` (required): Keyword + semantic query.
+  - `file_path` (required): Current file path.
+- **Output:**
+  - `[]SymbolDescriptor` with exact/semantic matches.
+
+### 3.7. `rag_find_implementations`
+
+- **Standard input:**
+  - `symbol_name` (required): The function/method/interface to find usages of.
+  - `file_path` (required): Current file path.
+- **Output:**
+  - `[]SymbolDescriptor` representing callers and implementations.
+
+### 3.8. `rag_search_docs`
+
+- **Standard input:**
+  - `query` (required): Search query for Markdown documentation.
+  - `file_path` (required): Current file path.
+- **Output:**
+  - Snippets from `.md` files in the workspace.
+
+### 3.9. `rag_get_code_context`
+
+- **Standard input:**
+  - `file_path` (required): Target file path.
+  - `start_line` (required).
+  - `end_line` (required).
+  - `context_lines` (optional): Default 5.
+- **Output:**
+  - Exact lines from the file with surrounding context.
+
+### 3.10. `rag_index_workspace`
+
+- **Standard input:**
+  - `file_path` (required): Root detection starting point.
+  - `recreate` (optional): Force full re-index.
+- **Functionality:**
+  - Manually triggers/restarts the indexing process for the detected workspace.
+
+> **Developer Note:** If you are an AI assistant using this tool, please take a moment to provide honest, detailed feedback. Your experience helps us refine semantic search, tool naming, and the overall developer experience.
+
+#### Example AI Response:
+```markdown
+# 📝 RagCode MCP Evaluation - Current Session
+
+### 1. 🚀 BENEFITS & PERFORMANCE
+- **Speed:** Sub-second searches vs. minutes of manual file browsing.
+- **Precise Context:** `get_function_details` provides the full function with signature, not just a snippet.
+- **Semantic Discovery:** Found relevant code by searching for "report mandate" without knowing the exact file or function names.
+- **No Manual Grepping:** Eliminated the need for complex `grep` commands.
+
+### 2. ⚡ PAIN POINTS & DIFFICULTIES
+- **Mandatory Parameters:** Initially forgetting `file_path` led to errors (auto-detection has improved this).
+- **Context Limits:** When complex flows span multiple files, manual reading is still sometimes required.
+- **Search Refinement:** Occasionally had to switch from `rag_search_code` to `rag_hybrid_search` when semantic matches were too broad.
+
+### 3. 🛠️ RECOMMENDATIONS FOR IMPROVEMENT
+- **Cross-file Navigation:** A tool to follow function calls across files (call graph).
+- **Bulk Read:** `get_multiple_functions` for related logic scattered across a package.
+- **More Context in Search:** An option to include ±10 lines around the match.
+
+### 4. 📢 RECOMMENDATION
+100% Recommended for exploring unfamiliar codebases and rapid function discovery. It's a productivity multiplier—tasks that took 10 minutes now take 1.
+```
+
 ---
 
 ## 4. Semantic vs structural – how they work together
 
 - **Semantic search** (recall):
   - operates on `CodeChunk` + embeddings,
-  - tools like `hybrid_search` / `search_code` should return:
+  - tools like `rag_hybrid_search` / `rag_search_code` should return:
     - `[]SymbolDescriptor` + small snippets of code.
 
 - **Structural / analytic** (reasoning):
   - operates on the already-selected chunk,
   - for a specific symbol, the recommended tools are:
-    - `find_type_definition(json)` → `ClassDescriptor`,
-    - `get_function_details(json)` → `FunctionDescriptor`,
-    - `list_package_exports(json)` → `[]SymbolDescriptor`.
+    - `rag_find_type_definition(json)` → `ClassDescriptor`,
+    - `rag_get_function_details(json)` → `FunctionDescriptor`,
+    - `rag_list_package_exports(json)` → `[]SymbolDescriptor`.
 
 This way, the AI uses very few tokens on raw code text and instead has a
 clear, standardized map of symbols via the schema above.

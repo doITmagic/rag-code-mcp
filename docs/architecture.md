@@ -56,16 +56,19 @@ internal/
 │   ├── README.md          # Workspace documentation
 │   └── *_test.go          # Comprehensive test suite (manager_multilang_test.go, etc.)
 │
-├── tools/                 # MCP tool implementations (9 tools)
+├── tools/                 # MCP tool implementations (10 tools)
 │   ├── search_local_index.go
 │   ├── hybrid_search.go
-│   ├── get_function_details.go
-│   ├── find_type_definition.go
-│   ├── get_code_context.go
-│   ├── list_package_exports.go
-│   ├── find_implementations.go
-│   ├── search_docs.go
-│   ├── index_workspace.go    # Manual indexing tool
+│   ├── rag_search_local_index.go
+│   ├── rag_hybrid_search.go
+│   ├── rag_get_function_details.go
+│   ├── rag_find_type_definition.go
+│   ├── rag_get_code_context.go
+│   ├── rag_list_package_exports.go
+│   ├── rag_find_implementations.go
+│   ├── rag_search_docs.go
+│   ├── rag_index_workspace.go    # Manual indexing tool
+│   ├── evaluate_ragcode.go       # AI self-evaluation tool
 │   ├── workspace_helpers.go  # Helper functions for tools
 │   ├── utils.go
 │   └── *_test.go             # Tool tests
@@ -412,19 +415,21 @@ paths → analyzer.AnalyzePaths() → []CodeChunk → embeddings → Qdrant
 - Vector similarity search
 - Filtering and text search integration
 
-### 8. Tools: 8 MCP Tools (`internal/tools`)
+### 8. Tools: 10 MCP Tools (`internal/tools`)
 
 **Purpose:** Implements semantic code navigation and search tools for IDE integration.
 
 **Tools:**
-1. `search_local_index.go` - Semantic search across indexed codebase
-2. `hybrid_search.go` - Combined semantic + lexical search
-3. `get_function_details.go` - Retrieve function signatures and documentation
-4. `find_type_definition.go` - Locate type and interface definitions
-5. `get_code_context.go` - Direct file access without indexing
-6. `list_package_exports.go` - List exported symbols
-7. `find_implementations.go` - Find interface implementations
-8. `search_docs.go` - Search markdown documentation
+1. `rag_search_local_index.go` - Semantic search across indexed codebase
+2. `rag_hybrid_search.go` - Combined semantic + lexical search
+3. `rag_get_function_details.go` - Retrieve function signatures and documentation
+4. `rag_find_type_definition.go` - Locate type and interface definitions
+5. `rag_get_code_context.go` - Direct file access without indexing
+6. `rag_list_package_exports.go` - List exported symbols
+7. `rag_find_implementations.go` - Find interface implementations
+8. `rag_search_docs.go` - Search markdown documentation
+9. `rag_index_workspace.go` - Manually trigger indexing
+10. `evaluate_ragcode.go` - AI performance evaluation
 
 **All tools support:**
 - Workspace-specific queries
@@ -654,7 +659,7 @@ For advanced users (not recommended for typical use):
 - Concurrent multi-workspace indexing
 - Comprehensive test suite (15+ integration tests)
 
-**MCP Tools:** ✅ 8 tools fully implemented
+**MCP Tools:** ✅ 10 tools fully implemented
 - All tools support multi-workspace and multi-language queries
 - Workspace-aware collection selection
 

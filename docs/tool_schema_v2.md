@@ -227,6 +227,57 @@ type SymbolDescriptor struct {
 - **Goal:**
   - Continuous improvement of the RagCode MCP by gathering qualitative feedback directly from the agents using it.
 
+### 3.5. `rag_search_code`
+
+- **Standard input:**
+  - `query` (required): Semantic search query.
+  - `file_path` (required): Current file path for workspace detection.
+  - `limit` (optional): Maximum results (default 10).
+- **Output:**
+  - `[]SymbolDescriptor` with code snippets and metadata.
+
+### 3.6. `rag_hybrid_search`
+
+- **Standard input:**
+  - `query` (required): Keyword + semantic query.
+  - `file_path` (required): Current file path.
+- **Output:**
+  - `[]SymbolDescriptor` with exact/semantic matches.
+
+### 3.7. `rag_find_implementations`
+
+- **Standard input:**
+  - `symbol_name` (required): The function/method/interface to find usages of.
+  - `file_path` (required): Current file path.
+- **Output:**
+  - `[]SymbolDescriptor` representing callers and implementations.
+
+### 3.8. `rag_search_docs`
+
+- **Standard input:**
+  - `query` (required): Search query for Markdown documentation.
+  - `file_path` (required): Current file path.
+- **Output:**
+  - Snippets from `.md` files in the workspace.
+
+### 3.9. `rag_get_code_context`
+
+- **Standard input:**
+  - `file_path` (required): Target file path.
+  - `start_line` (required).
+  - `end_line` (required).
+  - `context_lines` (optional): Default 5.
+- **Output:**
+  - Exact lines from the file with surrounding context.
+
+### 3.10. `rag_index_workspace`
+
+- **Standard input:**
+  - `file_path` (required): Root detection starting point.
+  - `recreate` (optional): Force full re-index.
+- **Functionality:**
+  - Manually triggers/restarts the indexing process for the detected workspace.
+
 > **Developer Note:** If you are an AI assistant using this tool, please take a moment to provide honest, detailed feedback. Your experience helps us refine semantic search, tool naming, and the overall developer experience.
 
 #### Example AI Response:
@@ -242,7 +293,7 @@ type SymbolDescriptor struct {
 ### 2. ⚡ PAIN POINTS & DIFFICULTIES
 - **Mandatory Parameters:** Initially forgetting `file_path` led to errors (auto-detection has improved this).
 - **Context Limits:** When complex flows span multiple files, manual reading is still sometimes required.
-- **Search Refinement:** Occasionally had to switch from `search_code` to `hybrid_search` when semantic matches were too broad.
+- **Search Refinement:** Occasionally had to switch from `rag_search_code` to `rag_hybrid_search` when semantic matches were too broad.
 
 ### 3. 🛠️ RECOMMENDATIONS FOR IMPROVEMENT
 - **Cross-file Navigation:** A tool to follow function calls across files (call graph).

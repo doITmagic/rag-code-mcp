@@ -708,19 +708,13 @@ After installation, you need to index each project you want to work with. This i
 
 ### Quick Start Prompt for Your AI Assistant
 
-Open your project in Windsurf or Cursor and paste this prompt to the AI:
+Open your project in Windsurf, Cursor, or VS Code and paste this prompt to the AI:
 
 ```
-Please use the RagCode MCP tool 'rag_index_workspace' to index this project 
-for semantic code search. Provide the file_path parameter pointing to any 
-file in this workspace. Once indexing completes, I'll be able to use 
-rag_search_code, rag_get_function_details, and other tools to help you navigate 
-and understand the codebase.
-
-Note: Indexing runs in the background and may take a few minutes depending 
-on project size. You can start using search immediately - results will 
-improve as indexing progresses.
+Find all authentication logic in this codebase.
 ```
+
+**That's it!** RagCode will automatically detect your project root and start indexing in the background on the very first search. You don't need to manually run the indexer, though you can use `rag_index_workspace` if you want to force a full re-scan.
 
 ### What Happens During Indexing?
 

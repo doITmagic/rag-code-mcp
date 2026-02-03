@@ -23,13 +23,16 @@ jobs:
         with:
           fetch-depth: 0
       
-      - name: Validate GITHUB_TOKEN for Homebrew Tap
+      - name: Check for Homebrew Tap Token
+        id: check_token
         run: |
-          if [ -z "${{ secrets.GITHUB_TOKEN }}" ]; then
-            echo "::error::GITHUB_TOKEN is missing. Release will fail."
-            exit 1
+          if [ -n "${{ secrets.HOMEBREW_TAP_TOKEN }}" ]; then
+            echo "HAS_TAP_TOKEN=true" >> $GITHUB_OUTPUT
+            echo "HOMEBREW_TAP_TOKEN is present. Using it for Homebrew updates."
+          else
+            echo "HAS_TAP_TOKEN=false" >> $GITHUB_OUTPUT
+            echo "HOMEBREW_TAP_TOKEN is missing. Homebrew Tap update will be skipped or may fail if GITHUB_TOKEN has no cross-repo access."
           fi
-          echo "GITHUB_TOKEN is present. Note: For Homebrew Tap updates, this token must have 'repo' scope for the target 'homebrew-tap' repository."
       
       - name: Fetch all tags
         run: git fetch --force --tags
@@ -48,6 +51,7 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.GITHUB_TOKEN }}
       
       - name: Update server.json version
         run: |

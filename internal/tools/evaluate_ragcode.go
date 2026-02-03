@@ -3,7 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
-	"os"
+	"log"
 	"strings"
 
 	"github.com/doITmagic/rag-code-mcp/internal/healthcheck"
@@ -28,19 +28,22 @@ func (t *EvaluateRagCodeTool) Description() string {
 }
 
 func (t *EvaluateRagCodeTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
-	fmt.Fprintf(os.Stderr, "[INFO] 🛠️ Executing tool '%s'\n", t.Name())
+	log.Printf("[INFO] 🛠️ Executing tool '%s'\n", t.Name())
 
-	// Detect workspace for context
+	// Detect workspace for context, but continue gracefully if it fails
 	info, err := t.wm.DetectWorkspace(args)
+	var languages []string
 	if err != nil {
-		return HandleWorkspaceDetectionError(err, "")
+		// For evaluation, lack of workspace context should not be fatal; log and continue.
+		log.Printf("[WARN] Workspace detection failed in '%s': %v (continuing without workspace context)\n", t.Name(), err)
+	} else {
+		languages = t.wm.GetDetectedLanguages(info)
 	}
 
 	// Gather minimal technical context
 	cfg := t.wm.GetConfig()
 	models := []string{cfg.LLM.OllamaModel, cfg.LLM.OllamaEmbed}
 	health := healthcheck.CheckAllWithModels(cfg.LLM.OllamaBaseURL, cfg.Storage.VectorDB.URL, models)
-	languages := t.wm.GetDetectedLanguages(info)
 
 	var healthStatus []string
 	for _, h := range health {
@@ -69,8 +72,12 @@ func (t *EvaluateRagCodeTool) Execute(ctx context.Context, args map[string]inter
 
 	builder.WriteString("--- \n")
 	builder.WriteString("#### 🛠️ Technical Context (for your reference):\n")
-	builder.WriteString(fmt.Sprintf("- **Workspace**: %s\n", info.Root))
-	builder.WriteString(fmt.Sprintf("- **Languages**: %s\n", strings.Join(languages, ", ")))
+	if info != nil {
+		builder.WriteString(fmt.Sprintf("- **Workspace**: %s\n", info.Root))
+		builder.WriteString(fmt.Sprintf("- **Languages**: %s\n", strings.Join(languages, ", ")))
+	} else {
+		builder.WriteString("- **Workspace**: Not detected (fallback mode)\n")
+	}
 	builder.WriteString(fmt.Sprintf("- **System Status**:\n%s\n", strings.Join(healthStatus, "\n")))
 	builder.WriteString(fmt.Sprintf("- **Models**: Chat=%s, Embed=%s\n\n", cfg.LLM.OllamaModel, cfg.LLM.OllamaEmbed))
 

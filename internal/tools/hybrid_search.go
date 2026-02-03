@@ -19,13 +19,22 @@ type HybridSearchTool struct {
 	memory           memory.LongTermMemory
 	embedder         llm.Provider
 	workspaceManager *workspace.Manager
+	searchLimit      int
 }
 
 // NewHybridSearchTool creates a new hybrid search tool. Accepts the main code memory and embedding provider.
 func NewHybridSearchTool(mem memory.LongTermMemory, embedder llm.Provider) *HybridSearchTool {
 	return &HybridSearchTool{
-		memory:   mem,
-		embedder: embedder,
+		memory:      mem,
+		embedder:    embedder,
+		searchLimit: 10,
+	}
+}
+
+// SetSearchLimit sets the default search limit
+func (t *HybridSearchTool) SetSearchLimit(limit int) {
+	if limit > 0 {
+		t.searchLimit = limit
 	}
 }
 
@@ -56,14 +65,14 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 		return "", fmt.Errorf("query parameter is required")
 	}
 
-	limit := 10
+	limit := t.searchLimit
 	if v, ok := params["limit"].(float64); ok {
 		limit = int(v)
 	} else if v, ok := params["limit"].(int); ok {
 		limit = v
 	}
 	if limit <= 0 {
-		limit = 10
+		limit = t.searchLimit
 	}
 
 	// Optional output format: json (default) or markdown
@@ -77,8 +86,10 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 	var workspacePath string
 	var collectionName string
 
+	var workspaceInfo *workspace.Info
 	if t.workspaceManager != nil {
-		workspaceInfo, err := t.workspaceManager.DetectWorkspace(params)
+		var err error
+		workspaceInfo, err = t.workspaceManager.DetectWorkspace(params)
 		if err != nil {
 			return HandleWorkspaceDetectionError(err, "")
 		}
@@ -105,12 +116,12 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 				// Check if indexing is in progress
 				indexKey := workspaceInfo.ID + "-" + language
 				if t.workspaceManager.IsIndexing(indexKey) {
-					return fmt.Sprintf("⏳ Workspace '%s' language '%s' is currently being indexed in the background.\n"+
+					return AttachAIWarning(fmt.Sprintf("⏳ Workspace '%s' language '%s' is currently being indexed in the background.\n"+
 						"Please try again in a few moments.\n"+
 						"Workspace: %s\n"+
 						"Language: %s\n"+
 						"Collection: %s",
-						workspaceInfo.Root, language, workspaceInfo.Root, language, collectionName), nil
+						workspaceInfo.Root, language, workspaceInfo.Root, language, collectionName), workspaceInfo), nil
 				}
 
 				// Check if collection exists before proceeding
@@ -118,7 +129,7 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 					if err != nil {
 						return "", err
 					}
-					return msg, nil
+					return AttachAIWarning(msg, workspaceInfo), nil
 				}
 
 				workspaceMem = mem
@@ -175,17 +186,17 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 				if err != nil {
 					return "", err
 				}
-				return msg, nil
+				return AttachAIWarning(msg, workspaceInfo), nil
 			}
 		}
 
 		if outputFormat == "markdown" {
 			if workspaceMem != nil {
-				return fmt.Sprintf("No relevant code found in workspace '%s'.", workspacePath), nil
+				return AttachAIWarning(fmt.Sprintf("No relevant code found in workspace '%s'.", workspacePath), workspaceInfo), nil
 			}
-			return "No relevant code found.", nil
+			return AttachAIWarning("No relevant code found.", workspaceInfo), nil
 		}
-		return "[]", nil
+		return AttachAIWarning("[]", workspaceInfo), nil
 	}
 
 	lowerQuery := strings.ToLower(query)
@@ -217,14 +228,14 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 			topSemantic = topSemantic[:limit]
 		}
 		if outputFormat == "markdown" {
-			return formatHybridResults(topSemantic, false, workspaceMem != nil, workspacePath), nil
+			return AttachAIWarning(formatHybridResults(topSemantic, false, workspaceMem != nil, workspacePath), workspaceInfo), nil
 		}
 		descriptors := buildSymbolDescriptorsFromDocs(topSemantic)
 		data, err := json.MarshalIndent(descriptors, "", "  ")
 		if err != nil {
 			return "", fmt.Errorf("failed to marshal rag_hybrid_search results: %w", err)
 		}
-		return string(data), nil
+		return AttachAIWarning(string(data), workspaceInfo), nil
 	}
 
 	// Combine scores (60% semantic + 40% normalized lexical)
@@ -257,7 +268,7 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 	}
 
 	if outputFormat == "markdown" {
-		return formatHybridResults(finalDocs, true, workspaceMem != nil, workspacePath), nil
+		return AttachAIWarning(formatHybridResults(finalDocs, true, workspaceMem != nil, workspacePath), workspaceInfo), nil
 	}
 
 	descriptors := buildSymbolDescriptorsFromDocs(finalDocs)
@@ -275,7 +286,7 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal rag_hybrid_search results: %w", err)
 	}
-	return string(data), nil
+	return AttachAIWarning(string(data), workspaceInfo), nil
 }
 
 func filterTokens(tokens []string) []string {

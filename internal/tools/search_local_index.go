@@ -16,6 +16,7 @@ type SearchLocalIndexTool struct {
 	embedder         llm.Provider
 	memories         []memory.LongTermMemory // Fallback memories if workspace detection fails
 	workspaceManager *workspace.Manager      // Workspace-aware collection manager
+	searchLimit      int                     // default limit for search results
 }
 
 // NewSearchLocalIndexTool creates a new search local index tool
@@ -26,8 +27,16 @@ func NewSearchLocalIndexTool(ltm memory.LongTermMemory, embedder llm.Provider, a
 	}
 	memories = append(memories, additional...)
 	return &SearchLocalIndexTool{
-		embedder: embedder,
-		memories: memories,
+		embedder:    embedder,
+		memories:    memories,
+		searchLimit: 10, // Default fallback
+	}
+}
+
+// SetSearchLimit sets the default search limit
+func (t *SearchLocalIndexTool) SetSearchLimit(limit int) {
+	if limit > 0 {
+		t.searchLimit = limit
 	}
 }
 
@@ -53,7 +62,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 		return "", fmt.Errorf("query parameter is required")
 	}
 
-	limit := 10
+	limit := t.searchLimit
 	if l, ok := params["limit"].(float64); ok {
 		limit = int(l)
 	} else if l, ok := params["limit"].(int); ok {
@@ -119,12 +128,12 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 		// Check if currently indexing
 		indexKey := workspaceInfo.ID + "-" + language
 		if t.workspaceManager.IsIndexing(indexKey) {
-			return fmt.Sprintf("⏳ Workspace '%s' language '%s' is currently being indexed in the background.\n"+
+			return AttachAIWarning(fmt.Sprintf("⏳ Workspace '%s' language '%s' is currently being indexed in the background.\n"+
 				"Please try again in a few moments.\n"+
 				"Workspace: %s\n"+
 				"Language: %s\n"+
 				"Collection: %s",
-				workspaceInfo.Root, language, workspaceInfo.Root, language, workspaceInfo.CollectionNameForLanguage(language)), nil
+				workspaceInfo.Root, language, workspaceInfo.Root, language, workspaceInfo.CollectionNameForLanguage(language)), workspaceInfo), nil
 		}
 
 		// Check if collection exists before searching (if memory supports it)
@@ -219,7 +228,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 				for i, doc := range docs {
 					result += fmt.Sprintf("--- Result %d ---\n%s\n\n", i+1, doc.Content)
 				}
-				return result, nil
+				return AttachAIWarning(result, workspaceInfo), nil
 			}
 
 			descriptors := buildSymbolDescriptorsFromDocs(docs)
@@ -235,7 +244,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			if marshalErr != nil {
 				return "", fmt.Errorf("failed to marshal rag_search_code results: %w", marshalErr)
 			}
-			return string(data), nil
+			return AttachAIWarning(string(data), workspaceInfo), nil
 		}
 	}
 

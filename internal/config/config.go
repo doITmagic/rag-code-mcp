@@ -137,6 +137,7 @@ type RagCodeConfig struct {
 	Model          string   `yaml:"model"`            // optional: embedding model override
 	Include        []string `yaml:"include"`          // glob include patterns
 	Exclude        []string `yaml:"exclude"`          // glob exclude patterns
+	SearchLimit    int      `yaml:"search_limit"`     // default limit for search results (default: 10)
 }
 
 // DocsConfig contains configuration for Markdown documentation indexing

@@ -26,6 +26,10 @@ type Info struct {
 	// CollectionPrefix is the prefix used for this workspace's collection
 	// Set by Manager based on config
 	CollectionPrefix string `json:"collection_prefix,omitempty"`
+
+	// AIWarning is an optional warning message meant for the AI assistant
+	// describing detection issues or fallback usage.
+	AIWarning string `json:"ai_warning,omitempty"`
 }
 
 // CollectionName returns the Qdrant collection name for this workspace

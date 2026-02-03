@@ -71,8 +71,10 @@ func (t *FindTypeDefinitionTool) Execute(ctx context.Context, args map[string]in
 	var workspacePath string
 	var collectionName string
 
+	var workspaceInfo *workspace.Info
 	if t.workspaceManager != nil {
-		workspaceInfo, err := t.workspaceManager.DetectWorkspace(args)
+		var err error
+		workspaceInfo, err = t.workspaceManager.DetectWorkspace(args)
 		if err != nil {
 			return HandleWorkspaceDetectionError(err, "")
 		}
@@ -98,12 +100,12 @@ func (t *FindTypeDefinitionTool) Execute(ctx context.Context, args map[string]in
 				// Check if indexing is in progress
 				indexKey := workspaceInfo.ID + "-" + language
 				if t.workspaceManager.IsIndexing(indexKey) {
-					return fmt.Sprintf("⏳ Workspace '%s' language '%s' is currently being indexed in the background.\n"+
+					return AttachAIWarning(fmt.Sprintf("⏳ Workspace '%s' language '%s' is currently being indexed in the background.\n"+
 						"Please try again in a few moments.\n"+
 						"Workspace: %s\n"+
 						"Language: %s\n"+
 						"Collection: %s",
-						workspaceInfo.Root, language, workspaceInfo.Root, language, collectionName), nil
+						workspaceInfo.Root, language, workspaceInfo.Root, language, collectionName), workspaceInfo), nil
 				}
 
 				// Check if collection exists before proceeding
@@ -111,7 +113,7 @@ func (t *FindTypeDefinitionTool) Execute(ctx context.Context, args map[string]in
 					if err != nil {
 						return "", err
 					}
-					return msg, nil
+					return AttachAIWarning(msg, workspaceInfo), nil
 				}
 
 				searchMemory = mem
@@ -193,11 +195,11 @@ processResults:
 				if err != nil {
 					return "", err
 				}
-				return msg, nil
+				return AttachAIWarning(msg, workspaceInfo), nil
 			}
-			return fmt.Sprintf("Type '%s' not found in workspace '%s'", typeName, workspacePath), nil
+			return AttachAIWarning(fmt.Sprintf("Type '%s' not found in workspace '%s'", typeName, workspacePath), workspaceInfo), nil
 		}
-		return fmt.Sprintf("Type '%s' not found", typeName), nil
+		return AttachAIWarning(fmt.Sprintf("Type '%s' not found", typeName), workspaceInfo), nil
 	}
 
 	// Find exact match (must be type chunk)
@@ -231,7 +233,7 @@ processResults:
 	}
 
 	if bestMatch == nil {
-		return fmt.Sprintf("Type '%s' not found (searched %d chunks)", typeName, len(results)), nil
+		return AttachAIWarning(fmt.Sprintf("Type '%s' not found (searched %d chunks)", typeName, len(results)), workspaceInfo), nil
 	}
 
 	var chunk codetypes.CodeChunk
@@ -252,11 +254,23 @@ processResults:
 	// This guarantees "Compiler Accuracy" by ignoring potentially stale vector metadata
 	switch chunk.Language {
 	case "php":
-		return t.buildPHPTypeResponse(&chunk, codeBody, outputFormat)
+		res, err := t.buildPHPTypeResponse(&chunk, codeBody, outputFormat)
+		if err != nil {
+			return "", err
+		}
+		return AttachAIWarning(res, workspaceInfo), nil
 	case "go":
-		return t.buildGoTypeResponse(&chunk, codeBody, outputFormat)
+		res, err := t.buildGoTypeResponse(&chunk, codeBody, outputFormat)
+		if err != nil {
+			return "", err
+		}
+		return AttachAIWarning(res, workspaceInfo), nil
 	case "python":
-		return t.buildPythonTypeResponse(&chunk, codeBody, outputFormat)
+		res, err := t.buildPythonTypeResponse(&chunk, codeBody, outputFormat)
+		if err != nil {
+			return "", err
+		}
+		return AttachAIWarning(res, workspaceInfo), nil
 	}
 
 	// Parse TypeInfo from chunk metadata if available (Legacy/Fallback path)
@@ -319,7 +333,7 @@ processResults:
 		if err != nil {
 			return "", fmt.Errorf("failed to marshal Go type descriptor: %w", err)
 		}
-		return string(data), nil
+		return AttachAIWarning(string(data), workspaceInfo), nil
 	}
 
 	// Markdown output using Go TypeInfo metadata when available
@@ -375,7 +389,7 @@ processResults:
 		response.WriteString("\n```\n")
 	}
 
-	return response.String(), nil
+	return AttachAIWarning(response.String(), workspaceInfo), nil
 }
 
 // findEloquentModelForClass looks up the EloquentModel for a given PHP class name within a PackageInfo.

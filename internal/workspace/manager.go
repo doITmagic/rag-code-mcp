@@ -418,7 +418,12 @@ func (m *Manager) DetectWorkspace(params map[string]interface{}) (*Info, error) 
 
 			if !hasPath {
 				log.Printf("⚠️ No path provided for workspace detection. Falling back to the only active workspace: %s", fallback.Root)
-				return fallback, nil
+
+				// Clone the fallback info to add a warning to the AI
+				warningWS := *fallback
+				warningWS.AIWarning = "This workspace was selected as a fallback because no 'file_path' was provided. To ensure accurate context in the future and support multiple workspace environments, please always provide the absolute 'file_path' of the file you are working on."
+
+				return &warningWS, nil
 			}
 		}
 

@@ -578,7 +578,7 @@ func main() {
 
 		if hasErrors {
 			fmt.Fprintln(os.Stderr, healthcheck.GetRemediation(results))
-			logger.Warn("Dependency check failed, but continuing server startup. Some features may be unavailable.")
+			log.Fatalf("Critical dependency check failed. Server cannot start without Ollama and Qdrant. See remediation steps above.")
 		}
 	}
 
@@ -635,13 +635,7 @@ func main() {
 				logger.Warn("Failed to list roots during init: %v", err)
 				return
 			}
-			var rootPaths []string
-			for _, r := range roots.Roots {
-				u, err := url.Parse(r.URI)
-				if err == nil && u.Scheme == "file" {
-					rootPaths = append(rootPaths, u.Path)
-				}
-			}
+			rootPaths := extractFilePathsFromRoots(roots.Roots)
 			if len(rootPaths) > 0 {
 				workspaceManager.AddWorkspaceRoots(rootPaths)
 			}
@@ -653,13 +647,7 @@ func main() {
 				logger.Warn("Failed to list roots after change: %v", err)
 				return
 			}
-			var rootPaths []string
-			for _, r := range roots.Roots {
-				u, err := url.Parse(r.URI)
-				if err == nil && u.Scheme == "file" {
-					rootPaths = append(rootPaths, u.Path)
-				}
-			}
+			rootPaths := extractFilePathsFromRoots(roots.Roots)
 			if len(rootPaths) > 0 {
 				workspaceManager.AddWorkspaceRoots(rootPaths)
 			}
@@ -669,6 +657,7 @@ func main() {
 	// All tools use workspace manager - no single collections
 	searchTool := tools.NewSearchLocalIndexTool(nil, ollamaProvider)
 	searchTool.SetWorkspaceManager(workspaceManager)
+	searchTool.SetSearchLimit(cfg.RagCode.SearchLimit)
 
 	getFunctionTool := tools.NewGetFunctionDetailsTool(nil, ollamaProvider)
 	getFunctionTool.SetWorkspaceManager(workspaceManager)
@@ -687,6 +676,7 @@ func main() {
 
 	hybridTool := tools.NewHybridSearchTool(nil, ollamaProvider)
 	hybridTool.SetWorkspaceManager(workspaceManager)
+	hybridTool.SetSearchLimit(cfg.RagCode.SearchLimit)
 
 	searchDocsTool := tools.NewSearchDocsTool(nil, ollamaProvider)
 	searchDocsTool.SetWorkspaceManager(workspaceManager)
@@ -1360,4 +1350,16 @@ func ensureIDERules(cfg *config.Config, filePath string) {
 			logger.Warn("Failed to write rule file %s: %v", absPath, err)
 		}
 	}
+}
+
+// extractFilePathsFromRoots converts MCP roots to a slice of absolute file paths
+func extractFilePathsFromRoots(roots []*mcp.Root) []string {
+	var rootPaths []string
+	for _, r := range roots {
+		u, err := url.Parse(r.URI)
+		if err == nil && u.Scheme == "file" {
+			rootPaths = append(rootPaths, u.Path)
+		}
+	}
+	return rootPaths
 }

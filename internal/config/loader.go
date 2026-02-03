@@ -124,7 +124,7 @@ func DefaultConfig() *Config {
 			Model:          "",
 			Include:        []string{"**/*.go"},
 			Exclude:        []string{"**/*_test.go", "vendor/**", ".git/**", "testdata/**"},
-			SearchLimit:    10,
+			SearchLimit:    5,
 		},
 		Docs: DocsConfig{
 			Collection: "do-ai-docs",

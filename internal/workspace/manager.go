@@ -400,11 +400,17 @@ func (m *Manager) DetectWorkspace(params map[string]interface{}) (*Info, error) 
 		m.knownWorkspacesMu.RLock()
 		var fallback *Info
 		knownCount := len(m.knownWorkspaces)
-		activeRoots := make([]string, 0, knownCount)
-		if knownCount > 0 {
+		var ambiguousWorkspaces []*Info
+
+		if knownCount == 1 {
 			for _, ws := range m.knownWorkspaces {
-				activeRoots = append(activeRoots, ws.Root)
 				fallback = ws
+				break
+			}
+		} else if knownCount > 1 {
+			ambiguousWorkspaces = make([]*Info, 0, knownCount)
+			for _, ws := range m.knownWorkspaces {
+				ambiguousWorkspaces = append(ambiguousWorkspaces, ws)
 			}
 		}
 		m.knownWorkspacesMu.RUnlock()
@@ -437,22 +443,17 @@ func (m *Manager) DetectWorkspace(params map[string]interface{}) (*Info, error) 
 		// If multiple workspaces, return helpful error
 		if knownCount > 1 {
 			var list strings.Builder
-			// Sort roots for consistent output
-			sort.Strings(activeRoots)
+			// Sort workspaces by root path for consistent output
+			sort.Slice(ambiguousWorkspaces, func(i, j int) bool {
+				return ambiguousWorkspaces[i].Root < ambiguousWorkspaces[j].Root
+			})
 
-			// Map roots back to their Info for extra details
-			rootToInfo := make(map[string]*Info)
-			for _, ws := range m.knownWorkspaces {
-				rootToInfo[ws.Root] = ws
-			}
-
-			for _, root := range activeRoots {
-				info := rootToInfo[root]
+			for _, info := range ambiguousWorkspaces {
 				langs := "no languages detected"
 				if len(info.Languages) > 0 {
 					langs = strings.Join(info.Languages, ", ")
 				}
-				list.WriteString(fmt.Sprintf("- %s [%s]\n", root, langs))
+				list.WriteString(fmt.Sprintf("- %s [%s]\n", info.Root, langs))
 			}
 
 			return nil, fmt.Errorf("Could not detect workspace and multiple workspaces are active. "+

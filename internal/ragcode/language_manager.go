@@ -21,6 +21,12 @@ const (
 	LanguagePython     Language = "python"
 	LanguageJavascript Language = "javascript"
 	LanguageTypescript Language = "typescript"
+	LanguageVue        Language = "vue"
+	LanguageSvelte     Language = "svelte"
+	LanguageCSS        Language = "css"
+	LanguageShell      Language = "shell"
+	LanguageBash       Language = "bash"
+	LanguageSQL        Language = "sql"
 )
 
 // AnalyzerManager selects analyzers based on language or workspace project type.
@@ -48,6 +54,18 @@ func normalizeProjectType(projectType string) Language {
 		return LanguageJavascript
 	case "typescript", "ts", "tsx":
 		return LanguageTypescript
+	case "vue":
+		return LanguageVue
+	case "svelte":
+		return LanguageSvelte
+	case "css":
+		return LanguageCSS
+	case "bash", "sh", "zsh":
+		return LanguageBash
+	case "shell":
+		return LanguageShell
+	case "sql":
+		return LanguageSQL
 	default:
 		return Language(pt)
 	}
@@ -66,7 +84,7 @@ func (m *AnalyzerManager) CodeAnalyzerForProjectType(projectType string) codetyp
 		return htmlanalyzer.NewCodeAnalyzer()
 	case LanguagePython:
 		return python.NewCodeAnalyzer()
-	case "vue", "svelte", "css", "shell", "sql", "bash":
+	case LanguageVue, LanguageSvelte, LanguageCSS, LanguageShell, LanguageSQL, LanguageBash:
 		// Use generic analyzer for languages we want to support with basic line-indexing
 		return generic.NewCodeAnalyzer(string(lang))
 	default:

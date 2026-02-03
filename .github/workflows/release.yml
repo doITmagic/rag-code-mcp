@@ -27,11 +27,11 @@ jobs:
         id: check_token
         run: |
           if [ -n "${{ secrets.HOMEBREW_TAP_TOKEN }}" ]; then
-            echo "HAS_TAP_TOKEN=true" >> $GITHUB_OUTPUT
-            echo "HOMEBREW_TAP_TOKEN is present. Using it for Homebrew updates."
+            echo "SKIP_HOMEBREW=" >> $GITHUB_OUTPUT
+            echo "HOMEBREW_TAP_TOKEN is present. Homebrew updates enabled."
           else
-            echo "HAS_TAP_TOKEN=false" >> $GITHUB_OUTPUT
-            echo "HOMEBREW_TAP_TOKEN is missing. Homebrew Tap update will be skipped or may fail if GITHUB_TOKEN has no cross-repo access."
+            echo "SKIP_HOMEBREW=--skip=homebrew" >> $GITHUB_OUTPUT
+            echo "HOMEBREW_TAP_TOKEN is missing. Homebrew Tap update will be skipped."
           fi
       
       - name: Fetch all tags
@@ -48,10 +48,10 @@ jobs:
         with:
           distribution: goreleaser
           version: v2.6.1
-          args: release --clean
+          args: release --clean ${{ steps.check_token.outputs.SKIP_HOMEBREW }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
       
       - name: Update server.json version
         run: |

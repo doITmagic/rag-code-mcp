@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/doITmagic/rag-code-mcp/internal/codetypes"
 	"github.com/doITmagic/rag-code-mcp/internal/llm"
@@ -22,6 +23,11 @@ type FindTypeDefinitionTool struct {
 	longTermMemory   memory.LongTermMemory
 	embedder         llm.Provider
 	workspaceManager *workspace.Manager
+
+	// JIT Analysis Caches
+	goPkgCache    map[string]*golang.PackageInfo
+	pyModuleCache map[string][]*python.ModuleInfo
+	cacheMu       sync.RWMutex
 }
 
 // NewFindTypeDefinitionTool creates a new type definition finder tool
@@ -29,6 +35,8 @@ func NewFindTypeDefinitionTool(ltm memory.LongTermMemory, embedder llm.Provider)
 	return &FindTypeDefinitionTool{
 		longTermMemory: ltm,
 		embedder:       embedder,
+		goPkgCache:     make(map[string]*golang.PackageInfo),
+		pyModuleCache:  make(map[string][]*python.ModuleInfo),
 	}
 }
 
@@ -74,7 +82,7 @@ func (t *FindTypeDefinitionTool) Execute(ctx context.Context, args map[string]in
 	var workspaceInfo *workspace.Info
 	if t.workspaceManager != nil {
 		var err error
-		workspaceInfo, err = t.workspaceManager.DetectWorkspace(args)
+		workspaceInfo, err = DetectAndRegisterWorkspace(t.workspaceManager, args)
 		if err != nil {
 			return HandleWorkspaceDetectionError(err, "")
 		}
@@ -944,11 +952,24 @@ func (t *FindTypeDefinitionTool) buildGoTypeResponse(chunk *codetypes.CodeChunk,
 		return fallback()
 	}
 
-	// JIT Analysis
-	analyzer := golang.NewCodeAnalyzer()
-	pkgInfo, err := analyzer.AnalyzePackage(filepath.Dir(chunk.FilePath))
-	if err != nil {
-		return fallback()
+	// JIT Analysis with Caching
+	var pkgInfo *golang.PackageInfo
+	pkgDir := filepath.Dir(chunk.FilePath)
+
+	t.cacheMu.RLock()
+	pkgInfo = t.goPkgCache[pkgDir]
+	t.cacheMu.RUnlock()
+
+	if pkgInfo == nil {
+		analyzer := golang.NewCodeAnalyzer()
+		var err error
+		pkgInfo, err = analyzer.AnalyzePackage(pkgDir)
+		if err != nil {
+			return fallback()
+		}
+		t.cacheMu.Lock()
+		t.goPkgCache[pkgDir] = pkgInfo
+		t.cacheMu.Unlock()
 	}
 
 	// Find the type in the package
@@ -1125,14 +1146,24 @@ func (t *FindTypeDefinitionTool) buildPythonTypeResponse(chunk *codetypes.CodeCh
 		return fallback()
 	}
 
-	// JIT Analysis
-	analyzer := python.NewCodeAnalyzer()
-	// AnalyzeFile returns chunks but also populates internal module state
-	if _, err := analyzer.AnalyzeFile(chunk.FilePath); err != nil {
-		return fallback()
-	}
+	// JIT Analysis with Caching
+	var modules []*python.ModuleInfo
 
-	modules := analyzer.GetModules()
+	t.cacheMu.RLock()
+	modules = t.pyModuleCache[chunk.FilePath]
+	t.cacheMu.RUnlock()
+
+	if modules == nil {
+		analyzer := python.NewCodeAnalyzer()
+		// AnalyzeFile returns chunks but also populates internal module state
+		if _, err := analyzer.AnalyzeFile(chunk.FilePath); err != nil {
+			return fallback()
+		}
+		modules = analyzer.GetModules()
+		t.cacheMu.Lock()
+		t.pyModuleCache[chunk.FilePath] = modules
+		t.cacheMu.Unlock()
+	}
 	var classInfo *python.ClassInfo
 	var moduleInfo *python.ModuleInfo
 

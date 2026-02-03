@@ -24,14 +24,14 @@ func (t *EvaluateRagCodeTool) Name() string {
 }
 
 func (t *EvaluateRagCodeTool) Description() string {
-	return "Request a performance and quality evaluation of RagCode MCP from the AI assistant's perspective. Use this to provide feedback on benefits, pain points, and suggest improvements. IMPORTANT: Always provide the 'file_path' of the file you are currently working on for better context detection."
+	return "Request a performance and quality evaluation of RagCode MCP from the AI assistant's perspective. Use this to provide feedback on benefits, pain points, and suggest improvements. RECOMMENDED: Providing the 'file_path' helps identifies the current project context for a more accurate evaluation, but it is not strictly mandatory."
 }
 
 func (t *EvaluateRagCodeTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
 	log.Printf("[INFO] 🛠️ Executing tool '%s'\n", t.Name())
 
 	// Detect workspace for context, but continue gracefully if it fails
-	info, err := t.wm.DetectWorkspace(args)
+	info, err := DetectAndRegisterWorkspace(t.wm, args)
 	var languages []string
 	if err != nil {
 		// For evaluation, lack of workspace context should not be fatal; log and continue.
@@ -76,7 +76,7 @@ func (t *EvaluateRagCodeTool) Execute(ctx context.Context, args map[string]inter
 		builder.WriteString(fmt.Sprintf("- **Workspace**: %s\n", info.Root))
 		builder.WriteString(fmt.Sprintf("- **Languages**: %s\n", strings.Join(languages, ", ")))
 	} else {
-		builder.WriteString("- **Workspace**: Not detected (fallback mode)\n")
+		builder.WriteString("- **Workspace**: Not detected (fallback mode). This means RagCode is using global settings because it couldn't identify a specific project root. To enable workspace-specific context, please ensure you provide a 'file_path' of a file within the project in your tool requests.\n")
 	}
 	builder.WriteString(fmt.Sprintf("- **System Status**:\n%s\n", strings.Join(healthStatus, "\n")))
 	builder.WriteString(fmt.Sprintf("- **Models**: Chat=%s, Embed=%s\n\n", cfg.LLM.OllamaModel, cfg.LLM.OllamaEmbed))

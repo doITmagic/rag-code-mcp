@@ -29,7 +29,7 @@ func NewSearchLocalIndexTool(ltm memory.LongTermMemory, embedder llm.Provider, a
 	return &SearchLocalIndexTool{
 		embedder:    embedder,
 		memories:    memories,
-		searchLimit: 10, // Default fallback
+		searchLimit: 5, // Default fallback
 	}
 }
 
@@ -83,7 +83,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 
 	// Try workspace-aware search first
 	if t.workspaceManager != nil {
-		workspaceInfo, err := t.workspaceManager.DetectWorkspace(params)
+		workspaceInfo, err := DetectAndRegisterWorkspace(t.workspaceManager, params)
 		if err != nil {
 			return HandleWorkspaceDetectionError(err, "")
 		}

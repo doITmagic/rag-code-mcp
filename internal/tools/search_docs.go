@@ -50,7 +50,7 @@ func (t *SearchDocsTool) Execute(ctx context.Context, params map[string]interfac
 	var collectionName string
 
 	if t.workspaceManager != nil {
-		workspaceInfo, err := t.workspaceManager.DetectWorkspace(params)
+		workspaceInfo, err := DetectAndRegisterWorkspace(t.workspaceManager, params)
 		if err != nil {
 			return HandleWorkspaceDetectionError(err, "")
 		}

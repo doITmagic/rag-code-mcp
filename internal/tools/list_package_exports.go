@@ -72,7 +72,7 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 	var collectionName string
 
 	if t.workspaceManager != nil {
-		wi, err := t.workspaceManager.DetectWorkspace(args)
+		wi, err := DetectAndRegisterWorkspace(t.workspaceManager, args)
 		if err != nil {
 			return HandleWorkspaceDetectionError(err, "")
 		}

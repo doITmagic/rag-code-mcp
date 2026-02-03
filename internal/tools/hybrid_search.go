@@ -27,7 +27,7 @@ func NewHybridSearchTool(mem memory.LongTermMemory, embedder llm.Provider) *Hybr
 	return &HybridSearchTool{
 		memory:      mem,
 		embedder:    embedder,
-		searchLimit: 10,
+		searchLimit: 5,
 	}
 }
 
@@ -89,7 +89,7 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 	var workspaceInfo *workspace.Info
 	if t.workspaceManager != nil {
 		var err error
-		workspaceInfo, err = t.workspaceManager.DetectWorkspace(params)
+		workspaceInfo, err = DetectAndRegisterWorkspace(t.workspaceManager, params)
 		if err != nil {
 			return HandleWorkspaceDetectionError(err, "")
 		}

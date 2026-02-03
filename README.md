@@ -148,6 +148,9 @@ First query triggers background indexing. Subsequent queries are instant.
 - **Without RagCode:** AI reads 5-10 files (~15,000 tokens) to find a function
 - **With RagCode:** AI gets exact function + context (~200 tokens)
 
+> [!TIP]
+> **Token Management:** By default, search tools return the top **5 most relevant results**. This is optimized to provide high-quality context while keeping token usage low. You can customize this by passing a `limit` parameter to any search tool.
+
 ### RagCode vs Cloud-Based Solutions
 
 | Feature | RagCode (Local) | Cloud AI Search |

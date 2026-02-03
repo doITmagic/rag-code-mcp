@@ -33,7 +33,7 @@ func (t *EvaluateRagCodeTool) Execute(ctx context.Context, args map[string]inter
 	// Detect workspace for context
 	info, err := t.wm.DetectWorkspace(args)
 	if err != nil {
-		return "", fmt.Errorf("failed to detect workspace: %w", err)
+		return HandleWorkspaceDetectionError(err, "")
 	}
 
 	// Gather minimal technical context

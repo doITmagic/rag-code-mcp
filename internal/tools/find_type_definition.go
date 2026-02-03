@@ -73,7 +73,11 @@ func (t *FindTypeDefinitionTool) Execute(ctx context.Context, args map[string]in
 
 	if t.workspaceManager != nil {
 		workspaceInfo, err := t.workspaceManager.DetectWorkspace(args)
-		if err == nil && workspaceInfo != nil {
+		if err != nil {
+			return HandleWorkspaceDetectionError(err, "")
+		}
+
+		if workspaceInfo != nil {
 			workspacePath = workspaceInfo.Root
 
 			// Detect language from file path or use first detected language

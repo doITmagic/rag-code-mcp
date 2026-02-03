@@ -76,10 +76,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 	if t.workspaceManager != nil {
 		workspaceInfo, err := t.workspaceManager.DetectWorkspace(params)
 		if err != nil {
-			// Workspace detection failed - return helpful message
-			return fmt.Sprintf("❌ Could not detect workspace.\n\n"+
-				"Please provide a 'file_path' parameter from your project so I can identify which workspace to search in.\n\n"+
-				"Error: %v", err), nil
+			return HandleWorkspaceDetectionError(err, "")
 		}
 
 		// Detect language from file path or query context

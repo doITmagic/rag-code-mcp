@@ -429,7 +429,28 @@ func (m *Manager) DetectWorkspace(params map[string]interface{}) (*Info, error) 
 
 		// If multiple workspaces, return helpful error
 		if knownCount > 1 {
-			return nil, fmt.Errorf("could not detect workspace and multiple workspaces are active: %v. Please provide 'file_path' to specify the context", activeRoots)
+			var list strings.Builder
+			// Sort roots for consistent output
+			sort.Strings(activeRoots)
+
+			// Map roots back to their Info for extra details
+			rootToInfo := make(map[string]*Info)
+			for _, ws := range m.knownWorkspaces {
+				rootToInfo[ws.Root] = ws
+			}
+
+			for _, root := range activeRoots {
+				info := rootToInfo[root]
+				langs := "no languages detected"
+				if len(info.Languages) > 0 {
+					langs = strings.Join(info.Languages, ", ")
+				}
+				list.WriteString(fmt.Sprintf("- %s [%s]\n", root, langs))
+			}
+
+			return nil, fmt.Errorf("Could not detect workspace and multiple workspaces are active. "+
+				"Please provide the absolute 'file_path' to specify which project context to use.\n\n"+
+				"Active workspaces:\n%s", list.String())
 		}
 
 		return nil, err

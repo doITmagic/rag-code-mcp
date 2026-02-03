@@ -42,7 +42,7 @@ func (t *FindTypeDefinitionTool) Name() string {
 }
 
 func (t *FindTypeDefinitionTool) Description() string {
-	return "Find class/struct/interface definition - returns complete type source code with all fields, methods, and inheritance chain. Use when you need to understand a data model or see what methods a type has. Returns the full type definition ready to read. Works for Go structs/interfaces, PHP classes, Python classes.\nExample: { \"type_name\": \"User\", \"file_path\": \"/path/to/project/main.go\" }"
+	return "Find class/struct/interface definition - returns complete type source code with all fields, methods, and inheritance chain. Use when you need to understand a data model or see what methods a type has. Returns the full type definition ready to read. Works for Go structs/interfaces, PHP classes, Python classes. IMPORTANT: Always provide the 'file_path' of the file you are currently working on for better context detection.\nExample: { \"type_name\": \"User\", \"file_path\": \"/path/to/project/main.go\" }"
 }
 
 func (t *FindTypeDefinitionTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {

@@ -615,10 +615,53 @@ func main() {
 		cfg,
 	)
 
+	mcpInstructions := "RagCode MCP requires project context to function. " +
+		"If the AI is working in a specific file, please ensure that the 'file_path' parameter " +
+		"for any tool call contains the absolute path to that file. This allows RagCode to " +
+		"identify the correct workspace and provide relevant code context."
+
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "ragcode",
 		Version: Version,
-	}, nil)
+	}, &mcp.ServerOptions{
+		Instructions: mcpInstructions,
+		InitializedHandler: func(ctx context.Context, req *mcp.InitializedRequest) {
+			logger.Info("MCP Initialized - listing roots...")
+			roots, err := req.Session.ListRoots(ctx, nil)
+			if err != nil {
+				logger.Warn("Failed to list roots during init: %v", err)
+				return
+			}
+			var rootPaths []string
+			for _, r := range roots.Roots {
+				u, err := url.Parse(r.URI)
+				if err == nil && u.Scheme == "file" {
+					rootPaths = append(rootPaths, u.Path)
+				}
+			}
+			if len(rootPaths) > 0 {
+				workspaceManager.AddWorkspaceRoots(rootPaths)
+			}
+		},
+		RootsListChangedHandler: func(ctx context.Context, req *mcp.RootsListChangedRequest) {
+			logger.Info("Roots list changed - updating...")
+			roots, err := req.Session.ListRoots(ctx, nil)
+			if err != nil {
+				logger.Warn("Failed to list roots after change: %v", err)
+				return
+			}
+			var rootPaths []string
+			for _, r := range roots.Roots {
+				u, err := url.Parse(r.URI)
+				if err == nil && u.Scheme == "file" {
+					rootPaths = append(rootPaths, u.Path)
+				}
+			}
+			if len(rootPaths) > 0 {
+				workspaceManager.AddWorkspaceRoots(rootPaths)
+			}
+		},
+	})
 
 	// All tools use workspace manager - no single collections
 	searchTool := tools.NewSearchLocalIndexTool(nil, ollamaProvider)

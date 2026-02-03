@@ -42,7 +42,7 @@ func (t *ListPackageExportsTool) Name() string {
 }
 
 func (t *ListPackageExportsTool) Description() string {
-	return "List all public functions, classes, and types in a package/module. Returns a structured list with symbol names, types, and signatures. Use to explore an unfamiliar package or find the right function to call. Works for Go packages, PHP namespaces, Python modules.\nExample: { \"package\": \"fmt\", \"file_path\": \"/path/to/project/main.go\" }"
+	return "List all public functions, classes, and types in a package/module. Returns a structured list with symbol names, types, and signatures. Use to explore an unfamiliar package or find the right function to call. Works for Go packages, PHP namespaces, Python modules. IMPORTANT: Always provide the 'file_path' of the file you are currently working on for better context detection.\nExample: { \"package\": \"fmt\", \"file_path\": \"/path/to/project/main.go\" }"
 }
 
 func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {

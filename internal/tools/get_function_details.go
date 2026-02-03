@@ -40,7 +40,7 @@ func (t *GetFunctionDetailsTool) Name() string {
 }
 
 func (t *GetFunctionDetailsTool) Description() string {
-	return "Get COMPLETE function/method source code - returns full implementation with signature, parameters, return types, and body. Use when you know the exact function name. Returns the entire function ready to read or modify. Works for Go, PHP, Python.\nExample: { \"function_name\": \"LoginUser\", \"file_path\": \"/path/to/project/main.go\" }"
+	return "Get COMPLETE function/method source code - returns full implementation with signature, parameters, return types, and body. Use when you know the exact function name. Returns the entire function ready to read or modify. Works for Go, PHP, Python. IMPORTANT: Always provide the 'file_path' of the file you are currently working on for better context detection.\nExample: { \"function_name\": \"LoginUser\", \"file_path\": \"/path/to/project/main.go\" }"
 }
 
 func (t *GetFunctionDetailsTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {

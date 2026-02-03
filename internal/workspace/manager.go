@@ -60,6 +60,35 @@ func (m *Manager) GetConfig() *config.Config {
 	return m.config
 }
 
+// AddWorkspaceRoots registers multiple workspace roots at once
+func (m *Manager) AddWorkspaceRoots(roots []string) {
+	for _, root := range roots {
+		// Convert to absolute path
+		absPath, err := filepath.Abs(root)
+		if err != nil {
+			log.Printf("⚠️ Failed to resolve absolute path for root %s: %v", root, err)
+			continue
+		}
+
+		// Use detector to get info
+		info, err := m.detector.DetectFromPath(absPath)
+		if err != nil {
+			// Skip invalid roots silently during bulk registration
+			continue
+		}
+
+		// Update known workspaces
+		m.knownWorkspacesMu.Lock()
+		if m.knownWorkspaces == nil {
+			m.knownWorkspaces = make(map[string]*Info)
+		}
+		m.knownWorkspaces[info.ID] = info
+		m.knownWorkspacesMu.Unlock()
+
+		log.Printf("📂 Registered workspace root via protocol: %s", info.Root)
+	}
+}
+
 // GetDetectedLanguages returns the list of programming languages detected in the workspace
 func (m *Manager) GetDetectedLanguages(info *Info) []string {
 	if len(info.Languages) > 0 {

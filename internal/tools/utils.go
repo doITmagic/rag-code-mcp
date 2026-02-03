@@ -165,7 +165,8 @@ func HandleWorkspaceDetectionError(err error, workspacePath string) (string, err
 	if workspacePath == "" {
 		workspacePath = "your project"
 	}
-	return fmt.Sprintf("❌ Could not detect workspace.\n\n"+
-		"Please provide a 'file_path' parameter from %s so I can identify which workspace to use.\n\n"+
-		"Error: %v", workspacePath, err), nil
+	return fmt.Sprintf("❌ Could not detect workspace context.\n\n"+
+		"To fix this, please provide the 'file_path' of the file you are currently working on in %s.\n"+
+		"Providing a valid file path allows RagCode to automatically identify the project root.\n\n"+
+		"Technical Error: %v", workspacePath, err), nil
 }

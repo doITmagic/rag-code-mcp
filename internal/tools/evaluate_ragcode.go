@@ -24,7 +24,7 @@ func (t *EvaluateRagCodeTool) Name() string {
 }
 
 func (t *EvaluateRagCodeTool) Description() string {
-	return "Request a performance and quality evaluation of RagCode MCP from the AI assistant's perspective. Use this to provide feedback on benefits, pain points, and suggest improvements."
+	return "Request a performance and quality evaluation of RagCode MCP from the AI assistant's perspective. Use this to provide feedback on benefits, pain points, and suggest improvements. IMPORTANT: Always provide the 'file_path' of the file you are currently working on for better context detection."
 }
 
 func (t *EvaluateRagCodeTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {

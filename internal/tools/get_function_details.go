@@ -40,7 +40,7 @@ func (t *GetFunctionDetailsTool) Name() string {
 }
 
 func (t *GetFunctionDetailsTool) Description() string {
-	return "Get COMPLETE function/method source code - returns full implementation with signature, parameters, return types, and body. Use when you know the exact function name. Returns the entire function ready to read or modify. Works for Go, PHP, Python. IMPORTANT: Always provide the 'file_path' of the file you are currently working on for better context detection.\nExample: { \"function_name\": \"LoginUser\", \"file_path\": \"/path/to/project/main.go\" }"
+	return "Get COMPLETE function/method source code - returns full implementation with signature, parameters, return types, and body. Use when you know the exact function name. Returns the entire function ready to read or modify. Works for Go, PHP, Python. MANDATORY: You must provide the 'file_path' of the current file to allow the tool to detect the correct workspace and context.\nExample: { \"function_name\": \"LoginUser\", \"file_path\": \"/path/to/project/main.go\" }"
 }
 
 func (t *GetFunctionDetailsTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -61,8 +61,11 @@ func (t *GetFunctionDetailsTool) Execute(ctx context.Context, args map[string]in
 		outputFormat = strings.ToLower(of)
 	}
 
-	// file_path is optional but recommended
+	// file_path is mandatory
 	filePath := extractFilePathFromParams(args)
+	if filePath == "" {
+		return "", fmt.Errorf("MANDATORY parameter 'file_path' is missing. You must provide the absolute path of the file you are currently working on.")
+	}
 
 	// Try workspace detection if workspace manager is available
 	var searchMemory memory.LongTermMemory

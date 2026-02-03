@@ -1364,8 +1364,9 @@ func extractFilePathsFromRoots(roots []*mcp.Root) []string {
 
 		if u.Scheme == "file" {
 			path := u.Path
-			// On Windows, the path might be /C:/path, trim the leading slash
-			if len(path) > 2 && path[0] == '/' && path[2] == ':' {
+			// On Windows, the path might be /C:/path or /c:/path; if so, trim the leading slash.
+			if len(path) > 2 && path[0] == '/' && path[2] == ':' &&
+				((path[1] >= 'A' && path[1] <= 'Z') || (path[1] >= 'a' && path[1] <= 'z')) {
 				path = path[1:]
 			}
 			rootPaths = append(rootPaths, path)

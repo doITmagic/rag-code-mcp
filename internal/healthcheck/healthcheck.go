@@ -89,8 +89,8 @@ func CheckOllamaWithModels(baseURL string, requiredModels []string) CheckResult 
 		}
 
 		var missing []string
-		for _, req := range requiredModels {
-			reqBase, reqTag := normalize(req)
+		for _, requiredModel := range requiredModels {
+			reqBase, reqTag := normalize(requiredModel)
 			found := false
 
 			for _, m := range tags.Models {
@@ -102,7 +102,7 @@ func CheckOllamaWithModels(baseURL string, requiredModels []string) CheckResult 
 			}
 
 			if !found {
-				missing = append(missing, req)
+				missing = append(missing, requiredModel)
 			}
 		}
 

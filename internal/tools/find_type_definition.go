@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/codetypes"
 	"github.com/doITmagic/rag-code-mcp/internal/llm"
@@ -18,6 +20,24 @@ import (
 	"github.com/doITmagic/rag-code-mcp/internal/workspace"
 )
 
+// Cache constants
+const (
+	jitCacheTTL     = 5 * time.Second
+	jitMaxCacheSize = 50
+)
+
+type cachedGoPackage struct {
+	info          *golang.PackageInfo
+	lastValidated time.Time
+	lastModTime   time.Time
+}
+
+type cachedPyModules struct {
+	modules       []*python.ModuleInfo
+	lastValidated time.Time
+	lastModTime   time.Time
+}
+
 // FindTypeDefinitionTool finds and returns complete type definitions (struct/interface)
 type FindTypeDefinitionTool struct {
 	longTermMemory   memory.LongTermMemory
@@ -25,8 +45,8 @@ type FindTypeDefinitionTool struct {
 	workspaceManager *workspace.Manager
 
 	// JIT Analysis Caches
-	goPkgCache    map[string]*golang.PackageInfo
-	pyModuleCache map[string][]*python.ModuleInfo
+	goPkgCache    map[string]cachedGoPackage
+	pyModuleCache map[string]cachedPyModules
 	cacheMu       sync.RWMutex
 }
 
@@ -35,8 +55,8 @@ func NewFindTypeDefinitionTool(ltm memory.LongTermMemory, embedder llm.Provider)
 	return &FindTypeDefinitionTool{
 		longTermMemory: ltm,
 		embedder:       embedder,
-		goPkgCache:     make(map[string]*golang.PackageInfo),
-		pyModuleCache:  make(map[string][]*python.ModuleInfo),
+		goPkgCache:     make(map[string]cachedGoPackage),
+		pyModuleCache:  make(map[string]cachedPyModules),
 	}
 }
 
@@ -956,19 +976,53 @@ func (t *FindTypeDefinitionTool) buildGoTypeResponse(chunk *codetypes.CodeChunk,
 	var pkgInfo *golang.PackageInfo
 	pkgDir := filepath.Dir(chunk.FilePath)
 
+	// Check cache
 	t.cacheMu.RLock()
-	pkgInfo = t.goPkgCache[pkgDir]
+	cached, found := t.goPkgCache[pkgDir]
 	t.cacheMu.RUnlock()
 
-	if pkgInfo == nil {
+	var useCache bool
+	if found {
+		// Valid if within TTL
+		if time.Since(cached.lastValidated) < jitCacheTTL {
+			useCache = true
+		} else {
+			// TTL expired, check file system modulation
+			currentMod, err := getDirLastMod(pkgDir)
+			if err == nil && !currentMod.After(cached.lastModTime) {
+				// No changes, update validation time and use cache
+				cached.lastValidated = time.Now()
+				t.cacheMu.Lock()
+				t.goPkgCache[pkgDir] = cached
+				t.cacheMu.Unlock()
+				useCache = true
+			}
+		}
+	}
+
+	if useCache {
+		pkgInfo = cached.info
+	} else {
+		// Miss or invalid: re-analyze
 		analyzer := golang.NewCodeAnalyzer()
 		var err error
 		pkgInfo, err = analyzer.AnalyzePackage(pkgDir)
 		if err != nil {
 			return fallback()
 		}
+
+		currentMod, _ := getDirLastMod(pkgDir)
+
 		t.cacheMu.Lock()
-		t.goPkgCache[pkgDir] = pkgInfo
+		// Simple eviction policy: prevent unbounded growth
+		if len(t.goPkgCache) >= jitMaxCacheSize {
+			t.goPkgCache = make(map[string]cachedGoPackage)
+		}
+		t.goPkgCache[pkgDir] = cachedGoPackage{
+			info:          pkgInfo,
+			lastValidated: time.Now(),
+			lastModTime:   currentMod,
+		}
 		t.cacheMu.Unlock()
 	}
 
@@ -1149,19 +1203,50 @@ func (t *FindTypeDefinitionTool) buildPythonTypeResponse(chunk *codetypes.CodeCh
 	// JIT Analysis with Caching
 	var modules []*python.ModuleInfo
 
+	// Check cache
 	t.cacheMu.RLock()
-	modules = t.pyModuleCache[chunk.FilePath]
+	cached, found := t.pyModuleCache[chunk.FilePath]
 	t.cacheMu.RUnlock()
 
-	if modules == nil {
+	var useCache bool
+	if found {
+		// Valid if within TTL
+		if time.Since(cached.lastValidated) < jitCacheTTL {
+			useCache = true
+		} else {
+			// TTL expired, check file modulation
+			currentMod, err := getFileLastMod(chunk.FilePath)
+			if err == nil && !currentMod.After(cached.lastModTime) {
+				cached.lastValidated = time.Now()
+				t.cacheMu.Lock()
+				t.pyModuleCache[chunk.FilePath] = cached
+				t.cacheMu.Unlock()
+				useCache = true
+			}
+		}
+	}
+
+	if useCache {
+		modules = cached.modules
+	} else {
 		analyzer := python.NewCodeAnalyzer()
-		// AnalyzeFile returns chunks but also populates internal module state
 		if _, err := analyzer.AnalyzeFile(chunk.FilePath); err != nil {
 			return fallback()
 		}
 		modules = analyzer.GetModules()
+
+		currentMod, _ := getFileLastMod(chunk.FilePath)
+
 		t.cacheMu.Lock()
-		t.pyModuleCache[chunk.FilePath] = modules
+		// Simple eviction policy
+		if len(t.pyModuleCache) >= jitMaxCacheSize {
+			t.pyModuleCache = make(map[string]cachedPyModules)
+		}
+		t.pyModuleCache[chunk.FilePath] = cachedPyModules{
+			modules:       modules,
+			lastValidated: time.Now(),
+			lastModTime:   currentMod,
+		}
 		t.cacheMu.Unlock()
 	}
 	var classInfo *python.ClassInfo
@@ -1277,4 +1362,34 @@ func (t *FindTypeDefinitionTool) buildPythonTypeResponse(chunk *codetypes.CodeCh
 	}
 
 	return sb.String(), nil
+}
+
+// Helper functions for cache validation
+
+// getDirLastMod returns the latest modification time of any file in the directory
+func getDirLastMod(dir string) (time.Time, error) {
+	var latest time.Time
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return latest, err
+	}
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().After(latest) {
+			latest = info.ModTime()
+		}
+	}
+	return latest, nil
+}
+
+// getFileLastMod returns the modification time of a single file
+func getFileLastMod(path string) (time.Time, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return info.ModTime(), nil
 }

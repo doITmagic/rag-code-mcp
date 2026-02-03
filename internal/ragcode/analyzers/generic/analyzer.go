@@ -84,6 +84,10 @@ func (a *CodeAnalyzer) analyzeFile(path string) ([]codetypes.CodeChunk, error) {
 		}
 	}
 
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("error reading file %s: %w", path, err)
+	}
+
 	if len(currentLines) > 0 {
 		chunks = append(chunks, a.createChunk(path, currentLines, startLine, lineNum))
 	}

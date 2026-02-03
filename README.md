@@ -188,13 +188,16 @@ First query triggers background indexing. Subsequent queries are instant.
 
 ## 🌐 Multi-Language Code Intelligence
 
-| Language | Support Level | Features | Docs |
-|----------|--------------|----------|------|
-| **Go** | ✅ Full | Functions, types, interfaces, methods, AST analysis | [📖 Go Analyzer](./internal/ragcode/analyzers/golang/README.md) |
-| **PHP** | ✅ Full | Classes, methods, interfaces, traits, PHPDoc | [📖 PHP Analyzer](./internal/ragcode/analyzers/php/README.md) |
-| **PHP + Laravel** | ✅ Full | Eloquent models, routes, controllers, middleware | [📖 Laravel Analyzer](./internal/ragcode/analyzers/php/laravel/README.md) |
-| **Python** | ✅ Full | Classes, functions, decorators, type hints, mixins | [📖 Python Analyzer](./internal/ragcode/analyzers/python/README.md) |
-| **JavaScript/TypeScript** | 🔜 Planned | Coming soon (tree-sitter based) | - |
+| Language | Support Level | Features |
+|----------|--------------|----------|
+| **Go** | ✅ Full AST | Functions, types, interfaces, methods, internal dependencies |
+| **PHP + Laravel** | ✅ Full AST | Classes, methods, Eloquent models, routes, middleware |
+| **Python** | ✅ Full AST | Classes, functions, decorators, type hints |
+| **HTML** | ✅ Full AST | Semantic sections, headings, ID/Class metadata |
+| **JS / TS** | ⚡ Basic | File-level chunking, semantic search by content |
+| **Other** * | ⚡ Basic | CSS, SQL, Shell, YAML, JSON, Markdown, etc. |
+
+*\* Basic support includes intelligent line-based chunking and full semantic search capabilities.*
 
 ### Multi-Workspace Support
 
@@ -298,9 +301,6 @@ Releases are automated via GitHub Actions and GoReleaser. To create a new releas
 1. Update the version in `server.json`.
 2. Push a new tag: `git tag -a v1.x.x -m "Release v1.x.x" && git push origin v1.x.x`.
 3. The GitHub Action will automatically build binaries, create a GitHub Release, and update the Homebrew Tap.
-
-**Note on Homebrew Tap:**
-The `GITHUB_TOKEN` used in the release workflow must have `repo` scope permissions for the [doITmagic/homebrew-tap](https://github.com/doITmagic/homebrew-tap) repository to successfully update the formula. If using the default `GITHUB_TOKEN`, ensure it has cross-repo write permissions, otherwise use a Personal Access Token (PAT).
 
 ---
 

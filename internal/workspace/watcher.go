@@ -136,9 +136,9 @@ func (fw *FileWatcher) triggerDebouncedIndex() {
 		fw.timer.Stop()
 	}
 
-	// 1-second delay is a robust middle ground to balance responsiveness for single-file
-	// edits with efficiency during bulk file operations.
-	delay := 1 * time.Second
+	// 2-second delay is a robust middle ground to balance responsiveness for single-file
+	// edits with efficiency during bulk file operations (e.g., git checkout or large refactors).
+	delay := 2 * time.Second
 
 	fw.timer = time.AfterFunc(delay, func() {
 		log.Printf("♻️ File changes detected in %s - Triggering reindex...", fw.root)

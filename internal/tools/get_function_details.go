@@ -69,8 +69,10 @@ func (t *GetFunctionDetailsTool) Execute(ctx context.Context, args map[string]in
 	var workspacePath string
 	var collectionName string
 
+	var workspaceInfo *workspace.Info
 	if t.workspaceManager != nil {
-		workspaceInfo, err := t.workspaceManager.DetectWorkspace(args)
+		var err error
+		workspaceInfo, err = t.workspaceManager.DetectWorkspace(args)
 		if err != nil {
 			return HandleWorkspaceDetectionError(err, "")
 		}
@@ -96,12 +98,12 @@ func (t *GetFunctionDetailsTool) Execute(ctx context.Context, args map[string]in
 				// Check if indexing is in progress
 				indexKey := workspaceInfo.ID + "-" + language
 				if t.workspaceManager.IsIndexing(indexKey) {
-					return fmt.Sprintf("⏳ Workspace '%s' language '%s' is currently being indexed in the background.\n"+
+					return AttachAIWarning(fmt.Sprintf("⏳ Workspace '%s' language '%s' is currently being indexed in the background.\n"+
 						"Please try again in a few moments.\n"+
 						"Workspace: %s\n"+
 						"Language: %s\n"+
 						"Collection: %s",
-						workspaceInfo.Root, language, workspaceInfo.Root, language, collectionName), nil
+						workspaceInfo.Root, language, workspaceInfo.Root, language, collectionName), workspaceInfo), nil
 				}
 
 				// Check if collection exists before proceeding
@@ -109,7 +111,7 @@ func (t *GetFunctionDetailsTool) Execute(ctx context.Context, args map[string]in
 					if err != nil {
 						return "", err
 					}
-					return msg, nil
+					return AttachAIWarning(msg, workspaceInfo), nil
 				}
 
 				searchMemory = mem
@@ -179,11 +181,11 @@ processResults:
 				if err != nil {
 					return "", err
 				}
-				return msg, nil
+				return AttachAIWarning(msg, workspaceInfo), nil
 			}
-			return fmt.Sprintf("Function '%s' not found in workspace '%s'", functionName, workspacePath), nil
+			return AttachAIWarning(fmt.Sprintf("Function '%s' not found in workspace '%s'", functionName, workspacePath), workspaceInfo), nil
 		}
-		return fmt.Sprintf("Function '%s' not found", functionName), nil
+		return AttachAIWarning(fmt.Sprintf("Function '%s' not found", functionName), workspaceInfo), nil
 	}
 
 	// Find exact match
@@ -214,7 +216,7 @@ processResults:
 	}
 
 	if bestMatch == nil {
-		return fmt.Sprintf("Function '%s' not found (searched %d chunks)", functionName, len(results)), nil
+		return AttachAIWarning(fmt.Sprintf("Function '%s' not found (searched %d chunks)", functionName, len(results)), workspaceInfo), nil
 	}
 
 	var chunk codetypes.CodeChunk
@@ -233,7 +235,11 @@ processResults:
 
 	// PHP: use PHP analyzer directly on the source file to build a rich function/method view
 	if chunk.Language == "php" {
-		return t.buildPHPFunctionResponse(&chunk, codeBody, outputFormat)
+		res, err := t.buildPHPFunctionResponse(&chunk, codeBody, outputFormat)
+		if err != nil {
+			return "", err
+		}
+		return AttachAIWarning(res, workspaceInfo), nil
 	}
 
 	// Default (Go and others): optional JSON output, otherwise keep existing
@@ -272,7 +278,7 @@ processResults:
 		if err != nil {
 			return "", fmt.Errorf("failed to marshal function descriptor: %w", err)
 		}
-		return string(data), nil
+		return AttachAIWarning(string(data), workspaceInfo), nil
 	}
 
 	// Markdown behaviour (Go and others)
@@ -298,7 +304,7 @@ processResults:
 		response.WriteString("\n```\n")
 	}
 
-	return response.String(), nil
+	return AttachAIWarning(response.String(), workspaceInfo), nil
 }
 
 // buildGoFunctionDescriptor constructs a richer FunctionDescriptor for Go

@@ -187,9 +187,8 @@ brews:
   - repository:
       owner: doITmagic
       name: homebrew-tap
-      # The GITHUB_TOKEN requires 'repo' scope (write access) to the target repository
-      # to create or update the Homebrew formula.
-      token: "{{ .Env.GITHUB_TOKEN }}"
+      # Use a dedicated token if available, otherwise fallback to GITHUB_TOKEN
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     
     directory: Formula
     homepage: "https://github.com/doITmagic/rag-code-mcp"

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/doITmagic/rag-code-mcp/internal/memory"
+	"github.com/doITmagic/rag-code-mcp/internal/workspace"
 )
 
 // CheckCollectionStatus verifies if a collection exists and has data.
@@ -61,4 +62,12 @@ func CheckSearchResults(resultCount int, collectionName, workspacePath string) (
 	}
 
 	return "", nil
+}
+
+// AttachAIWarning appends a workspace detection warning to the result string if present.
+func AttachAIWarning(result string, wsInfo *workspace.Info) string {
+	if wsInfo != nil && wsInfo.AIWarning != "" {
+		return fmt.Sprintf("%s\n\n⚠️  [WORKSPACE WARNING]: %s", result, wsInfo.AIWarning)
+	}
+	return result
 }

@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/doITmagic/rag-code-mcp/internal/codetypes"
+	"github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/generic"
 	"github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/golang"
 	htmlanalyzer "github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/html"
 	"github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/php/laravel"
@@ -68,8 +69,9 @@ func (m *AnalyzerManager) CodeAnalyzerForProjectType(projectType string) codetyp
 	case LanguageJavascript, LanguageTypescript:
 		// TODO: Implement Tree-sitter basic analyzer for JS/TS
 		// See: internal/ragcode/analyzers/javascript/README.md for implementation plan
-		return nil
+		return generic.NewCodeAnalyzer(string(lang))
 	default:
-		return nil
+		// Fallback to generic analyzer for any other detected language (vue, svelte, shell, etc.)
+		return generic.NewCodeAnalyzer(string(lang))
 	}
 }

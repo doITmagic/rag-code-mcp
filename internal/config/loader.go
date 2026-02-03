@@ -124,6 +124,7 @@ func DefaultConfig() *Config {
 			Model:          "",
 			Include:        []string{"**/*.go"},
 			Exclude:        []string{"**/*_test.go", "vendor/**", ".git/**", "testdata/**"},
+			SearchLimit:    10,
 		},
 		Docs: DocsConfig{
 			Collection: "do-ai-docs",
@@ -221,6 +222,11 @@ func applyEnvOverrides(cfg *Config) {
 	if indexOnStartup := os.Getenv("CODE_RAG_INDEX_ON_STARTUP"); indexOnStartup != "" {
 		if v, err := strconv.ParseBool(indexOnStartup); err == nil {
 			cfg.RagCode.IndexOnStartup = v
+		}
+	}
+	if searchLimit := os.Getenv("SEARCH_LIMIT"); searchLimit != "" {
+		if v, err := strconv.Atoi(searchLimit); err == nil {
+			cfg.RagCode.SearchLimit = v
 		}
 	}
 

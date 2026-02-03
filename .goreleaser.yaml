@@ -182,11 +182,23 @@ release:
     
     **Full documentation:** https://github.com/doITmagic/rag-code-mcp
 
-# Homebrew tap (optional, can be enabled later)
-# brews:
-#   - repository:
-#       owner: doITmagic
-#       name: homebrew-tap
-#     homepage: https://github.com/doITmagic/rag-code-mcp
-#     description: Semantic code navigation for Go codebases using RAG
-#     license: MIT
+# Homebrew tap configuration
+brews:
+  - repository:
+      owner: doITmagic
+      name: homebrew-tap
+      token: "{{ .Env.GITHUB_TOKEN }}"
+    
+    directory: Formula
+    homepage: "https://github.com/doITmagic/rag-code-mcp"
+    description: "Semantic code navigation for Go, PHP, and Python codebases using RAG and MCP."
+    license: "MIT"
+    
+    # Custom install script to handle multiple binaries
+    install: |
+      bin.install "rag-code-mcp"
+      bin.install "ragcode-installer"
+      bin.install "index-all"
+    
+    test: |
+      system "#{bin}/rag-code-mcp --version"

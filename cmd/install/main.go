@@ -90,10 +90,26 @@ func installRuntimeBinaries() {
 		}
 		output := filepath.Join(binDir, binName)
 
-		// Option 1: Check if pre-built binary exists in current directory
-		if _, err := os.Stat(binName); err == nil {
-			log(fmt.Sprintf(" - Found %s in current directory, copying...", binName))
-			if err := copyFile(binName, output); err != nil {
+		// Option 1: Check if pre-built binary exists in current directory or bin/
+		searchPaths := []string{
+			binName,
+			filepath.Join("bin", binName),
+		}
+		if exe, err := os.Executable(); err == nil {
+			searchPaths = append(searchPaths, filepath.Join(filepath.Dir(exe), binName))
+		}
+
+		var sourcePath string
+		for _, p := range searchPaths {
+			if _, err := os.Stat(p); err == nil {
+				sourcePath = p
+				break
+			}
+		}
+
+		if sourcePath != "" {
+			log(fmt.Sprintf(" - Found %s at %s, copying...", binName, sourcePath))
+			if err := copyFile(sourcePath, output); err != nil {
 				fail(fmt.Sprintf("Failed to copy %s: %v", binName, err))
 			}
 		} else if _, err := os.Stat(bin.pkg); err == nil {
@@ -525,10 +541,26 @@ func installBinary() {
 	}
 	outputBin := filepath.Join(binDir, binaryName)
 
-	// Option 1: Check if binary exists in current directory (from extracted archive)
-	if _, err := os.Stat(binaryName); err == nil {
-		log(fmt.Sprintf("Found %s in current directory, copying to %s...", binaryName, binDir))
-		if err := copyFile(binaryName, outputBin); err != nil {
+	// Option 1: Check if binary exists in current directory or bin/ (from extracted archive or local build)
+	possiblePaths := []string{
+		binaryName,
+		filepath.Join("bin", binaryName),
+	}
+	if exe, err := os.Executable(); err == nil {
+		possiblePaths = append(possiblePaths, filepath.Join(filepath.Dir(exe), binaryName))
+	}
+
+	var sourcePath string
+	for _, p := range possiblePaths {
+		if _, err := os.Stat(p); err == nil {
+			sourcePath = p
+			break
+		}
+	}
+
+	if sourcePath != "" {
+		log(fmt.Sprintf("Found %s at %s, copying to %s...", binaryName, sourcePath, binDir))
+		if err := copyFile(sourcePath, outputBin); err != nil {
 			fail(fmt.Sprintf("Failed to copy binary: %v", err))
 		}
 		if err := os.Chmod(outputBin, 0755); err != nil {

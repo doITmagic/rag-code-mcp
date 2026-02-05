@@ -53,6 +53,9 @@ type Manager struct {
 	// Mutexes per collection for migration/init operations to prevent race conditions
 	collLocksMu sync.Mutex
 	collLocks   map[string]*sync.Mutex
+
+	// Persistent registry for cross-session workspace memory
+	registry *Registry
 }
 
 // GetConfig returns the workspace manager configuration
@@ -71,6 +74,13 @@ func (m *Manager) RegisterWorkspace(info *Info) {
 	}
 	m.knownWorkspaces[info.ID] = info
 	m.knownWorkspacesMu.Unlock()
+
+	// Also persist to global registry
+	if m.registry != nil {
+		if err := m.registry.RegisterOrUpdate(info); err != nil {
+			log.Printf("⚠️ Failed to update workspace registry: %v", err)
+		}
+	}
 }
 
 // AddWorkspaceRoots registers multiple workspace roots at once
@@ -289,7 +299,7 @@ func NewManager(qdrant *storage.QdrantClient, llm llm.Provider, cfg *config.Conf
 
 	log.Printf("🔧 Workspace Manager initialized (logging verified)")
 
-	return &Manager{
+	mgr := &Manager{
 		detector:         detector,
 		cache:            NewCache(5 * time.Minute),
 		qdrant:           qdrant,
@@ -302,6 +312,16 @@ func NewManager(qdrant *storage.QdrantClient, llm llm.Provider, cfg *config.Conf
 		collLocks:        make(map[string]*sync.Mutex),
 		knownWorkspaces:  make(map[string]*Info),
 	}
+
+	// Initialize persistent registry
+	registry, err := NewRegistry("")
+	if err != nil {
+		log.Printf("⚠️ Failed to initialize workspace registry: %v", err)
+	} else {
+		mgr.registry = registry
+	}
+
+	return mgr
 }
 
 // GetKnownWorkspaces returns a list of all workspaces detected in the current session
@@ -395,7 +415,48 @@ func (m *Manager) DetectWorkspace(params map[string]interface{}) (*Info, error) 
 	// Detect workspace
 	info, err := m.detector.DetectFromParams(params)
 	if err != nil {
-		// If detection failed, check if we have exactly ONE known workspace to fall back to
+		// PRIORITY 2.5: CWD Fallback (Process Isolation)
+		// Most IDEs start the MCP server instance with the project root as the Current Working Directory.
+		// Checking this first ensures that Window A uses Project A, and Window B uses Project B,
+		// avoiding the "cross-talk" or "mess" (varză) causing by a shared global registry.
+		if cwd, err := os.Getwd(); err == nil {
+			// Try to detect a valid workspace in CWD
+			// DetectFromPath protects against invalid roots (like Home or /tmp), so this is safe.
+			if cwdInfo, err := m.detector.DetectFromPath(cwd); err == nil && cwdInfo != nil {
+				log.Printf("📂 Using CWD as workspace context: %s", cwdInfo.Root)
+
+				// Register it as active
+				m.RegisterWorkspace(cwdInfo)
+
+				return cwdInfo, nil
+			}
+		}
+
+		// PRIORITY 3: Global Registry Fallback (Persistent Memory)
+		// If we have no explicit path, and no context, check if we have a "Last Used" workspace in the registry.
+		// This solves the issue where restarting the server makes it forget the project location.
+		if m.registry != nil {
+			if lastUsed := m.registry.GetLastUsed(); lastUsed != nil {
+				// We found a last used workspace! Let's try to detect it again to make sure it still exists/is valid.
+				log.Printf("🧠 No path provided, remembering last active workspace: %s", lastUsed.Root)
+
+				fallbackInfo, fallbackErr := m.detector.DetectFromPath(lastUsed.Root)
+				if fallbackErr == nil && fallbackInfo != nil {
+					// Add a warning so the AI knows this was an automatic assumption
+					fallbackInfo.AIWarning = fmt.Sprintf("Note: No 'file_path' was provided. Automatically selected the last active workspace: %s. please provide 'file_path' for accurate context.", fallbackInfo.Root)
+
+					// Register it as active in this session too
+					m.RegisterWorkspace(fallbackInfo)
+
+					return fallbackInfo, nil
+				} else {
+					log.Printf("⚠️ Last used workspace '%s' is no longer valid: %v", lastUsed.Root, fallbackErr)
+				}
+			}
+		}
+
+		// PRIORITY 4: Session-based Fallback
+		// Check if we have exactly ONE known workspace in the current session to fall back to
 		// but ONLY if the user didn't provide an explicit path that failed
 		m.knownWorkspacesMu.RLock()
 		var fallback *Info

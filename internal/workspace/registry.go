@@ -63,7 +63,11 @@ func (r *Registry) Load() error {
 	}
 	defer f.Close()
 
-	return json.NewDecoder(f).Decode(&r.Entries)
+	if err := json.NewDecoder(f).Decode(&r.Entries); err != nil {
+		// If JSON is corrupted, log error and return it so NewRegistry can handle it
+		return fmt.Errorf("failed to decode registry JSON: %w", err)
+	}
+	return nil
 }
 
 // Save saves the registry to disk. It assumes the caller holds the lock.
@@ -109,6 +113,8 @@ func (r *Registry) RegisterOrUpdate(info *Info) error {
 		r.Entries[info.ID] = entry
 	}
 
+	// Update root if it changed (e.g. symlink resolution or moved directory)
+	entry.Root = info.Root
 	// Always update timestamp and languages
 	entry.LastUsed = time.Now()
 	entry.Languages = info.Languages

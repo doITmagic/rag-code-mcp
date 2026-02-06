@@ -82,6 +82,18 @@ func TestRegistry(t *testing.T) {
 		assert.Equal(t, "test-id-1", reg.Entries["test-id-1"].ID)
 	})
 
+	t.Run("Corrupted JSON", func(t *testing.T) {
+		corruptedPath := filepath.Join(tempDir, "corrupted.json")
+		// Write invalid JSON to file
+		require.NoError(t, os.WriteFile(corruptedPath, []byte("{invalid json"), 0644))
+
+		// NewRegistry should log warning and return error if Load fails
+		reg, err := NewRegistry(corruptedPath)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to decode registry JSON")
+		assert.Nil(t, reg)
+	})
+
 	t.Run("GetLastUsed", func(t *testing.T) {
 		reg, _ := NewRegistry(regPath)
 
@@ -122,11 +134,15 @@ func TestRegistryConcurrency(t *testing.T) {
 
 	for i := 0; i < count; i++ {
 		go func(id int) {
+			idStr := fmt.Sprintf("id-%d", id)
 			info := &Info{
-				ID:   fmt.Sprintf("id-%d", id),
+				ID:   idStr,
 				Root: fmt.Sprintf("/root/%d", id),
 			}
-			_ = reg.RegisterOrUpdate(info)
+			err := reg.RegisterOrUpdate(info)
+			assert.NoError(t, err)
+
+			// Randomly call GetLastUsed
 			_ = reg.GetLastUsed()
 			done <- true
 		}(i)
@@ -137,4 +153,13 @@ func TestRegistryConcurrency(t *testing.T) {
 	}
 
 	assert.Len(t, reg.Entries, count)
+
+	// Verify data integrity
+	for i := 0; i < count; i++ {
+		idStr := fmt.Sprintf("id-%d", i)
+		entry, exists := reg.Entries[idStr]
+		assert.True(t, exists, "Entry %s should exist", idStr)
+		assert.NotEmpty(t, entry.Root)
+		assert.False(t, entry.LastUsed.IsZero())
+	}
 }

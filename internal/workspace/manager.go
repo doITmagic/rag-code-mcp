@@ -425,6 +425,14 @@ func (m *Manager) DetectWorkspace(params map[string]interface{}) (*Info, error) 
 			if cwdInfo, detectErr := m.detector.DetectFromPath(cwd); detectErr == nil && cwdInfo != nil {
 				log.Printf("📂 Using CWD as workspace context: %s", cwdInfo.Root)
 
+				// Set collection prefix from config
+				if m.config != nil && m.config.Workspace.CollectionPrefix != "" {
+					cwdInfo.CollectionPrefix = m.config.Workspace.CollectionPrefix
+				}
+
+				// Cache the CWD-detected workspace so subsequent calls can reuse it
+				m.cache.Set(cwd, cwdInfo)
+
 				// Register it as active
 				m.RegisterWorkspace(cwdInfo)
 
@@ -444,6 +452,11 @@ func (m *Manager) DetectWorkspace(params map[string]interface{}) (*Info, error) 
 				if fallbackErr == nil && fallbackInfo != nil {
 					// Add a warning so the AI knows this was an automatic assumption
 					fallbackInfo.AIWarning = fmt.Sprintf("Note: No 'file_path' was provided. Automatically selected the last active workspace: %s. Please provide 'file_path' for accurate context.", fallbackInfo.Root)
+
+					// Set collection prefix from config
+					if m.config != nil && m.config.Workspace.CollectionPrefix != "" {
+						fallbackInfo.CollectionPrefix = m.config.Workspace.CollectionPrefix
+					}
 
 					// Register it as active in this session too
 					m.RegisterWorkspace(fallbackInfo)

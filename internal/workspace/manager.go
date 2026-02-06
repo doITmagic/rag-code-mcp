@@ -418,11 +418,11 @@ func (m *Manager) DetectWorkspace(params map[string]interface{}) (*Info, error) 
 		// PRIORITY 2.5: CWD Fallback (Process Isolation)
 		// Most IDEs start the MCP server instance with the project root as the Current Working Directory.
 		// Checking this first ensures that Window A uses Project A, and Window B uses Project B,
-		// avoiding the "cross-talk" or "mess" (varză) causing by a shared global registry.
-		if cwd, err := os.Getwd(); err == nil {
+		// avoiding the "cross-talk" or "mess" (varză) caused by a shared global registry.
+		if cwd, cwdErr := os.Getwd(); cwdErr == nil {
 			// Try to detect a valid workspace in CWD
 			// DetectFromPath protects against invalid roots (like Home or /tmp), so this is safe.
-			if cwdInfo, err := m.detector.DetectFromPath(cwd); err == nil && cwdInfo != nil {
+			if cwdInfo, detectErr := m.detector.DetectFromPath(cwd); detectErr == nil && cwdInfo != nil {
 				log.Printf("📂 Using CWD as workspace context: %s", cwdInfo.Root)
 
 				// Register it as active
@@ -443,7 +443,7 @@ func (m *Manager) DetectWorkspace(params map[string]interface{}) (*Info, error) 
 				fallbackInfo, fallbackErr := m.detector.DetectFromPath(lastUsed.Root)
 				if fallbackErr == nil && fallbackInfo != nil {
 					// Add a warning so the AI knows this was an automatic assumption
-					fallbackInfo.AIWarning = fmt.Sprintf("Note: No 'file_path' was provided. Automatically selected the last active workspace: %s. please provide 'file_path' for accurate context.", fallbackInfo.Root)
+					fallbackInfo.AIWarning = fmt.Sprintf("Note: No 'file_path' was provided. Automatically selected the last active workspace: %s. Please provide 'file_path' for accurate context.", fallbackInfo.Root)
 
 					// Register it as active in this session too
 					m.RegisterWorkspace(fallbackInfo)

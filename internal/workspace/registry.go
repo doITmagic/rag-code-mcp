@@ -66,11 +66,8 @@ func (r *Registry) Load() error {
 	return json.NewDecoder(f).Decode(&r.Entries)
 }
 
-// Save saves the registry to disk
-func (r *Registry) Save() error {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
+// Save saves the registry to disk. It assumes the caller holds the lock.
+func (r *Registry) saveLocked() error {
 	dir := filepath.Dir(r.path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
@@ -87,6 +84,13 @@ func (r *Registry) Save() error {
 	return encoder.Encode(r.Entries)
 }
 
+// Save saves the registry to disk
+func (r *Registry) Save() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.saveLocked()
+}
+
 // RegisterOrUpdate adds or updates a workspace in the registry
 func (r *Registry) RegisterOrUpdate(info *Info) error {
 	if info == nil {
@@ -94,6 +98,8 @@ func (r *Registry) RegisterOrUpdate(info *Info) error {
 	}
 
 	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	entry, exists := r.Entries[info.ID]
 	if !exists {
 		entry = &RegistryEntry{
@@ -106,9 +112,8 @@ func (r *Registry) RegisterOrUpdate(info *Info) error {
 	// Always update timestamp and languages
 	entry.LastUsed = time.Now()
 	entry.Languages = info.Languages
-	r.mu.Unlock()
 
-	return r.Save()
+	return r.saveLocked()
 }
 
 // GetLastUsed returns the most recently used workspace

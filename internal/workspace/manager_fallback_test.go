@@ -50,8 +50,13 @@ func TestDetectWorkspace_Fallbacks(t *testing.T) {
 	t.Run("Priority 2.5: CWD Fallback", func(t *testing.T) {
 		// Change CWD to project root
 		oldCwd, _ := os.Getwd()
-		_ = os.Chdir(projectRoot)
-		defer os.Chdir(oldCwd)
+		require.NoError(t, os.Chdir(projectRoot))
+		defer func() {
+			err := os.Chdir(oldCwd)
+			if err != nil {
+				t.Logf("failed to restore CWD: %v", err)
+			}
+		}()
 
 		// Call DetectWorkspace with no params
 		info, err := mgr.DetectWorkspace(nil)
@@ -71,8 +76,13 @@ func TestDetectWorkspace_Fallbacks(t *testing.T) {
 		emptyDir := filepath.Join(tempDir, "empty")
 		_ = os.MkdirAll(emptyDir, 0755)
 		oldCwd, _ := os.Getwd()
-		_ = os.Chdir(emptyDir)
-		defer os.Chdir(oldCwd)
+		require.NoError(t, os.Chdir(emptyDir))
+		defer func() {
+			err := os.Chdir(oldCwd)
+			if err != nil {
+				t.Logf("failed to restore CWD: %v", err)
+			}
+		}()
 
 		// Add project to registry
 		info := &Info{

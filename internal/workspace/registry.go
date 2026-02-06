@@ -3,6 +3,7 @@ package workspace
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -23,6 +24,9 @@ type Registry struct {
 	Entries map[string]*RegistryEntry `json:"entries"`
 	path    string
 	mu      sync.RWMutex
+
+	// Throttling
+	saveTimer *time.Timer
 }
 
 // NewRegistry creates a new registry loaded from the given path.
@@ -42,10 +46,11 @@ func NewRegistry(path string) (*Registry, error) {
 	}
 
 	if err := r.Load(); err != nil {
-		// Log error but continue with empty registry
-		// Only return error if it's not a "file not found" error
+		// If the file exists but we can't load it (e.g. corruption), log and start fresh
 		if !os.IsNotExist(err) {
-			return nil, err
+			log.Printf("⚠️  Workspace registry at %s is corrupted or unreadable: %v. Starting with a fresh one.", path, err)
+			// Reset entries just in case
+			r.Entries = make(map[string]*RegistryEntry)
 		}
 	}
 
@@ -95,7 +100,8 @@ func (r *Registry) Save() error {
 	return r.saveLocked()
 }
 
-// RegisterOrUpdate adds or updates a workspace in the registry
+// RegisterOrUpdate adds or updates a workspace in the registry.
+// It uses a debounce mechanism to avoid excessive disk writes in high-frequency scenarios.
 func (r *Registry) RegisterOrUpdate(info *Info) error {
 	if info == nil {
 		return nil
@@ -119,7 +125,20 @@ func (r *Registry) RegisterOrUpdate(info *Info) error {
 	entry.LastUsed = time.Now()
 	entry.Languages = info.Languages
 
-	return r.saveLocked()
+	// Throttled save: wait for 500ms of inactivity before writing to disk
+	if r.saveTimer != nil {
+		r.saveTimer.Stop()
+	}
+
+	r.saveTimer = time.AfterFunc(500*time.Millisecond, func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if err := r.saveLocked(); err != nil {
+			log.Printf("⚠️  Failed to save workspace registry: %v", err)
+		}
+	})
+
+	return nil
 }
 
 // GetLastUsed returns the most recently used workspace

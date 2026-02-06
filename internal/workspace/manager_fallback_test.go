@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
 	"github.com/doITmagic/rag-code-mcp/internal/llm"
@@ -98,5 +99,36 @@ func TestDetectWorkspace_Fallbacks(t *testing.T) {
 		assert.Equal(t, projectRoot, fallbackInfo.Root)
 		assert.Equal(t, "test-prefix", fallbackInfo.CollectionPrefix)
 		assert.Contains(t, fallbackInfo.AIWarning, "Automatically selected the last active workspace")
+	})
+
+	t.Run("Priority Order Check", func(t *testing.T) {
+		// Create two projects
+		p1Root := filepath.Join(tempDir, "p1")
+		p2Root := filepath.Join(tempDir, "p2")
+		_ = os.MkdirAll(p1Root, 0755)
+		_ = os.MkdirAll(p2Root, 0755)
+		_ = os.WriteFile(filepath.Join(p1Root, "go.mod"), []byte("module p1"), 0644)
+		_ = os.WriteFile(filepath.Join(p2Root, "go.mod"), []byte("module p2"), 0644)
+
+		// 1. Add P1 to registry (lowest priority)
+		_ = reg.RegisterOrUpdate(&Info{ID: "p1", Root: p1Root})
+		// Wait for save
+		time.Sleep(600 * time.Millisecond)
+
+		// 2. Set CWD to P2 (medium priority)
+		oldCwd, _ := os.Getwd()
+		_ = os.Chdir(p2Root)
+		defer os.Chdir(oldCwd)
+
+		// Detection should pick CWD (P2) over Registry (P1)
+		info, err := mgr.DetectWorkspace(nil)
+		assert.NoError(t, err)
+		assert.Equal(t, p2Root, info.Root, "Should prioritize CWD over Registry")
+
+		// 3. Provide file_path to P1 (highest priority)
+		params := map[string]interface{}{"file_path": filepath.Join(p1Root, "main.go")}
+		info, err = mgr.DetectWorkspace(params)
+		assert.NoError(t, err)
+		assert.Equal(t, p1Root, info.Root, "Should prioritize file_path over CWD")
 	})
 }

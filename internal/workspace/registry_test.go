@@ -44,6 +44,9 @@ func TestRegistry(t *testing.T) {
 		assert.Equal(t, []string{"go", "python"}, entry.Languages)
 		assert.False(t, entry.LastUsed.IsZero())
 
+		// Wait for throttled save (500ms + buffer)
+		time.Sleep(600 * time.Millisecond)
+
 		// Verify it was saved to disk
 		_, err = os.Stat(regPath)
 		assert.NoError(t, err)
@@ -87,11 +90,11 @@ func TestRegistry(t *testing.T) {
 		// Write invalid JSON to file
 		require.NoError(t, os.WriteFile(corruptedPath, []byte("{invalid json"), 0644))
 
-		// NewRegistry should log warning and return error if Load fails
+		// NewRegistry should log warning and CONTINUE with empty registry
 		reg, err := NewRegistry(corruptedPath)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to decode registry JSON")
-		assert.Nil(t, reg)
+		assert.NoError(t, err)
+		assert.NotNil(t, reg)
+		assert.Empty(t, reg.Entries)
 	})
 
 	t.Run("GetLastUsed", func(t *testing.T) {

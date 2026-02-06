@@ -38,7 +38,7 @@ func (t *FindImplementationsTool) Name() string {
 }
 
 func (t *FindImplementationsTool) Description() string {
-	return "Find where a function/method/interface is USED - shows all callers and implementations. Use to understand impact before refactoring, or to find usage examples. Returns list of code snippets with file paths and line numbers. Works for Go, PHP, Python. IMPORTANT: Always provide the 'file_path' of the file you are currently working on for better context detection.\nExample: { \"symbol_name\": \"NewUser\", \"file_path\": \"/path/to/project/user.go\" }"
+	return "Find where a function/method/interface is USED - shows all callers and implementations. Use to understand impact before refactoring, or to find usage examples. Returns list of code snippets with file paths and line numbers. Works for Go, PHP, Python. RECOMMENDED: Always provide the 'file_path' of the file you are currently working on for better context detection.\nExample: { \"symbol_name\": \"NewUser\", \"file_path\": \"/path/to/project/user.go\" }"
 }
 
 func (t *FindImplementationsTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {

@@ -52,7 +52,7 @@ func (t *SearchLocalIndexTool) Name() string {
 
 // Description returns the tool description
 func (t *SearchLocalIndexTool) Description() string {
-	return "Semantic code search - finds functions, classes, and methods by MEANING, not just keywords. USE THIS FIRST when exploring unfamiliar code. Returns complete source code with file path and line numbers. Better than rag_hybrid_search for general exploration; use rag_hybrid_search only when you need EXACT identifier matches. Supports Go, PHP, Python, HTML. IMPORTANT: Always provide the 'file_path' of the file you are currently working on for better context detection.\nExample: { \"query\": \"auth middleware\", \"file_path\": \"/path/to/project/server.go\" }"
+	return "Semantic code search - finds functions, classes, and methods by MEANING, not just keywords. USE THIS FIRST when exploring unfamiliar code. Returns complete source code with file path and line numbers. Better than rag_hybrid_search for general exploration; use rag_hybrid_search only when you need EXACT identifier matches. Supports Go, PHP, Python, HTML. RECOMMENDED: Always provide the 'file_path' of the file you are currently working on for better context detection.\nExample: { \"query\": \"auth middleware\", \"file_path\": \"/path/to/project/server.go\" }"
 }
 
 // Execute executes a search in the local index

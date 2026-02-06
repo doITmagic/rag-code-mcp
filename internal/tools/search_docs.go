@@ -36,16 +36,13 @@ func (t *SearchDocsTool) Name() string {
 
 // Description returns the tool description
 func (t *SearchDocsTool) Description() string {
-	return "Search project documentation (README, guides, API docs) - use when you need to understand project setup, architecture decisions, or usage examples. Returns relevant documentation snippets with file paths. Searches Markdown files ONLY, not code - use rag_search_code for code. MANDATORY: You must provide the 'file_path' of the current file to allow the tool to detect the correct workspace and context.\nExample: { \"query\": \"deployment\", \"file_path\": \"/path/to/project/README.md\" }"
+	return "Search project documentation (README, guides, API docs) - use when you need to understand project setup, architecture decisions, or usage examples. Returns relevant documentation snippets with file paths. Searches Markdown files ONLY, not code - use rag_search_code for code. RECOMMENDED: Always provide the 'file_path' of the file you are currently working on for better context detection.\nExample: { \"query\": \"deployment\", \"file_path\": \"/path/to/project/README.md\" }"
 }
 
 // Execute executes a search in the docs index
 func (t *SearchDocsTool) Execute(ctx context.Context, params map[string]interface{}) (string, error) {
-	// file_path is mandatory
+	// file_path is optional with CWD fallback
 	filePath := extractFilePathFromParams(params)
-	if filePath == "" {
-		return "", fmt.Errorf("MANDATORY parameter 'file_path' is missing. You must provide the absolute path of the file you are currently working on.")
-	}
 
 	// Try workspace detection
 	var searchMemory memory.LongTermMemory

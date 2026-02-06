@@ -618,10 +618,10 @@ func main() {
 		cfg,
 	)
 
-	mcpInstructions := "RagCode MCP requires project context to function. " +
-		"If the AI is working in a specific file, please ensure that the 'file_path' parameter " +
-		"for any tool call contains the absolute path to that file. This allows RagCode to " +
-		"identify the correct workspace and provide relevant code context."
+	mcpInstructions := "RagCode MCP works best when it has project context. " +
+		"While many tools now feature automatic workspace detection (CWD), " +
+		"it is RECOMMENDED that tool calls include the 'file_path' of the file you are currently working on. " +
+		"This ensures the highest accuracy in identifying the correct workspace and local context."
 
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "ragcode",
@@ -1313,7 +1313,7 @@ func ensureIDERules(cfg *config.Config, filePath string) {
 - rag_search_docs: Find project documentation.
 
 ## Usage Guidelines
-- Always provide 'file_path' to tools to ensure they detect the correct project context.
+- Tool calls RECOMMENDED to include 'file_path' for best workspace detection, though CWD fallback is active.
 - Use 'rag_hybrid_search' if looking for exact variable names or error messages.
 - If the tool says "workspace not indexed", use 'rag_index_workspace' once.
 `

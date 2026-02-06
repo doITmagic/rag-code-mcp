@@ -41,7 +41,10 @@ storage:
     collection_prefix: "ragcode"
 
 workspace:
+  enabled: true
   auto_index: true
+  collection_prefix: "ragcode" # Optional: prefix for all vector collections
+  registry_path: "~/.config/ragcode/workspaces.json" # Persistence location
   exclude_patterns:
     - "vendor"
     - "node_modules"

@@ -231,7 +231,7 @@ type SymbolDescriptor struct {
 
 - **Standard input:**
   - `query` (required): Semantic search query.
-  - `file_path` (required): Current file path for workspace detection.
+  - `file_path` (recommended): Used for workspace detection. If omitted, the server uses CWD or last active workspace from registry.
   - `limit` (optional): Maximum results (default 10).
 - **Output:**
   - `[]SymbolDescriptor` with code snippets and metadata.
@@ -240,7 +240,7 @@ type SymbolDescriptor struct {
 
 - **Standard input:**
   - `query` (required): Keyword + semantic query.
-  - `file_path` (required): Current file path.
+  - `file_path` (recommended): Used for workspace detection.
 - **Output:**
   - `[]SymbolDescriptor` with exact/semantic matches.
 
@@ -248,7 +248,7 @@ type SymbolDescriptor struct {
 
 - **Standard input:**
   - `symbol_name` (required): The function/method/interface to find usages of.
-  - `file_path` (required): Current file path.
+  - `file_path` (recommended): Used for workspace detection.
 - **Output:**
   - `[]SymbolDescriptor` representing callers and implementations.
 
@@ -256,7 +256,7 @@ type SymbolDescriptor struct {
 
 - **Standard input:**
   - `query` (required): Search query for Markdown documentation.
-  - `file_path` (required): Current file path.
+  - `file_path` (recommended): Used for workspace detection.
 - **Output:**
   - Snippets from `.md` files in the workspace.
 
@@ -273,7 +273,7 @@ type SymbolDescriptor struct {
 ### 3.10. `rag_index_workspace`
 
 - **Standard input:**
-  - `file_path` (required): Root detection starting point.
+  - `file_path` (recommended): Detection starting point. Falls back to CWD or registry if omitted.
   - `recreate` (optional): Force full re-index.
 - **Functionality:**
   - Manually triggers/restarts the indexing process for the detected workspace.

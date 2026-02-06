@@ -314,38 +314,41 @@ func (m *AnalyzerManager) APIAnalyzerForProjectType(projectType string) codetype
 
 ### 4. Workspace Manager (`internal/workspace/manager.go`)
 
-**Purpose:** Core component for multi-workspace and multi-language support. Manages automatic workspace detection, per-language collections, and multi-workspace indexing.
+**Purpose:** Core orchestrator for multi-workspace and multi-language support. It manages the entire lifecycle of workspace detection, persistence, and collection mapping.
 
 **Key Capabilities:**
-- Automatic workspace detection using markers (`.git`, `go.mod`, `package.json`, etc.)
-- Per-workspace, per-language collection creation: `{prefix}-{workspaceID}-{language}`
-- Language detection from file markers
-- Workspace cache for performance
-- Multi-workspace simultaneous indexing with concurrency limits
+- **Auto-Detection**: Uses a 4-priority fallback system (Explicit -> Path -> CWD -> Registry -> Session).
+- **Persistence**: Remembers workspaces across restarts via a global registry (`workspaces.json`).
+- **Process Isolation**: Distinguishes between different IDE windows using CWD for auto-detection when `file_path` is missing.
+- **Collection Mapping**: Manages per-workspace, per-language collections: `{prefix}-{workspaceID}-{language}`.
+- **Throttled Saves**: Protects system performance with debounced (500ms) registry writes.
 
 **Key Methods:**
 ```go
-func (m *Manager) GetMemoryForWorkspaceLanguage(workspaceID, language string) (memory.LongTermMemory, error)
 func (m *Manager) DetectWorkspace(params map[string]interface{}) (*Info, error)
-func (m *Manager) GetAllWorkspaces() []Info
+func (m *Manager) RegisterWorkspace(info *Info) error
+func (m *Manager) GetLastUsed() *RegistryEntry
 ```
 
-**Example:**
-For a monorepo with Go + Python code:
-```
-├── backend/                      → workspace "backend"
-│   ├── .git/
-│   ├── go.mod                   → language: "go"
-│   └── Collections: ragcode-backend-go
-├── frontend/                     → workspace "frontend"
-│   ├── package.json             → language: "javascript"
-│   └── Collections: ragcode-frontend-javascript
-└── scripts/                      → workspace "scripts"
-    ├── requirements.txt         → language: "python"
-    └── Collections: ragcode-scripts-python
-```
+**Workflow:**
+1. Tool receives `file_path` (or not).
+2. `Manager` checks cache.
+3. If no cache, it detects the root using parent directory walking.
+4. If no path, it falls back to CWD, then Registry.
+5. `Registry` records the workspace and language info.
+6. `Manager` provides the correct collection name to the caller.
 
-### 5. Workspace Detector (`internal/workspace/detector.go`)
+### 5. Workspace Registry (`internal/workspace/registry.go`)
+
+**Purpose:** Provides global persistence for workspace metadata.
+
+**Features:**
+- JSON-based storage for workspace ID, Root, and LastUsed timestamp.
+- Atomic writes to prevent data corruption.
+- Graceful handling of corrupted files (loads empty registry and logs error).
+- ID-based lookups for fast retrieval.
+
+### 6. Workspace Detector (`internal/workspace/detector.go`)
 
 **Purpose:** Detects workspace roots from file paths and manages workspace information caching.
 
@@ -354,7 +357,7 @@ For a monorepo with Go + Python code:
 - Cache workspace information for fast lookups
 - Extract workspace metadata (root, ID, detected markers)
 
-### 6. Language Detection (`internal/workspace/language_detection.go`)
+### 7. Language Detection (`internal/workspace/language_detection.go`)
 
 **Purpose:** Identifies programming language from workspace detection markers.
 
@@ -370,7 +373,7 @@ For a monorepo with Go + Python code:
 - C#: `*.csproj`
 - Others: `.git` alone indicates workspace root
 
-### 5. Indexer (`internal/ragcode/indexer.go`)
+### 8. Indexer (`internal/ragcode/indexer.go`)
 
 **Purpose:** Indexes code chunks into vector database using embeddings.
 
@@ -384,7 +387,7 @@ For a monorepo with Go + Python code:
 paths → analyzer.AnalyzePaths() → []CodeChunk → embeddings → Qdrant
 ```
 
-### 6. Go Analyzer (`internal/ragcode/analyzers/golang`)
+### 9. Go Analyzer (`internal/ragcode/analyzers/golang`)
 
 **Purpose:** Implements PathAnalyzer and APIAnalyzer for Go language using `go/ast`, `go/doc`, and `go/parser`.
 
@@ -401,7 +404,7 @@ paths → analyzer.AnalyzePaths() → []CodeChunk → embeddings → Qdrant
 
 **Test Coverage:** 82.1% (13 unit tests)
 
-### 7. Storage: Qdrant Integration (`internal/storage`)
+### 10. Storage: Qdrant Integration (`internal/storage`)
 
 **Purpose:** Vector database integration for storing and retrieving embeddings.
 
@@ -415,7 +418,7 @@ paths → analyzer.AnalyzePaths() → []CodeChunk → embeddings → Qdrant
 - Vector similarity search
 - Filtering and text search integration
 
-### 8. Tools: 10 MCP Tools (`internal/tools`)
+### 11. Tools: 10 MCP Tools (`internal/tools`)
 
 **Purpose:** Implements semantic code navigation and search tools for IDE integration.
 

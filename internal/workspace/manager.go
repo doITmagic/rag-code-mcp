@@ -421,7 +421,8 @@ func (m *Manager) DetectWorkspace(params map[string]interface{}) (*Info, error) 
 		// avoiding the "cross-talk" or "mess" (varză) caused by a shared global registry.
 		if cwd, cwdErr := os.Getwd(); cwdErr == nil {
 			// Try to detect a valid workspace in CWD
-			// DetectFromPath protects against invalid roots (like Home or /tmp), so this is safe.
+			// DetectFromPath rejects CWD only when it is an invalid root (like bare $HOME or /tmp),
+			// while still allowing typical project subdirectories under them (e.g. ~/projects), so this fallback is safe.
 			if cwdInfo, detectErr := m.detector.DetectFromPath(cwd); detectErr == nil && cwdInfo != nil {
 				log.Printf("📂 Using CWD as workspace context: %s", cwdInfo.Root)
 

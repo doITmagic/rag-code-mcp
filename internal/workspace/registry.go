@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
 	"sync"
 	"time"
 )
@@ -82,7 +81,7 @@ func (r *Registry) saveLocked() error {
 		return err
 	}
 
-	f, err := os.Create(r.path)
+	f, err := os.OpenFile(r.path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
 	}
@@ -146,19 +145,12 @@ func (r *Registry) GetLastUsed() *RegistryEntry {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	var entries []*RegistryEntry
+	var last *RegistryEntry
 	for _, e := range r.Entries {
-		entries = append(entries, e)
+		if last == nil || e.LastUsed.After(last.LastUsed) {
+			last = e
+		}
 	}
 
-	if len(entries) == 0 {
-		return nil
-	}
-
-	// Sort by LastUsed descending
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].LastUsed.After(entries[j].LastUsed)
-	})
-
-	return entries[0]
+	return last
 }

@@ -53,9 +53,8 @@ func TestDetectWorkspace_Fallbacks(t *testing.T) {
 		oldCwd, _ := os.Getwd()
 		require.NoError(t, os.Chdir(projectRoot))
 		defer func() {
-			err := os.Chdir(oldCwd)
-			if err != nil {
-				t.Logf("failed to restore CWD: %v", err)
+			if err := os.Chdir(oldCwd); err != nil {
+				t.Fatalf("failed to restore CWD: %v", err)
 			}
 		}()
 
@@ -79,9 +78,8 @@ func TestDetectWorkspace_Fallbacks(t *testing.T) {
 		oldCwd, _ := os.Getwd()
 		require.NoError(t, os.Chdir(emptyDir))
 		defer func() {
-			err := os.Chdir(oldCwd)
-			if err != nil {
-				t.Logf("failed to restore CWD: %v", err)
+			if err := os.Chdir(oldCwd); err != nil {
+				t.Fatalf("failed to restore CWD: %v", err)
 			}
 		}()
 
@@ -118,7 +116,11 @@ func TestDetectWorkspace_Fallbacks(t *testing.T) {
 		// 2. Set CWD to P2 (medium priority)
 		oldCwd, _ := os.Getwd()
 		_ = os.Chdir(p2Root)
-		defer os.Chdir(oldCwd)
+		defer func() {
+			if err := os.Chdir(oldCwd); err != nil {
+				t.Fatalf("failed to restore CWD: %v", err)
+			}
+		}()
 
 		// Detection should pick CWD (P2) over Registry (P1)
 		info, err := mgr.DetectWorkspace(nil)

@@ -133,7 +133,7 @@ func TestRegistryConcurrency(t *testing.T) {
 	reg, _ := NewRegistry(regPath)
 
 	const count = 100
-	done := make(chan bool)
+	errChan := make(chan error, count)
 
 	for i := 0; i < count; i++ {
 		go func(id int) {
@@ -143,16 +143,20 @@ func TestRegistryConcurrency(t *testing.T) {
 				Root: fmt.Sprintf("/root/%d", id),
 			}
 			err := reg.RegisterOrUpdate(info)
-			assert.NoError(t, err)
+			if err != nil {
+				errChan <- err
+				return
+			}
 
 			// Randomly call GetLastUsed
 			_ = reg.GetLastUsed()
-			done <- true
+			errChan <- nil
 		}(i)
 	}
 
 	for i := 0; i < count; i++ {
-		<-done
+		err := <-errChan
+		assert.NoError(t, err)
 	}
 
 	assert.Len(t, reg.Entries, count)

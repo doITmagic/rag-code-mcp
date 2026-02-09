@@ -13,9 +13,59 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/Masterminds/semver/v3"
 )
+
+type UpdateCache struct {
+	LastCheck     time.Time   `json:"last_check"`
+	LatestVersion string      `json:"latest_version"`
+	UpdateDetails *UpdateInfo `json:"update_details,omitempty"`
+}
+
+var (
+	cacheFile = "update_cache.json"
+)
+
+func getCachePath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return cacheFile // Fallback to CWD
+	}
+	configDir := filepath.Join(home, ".config", "rag-code-mcp")
+	_ = os.MkdirAll(configDir, 0755)
+	return filepath.Join(configDir, cacheFile)
+}
+
+func GetCachedUpdate() (*UpdateCache, error) {
+	path := getCachePath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var cache UpdateCache
+	if err := json.Unmarshal(data, &cache); err != nil {
+		return nil, err
+	}
+	return &cache, nil
+}
+
+func SaveUpdateCache(info *UpdateInfo) error {
+	cache := UpdateCache{
+		LastCheck: time.Now(),
+	}
+	if info != nil {
+		cache.LatestVersion = info.LatestVersion
+		cache.UpdateDetails = info
+	}
+
+	data, err := json.Marshal(cache)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(getCachePath(), data, 0644)
+}
 
 const (
 	GitHubOwner = "doITmagic"
@@ -30,9 +80,30 @@ type UpdateInfo struct {
 }
 
 // CheckForUpdates queries GitHub for the latest release and compares it with the current version.
-func CheckForUpdates(currentVersion string) (*UpdateInfo, error) {
+// If force is false, it returns cached results if available and less than 24 hours old.
+func CheckForUpdates(currentVersion string, force bool) (*UpdateInfo, error) {
 	if currentVersion == "" || currentVersion == "dev" {
 		return nil, nil // Skip checks for dev versions
+	}
+
+	if !force {
+		cache, err := GetCachedUpdate()
+		if err == nil && cache != nil {
+			// Check if cache is fresh (24h)
+			if time.Since(cache.LastCheck) < 24*time.Hour {
+				// Still need to compare versions because currentVersion might have changed
+				if cache.UpdateDetails != nil {
+					curr, err := semver.NewVersion(currentVersion)
+					if err == nil {
+						latest, err := semver.NewVersion(cache.UpdateDetails.LatestVersion)
+						if err == nil && latest.GreaterThan(curr) {
+							return cache.UpdateDetails, nil
+						}
+					}
+				}
+				return nil, nil // No new version in cache or already on latest
+			}
+		}
 	}
 
 	curr, err := semver.NewVersion(currentVersion)
@@ -68,35 +139,37 @@ func CheckForUpdates(currentVersion string) (*UpdateInfo, error) {
 		return nil, fmt.Errorf("invalid latest version %q: %w", release.TagName, err)
 	}
 
-	if !latest.GreaterThan(curr) {
-		return nil, nil // No update needed
-	}
-
-	info := &UpdateInfo{
-		LatestVersion: latest.String(),
-		Tag:           release.TagName,
-	}
-
-	// Match asset for current platform
-	archiveName := fmt.Sprintf("rag-code-mcp_%s_%s", runtime.GOOS, runtime.GOARCH)
-	if runtime.GOOS == "windows" {
-		archiveName += ".zip"
-	} else {
-		archiveName += ".tar.gz"
-	}
-
-	for _, asset := range release.Assets {
-		if asset.Name == archiveName {
-			info.AssetURL = asset.BrowserDownloadURL
+	var info *UpdateInfo
+	if latest.GreaterThan(curr) {
+		info = &UpdateInfo{
+			LatestVersion: latest.String(),
+			Tag:           release.TagName,
 		}
-		if asset.Name == "checksums.txt" {
-			info.ChecksumURL = asset.BrowserDownloadURL
+
+		// Match asset for current platform
+		archiveName := fmt.Sprintf("rag-code-mcp_%s_%s", runtime.GOOS, runtime.GOARCH)
+		if runtime.GOOS == "windows" {
+			archiveName += ".zip"
+		} else {
+			archiveName += ".tar.gz"
+		}
+
+		for _, asset := range release.Assets {
+			if asset.Name == archiveName {
+				info.AssetURL = asset.BrowserDownloadURL
+			}
+			if asset.Name == "checksums.txt" {
+				info.ChecksumURL = asset.BrowserDownloadURL
+			}
+		}
+
+		if info.AssetURL == "" {
+			return nil, fmt.Errorf("no asset found for platform %s/%s", runtime.GOOS, runtime.GOARCH)
 		}
 	}
 
-	if info.AssetURL == "" {
-		return nil, fmt.Errorf("no asset found for platform %s/%s", runtime.GOOS, runtime.GOARCH)
-	}
+	// Always save cache after successful network call, even if info is nil (meaning we are on latest)
+	_ = SaveUpdateCache(info)
 
 	return info, nil
 }

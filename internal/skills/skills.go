@@ -6,10 +6,13 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+var skillIDRegex = regexp.MustCompile(`^[a-z0-9-]+$`)
 
 //go:embed embedded/*
 var embeddedSkills embed.FS
@@ -77,14 +80,10 @@ func GetSkillMetadata(skillID string) (SkillInfo, error) {
 	}, nil
 }
 
-// validateSkillID ensures the skill ID is safe and does not contain path traversal characters
+// validateSkillID ensures the skill ID is safe and matches a strict allowlist
 func validateSkillID(skillID string) error {
-	if strings.Contains(skillID, "..") || strings.ContainsAny(skillID, `/\`) {
-		return fmt.Errorf("invalid skill ID: potential path traversal detected")
-	}
-	// Check if Clean changes the path, which would indicate traversal or special characters
-	if filepath.Clean(skillID) != skillID {
-		return fmt.Errorf("invalid skill ID: format error")
+	if !skillIDRegex.MatchString(skillID) {
+		return fmt.Errorf("invalid skill ID: must be lowercase alphanumeric with hyphens (e.g. 'my-skill')")
 	}
 	return nil
 }

@@ -115,6 +115,14 @@ func SaveUpdateCache(info *UpdateInfo) error {
 	}
 
 	// On success, rename the temp file to the final path (atomic on same filesystem).
+	// On Windows, os.Rename may not reliably replace an existing file, so remove it first.
+	if runtime.GOOS == "windows" {
+		if _, err := os.Stat(path); err == nil {
+			if err := os.Remove(path); err != nil {
+				return fmt.Errorf("failed to remove existing cache file: %w", err)
+			}
+		}
+	}
 	if err := os.Rename(tmpName, path); err != nil {
 		return err
 	}
@@ -155,16 +163,22 @@ func CheckForUpdates(ctx context.Context, currentVersion string, force bool) (*U
 			// Check if cache is fresh (24h)
 			if time.Since(cache.LastCheck) < 24*time.Hour {
 				// Still need to compare versions because currentVersion might have changed
+				curr, errCurr := semver.NewVersion(currentVersion)
 				if cache.UpdateDetails != nil {
-					curr, err := semver.NewVersion(currentVersion)
-					if err == nil {
-						latest, err := semver.NewVersion(cache.UpdateDetails.LatestVersion)
-						if err == nil && latest.GreaterThan(curr) {
+					latest, errLatest := semver.NewVersion(cache.UpdateDetails.LatestVersion)
+					if errCurr == nil && errLatest == nil {
+						if latest.GreaterThan(curr) {
 							return cache.UpdateDetails, nil
 						}
+						// Already on latest (or newer) version according to cache
+						return nil, nil
 					}
+					// If semver parsing fails for current or cached version, treat as cache miss
+					// and fall through to the network-based check below.
+				} else if errCurr == nil {
+					// Fresh cache with no update details means no update was available last check
+					return nil, nil
 				}
-				return nil, nil // No new version in cache or already on latest
 			}
 		}
 	}
@@ -209,13 +223,17 @@ func CheckForUpdates(ctx context.Context, currentVersion string, force bool) (*U
 		return nil, fmt.Errorf("invalid latest version %q: %w", release.TagName, err)
 	}
 
-	var info *UpdateInfo
-	if latest.GreaterThan(curr) {
-		info = &UpdateInfo{
-			LatestVersion: latest.String(),
-			Tag:           release.TagName,
-		}
+	// Always record the latest version/tag so callers can cache this information
+	// even when no update is required. Additional update details (asset URLs,
+	// checksums) are only populated when a newer version is actually available.
+	info := &UpdateInfo{
+		LatestVersion: latest.String(),
+		Tag:           release.TagName,
+	}
 
+	updateAvailable := false
+	if latest.GreaterThan(curr) {
+		updateAvailable = true
 		// Match asset for current platform
 		archiveName := fmt.Sprintf("rag-code-mcp_%s_%s", runtime.GOOS, runtime.GOARCH)
 		if runtime.GOOS == "windows" {
@@ -238,10 +256,16 @@ func CheckForUpdates(ctx context.Context, currentVersion string, force bool) (*U
 		}
 	}
 
-	// Always save cache after successful network call, even if info is nil (meaning we are on latest)
-	_ = SaveUpdateCache(info)
+	// Always save cache after successful network call, even if update info is nil (meaning we are on latest)
+	if err := SaveUpdateCache(info); err != nil {
+		// Log error but don't fail the update check itself
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to save update cache: %v\n", err)
+	}
 
-	return info, nil
+	if updateAvailable {
+		return info, nil
+	}
+	return nil, nil
 }
 
 // DownloadAndVerify downloads the archive and checks its integrity.
@@ -447,11 +471,17 @@ func unzip(src, dest string) error {
 	defer r.Close()
 
 	for _, f := range r.File {
-		fpath := filepath.Join(dest, f.Name)
+		// Normalize ZIP entry name to prevent ZipSlip, including backslash separators
+		cleanName := strings.ReplaceAll(f.Name, "\\", "/")
+		cleanName = filepath.Clean(cleanName)
 
-		// Check for ZipSlip (Directory traversal)
-		if !strings.HasPrefix(fpath, filepath.Clean(dest)+string(os.PathSeparator)) {
-			return fmt.Errorf("illegal file path: %s", fpath)
+		cleanDest := filepath.Clean(dest)
+		fpath := filepath.Join(cleanDest, cleanName)
+
+		// Check for ZipSlip (Directory traversal) using filepath.Rel
+		rel, err := filepath.Rel(cleanDest, fpath)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+			return fmt.Errorf("illegal file path: %s", f.Name)
 		}
 
 		// Security: Reject non-regular files (symlinks, devices, etc.)

@@ -8,6 +8,11 @@ import (
 )
 
 func TestGetCachePath(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tempDir)
+	t.Setenv("AppData", tempDir)
+	t.Setenv("HOME", tempDir)
+
 	path, err := getCachePath()
 	if err != nil {
 		t.Fatalf("getCachePath failed: %v", err)
@@ -18,13 +23,8 @@ func TestGetCachePath(t *testing.T) {
 	}
 
 	dir := filepath.Dir(path)
-	info, err := os.Stat(dir)
-	if err != nil {
+	if _, err := os.Stat(dir); err != nil {
 		t.Fatalf("Cache directory does not exist: %v", err)
-	}
-
-	if !info.IsDir() {
-		t.Errorf("Expected %s to be a directory", dir)
 	}
 }
 

@@ -77,10 +77,35 @@ func GetSkillMetadata(skillID string) (SkillInfo, error) {
 	}, nil
 }
 
+// validateSkillID ensures the skill ID is safe and does not contain path traversal characters
+func validateSkillID(skillID string) error {
+	if strings.Contains(skillID, "..") || strings.ContainsAny(skillID, `/\`) {
+		return fmt.Errorf("invalid skill ID: potential path traversal detected")
+	}
+	// Check if Clean changes the path, which would indicate traversal or special characters
+	if filepath.Clean(skillID) != skillID {
+		return fmt.Errorf("invalid skill ID: format error")
+	}
+	return nil
+}
+
 // InstallSkill copies all files of an embedded skill to the destination directory
 func InstallSkill(skillID string, workspaceRoot string) error {
+	if err := validateSkillID(skillID); err != nil {
+		return err
+	}
+
 	destDir := filepath.Join(workspaceRoot, ".agent", "skills", skillID)
+	// Additional safety check: ensure destDir is within workspaceRoot
+	// Note: This might be redundant with validateSkillID but good for defense in depth
+	// However, workspaceRoot might be relative or absolute, so we rely on skillID validation primarily.
+
 	srcDir := "embedded/" + skillID
+
+	// Verify the skill exists in embedded FS before trying to walk
+	if _, err := embeddedSkills.ReadDir(srcDir); err != nil {
+		return fmt.Errorf("skill '%s' not found in embedded library", skillID)
+	}
 
 	return fs.WalkDir(embeddedSkills, srcDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -93,6 +118,7 @@ func InstallSkill(skillID string, workspaceRoot string) error {
 			return err
 		}
 
+		// Join with destination directory
 		targetPath := filepath.Join(destDir, relPath)
 
 		if d.IsDir() {
@@ -111,6 +137,9 @@ func InstallSkill(skillID string, workspaceRoot string) error {
 
 // UninstallSkill removes a skill from the workspace
 func UninstallSkill(skillID string, workspaceRoot string) error {
+	if err := validateSkillID(skillID); err != nil {
+		return err
+	}
 	destDir := filepath.Join(workspaceRoot, ".agent", "skills", skillID)
 	return os.RemoveAll(destDir)
 }

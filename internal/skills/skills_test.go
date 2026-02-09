@@ -33,16 +33,12 @@ func TestListAvailableSkills(t *testing.T) {
 }
 
 func TestInstallAndUninstallSkill(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "skill-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	skillID := "ragcode-priority"
 
 	// Test Installation
-	err = InstallSkill(skillID, tempDir)
+	err := InstallSkill(skillID, tempDir)
 	if err != nil {
 		t.Fatalf("InstallSkill failed: %v", err)
 	}
@@ -62,5 +58,26 @@ func TestInstallAndUninstallSkill(t *testing.T) {
 	// Verify file removal
 	if _, err := os.Stat(filepath.Dir(skillFile)); !os.IsNotExist(err) {
 		t.Errorf("Skill directory %s still exists after uninstallation", filepath.Dir(skillFile))
+	}
+}
+
+func TestInstallSkillPathTraversal(t *testing.T) {
+	tempDir := t.TempDir()
+
+	evilIDs := []string{
+		"../foo",
+		"foo/bar",
+		"/etc/passwd",
+		`foo\bar`,
+	}
+
+	for _, id := range evilIDs {
+		err := InstallSkill(id, tempDir)
+		if err == nil {
+			t.Errorf("InstallSkill should have failed for ID '%s'", id)
+		} else {
+			// Optional: verify error message
+			// t.Logf("Got expected error for %s: %v", id, err)
+		}
 	}
 }

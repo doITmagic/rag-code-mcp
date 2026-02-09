@@ -34,11 +34,11 @@ func (t *FindImplementationsTool) SetWorkspaceManager(wm *workspace.Manager) {
 }
 
 func (t *FindImplementationsTool) Name() string {
-	return "find_implementations"
+	return "rag_find_implementations"
 }
 
 func (t *FindImplementationsTool) Description() string {
-	return "Find where a function/method/interface is USED - shows all callers and implementations. Use to understand impact before refactoring, or to find usage examples. Returns list of code snippets with file paths and line numbers. Works for Go, PHP, Python."
+	return "Find where a function/method/interface is USED - shows all callers and implementations. Use to understand impact before refactoring, or to find usage examples. Returns list of code snippets with file paths and line numbers. Works for Go, PHP, Python. IMPORTANT: Always provide the 'file_path' of the file you are currently working on for better context detection.\nExample: { \"symbol_name\": \"NewUser\", \"file_path\": \"/path/to/project/user.go\" }"
 }
 
 func (t *FindImplementationsTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -53,24 +53,30 @@ func (t *FindImplementationsTool) Execute(ctx context.Context, args map[string]i
 		packagePath = pkg
 	}
 
-	// file_path is required for workspace detection
+	// file_path is optional but recommended
 	filePath := extractFilePathFromParams(args)
-	if filePath == "" {
-		return "", fmt.Errorf("file_path parameter is required for find_implementations. Please provide a file path from your workspace")
-	}
 
 	// Try workspace detection if workspace manager is available
 	var searchMemory memory.LongTermMemory
 	var workspacePath string
 	var collectionName string
 
+	var workspaceInfo *workspace.Info
 	if t.workspaceManager != nil {
-		workspaceInfo, err := t.workspaceManager.DetectWorkspace(args)
-		if err == nil && workspaceInfo != nil {
+		var err error
+		workspaceInfo, err = DetectAndRegisterWorkspace(t.workspaceManager, args)
+		if err != nil {
+			return HandleWorkspaceDetectionError(err, "")
+		}
+
+		if workspaceInfo != nil {
 			workspacePath = workspaceInfo.Root
 
 			// Detect language from file path or use first detected language
-			language := inferLanguageFromPath(filePath)
+			language := ""
+			if filePath != "" {
+				language = inferLanguageFromPath(filePath)
+			}
 			if language == "" && len(workspaceInfo.Languages) > 0 {
 				language = workspaceInfo.Languages[0]
 			}
@@ -84,12 +90,12 @@ func (t *FindImplementationsTool) Execute(ctx context.Context, args map[string]i
 				// Check if indexing is in progress
 				indexKey := workspaceInfo.ID + "-" + language
 				if t.workspaceManager.IsIndexing(indexKey) {
-					return fmt.Sprintf("⏳ Workspace '%s' language '%s' is currently being indexed in the background.\n"+
+					return AttachAIWarning(fmt.Sprintf("⏳ Workspace '%s' language '%s' is currently being indexed in the background.\n"+
 						"Please try again in a few moments.\n"+
 						"Workspace: %s\n"+
 						"Language: %s\n"+
 						"Collection: %s",
-						workspaceInfo.Root, language, workspaceInfo.Root, language, collectionName), nil
+						workspaceInfo.Root, language, workspaceInfo.Root, language, collectionName), workspaceInfo), nil
 				}
 
 				// Check if collection exists before proceeding
@@ -97,7 +103,7 @@ func (t *FindImplementationsTool) Execute(ctx context.Context, args map[string]i
 					if err != nil {
 						return "", err
 					}
-					return msg, nil
+					return AttachAIWarning(msg, workspaceInfo), nil
 				}
 
 				searchMemory = mem
@@ -147,7 +153,7 @@ func (t *FindImplementationsTool) Execute(ctx context.Context, args map[string]i
 			if err != nil {
 				return "", err
 			}
-			return msg, nil
+			return AttachAIWarning(msg, workspaceInfo), nil
 		}
 	}
 
@@ -201,9 +207,9 @@ func (t *FindImplementationsTool) Execute(ctx context.Context, args map[string]i
 
 	if len(implementations) == 0 {
 		if workspacePath != "" {
-			return fmt.Sprintf("🔍 No implementations or usages found for '%s' in workspace '%s'", symbolName, workspacePath), nil
+			return AttachAIWarning(fmt.Sprintf("🔍 No implementations or usages found for '%s' in workspace '%s'", symbolName, workspacePath), workspaceInfo), nil
 		}
-		return fmt.Sprintf("No implementations or usages found for '%s'", symbolName), nil
+		return AttachAIWarning(fmt.Sprintf("No implementations or usages found for '%s'", symbolName), workspaceInfo), nil
 	}
 
 	// Sort by number of occurrences (most used first)
@@ -238,7 +244,7 @@ func (t *FindImplementationsTool) Execute(ctx context.Context, args map[string]i
 		}
 	}
 
-	return response.String(), nil
+	return AttachAIWarning(response.String(), workspaceInfo), nil
 }
 
 type Implementation struct {

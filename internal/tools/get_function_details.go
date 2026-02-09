@@ -36,11 +36,11 @@ func (t *GetFunctionDetailsTool) SetWorkspaceManager(wm *workspace.Manager) {
 }
 
 func (t *GetFunctionDetailsTool) Name() string {
-	return "get_function_details"
+	return "rag_get_function_details"
 }
 
 func (t *GetFunctionDetailsTool) Description() string {
-	return "Get COMPLETE function/method source code - returns full implementation with signature, parameters, return types, and body. Use when you know the exact function name. Returns the entire function ready to read or modify. Works for Go, PHP, Python."
+	return "Get COMPLETE function/method source code - returns full implementation with signature, parameters, return types, and body. Use when you know the exact function name. Returns the entire function ready to read or modify. Works for Go, PHP, Python. MANDATORY: You must provide the 'file_path' of the current file to allow the tool to detect the correct workspace and context.\nExample: { \"function_name\": \"LoginUser\", \"file_path\": \"/path/to/project/main.go\" }"
 }
 
 func (t *GetFunctionDetailsTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -61,10 +61,10 @@ func (t *GetFunctionDetailsTool) Execute(ctx context.Context, args map[string]in
 		outputFormat = strings.ToLower(of)
 	}
 
-	// file_path is required for workspace detection
+	// file_path is mandatory
 	filePath := extractFilePathFromParams(args)
 	if filePath == "" {
-		return "", fmt.Errorf("file_path parameter is required for get_function_details. Please provide a file path from your workspace")
+		return "", fmt.Errorf("MANDATORY parameter 'file_path' is missing. You must provide the absolute path of the file you are currently working on.")
 	}
 
 	// Try workspace detection if workspace manager is available
@@ -72,13 +72,22 @@ func (t *GetFunctionDetailsTool) Execute(ctx context.Context, args map[string]in
 	var workspacePath string
 	var collectionName string
 
+	var workspaceInfo *workspace.Info
 	if t.workspaceManager != nil {
-		workspaceInfo, err := t.workspaceManager.DetectWorkspace(args)
-		if err == nil && workspaceInfo != nil {
+		var err error
+		workspaceInfo, err = DetectAndRegisterWorkspace(t.workspaceManager, args)
+		if err != nil {
+			return HandleWorkspaceDetectionError(err, "")
+		}
+
+		if workspaceInfo != nil {
 			workspacePath = workspaceInfo.Root
 
 			// Detect language from file path or use first detected language
-			language := inferLanguageFromPath(filePath)
+			language := ""
+			if filePath != "" {
+				language = inferLanguageFromPath(filePath)
+			}
 			if language == "" && len(workspaceInfo.Languages) > 0 {
 				language = workspaceInfo.Languages[0]
 			}
@@ -92,12 +101,12 @@ func (t *GetFunctionDetailsTool) Execute(ctx context.Context, args map[string]in
 				// Check if indexing is in progress
 				indexKey := workspaceInfo.ID + "-" + language
 				if t.workspaceManager.IsIndexing(indexKey) {
-					return fmt.Sprintf("⏳ Workspace '%s' language '%s' is currently being indexed in the background.\n"+
+					return AttachAIWarning(fmt.Sprintf("⏳ Workspace '%s' language '%s' is currently being indexed in the background.\n"+
 						"Please try again in a few moments.\n"+
 						"Workspace: %s\n"+
 						"Language: %s\n"+
 						"Collection: %s",
-						workspaceInfo.Root, language, workspaceInfo.Root, language, collectionName), nil
+						workspaceInfo.Root, language, workspaceInfo.Root, language, collectionName), workspaceInfo), nil
 				}
 
 				// Check if collection exists before proceeding
@@ -105,7 +114,7 @@ func (t *GetFunctionDetailsTool) Execute(ctx context.Context, args map[string]in
 					if err != nil {
 						return "", err
 					}
-					return msg, nil
+					return AttachAIWarning(msg, workspaceInfo), nil
 				}
 
 				searchMemory = mem
@@ -175,11 +184,11 @@ processResults:
 				if err != nil {
 					return "", err
 				}
-				return msg, nil
+				return AttachAIWarning(msg, workspaceInfo), nil
 			}
-			return fmt.Sprintf("Function '%s' not found in workspace '%s'", functionName, workspacePath), nil
+			return AttachAIWarning(fmt.Sprintf("Function '%s' not found in workspace '%s'", functionName, workspacePath), workspaceInfo), nil
 		}
-		return fmt.Sprintf("Function '%s' not found", functionName), nil
+		return AttachAIWarning(fmt.Sprintf("Function '%s' not found", functionName), workspaceInfo), nil
 	}
 
 	// Find exact match
@@ -210,7 +219,7 @@ processResults:
 	}
 
 	if bestMatch == nil {
-		return fmt.Sprintf("Function '%s' not found (searched %d chunks)", functionName, len(results)), nil
+		return AttachAIWarning(fmt.Sprintf("Function '%s' not found (searched %d chunks)", functionName, len(results)), workspaceInfo), nil
 	}
 
 	var chunk codetypes.CodeChunk
@@ -229,7 +238,11 @@ processResults:
 
 	// PHP: use PHP analyzer directly on the source file to build a rich function/method view
 	if chunk.Language == "php" {
-		return t.buildPHPFunctionResponse(&chunk, codeBody, outputFormat)
+		res, err := t.buildPHPFunctionResponse(&chunk, codeBody, outputFormat)
+		if err != nil {
+			return "", err
+		}
+		return AttachAIWarning(res, workspaceInfo), nil
 	}
 
 	// Default (Go and others): optional JSON output, otherwise keep existing
@@ -256,16 +269,28 @@ processResults:
 				Code: codeBody,
 			}
 		}
+
+		if workspacePath != "" {
+			if desc.Metadata == nil {
+				desc.Metadata = make(map[string]any)
+			}
+			desc.Metadata["workspace_root"] = workspacePath
+		}
+
 		data, err := json.MarshalIndent(desc, "", "  ")
 		if err != nil {
-			return "", fmt.Errorf("failed to marshal Go function descriptor: %w", err)
+			return "", fmt.Errorf("failed to marshal function descriptor: %w", err)
 		}
-		return string(data), nil
+		return AttachAIWarning(string(data), workspaceInfo), nil
 	}
 
 	// Markdown behaviour (Go and others)
 	var response strings.Builder
-	response.WriteString(fmt.Sprintf("# %s\n\n", chunk.Name))
+	if workspacePath != "" {
+		response.WriteString(fmt.Sprintf("# %s (Workspace: %s)\n\n", chunk.Name, workspacePath))
+	} else {
+		response.WriteString(fmt.Sprintf("# %s\n\n", chunk.Name))
+	}
 	response.WriteString(fmt.Sprintf("**Type:** %s\n", chunk.Type))
 	response.WriteString(fmt.Sprintf("**Package:** %s\n", chunk.Package))
 	response.WriteString(fmt.Sprintf("**Signature:** `%s`\n\n", chunk.Signature))
@@ -282,7 +307,7 @@ processResults:
 		response.WriteString("\n```\n")
 	}
 
-	return response.String(), nil
+	return AttachAIWarning(response.String(), workspaceInfo), nil
 }
 
 // buildGoFunctionDescriptor constructs a richer FunctionDescriptor for Go

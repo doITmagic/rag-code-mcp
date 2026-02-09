@@ -2,8 +2,10 @@ package healthcheck
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -15,8 +17,23 @@ type CheckResult struct {
 	Error   error
 }
 
+// OllamaModel represents basic item in tags response
+type OllamaModel struct {
+	Name string `json:"name"`
+}
+
+// OllamaTagsResponse represents response from /api/tags
+type OllamaTagsResponse struct {
+	Models []OllamaModel `json:"models"`
+}
+
 // CheckOllama verifies Ollama is running and accessible
 func CheckOllama(baseURL string) CheckResult {
+	return CheckOllamaWithModels(baseURL, nil)
+}
+
+// CheckOllamaWithModels verifies Ollama and checks for required models
+func CheckOllamaWithModels(baseURL string, requiredModels []string) CheckResult {
 	result := CheckResult{
 		Service: "Ollama",
 		Status:  "unknown",
@@ -47,14 +64,62 @@ func CheckOllama(baseURL string) CheckResult {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusOK {
-		result.Status = "ok"
-		result.Message = fmt.Sprintf("Connected to Ollama at %s", baseURL)
-	} else {
+	if resp.StatusCode != http.StatusOK {
 		result.Status = "error"
 		result.Message = fmt.Sprintf("Ollama returned status %d", resp.StatusCode)
+		return result
 	}
 
+	// If we have required models, check them
+	if len(requiredModels) > 0 {
+		var tags OllamaTagsResponse
+		if err := json.NewDecoder(resp.Body).Decode(&tags); err != nil {
+			result.Status = "error"
+			result.Message = "Failed to parse Ollama models response"
+			return result
+		}
+
+		// Normalize helper: returns model name and tag
+		normalize := func(name string) (string, string) {
+			if !strings.Contains(name, ":") {
+				return name, "latest"
+			}
+			parts := strings.SplitN(name, ":", 2)
+			return parts[0], parts[1]
+		}
+
+		var missing []string
+		for _, requiredModel := range requiredModels {
+			reqBase, reqTag := normalize(requiredModel)
+			found := false
+
+			for _, m := range tags.Models {
+				mBase, mTag := normalize(m.Name)
+				if reqBase == mBase && reqTag == mTag {
+					found = true
+					break
+				}
+			}
+
+			if !found {
+				missing = append(missing, requiredModel)
+			}
+		}
+
+		if len(missing) > 0 {
+			result.Status = "error"
+			result.Message = fmt.Sprintf("Missing models: %s (Ollama implicit :latest tag might cause mismatch if you have specific versions installed)", strings.Join(missing, ", "))
+			return result
+		}
+
+		// Success: include verified models in message
+		result.Status = "ok"
+		result.Message = fmt.Sprintf("Connected to Ollama at %s (Verified: %s)", baseURL, strings.Join(requiredModels, ", "))
+		return result
+	}
+
+	result.Status = "ok"
+	result.Message = fmt.Sprintf("Connected to Ollama at %s", baseURL)
 	return result
 }
 
@@ -105,6 +170,14 @@ func CheckQdrant(url string) CheckResult {
 func CheckAll(ollamaURL, qdrantURL string) []CheckResult {
 	return []CheckResult{
 		CheckOllama(ollamaURL),
+		CheckQdrant(qdrantURL),
+	}
+}
+
+// CheckAllWithModels runs all health checks including configured models
+func CheckAllWithModels(ollamaURL, qdrantURL string, requiredModels []string) []CheckResult {
+	return []CheckResult{
+		CheckOllamaWithModels(ollamaURL, requiredModels),
 		CheckQdrant(qdrantURL),
 	}
 }

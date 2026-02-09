@@ -21,7 +21,7 @@ This provides:
 **Before (Automatic Detection)**:
 ```json
 {
-  "tool": "index_workspace",
+  "tool": "rag_index_workspace",
   "file_path": "/home/user/projects/myapp/src/handlers/auth.go"
 }
 ```
@@ -30,13 +30,13 @@ Tool searches UP from `auth.go` → finds `.git` in `/home/user/projects/myapp/`
 **After (Explicit Root)** - RECOMMENDED:
 ```json
 {
-  "tool": "index_workspace",
+  "tool": "rag_index_workspace",
   "workspace_root": "/home/user/projects/myapp"
 }
 ```
 Tool uses `/home/user/projects/myapp` directly → No searching needed!
 
-### For Search Operations (search_code, etc.)
+### For Search Operations (rag_search_code, etc.)
 
 Search operations DON'T need `workspace_root` because:
 1. The workspace is already indexed with a unique ID
@@ -46,7 +46,7 @@ Search operations DON'T need `workspace_root` because:
 **Example**:
 ```json
 {
-  "tool": "search_code",
+  "tool": "rag_search_code",
   "query": "authentication",
   "file_path": "/home/user/projects/myapp/src/auth.go"
 }
@@ -56,13 +56,13 @@ Search operations DON'T need `workspace_root` because:
 - Searches in appropriate collection
 - Fast and secure!
 
-## Usage: index_workspace Tool
+## Usage: rag_index_workspace Tool
 
 ### Schema
 
 ```json
 {
-  "tool": "index_workspace",
+  "tool": "rag_index_workspace",
   "params": {
     "workspace_root": "string (optional)",  // NEW: Explicit project root
     "file_path": "string (optional)",        // Fallback: Any file in project
@@ -78,7 +78,7 @@ Search operations DON'T need `workspace_root` because:
 
 ```json
 {
-  "tool": "index_workspace",
+  "tool": "rag_index_workspace",
   "params": {
     "workspace_root": "/home/user/projects/myapp"
   }
@@ -93,7 +93,7 @@ Search operations DON'T need `workspace_root` because:
 
 ```json
 {
-  "tool": "index_workspace",
+  "tool": "rag_index_workspace",
   "params": {
     "file_path": "/home/user/projects/myapp/main.go"
   }
@@ -107,7 +107,7 @@ Search operations DON'T need `workspace_root` because:
 
 ```json
 {
-  "tool": "index_workspace",
+  "tool": "rag_index_workspace",
   "params": {
     "workspace_root": "/home/user/projects/myapp",
     "language": "go"
@@ -168,9 +168,9 @@ Letting AI provide the workspace root explicitly is:
 
 ## Implementation Details
 
-### Priority Order in index_workspace
+### Priority Order in rag_index_workspace
 
-When `index_workspace` is called:
+When `rag_index_workspace` is called:
 
 1. **Check for `workspace_root`** (highest priority)
    - If present, use it directly
@@ -217,12 +217,12 @@ When building MCP integrations for `index_workspace`:
 
 ```python
 class MCPClient:
-    def index_workspace(self):
+    def rag_index_workspace(self):
         # Get project root from IDE
         project_root = self.get_project_root_from_ide()
         
         # Call index_workspace with explicit root
-        return self.mcp_server.execute('index_workspace', {
+        return self.mcp_server.execute('rag_index_workspace', {
             'workspace_root': project_root
         })
     
@@ -239,7 +239,7 @@ class MCPClient:
 ```typescript
 const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
-const result = await mcpClient.callTool('index_workspace', {
+const result = await mcpClient.callTool('rag_index_workspace', {
     workspace_root: workspaceRoot  // Explicit root from VS Code
 });
 ```
@@ -250,7 +250,7 @@ const result = await mcpClient.callTool('index_workspace', {
 const projectRoot = getCurrentProjectRoot();
 
 await mcp.execute({
-    tool: 'index_workspace',
+    tool: 'rag_index_workspace',
     params: {
         workspace_root: projectRoot  // Explicit root from IDE
     }
@@ -259,7 +259,7 @@ await mcp.execute({
 
 ## Why Only for index_workspace?
 
-**Q**: Why not add `workspace_root` to search tools (`search_code`, `get_function_details`, etc.)?
+**Q**: Why not add `workspace_root` to search tools (`rag_search_code`, `rag_get_function_details`, etc.)?
 
 **A**: Search operations don't need it because:
 
@@ -274,17 +274,17 @@ The filesystem traversal risk ONLY exists during **indexing**, not during **sear
 
 | Operation | Needs workspace_root? | Filesystem Access? | Why? |
 |-----------|----------------------|-------------------|------|
-| **index_workspace** | ✅ Yes (recommended) | ✅ Yes (walks entire project) | Must scan all files to index |
-| **search_code** | ❌ No | ❌ No (only DB query) | Searches already-indexed data |
-| **get_function_details** | ❌ No | ❌ No (only DB query) | Looks up in indexed collection |
-| **find_type_definition** | ❌ No | ❌ No (only DB query) | Searches indexed types |
+| **rag_index_workspace** | ✅ Yes (recommended) | ✅ Yes (walks entire project) | Must scan all files to index |
+| **rag_search_code** | ❌ No | ❌ No (only DB query) | Searches already-indexed data |
+| **rag_get_function_details** | ❌ No | ❌ No (only DB query) | Looks up in indexed collection |
+| **rag_find_type_definition** | ❌ No | ❌ No (only DB query) | Searches indexed types |
 
 ## Backward Compatibility
 
 The `workspace_root` parameter is **optional**. Existing behavior is preserved:
 
-- `index_workspace` without `workspace_root` → automatic detection (as before)
-- `index_workspace` with `workspace_root` → explicit root (new behavior)
+- `rag_index_workspace` without `workspace_root` → automatic detection (as before)
+- `rag_index_workspace` with `workspace_root` → explicit root (new behavior)
 - No breaking changes to existing integrations
 
 ## Testing
@@ -302,7 +302,7 @@ echo "package main" > main.go
 curl -X POST http://localhost:8080/mcp \
   -H "Content-Type: application/json" \
   -d '{
-    "tool": "index_workspace",
+    "tool": "rag_index_workspace",
     "params": {
       "workspace_root": "/tmp/test-project"
     }
@@ -316,7 +316,7 @@ curl -X POST http://localhost:8080/mcp \
 curl -X POST http://localhost:8080/mcp \
   -H "Content-Type: application/json" \
   -d '{
-    "tool": "index_workspace",
+    "tool": "rag_index_workspace",
     "params": {
       "workspace_root": "/nonexistent/path"
     }

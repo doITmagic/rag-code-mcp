@@ -19,13 +19,22 @@ type HybridSearchTool struct {
 	memory           memory.LongTermMemory
 	embedder         llm.Provider
 	workspaceManager *workspace.Manager
+	searchLimit      int
 }
 
 // NewHybridSearchTool creates a new hybrid search tool. Accepts the main code memory and embedding provider.
 func NewHybridSearchTool(mem memory.LongTermMemory, embedder llm.Provider) *HybridSearchTool {
 	return &HybridSearchTool{
-		memory:   mem,
-		embedder: embedder,
+		memory:      mem,
+		embedder:    embedder,
+		searchLimit: 5,
+	}
+}
+
+// SetSearchLimit sets the default search limit
+func (t *HybridSearchTool) SetSearchLimit(limit int) {
+	if limit > 0 {
+		t.searchLimit = limit
 	}
 }
 
@@ -35,11 +44,11 @@ func (t *HybridSearchTool) SetWorkspaceManager(wm *workspace.Manager) {
 }
 
 // Name returns the MCP tool name.
-func (t *HybridSearchTool) Name() string { return "hybrid_search" }
+func (t *HybridSearchTool) Name() string { return "rag_hybrid_search" }
 
 // Description provides a description for the tool.
 func (t *HybridSearchTool) Description() string {
-	return "Combined keyword + semantic search - use ONLY when you need EXACT matches (variable names, error messages, specific identifiers). Returns complete source code with file path, line numbers, and metadata. Use search_code FIRST for general exploration; use this when search_code misses exact terms. Supports Go, PHP, Python, HTML."
+	return "Combined keyword + semantic search - use ONLY when you need EXACT matches (variable names, error messages, specific identifiers). Returns complete source code with file path, line numbers, and metadata. Use rag_search_code FIRST for general exploration; use this when rag_search_code misses exact terms. Supports Go, PHP, Python, HTML. IMPORTANT: Always provide the 'file_path' of the file you are currently working on for better context detection.\nExample: { \"query\": \"func ProcessOrder\", \"file_path\": \"/path/to/project/orders.go\" }"
 }
 
 type hybridScore struct {
@@ -56,14 +65,14 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 		return "", fmt.Errorf("query parameter is required")
 	}
 
-	limit := 5
+	limit := t.searchLimit
 	if v, ok := params["limit"].(float64); ok {
 		limit = int(v)
 	} else if v, ok := params["limit"].(int); ok {
 		limit = v
 	}
 	if limit <= 0 {
-		limit = 5
+		limit = t.searchLimit
 	}
 
 	// Optional output format: json (default) or markdown
@@ -72,24 +81,28 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 		outputFormat = strings.ToLower(of)
 	}
 
-	// file_path is required for workspace detection
-	filePath := extractFilePathFromParams(params)
-	if filePath == "" {
-		return "", fmt.Errorf("file_path parameter is required for hybrid_search. Please provide a file path from your workspace")
-	}
-
 	// Try workspace detection
 	var workspaceMem memory.LongTermMemory
 	var workspacePath string
 	var collectionName string
 
+	var workspaceInfo *workspace.Info
 	if t.workspaceManager != nil {
-		workspaceInfo, err := t.workspaceManager.DetectWorkspace(params)
-		if err == nil && workspaceInfo != nil {
+		var err error
+		workspaceInfo, err = DetectAndRegisterWorkspace(t.workspaceManager, params)
+		if err != nil {
+			return HandleWorkspaceDetectionError(err, "")
+		}
+
+		if workspaceInfo != nil {
 			workspacePath = workspaceInfo.Root
 
 			// Detect language from file path or use first detected language
-			language := inferLanguageFromPath(filePath)
+			language := ""
+			filePath := extractFilePathFromParams(params)
+			if filePath != "" {
+				language = inferLanguageFromPath(filePath)
+			}
 			if language == "" && len(workspaceInfo.Languages) > 0 {
 				language = workspaceInfo.Languages[0]
 			}
@@ -103,12 +116,12 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 				// Check if indexing is in progress
 				indexKey := workspaceInfo.ID + "-" + language
 				if t.workspaceManager.IsIndexing(indexKey) {
-					return fmt.Sprintf("⏳ Workspace '%s' language '%s' is currently being indexed in the background.\n"+
+					return AttachAIWarning(fmt.Sprintf("⏳ Workspace '%s' language '%s' is currently being indexed in the background.\n"+
 						"Please try again in a few moments.\n"+
 						"Workspace: %s\n"+
 						"Language: %s\n"+
 						"Collection: %s",
-						workspaceInfo.Root, language, workspaceInfo.Root, language, collectionName), nil
+						workspaceInfo.Root, language, workspaceInfo.Root, language, collectionName), workspaceInfo), nil
 				}
 
 				// Check if collection exists before proceeding
@@ -116,7 +129,7 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 					if err != nil {
 						return "", err
 					}
-					return msg, nil
+					return AttachAIWarning(msg, workspaceInfo), nil
 				}
 
 				workspaceMem = mem
@@ -173,17 +186,17 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 				if err != nil {
 					return "", err
 				}
-				return msg, nil
+				return AttachAIWarning(msg, workspaceInfo), nil
 			}
 		}
 
 		if outputFormat == "markdown" {
 			if workspaceMem != nil {
-				return fmt.Sprintf("No relevant code found in workspace '%s'.", workspacePath), nil
+				return AttachAIWarning(fmt.Sprintf("No relevant code found in workspace '%s'.", workspacePath), workspaceInfo), nil
 			}
-			return "No relevant code found.", nil
+			return AttachAIWarning("No relevant code found.", workspaceInfo), nil
 		}
-		return "[]", nil
+		return AttachAIWarning("[]", workspaceInfo), nil
 	}
 
 	lowerQuery := strings.ToLower(query)
@@ -215,14 +228,14 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 			topSemantic = topSemantic[:limit]
 		}
 		if outputFormat == "markdown" {
-			return formatHybridResults(topSemantic, false, workspaceMem != nil, workspacePath), nil
+			return AttachAIWarning(formatHybridResults(topSemantic, false, workspaceMem != nil, workspacePath), workspaceInfo), nil
 		}
 		descriptors := buildSymbolDescriptorsFromDocs(topSemantic)
 		data, err := json.MarshalIndent(descriptors, "", "  ")
 		if err != nil {
-			return "", fmt.Errorf("failed to marshal hybrid_search results: %w", err)
+			return "", fmt.Errorf("failed to marshal rag_hybrid_search results: %w", err)
 		}
-		return string(data), nil
+		return AttachAIWarning(string(data), workspaceInfo), nil
 	}
 
 	// Combine scores (60% semantic + 40% normalized lexical)
@@ -255,15 +268,25 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 	}
 
 	if outputFormat == "markdown" {
-		return formatHybridResults(finalDocs, true, workspaceMem != nil, workspacePath), nil
+		return AttachAIWarning(formatHybridResults(finalDocs, true, workspaceMem != nil, workspacePath), workspaceInfo), nil
 	}
 
 	descriptors := buildSymbolDescriptorsFromDocs(finalDocs)
+	// Add workspace info to metadata of each descriptor for AI verification
+	for i := range descriptors {
+		if descriptors[i].Metadata == nil {
+			descriptors[i].Metadata = make(map[string]any)
+		}
+		if workspacePath != "" {
+			descriptors[i].Metadata["workspace_root"] = workspacePath
+		}
+	}
+
 	data, err := json.MarshalIndent(descriptors, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal hybrid_search results: %w", err)
+		return "", fmt.Errorf("failed to marshal rag_hybrid_search results: %w", err)
 	}
-	return string(data), nil
+	return AttachAIWarning(string(data), workspaceInfo), nil
 }
 
 func filterTokens(tokens []string) []string {

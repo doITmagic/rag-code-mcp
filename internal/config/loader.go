@@ -124,6 +124,7 @@ func DefaultConfig() *Config {
 			Model:          "",
 			Include:        []string{"**/*.go"},
 			Exclude:        []string{"**/*_test.go", "vendor/**", ".git/**", "testdata/**"},
+			SearchLimit:    5,
 		},
 		Docs: DocsConfig{
 			Collection: "do-ai-docs",
@@ -143,6 +144,9 @@ func DefaultConfig() *Config {
 			IndexInclude:       []string{}, // Empty means use global rag_code.include
 			IndexExclude:       []string{}, // Empty means use global rag_code.exclude
 			AutoCreateIDERules: true,
+		},
+		HealthCheck: HealthCheckConfig{
+			EnableOnStartup: true,
 		},
 	}
 }
@@ -220,6 +224,11 @@ func applyEnvOverrides(cfg *Config) {
 			cfg.RagCode.IndexOnStartup = v
 		}
 	}
+	if searchLimit := os.Getenv("SEARCH_LIMIT"); searchLimit != "" {
+		if v, err := strconv.Atoi(searchLimit); err == nil {
+			cfg.RagCode.SearchLimit = v
+		}
+	}
 
 	// Workspace configuration overrides
 	if wsEnabled := os.Getenv("WORKSPACE_ENABLED"); wsEnabled != "" {
@@ -245,6 +254,13 @@ func applyEnvOverrides(cfg *Config) {
 			cfg.Workspace.AutoCreateIDERules = v
 		}
 	}
+
+	// HealthCheck configuration overrides
+	if healthOnStartup := os.Getenv("HEALTH_CHECK_ON_STARTUP"); healthOnStartup != "" {
+		if v, err := strconv.ParseBool(healthOnStartup); err == nil {
+			cfg.HealthCheck.EnableOnStartup = v
+		}
+	}
 }
 
 // migrateEmbeddingModel automatically migrates from old unstable embedding model
@@ -261,7 +277,7 @@ func migrateEmbeddingModel(cfg *Config) bool {
 			log.Printf("⚠️  MIGRATION: Detected deprecated embedding model '%s'", deprecated)
 			log.Printf("   Automatically upgrading to stable model '%s'", newStableModel)
 			log.Printf("   Note: Existing indexed data will need to be re-indexed.")
-			log.Printf("   Use 'index_workspace' tool with 'recreate: true' to rebuild indexes.")
+			log.Printf("   Use 'rag_index_workspace' tool with 'recreate: true' to rebuild indexes.")
 
 			cfg.LLM.OllamaEmbed = newStableModel
 			migrated = true

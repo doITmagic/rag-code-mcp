@@ -45,9 +45,76 @@ type Manager struct {
 	watchersMu sync.Mutex
 	watchers   map[string]*FileWatcher
 
+	// Known workspaces to support fallback detection when file_path is missing
+	// Maps workspace ID -> Info
+	knownWorkspacesMu sync.RWMutex
+	knownWorkspaces   map[string]*Info
+
 	// Mutexes per collection for migration/init operations to prevent race conditions
 	collLocksMu sync.Mutex
 	collLocks   map[string]*sync.Mutex
+}
+
+// GetConfig returns the workspace manager configuration
+func (m *Manager) GetConfig() *config.Config {
+	return m.config
+}
+
+// RegisterWorkspace explicitly adds a workspace to the list of known workspaces for fallback detection
+func (m *Manager) RegisterWorkspace(info *Info) {
+	if info == nil {
+		return
+	}
+	m.knownWorkspacesMu.Lock()
+	if m.knownWorkspaces == nil {
+		m.knownWorkspaces = make(map[string]*Info)
+	}
+	m.knownWorkspaces[info.ID] = info
+	m.knownWorkspacesMu.Unlock()
+}
+
+// AddWorkspaceRoots registers multiple workspace roots at once
+func (m *Manager) AddWorkspaceRoots(roots []string) {
+	for _, root := range roots {
+		// Convert to absolute path
+		absPath, err := filepath.Abs(root)
+		if err != nil {
+			log.Printf("⚠️ Failed to resolve absolute path for root %s: %v", root, err)
+			continue
+		}
+
+		// Use detector to get info
+		info, err := m.detector.DetectFromPath(absPath)
+		if err != nil {
+			// Skip invalid roots silently during bulk registration
+			continue
+		}
+
+		// Update known workspaces
+		m.RegisterWorkspace(info)
+
+		log.Printf("📂 Registered workspace root via protocol: %s", info.Root)
+	}
+}
+
+// GetDetectedLanguages returns the list of programming languages detected in the workspace
+func (m *Manager) GetDetectedLanguages(info *Info) []string {
+	if len(info.Languages) > 0 {
+		return info.Languages
+	}
+
+	// If not already detected, run a scan
+	scan, err := m.scanWorkspace(info)
+	if err != nil {
+		return []string{}
+	}
+
+	langs := make([]string, 0, len(scan.LanguageDirs))
+	for lang := range scan.LanguageDirs {
+		langs = append(langs, lang)
+	}
+	sort.Strings(langs)
+	return langs
 }
 
 type workspaceScan struct {
@@ -67,7 +134,6 @@ var defaultSkipDirs = map[string]struct{}{
 	"dist":         {},
 	"build":        {},
 	"storage":      {},
-	"public":       {},
 }
 
 func addDirForLanguage(scan *workspaceScan, cache map[string]map[string]struct{}, language, dir string) {
@@ -234,7 +300,20 @@ func NewManager(qdrant *storage.QdrantClient, llm llm.Provider, cfg *config.Conf
 		scanFingerprints: make(map[string]string),
 		watchers:         make(map[string]*FileWatcher),
 		collLocks:        make(map[string]*sync.Mutex),
+		knownWorkspaces:  make(map[string]*Info),
 	}
+}
+
+// GetKnownWorkspaces returns a list of all workspaces detected in the current session
+func (m *Manager) GetKnownWorkspaces() []*Info {
+	m.knownWorkspacesMu.RLock()
+	defer m.knownWorkspacesMu.RUnlock()
+
+	workspaces := make([]*Info, 0, len(m.knownWorkspaces))
+	for _, ws := range m.knownWorkspaces {
+		workspaces = append(workspaces, ws)
+	}
+	return workspaces
 }
 
 // getCollectionMutex returns a mutex for a specific collection name, creating it if needed
@@ -316,6 +395,72 @@ func (m *Manager) DetectWorkspace(params map[string]interface{}) (*Info, error) 
 	// Detect workspace
 	info, err := m.detector.DetectFromParams(params)
 	if err != nil {
+		// If detection failed, check if we have exactly ONE known workspace to fall back to
+		// but ONLY if the user didn't provide an explicit path that failed
+		m.knownWorkspacesMu.RLock()
+		var fallback *Info
+		knownCount := len(m.knownWorkspaces)
+		var ambiguousWorkspaces []*Info
+
+		if knownCount == 1 {
+			for _, ws := range m.knownWorkspaces {
+				fallback = ws
+				break
+			}
+		} else if knownCount > 1 {
+			ambiguousWorkspaces = make([]*Info, 0, knownCount)
+			for _, ws := range m.knownWorkspaces {
+				ambiguousWorkspaces = append(ambiguousWorkspaces, ws)
+			}
+		}
+		m.knownWorkspacesMu.RUnlock()
+
+		// If exactly one workspace, use as fallback
+		if knownCount == 1 && fallback != nil {
+			// Check if we have any path parameter that actually failed.
+			// Only consider actual string values for path parameters.
+			hasPath := false
+			for _, p := range []string{"file_path", "filePath", "path", "file", "workspace_root"} {
+				if v, ok := params[p]; ok {
+					if s, ok := v.(string); ok && s != "" {
+						hasPath = true
+						break
+					}
+				}
+			}
+
+			if !hasPath {
+				log.Printf("⚠️ No path provided for workspace detection. Falling back to the only active workspace: %s", fallback.Root)
+
+				// Clone the fallback info to add a warning to the AI
+				warningWS := *fallback
+				warningWS.AIWarning = "This workspace was selected as a fallback because no 'file_path' was provided. To ensure accurate context in the future and support multiple workspace environments, please always provide the absolute 'file_path' of the file you are working on."
+
+				return &warningWS, nil
+			}
+		}
+
+		// If multiple workspaces, return helpful error
+		if knownCount > 1 {
+			var list strings.Builder
+			// Sort workspaces by root path for consistent output
+			sort.Slice(ambiguousWorkspaces, func(i, j int) bool {
+				return ambiguousWorkspaces[i].Root < ambiguousWorkspaces[j].Root
+			})
+
+			for _, info := range ambiguousWorkspaces {
+				langs := "no languages detected"
+				if len(info.Languages) > 0 {
+					langs = strings.Join(info.Languages, ", ")
+				}
+				list.WriteString(fmt.Sprintf("- %s [%s]\n", info.Root, langs))
+			}
+
+			return nil, fmt.Errorf("Could not detect workspace and multiple workspaces are active. "+
+				"Please provide the absolute 'file_path' to specify which project context to use.\n\n"+
+				"Active workspaces:\n%s", list.String())
+		}
+
 		return nil, err
 	}
 
@@ -323,6 +468,7 @@ func (m *Manager) DetectWorkspace(params map[string]interface{}) (*Info, error) 
 	if m.config != nil && m.config.Workspace.CollectionPrefix != "" {
 		info.CollectionPrefix = m.config.Workspace.CollectionPrefix
 	}
+	// NOTE: Registration is now explicit via RegisterWorkspace() to avoid side effects in pure detection.
 
 	// Cache result
 	if cacheKey != "" {

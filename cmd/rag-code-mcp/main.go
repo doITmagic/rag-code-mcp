@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -447,7 +448,13 @@ func main() {
 		}
 
 		fmt.Printf("Found new version: %s\nDownloading...\n", info.LatestVersion)
-		tempFile := filepath.Join(os.TempDir(), "ragcode_update.tar.gz")
+
+		// Determine extension from asset URL
+		ext := ".tar.gz"
+		if strings.HasSuffix(info.AssetURL, ".zip") {
+			ext = ".zip"
+		}
+		tempFile := filepath.Join(os.TempDir(), "ragcode_update"+ext)
 		if err := info.DownloadAndVerify(tempFile); err != nil {
 			log.Fatalf("Update failed: %v", err)
 		}
@@ -1112,6 +1119,49 @@ func getToolSchema(toolName string) map[string]interface{} {
 			"required": []string{"query"},
 		}
 
+	case "list_skills":
+		return map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+		}
+
+	case "install_skill":
+		return map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"skill_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the skill to install or uninstall",
+				},
+				"active": map[string]interface{}{
+					"type":        "boolean",
+					"description": "True to install the skill, false to uninstall it",
+				},
+				"file_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional: file path to help detect workspace context",
+				},
+			},
+			"required": []string{"skill_id", "active"},
+		}
+
+	case "check_update":
+		return map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"force": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Force check ignoring cache (default: false)",
+				},
+			},
+		}
+
+	case "apply_update":
+		return map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+		}
+
 	default:
 		return map[string]interface{}{
 			"type":       "object",
@@ -1304,9 +1354,15 @@ func ensureIDERules(cfg *config.Config, filePath string) {
 	}
 }
 
-var lastUpdateCheck time.Time
+var (
+	lastUpdateCheck      time.Time
+	lastUpdateCheckMutex sync.Mutex
+)
 
 func triggerBackgroundUpdateCheck() {
+	lastUpdateCheckMutex.Lock()
+	defer lastUpdateCheckMutex.Unlock()
+
 	// Only check if more than 1 hour passed since last check in THIS session
 	// to avoid spamming go-routines, while updater.CheckForUpdates handles the 24h logic
 	if time.Since(lastUpdateCheck) < 1*time.Hour {
@@ -1315,8 +1371,8 @@ func triggerBackgroundUpdateCheck() {
 	lastUpdateCheck = time.Now()
 
 	go func() {
-		info, _ := updater.CheckForUpdates(Version, false)
-		if info != nil {
+		info, err := updater.CheckForUpdates(Version, false)
+		if err == nil && info != nil {
 			logger.Info("🌟 New version available: %s. Run 'apply_update' to upgrade.", info.LatestVersion)
 		}
 	}()

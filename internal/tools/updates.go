@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
+	"strings"
 
 	"github.com/doITmagic/rag-code-mcp/internal/updater"
 )
@@ -61,12 +61,26 @@ func (t *ApplyUpdateTool) Execute(ctx context.Context, args map[string]interface
 		return "✅ You are already on the latest version.", nil
 	}
 
-	tempFile := filepath.Join(os.TempDir(), "ragcode_update.tar.gz")
-	if err := info.DownloadAndVerify(tempFile); err != nil {
+	// Create a unique temporary file securely
+	// Use pattern with extension based on asset type
+	ext := ".tar.gz"
+	if strings.HasSuffix(info.AssetURL, ".zip") {
+		ext = ".zip"
+	}
+
+	tempFile, err := os.CreateTemp("", "ragcode_update_*"+ext)
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tempPath := tempFile.Name()
+	tempFile.Close() // Close immediately, DownloadAndVerify re-opens/overwrites it
+	defer os.Remove(tempPath)
+
+	if err := info.DownloadAndVerify(tempPath); err != nil {
 		return "", fmt.Errorf("failed to download update: %w", err)
 	}
 
-	if err := updater.ApplyUpdate(tempFile); err != nil {
+	if err := updater.ApplyUpdate(tempPath); err != nil {
 		return "", fmt.Errorf("failed to install update: %w", err)
 	}
 

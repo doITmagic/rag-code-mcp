@@ -23,7 +23,14 @@ func (t *InstallSkillTool) Name() string {
 }
 
 func (t *InstallSkillTool) Description() string {
-	return "Installs or uninstalls an AI skill to/from the current workspace. Param 'active' (bool) determines if it should be installed (true) or removed (false)."
+	return `Installs or uninstalls an AI skill to/from the current workspace. 
+Param 'skill_id' is the unique identifier of the skill (e.g., 'go-best-practices', 'ragcode-priority').
+Param 'active' (bool) determines if it should be installed (true) or removed (false).
+Param 'file_path' (string) is HIGHLY RECOMMENDED to help detect the correct workspace root.
+
+EXAMPLES:
+- mcp_ragcode_install_skill(skill_id="go-best-practices", active=true, file_path="/path/to/project/go.mod")
+- mcp_ragcode_install_skill(skill_id="ragcode-priority", active=true, file_path="/path/to/project/README.md")`
 }
 
 func (t *InstallSkillTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -40,7 +47,9 @@ func (t *InstallSkillTool) Execute(ctx context.Context, args map[string]interfac
 	// Detect workspace to know where to install the skill
 	workspaceInfo, err := t.workspaceManager.DetectWorkspace(args)
 	if err != nil {
-		return "", fmt.Errorf("could not detect workspace for skill installation: %w", err)
+		return "", fmt.Errorf("could not detect workspace for skill installation: %w\n\n"+
+			"TIP: If automatic detection fails, please provide an explicit 'file_path' or 'workspace_root' "+
+			"to a directory in your project containing workspace markers (like .git, go.mod, package.json).", err)
 	}
 
 	workspaceRoot := workspaceInfo.Root

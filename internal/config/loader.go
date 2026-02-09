@@ -252,8 +252,8 @@ func migrateEmbeddingModel(cfg *Config) bool {
 	migrated := false
 
 	// List of deprecated/unstable models that should be migrated
-	deprecatedModels := []string{"nomic-embed-text"}
-	newStableModel := "mxbai-embed-large"
+	deprecatedModels := []string{}
+	newStableModel := "nomic-embed-text"
 
 	// Check if current model is deprecated
 	for _, deprecated := range deprecatedModels {

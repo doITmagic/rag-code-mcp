@@ -36,7 +36,7 @@ const (
 	ollamaContainer = "ragcode-ollama"
 	qdrantContainer = "ragcode-qdrant"
 	defaultModel    = "phi3:medium"
-	defaultEmbed    = "mxbai-embed-large"
+	defaultEmbed    = "nomic-embed-text"
 	installDirName  = ".local/share/ragcode"
 )
 

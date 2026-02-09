@@ -438,7 +438,7 @@ func main() {
 	// Handle update flag
 	if *updateFlag {
 		fmt.Println("Checking for updates...")
-		info, err := updater.CheckForUpdates(Version, true)
+		info, err := updater.CheckForUpdates(context.Background(), Version, true)
 		if err != nil {
 			log.Fatalf("Failed to check for updates: %v", err)
 		}
@@ -454,8 +454,16 @@ func main() {
 		if strings.HasSuffix(info.AssetURL, ".zip") {
 			ext = ".zip"
 		}
-		tempFile := filepath.Join(os.TempDir(), "ragcode_update"+ext)
-		if err := info.DownloadAndVerify(tempFile); err != nil {
+		// Create a unique temporary file securely
+		tmp, err := os.CreateTemp("", "ragcode_update_*"+ext)
+		if err != nil {
+			log.Fatalf("Failed to create temporary file for update: %v", err)
+		}
+		tempFile := tmp.Name()
+		tmp.Close()
+		defer os.Remove(tempFile)
+
+		if err := info.DownloadAndVerify(context.Background(), tempFile); err != nil {
 			log.Fatalf("Update failed: %v", err)
 		}
 
@@ -485,7 +493,7 @@ func main() {
 
 	// Background update check
 	go func() {
-		info, err := updater.CheckForUpdates(Version, false)
+		info, err := updater.CheckForUpdates(context.Background(), Version, false)
 		if err == nil && info != nil {
 			logger.Info("🌟 New version available: %s. Run 'rag-code-mcp --update' to upgrade.", info.LatestVersion)
 		}
@@ -1371,7 +1379,7 @@ func triggerBackgroundUpdateCheck() {
 	lastUpdateCheck = time.Now()
 
 	go func() {
-		info, err := updater.CheckForUpdates(Version, false)
+		info, err := updater.CheckForUpdates(context.Background(), Version, false)
 		if err == nil && info != nil {
 			logger.Info("🌟 New version available: %s. Run 'apply_update' to upgrade.", info.LatestVersion)
 		}

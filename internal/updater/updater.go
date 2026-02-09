@@ -3,6 +3,7 @@ package updater
 import (
 	"archive/zip"
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -85,7 +86,44 @@ func SaveUpdateCache(info *UpdateInfo) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+
+	// Write to a temporary file in the same directory and atomically replace
+	dir := filepath.Dir(path)
+	tmpFile, err := os.CreateTemp(dir, "update_cache_*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmpFile.Name()
+
+	// Ensure cleanup if we fail before rename
+	success := false
+	defer func() {
+		if !success {
+			tmpFile.Close()
+			os.Remove(tmpName)
+		}
+	}()
+
+	if _, err := tmpFile.Write(data); err != nil {
+		return err
+	}
+	if err := tmpFile.Sync(); err != nil {
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+
+	// On success, rename the temp file to the final path (atomic on same filesystem).
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+
+	// Set restrictive permissions
+	os.Chmod(path, 0600)
+
+	success = true
+	return nil
 }
 
 const (
@@ -102,7 +140,7 @@ type UpdateInfo struct {
 
 // CheckForUpdates queries GitHub for the latest release and compares it with the current version.
 // If force is false, it returns cached results if available and less than 24 hours old.
-func CheckForUpdates(currentVersion string, force bool) (*UpdateInfo, error) {
+func CheckForUpdates(ctx context.Context, currentVersion string, force bool) (*UpdateInfo, error) {
 	if currentVersion == "" || currentVersion == "dev" {
 		return nil, nil // Skip checks for dev versions
 	}
@@ -133,7 +171,14 @@ func CheckForUpdates(currentVersion string, force bool) (*UpdateInfo, error) {
 	}
 
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", GitHubOwner, GitHubRepo)
-	resp, err := http.Get(url)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch latest release: %w", err)
 	}
@@ -196,9 +241,9 @@ func CheckForUpdates(currentVersion string, force bool) (*UpdateInfo, error) {
 }
 
 // DownloadAndVerify downloads the archive and checks its integrity.
-func (info *UpdateInfo) DownloadAndVerify(destPath string) error {
+func (info *UpdateInfo) DownloadAndVerify(ctx context.Context, destPath string) error {
 	// 1. Download archive
-	if err := downloadFile(info.AssetURL, destPath); err != nil {
+	if err := downloadFile(ctx, info.AssetURL, destPath); err != nil {
 		return fmt.Errorf("failed to download asset: %w", err)
 	}
 
@@ -207,7 +252,13 @@ func (info *UpdateInfo) DownloadAndVerify(destPath string) error {
 		return fmt.Errorf("no checksum URL available")
 	}
 
-	resp, err := http.Get(info.ChecksumURL)
+	req, err := http.NewRequestWithContext(ctx, "GET", info.ChecksumURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create checksum request: %w", err)
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to download checksums: %w", err)
 	}
@@ -291,6 +342,14 @@ func ApplyUpdate(archivePath string) error {
 	// but it's safer to move the old one to a .old suffix and move the new one in.
 	oldBinPath := self + ".old"
 	if err := os.Rename(self, oldBinPath); err != nil {
+		if runtime.GOOS == "windows" {
+			// Fallback: write as .new and tell user
+			newBinPermanent := self + ".new"
+			if err := moveFile(newBinPath, newBinPermanent); err != nil {
+				return fmt.Errorf("failed to write new binary: %w", err)
+			}
+			return fmt.Errorf("could not replace running binary on Windows: %w. New version saved to %s. Please close the server and rename it manually.", err, filepath.Base(newBinPermanent))
+		}
 		return fmt.Errorf("failed to move current binary to %s: %w", oldBinPath, err)
 	}
 
@@ -324,8 +383,15 @@ func moveFile(src, dst string) error {
 	return os.WriteFile(dst, input, 0755)
 }
 
-func downloadFile(url, dest string) error {
-	resp, err := http.Get(url)
+func downloadFile(ctx context.Context, url, dest string) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return err
+	}
+
+	// Longer timeout for binary download
+	client := &http.Client{Timeout: 5 * time.Minute}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -380,18 +446,25 @@ func unzip(src, dest string) error {
 			return fmt.Errorf("illegal file path: %s", fpath)
 		}
 
-		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(fpath, os.ModePerm); err != nil {
+		// Security: Reject non-regular files (symlinks, devices, etc.)
+		info := f.FileInfo()
+		if !info.Mode().IsRegular() && !info.IsDir() {
+			continue
+		}
+
+		if info.IsDir() {
+			if err := os.MkdirAll(fpath, 0755); err != nil {
 				return err
 			}
 			continue
 		}
 
-		if err := os.MkdirAll(filepath.Dir(fpath), os.ModePerm); err != nil {
+		if err := os.MkdirAll(filepath.Dir(fpath), 0755); err != nil {
 			return err
 		}
 
-		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+		// Use fixed mode 0644 for extracted files for better security consistency
+		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 		if err != nil {
 			return err
 		}
@@ -402,13 +475,19 @@ func unzip(src, dest string) error {
 			return err
 		}
 
-		_, err = io.Copy(outFile, rc)
+		_, copyErr := io.Copy(outFile, rc)
 
-		outFile.Close()
-		rc.Close()
+		closeErr := outFile.Close()
+		rcErr := rc.Close()
 
-		if err != nil {
-			return err
+		if copyErr != nil {
+			return copyErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		if rcErr != nil {
+			return rcErr
 		}
 	}
 	return nil

@@ -1,6 +1,7 @@
 package updater
 
 import (
+	"archive/zip"
 	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Masterminds/semver/v3"
@@ -25,21 +27,32 @@ type UpdateCache struct {
 }
 
 var (
-	cacheFile = "update_cache.json"
+	cacheFile  = "update_cache.json"
+	cacheMutex sync.Mutex
 )
 
-func getCachePath() string {
-	home, err := os.UserHomeDir()
+func getCachePath() (string, error) {
+	configDir, err := os.UserConfigDir()
 	if err != nil {
-		return cacheFile // Fallback to CWD
+		return "", fmt.Errorf("failed to get user config dir: %w", err)
 	}
-	configDir := filepath.Join(home, ".config", "rag-code-mcp")
-	_ = os.MkdirAll(configDir, 0755)
-	return filepath.Join(configDir, cacheFile)
+
+	appConfigDir := filepath.Join(configDir, "rag-code-mcp")
+	if err := os.MkdirAll(appConfigDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create config dir: %w", err)
+	}
+
+	return filepath.Join(appConfigDir, cacheFile), nil
 }
 
 func GetCachedUpdate() (*UpdateCache, error) {
-	path := getCachePath()
+	cacheMutex.Lock()
+	defer cacheMutex.Unlock()
+
+	path, err := getCachePath()
+	if err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -52,6 +65,9 @@ func GetCachedUpdate() (*UpdateCache, error) {
 }
 
 func SaveUpdateCache(info *UpdateInfo) error {
+	cacheMutex.Lock()
+	defer cacheMutex.Unlock()
+
 	cache := UpdateCache{
 		LastCheck: time.Now(),
 	}
@@ -64,7 +80,12 @@ func SaveUpdateCache(info *UpdateInfo) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(getCachePath(), data, 0644)
+
+	path, err := getCachePath()
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
 }
 
 const (
@@ -255,9 +276,9 @@ func ApplyUpdate(archivePath string) error {
 			return fmt.Errorf("failed to extract tar.gz: %w", err)
 		}
 	} else if strings.HasSuffix(archivePath, ".zip") {
-		// Basic unzip command for windows/linux if available
-		// Ideally use archive/zip in Go for better cross-platform
-		return fmt.Errorf("zip extraction not yet implemented in updater")
+		if err := unzip(archivePath, tempDir); err != nil {
+			return fmt.Errorf("failed to extract zip: %w", err)
+		}
 	}
 
 	newBinPath := filepath.Join(tempDir, binaryName)
@@ -342,4 +363,51 @@ func calculateSHA256(path string) (string, error) {
 func getAssetName(url string) string {
 	parts := strings.Split(url, "/")
 	return parts[len(parts)-1]
+}
+
+func unzip(src, dest string) error {
+	r, err := zip.OpenReader(src)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+
+	for _, f := range r.File {
+		fpath := filepath.Join(dest, f.Name)
+
+		// Check for ZipSlip (Directory traversal)
+		if !strings.HasPrefix(fpath, filepath.Clean(dest)+string(os.PathSeparator)) {
+			return fmt.Errorf("illegal file path: %s", fpath)
+		}
+
+		if f.FileInfo().IsDir() {
+			os.MkdirAll(fpath, os.ModePerm)
+			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(fpath), os.ModePerm); err != nil {
+			return err
+		}
+
+		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+		if err != nil {
+			return err
+		}
+
+		rc, err := f.Open()
+		if err != nil {
+			outFile.Close()
+			return err
+		}
+
+		_, err = io.Copy(outFile, rc)
+
+		outFile.Close()
+		rc.Close()
+
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

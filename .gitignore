@@ -58,3 +58,4 @@ temp/
 # Scripts
 scripts/
 .ragcode/
+.agent/skills/

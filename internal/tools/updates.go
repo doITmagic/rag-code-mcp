@@ -19,7 +19,7 @@ func NewCheckUpdateTool(version string) *CheckUpdateTool {
 
 func (t *CheckUpdateTool) Name() string { return "check_update" }
 func (t *CheckUpdateTool) Description() string {
-	return "Checks for available ragcode-mcp updates on GitHub. Returns version info and release notes if a new version is available."
+	return "Checks for available ragcode-mcp updates on GitHub and reports if a newer version is available."
 }
 
 func (t *CheckUpdateTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -27,7 +27,7 @@ func (t *CheckUpdateTool) Execute(ctx context.Context, args map[string]interface
 	if f, ok := args["force"].(bool); ok {
 		force = f
 	}
-	info, err := updater.CheckForUpdates(t.version, force)
+	info, err := updater.CheckForUpdates(ctx, t.version, force)
 	if err != nil {
 		return "", fmt.Errorf("failed to check for updates: %w", err)
 	}
@@ -53,7 +53,7 @@ func (t *ApplyUpdateTool) Description() string {
 }
 
 func (t *ApplyUpdateTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
-	info, err := updater.CheckForUpdates(t.version, true)
+	info, err := updater.CheckForUpdates(ctx, t.version, true)
 	if err != nil {
 		return "", err
 	}
@@ -76,7 +76,7 @@ func (t *ApplyUpdateTool) Execute(ctx context.Context, args map[string]interface
 	tempFile.Close() // Close immediately, DownloadAndVerify re-opens/overwrites it
 	defer os.Remove(tempPath)
 
-	if err := info.DownloadAndVerify(tempPath); err != nil {
+	if err := info.DownloadAndVerify(ctx, tempPath); err != nil {
 		return "", fmt.Errorf("failed to download update: %w", err)
 	}
 

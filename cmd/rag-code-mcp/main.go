@@ -477,7 +477,7 @@ func main() {
 	go func() {
 		info, err := updater.CheckForUpdates(context.Background(), Version, false)
 		if err == nil && info != nil {
-			logger.Info("🌟 New version available: %s. Run 'rag-code-mcp --update' to upgrade.", info.LatestVersion)
+			logger.Info("🌟 New version available: %s. Run 'rag-code-mcp --update' or use the 'apply_update' tool to upgrade.", info.LatestVersion)
 		}
 	}()
 
@@ -1148,8 +1148,13 @@ func getToolSchema(toolName string) map[string]interface{} {
 
 	case "apply_update":
 		return map[string]interface{}{
-			"type":       "object",
-			"properties": map[string]interface{}{},
+			"type": "object",
+			"properties": map[string]interface{}{
+				"force": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Force update even if version matches (default: false)",
+				},
+			},
 		}
 
 	default:
@@ -1363,7 +1368,7 @@ func triggerBackgroundUpdateCheck() {
 	go func() {
 		info, err := updater.CheckForUpdates(context.Background(), Version, false)
 		if err == nil && info != nil {
-			logger.Info("🌟 New version available: %s. Run 'apply_update' to upgrade.", info.LatestVersion)
+			logger.Info("🌟 New version available: %s. Run 'rag-code-mcp --update' or use the 'apply_update' tool to upgrade.", info.LatestVersion)
 		}
 	}()
 }

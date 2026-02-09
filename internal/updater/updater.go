@@ -120,7 +120,11 @@ func SaveUpdateCache(info *UpdateInfo) error {
 	}
 
 	// Set restrictive permissions
-	os.Chmod(path, 0600)
+	if err := os.Chmod(path, 0600); err != nil {
+		// Non-fatal, just log or ignore if we really don't care,
+		// but checking it satisfies the linter and is better practice.
+		return fmt.Errorf("failed to set restrictive permissions on cache: %w", err)
+	}
 
 	success = true
 	return nil

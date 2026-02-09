@@ -227,7 +227,7 @@ func (info *UpdateInfo) DownloadAndVerify(destPath string) error {
 	return nil
 }
 
-// ApplyUpdate extracts the binary from the archive and replaces the current executable.
+// ApplyUpdate extracts the archive and replaces the binaries, then runs the installer for environment sync.
 func ApplyUpdate(archivePath string) error {
 	self, err := os.Executable()
 	if err != nil {
@@ -240,13 +240,13 @@ func ApplyUpdate(archivePath string) error {
 		return fmt.Errorf("could not resolve symlinks for %s: %w", self, err)
 	}
 
+	binDir := filepath.Dir(self)
+
 	tempDir, err := os.MkdirTemp("", "ragcode-update-*")
 	if err != nil {
 		return fmt.Errorf("could not create temp dir: %w", err)
 	}
 	defer os.RemoveAll(tempDir)
-
-	binaryName := filepath.Base(self)
 
 	// Extraction logic
 	if strings.HasSuffix(archivePath, ".tar.gz") {
@@ -255,36 +255,65 @@ func ApplyUpdate(archivePath string) error {
 			return fmt.Errorf("failed to extract tar.gz: %w", err)
 		}
 	} else if strings.HasSuffix(archivePath, ".zip") {
-		// Basic unzip command for windows/linux if available
-		// Ideally use archive/zip in Go for better cross-platform
 		return fmt.Errorf("zip extraction not yet implemented in updater")
 	}
 
-	newBinPath := filepath.Join(tempDir, binaryName)
-	if _, err := os.Stat(newBinPath); err != nil {
-		return fmt.Errorf("binary %s not found in archive", binaryName)
+	// Binaries to update
+	binaries := []string{"rag-code-mcp", "index-all", "ragcode-installer"}
+
+	for _, binName := range binaries {
+		srcPath := filepath.Join(tempDir, binName)
+		if runtime.GOOS == "windows" {
+			srcPath += ".exe"
+		}
+
+		// Skip if binary not in archive
+		if _, err := os.Stat(srcPath); err != nil {
+			continue
+		}
+
+		dstPath := filepath.Join(binDir, binName)
+		if runtime.GOOS == "windows" {
+			dstPath += ".exe"
+		}
+
+		// Swap logic for each binary
+		oldPath := dstPath + ".old"
+
+		// If the destination exists, move it to .old
+		if _, err := os.Stat(dstPath); err == nil {
+			_ = os.Remove(oldPath) // Remove existing .old if any
+			if err := os.Rename(dstPath, oldPath); err != nil {
+				return fmt.Errorf("failed to move %s to .old: %w", binName, err)
+			}
+		}
+
+		if err := moveFile(srcPath, dstPath); err != nil {
+			return fmt.Errorf("failed to replace %s: %w", binName, err)
+		}
+
+		if err := os.Chmod(dstPath, 0755); err != nil {
+			return fmt.Errorf("failed to set executable permissions for %s: %w", binName, err)
+		}
+
+		_ = os.Remove(oldPath)
 	}
 
-	// Swap logic
-	// On Linux/macOS we can rename the new binary over the old one
-	// but it's safer to move the old one to a .old suffix and move the new one in.
-	oldBinPath := self + ".old"
-	if err := os.Rename(self, oldBinPath); err != nil {
-		return fmt.Errorf("failed to move current binary to %s: %w", oldBinPath, err)
+	// Execute the new installer to sync models and IDE configs
+	installerName := "ragcode-installer"
+	if runtime.GOOS == "windows" {
+		installerName += ".exe"
 	}
+	installerPath := filepath.Join(binDir, installerName)
 
-	if err := moveFile(newBinPath, self); err != nil {
-		// Rollback if possible
-		_ = os.Rename(oldBinPath, self)
-		return fmt.Errorf("failed to replace binary: %w", err)
+	if _, err := os.Stat(installerPath); err == nil {
+		// Run installer in background or wait for it?
+		// We should wait to ensure everything is ready before informing the user.
+		cmd := exec.Command(installerPath, "--upgrade", "--skip-build")
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("update binaries succeeded, but installer failed: %w", err)
+		}
 	}
-
-	if err := os.Chmod(self, 0755); err != nil {
-		return fmt.Errorf("failed to set executable permissions: %w", err)
-	}
-
-	// Clean up old binary (might fail if still in use on some OSs, but that's fine)
-	_ = os.Remove(oldBinPath)
 
 	return nil
 }

@@ -1,0 +1,4 @@
+Time: 2026-02-06 14:49:03.911017622 +0200 EET m=+0.001824994
+Exe: /home/razvan/.local/share/ragcode/bin/rag-code-mcp
+CWD: /home/razvan
+Args: [/home/razvan/.local/share/ragcode/bin/rag-code-mcp]

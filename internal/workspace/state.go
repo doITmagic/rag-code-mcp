@@ -67,10 +67,15 @@ func (s *WorkspaceState) Save(path string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 
 	s.LastIndexed = time.Now()
-	return json.NewEncoder(f).Encode(s)
+	encodeErr := json.NewEncoder(f).Encode(s)
+	closeErr := f.Close()
+
+	if encodeErr != nil {
+		return encodeErr
+	}
+	return closeErr
 }
 
 // UpdateFile updates the state for a file

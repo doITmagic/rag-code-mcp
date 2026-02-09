@@ -409,10 +409,14 @@ func downloadFile(ctx context.Context, url, dest string) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
 
-	_, err = io.Copy(out, resp.Body)
-	return err
+	_, copyErr := io.Copy(out, resp.Body)
+	closeErr := out.Close()
+
+	if copyErr != nil {
+		return copyErr
+	}
+	return closeErr
 }
 
 func calculateSHA256(path string) (string, error) {
@@ -475,7 +479,9 @@ func unzip(src, dest string) error {
 
 		rc, err := f.Open()
 		if err != nil {
-			outFile.Close()
+			if cerr := outFile.Close(); cerr != nil {
+				return fmt.Errorf("failed to open zip entry: %w; additionally failed to close destination file: %v", err, cerr)
+			}
 			return err
 		}
 

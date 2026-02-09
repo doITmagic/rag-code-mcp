@@ -29,21 +29,12 @@ func TestGetCachePath(t *testing.T) {
 }
 
 func TestSaveAndGetUpdateCache(t *testing.T) {
-	// Backup existing cache if any
-	realPath, err := getCachePath()
-	if err == nil {
-		if _, err := os.Stat(realPath); err == nil {
-			backupPath := realPath + ".bak"
-			if err := os.Rename(realPath, backupPath); err != nil {
-				t.Logf("Failed to backup existing cache: %v", err)
-			}
-			defer func() {
-				if err := os.Rename(backupPath, realPath); err != nil {
-					t.Logf("Failed to restore backup cache: %v", err)
-				}
-			}()
-		}
-	}
+	tempDir := t.TempDir()
+
+	// Isolate user config dir to the temp directory
+	t.Setenv("XDG_CONFIG_HOME", tempDir)
+	t.Setenv("AppData", tempDir)
+	t.Setenv("HOME", tempDir) // Fallback for some systems
 
 	info := &UpdateInfo{
 		LatestVersion: "v1.2.3",
@@ -52,7 +43,7 @@ func TestSaveAndGetUpdateCache(t *testing.T) {
 		ChecksumURL:   "http://example.com/checksum",
 	}
 
-	err = SaveUpdateCache(info)
+	err := SaveUpdateCache(info)
 	if err != nil {
 		t.Fatalf("SaveUpdateCache failed: %v", err)
 	}

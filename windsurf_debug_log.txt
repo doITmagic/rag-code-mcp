@@ -1,0 +1,3 @@
+TIME: 2026-02-06T14:52:48+02:00 | OP: InitializedHandler
+Running extract roots...
+ERROR: Failed to list roots: calling "roots/list": no roots handler configured

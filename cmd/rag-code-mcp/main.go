@@ -365,16 +365,6 @@ workspace:
 }
 
 func main() {
-	// AGGRESSIVE STARTUP DEBUG
-	f, _ := os.Create("/tmp/ragcode-startup.txt")
-	cwd, _ := os.Getwd()
-	exe, _ := os.Executable()
-	fmt.Fprintf(f, "Time: %s\n", time.Now())
-	fmt.Fprintf(f, "Exe: %s\n", exe)
-	fmt.Fprintf(f, "CWD: %s\n", cwd)
-	fmt.Fprintf(f, "Args: %v\n", os.Args)
-	f.Close()
-
 	// Define flags
 	configPath := flag.String("config", "config.yaml", "Path to configuration file")
 	ollamaBaseURLFlag := flag.String("ollama-base-url", "", "Ollama base URL (overrides config/env)")
@@ -454,15 +444,7 @@ func main() {
 		if strings.HasSuffix(info.AssetURL, ".zip") {
 			ext = ".zip"
 		}
-		// Create a unique temporary file securely
-		tmp, err := os.CreateTemp("", "ragcode_update_*"+ext)
-		if err != nil {
-			log.Fatalf("Failed to create temporary file for update: %v", err)
-		}
-		tempFile := tmp.Name()
-		tmp.Close()
-		defer os.Remove(tempFile)
-
+		tempFile := filepath.Join(os.TempDir(), "ragcode_update"+ext)
 		if err := info.DownloadAndVerify(context.Background(), tempFile); err != nil {
 			log.Fatalf("Update failed: %v", err)
 		}

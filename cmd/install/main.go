@@ -511,9 +511,9 @@ func installBinary() {
 	}
 	var binDir string
 	if runtime.GOOS == "windows" {
-		binDir = filepath.Join(home, ".local", "share", "ragcode", "bin")
+		binDir = filepath.Join(home, installDirName, "bin")
 	} else {
-		binDir = filepath.Join(home, ".local", "share", "ragcode", "bin")
+		binDir = filepath.Join(home, installDirName, "bin")
 	}
 	if err := os.MkdirAll(binDir, 0755); err != nil {
 		fail(fmt.Sprintf("Could not create bin directory: %v", err))

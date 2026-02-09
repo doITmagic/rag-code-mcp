@@ -437,7 +437,7 @@ func main() {
 	// Handle update flag
 	if *updateFlag {
 		fmt.Println("Checking for updates...")
-		info, err := updater.CheckForUpdates(Version)
+		info, err := updater.CheckForUpdates(Version, true)
 		if err != nil {
 			log.Fatalf("Failed to check for updates: %v", err)
 		}
@@ -478,7 +478,7 @@ func main() {
 
 	// Background update check
 	go func() {
-		info, err := updater.CheckForUpdates(Version)
+		info, err := updater.CheckForUpdates(Version, false)
 		if err == nil && info != nil {
 			logger.Info("🌟 New version available: %s. Run 'rag-code-mcp --update' to upgrade.", info.LatestVersion)
 		}
@@ -643,6 +643,11 @@ func main() {
 
 	indexWorkspaceTool := tools.NewIndexWorkspaceTool(workspaceManager)
 
+	listSkillsTool := tools.NewListSkillsTool()
+	installSkillTool := tools.NewInstallSkillTool(workspaceManager)
+	checkUpdateTool := tools.NewCheckUpdateTool(Version)
+	applyUpdateTool := tools.NewApplyUpdateTool(Version)
+
 	// Example: use typed ToolHandlerFor for search_code
 	registerSearchCodeToolTyped(server, searchTool, cfg)
 
@@ -655,6 +660,10 @@ func main() {
 	registerAgentTool(server, searchDocsTool, cfg)
 	registerAgentTool(server, hybridTool, cfg)
 	registerAgentTool(server, indexWorkspaceTool, cfg)
+	registerAgentTool(server, listSkillsTool, cfg)
+	registerAgentTool(server, installSkillTool, cfg)
+	registerAgentTool(server, checkUpdateTool, cfg)
+	registerAgentTool(server, applyUpdateTool, cfg)
 
 	if err := registerFileResources(server); err != nil {
 		log.Fatalf("Failed to register resources: %v", err)
@@ -708,6 +717,9 @@ func registerSearchCodeToolTyped(server *mcp.Server, tool *tools.SearchLocalInde
 
 		logger.Info("✅ Tool '%s' completed in %v", tool.Name(), duration)
 
+		// Trigger background update check (non-blocking)
+		triggerBackgroundUpdateCheck()
+
 		return nil, SearchCodeOutput{Results: result}, nil
 	})
 }
@@ -750,6 +762,9 @@ func registerAgentTool(server *mcp.Server, tool MCPTool, cfg *config.Config) {
 		}
 
 		logger.Info("✅ Tool '%s' completed in %v", tool.Name(), duration)
+
+		// Trigger background update check (non-blocking)
+		triggerBackgroundUpdateCheck()
 
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
@@ -1252,6 +1267,7 @@ func ensureIDERules(cfg *config.Config, filePath string) {
 - Always provide 'file_path' to tools to ensure they detect the correct project context.
 - Use 'hybrid_search' if looking for exact variable names or error messages.
 - If the tool says "workspace not indexed", use 'index_workspace' once.
+- **Skills System**: Use 'list_skills' to see available AI behaviors and 'install_skill' to enable them in this workspace (e.g., 'ragcode-priority', 'ragcode-update').
 `
 
 	// 3. Define target rule files
@@ -1286,4 +1302,22 @@ func ensureIDERules(cfg *config.Config, filePath string) {
 			logger.Warn("Failed to write rule file %s: %v", absPath, err)
 		}
 	}
+}
+
+var lastUpdateCheck time.Time
+
+func triggerBackgroundUpdateCheck() {
+	// Only check if more than 1 hour passed since last check in THIS session
+	// to avoid spamming go-routines, while updater.CheckForUpdates handles the 24h logic
+	if time.Since(lastUpdateCheck) < 1*time.Hour {
+		return
+	}
+	lastUpdateCheck = time.Now()
+
+	go func() {
+		info, _ := updater.CheckForUpdates(Version, false)
+		if info != nil {
+			logger.Info("🌟 New version available: %s. Run 'apply_update' to upgrade.", info.LatestVersion)
+		}
+	}()
 }

@@ -34,8 +34,14 @@ func TestSaveAndGetUpdateCache(t *testing.T) {
 	if err == nil {
 		if _, err := os.Stat(realPath); err == nil {
 			backupPath := realPath + ".bak"
-			os.Rename(realPath, backupPath)
-			defer os.Rename(backupPath, realPath)
+			if err := os.Rename(realPath, backupPath); err != nil {
+				t.Logf("Failed to backup existing cache: %v", err)
+			}
+			defer func() {
+				if err := os.Rename(backupPath, realPath); err != nil {
+					t.Logf("Failed to restore backup cache: %v", err)
+				}
+			}()
 		}
 	}
 

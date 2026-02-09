@@ -72,12 +72,8 @@ func TestInstallSkillPathTraversal(t *testing.T) {
 	}
 
 	for _, id := range evilIDs {
-		err := InstallSkill(id, tempDir)
-		if err == nil {
+		if err := InstallSkill(id, tempDir); err == nil {
 			t.Errorf("InstallSkill should have failed for ID '%s'", id)
-		} else {
-			// Optional: verify error message
-			// t.Logf("Got expected error for %s: %v", id, err)
 		}
 	}
 }

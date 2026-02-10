@@ -59,3 +59,7 @@ temp/
 scripts/
 .ragcode/
 .agent/skills/
+
+# Debug logs
+startup_debug.txt
+windsurf_debug_log.txt

@@ -127,11 +127,9 @@ func SaveUpdateCache(info *UpdateInfo) error {
 		return err
 	}
 
-	// Set restrictive permissions
+	// Set restrictive permissions; treat as best-effort if it fails (notably on some filesystems or Windows)
 	if err := os.Chmod(path, 0600); err != nil {
-		// Non-fatal, just log or ignore if we really don't care,
-		// but checking it satisfies the linter and is better practice.
-		return fmt.Errorf("failed to set restrictive permissions on cache: %w", err)
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to set restrictive permissions on cache: %v\n", err)
 	}
 
 	success = true
@@ -231,29 +229,29 @@ func CheckForUpdates(ctx context.Context, currentVersion string, force bool) (*U
 		Tag:           release.TagName,
 	}
 
+	// Always populate asset and checksum URLs if found in release
+	archiveName := fmt.Sprintf("rag-code-mcp_%s_%s", runtime.GOOS, runtime.GOARCH)
+	if runtime.GOOS == "windows" {
+		archiveName += ".zip"
+	} else {
+		archiveName += ".tar.gz"
+	}
+
+	for _, asset := range release.Assets {
+		if asset.Name == archiveName {
+			info.AssetURL = asset.BrowserDownloadURL
+		}
+		if asset.Name == "checksums.txt" {
+			info.ChecksumURL = asset.BrowserDownloadURL
+		}
+	}
+
 	updateAvailable := false
 	if latest.GreaterThan(curr) {
-		updateAvailable = true
-		// Match asset for current platform
-		archiveName := fmt.Sprintf("rag-code-mcp_%s_%s", runtime.GOOS, runtime.GOARCH)
-		if runtime.GOOS == "windows" {
-			archiveName += ".zip"
-		} else {
-			archiveName += ".tar.gz"
-		}
-
-		for _, asset := range release.Assets {
-			if asset.Name == archiveName {
-				info.AssetURL = asset.BrowserDownloadURL
-			}
-			if asset.Name == "checksums.txt" {
-				info.ChecksumURL = asset.BrowserDownloadURL
-			}
-		}
-
 		if info.AssetURL == "" {
 			return nil, fmt.Errorf("no asset found for platform %s/%s", runtime.GOOS, runtime.GOARCH)
 		}
+		updateAvailable = true
 	}
 
 	// Always save cache after successful network call, even if update info is nil (meaning we are on latest)

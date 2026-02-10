@@ -444,7 +444,19 @@ func main() {
 		if strings.HasSuffix(info.AssetURL, ".zip") {
 			ext = ".zip"
 		}
-		tempFile := filepath.Join(os.TempDir(), "ragcode_update"+ext)
+		// Create a unique temporary file securely
+		tmp, err := os.CreateTemp("", "ragcode_update_*"+ext)
+		if err != nil {
+			log.Fatalf("Failed to create temporary file for update: %v", err)
+		}
+		tempFile := tmp.Name()
+		// We only need the path; close the file descriptor
+		if err := tmp.Close(); err != nil {
+			log.Fatalf("Failed to close temporary file for update: %v", err)
+		}
+		// Ensure the temporary file is removed after applying the update
+		defer os.Remove(tempFile)
+
 		if err := info.DownloadAndVerify(context.Background(), tempFile); err != nil {
 			log.Fatalf("Update failed: %v", err)
 		}
@@ -474,12 +486,7 @@ func main() {
 	}
 
 	// Background update check
-	go func() {
-		info, err := updater.CheckForUpdates(context.Background(), Version, false)
-		if err == nil && info != nil {
-			logger.Info("🌟 New version available: %s. Run 'rag-code-mcp --update' or use the 'apply_update' tool to upgrade.", info.LatestVersion)
-		}
-	}()
+	triggerBackgroundUpdateCheck()
 
 	// Apply logging settings from config unless env vars already override them
 	applyLoggingConfig(cfg.Logging)

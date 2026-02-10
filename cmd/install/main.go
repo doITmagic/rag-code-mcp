@@ -718,7 +718,9 @@ func addToPath(binDir string) {
 	}
 	if _, err := f.WriteString(fmt.Sprintf("\nexport PATH=\"%s:$PATH\"\n", binDir)); err != nil {
 		warn(fmt.Sprintf("Could not write to shell config: %v", err))
-		f.Close()
+		if cerr := f.Close(); cerr != nil {
+			warn(fmt.Sprintf("Could not finalise shell config after write failure: %v", cerr))
+		}
 		return
 	}
 	if err := f.Close(); err != nil {

@@ -53,7 +53,12 @@ func (t *ApplyUpdateTool) Description() string {
 }
 
 func (t *ApplyUpdateTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
-	info, err := updater.CheckForUpdates(ctx, t.version, true)
+	force := true // default to true for apply_update if not specified
+	if f, ok := args["force"].(bool); ok {
+		force = f
+	}
+
+	info, err := updater.CheckForUpdates(ctx, t.version, force)
 	if err != nil {
 		return "", err
 	}
@@ -73,7 +78,10 @@ func (t *ApplyUpdateTool) Execute(ctx context.Context, args map[string]interface
 		return "", fmt.Errorf("failed to create temp file: %w", err)
 	}
 	tempPath := tempFile.Name()
-	tempFile.Close() // Close immediately, DownloadAndVerify re-opens/overwrites it
+	if err := tempFile.Close(); err != nil { // Close immediately, DownloadAndVerify re-opens/overwrites it
+		os.Remove(tempPath)
+		return "", fmt.Errorf("failed to close temp file: %w", err)
+	}
 	defer os.Remove(tempPath)
 
 	if err := info.DownloadAndVerify(ctx, tempPath); err != nil {

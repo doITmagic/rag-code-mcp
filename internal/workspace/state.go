@@ -55,8 +55,8 @@ func LoadState(path string) (*WorkspaceState, error) {
 
 // SaveState saves workspace state to disk
 func (s *WorkspaceState) Save(path string) error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {

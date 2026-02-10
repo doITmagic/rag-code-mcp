@@ -27,7 +27,7 @@ import (
 )
 
 var (
-	Version = "1.1.21"
+	Version = "1.2.0"
 	Commit  = "none"
 	Date    = "unknown"
 	// Build trigger: Python analyzer support
@@ -647,7 +647,7 @@ func main() {
 
 	indexWorkspaceTool := tools.NewIndexWorkspaceTool(workspaceManager)
 
-	listSkillsTool := tools.NewListSkillsTool()
+	listSkillsTool := tools.NewListSkillsTool(workspaceManager)
 	installSkillTool := tools.NewInstallSkillTool(workspaceManager)
 	checkUpdateTool := tools.NewCheckUpdateTool(Version)
 	applyUpdateTool := tools.NewApplyUpdateTool(Version)

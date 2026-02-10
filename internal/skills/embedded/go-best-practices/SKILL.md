@@ -1,6 +1,7 @@
 ---
 name: go-best-practices
-description: Go development patterns, project structure, and idiomatic practices
+description: OFFICIAL Go development patterns and project structure. MANDATORY for all Go coding tasks in this workspace.
+compatible-with: [rag-code-mcp]
 ---
 
 # 🐹 Skill: Go Best Practices

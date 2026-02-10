@@ -22,32 +22,128 @@ type SkillInfo struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	Source      string `json:"source,omitempty"` // "binary" or absolute path to source
 }
 
-// ListAvailableSkills scans the embedded filesystem for skills and extracts metadata from SKILL.md
+var externalSkillsPaths []string
+
+// AddExternalSkillsPath adds a directory to be scanned for skills
+func AddExternalSkillsPath(path string) {
+	if path == "" {
+		return
+	}
+	abs, err := filepath.Abs(path)
+	if err == nil {
+		path = abs
+	}
+	// Avoid duplicates
+	for _, p := range externalSkillsPaths {
+		if p == path {
+			return
+		}
+	}
+	externalSkillsPaths = append(externalSkillsPaths, path)
+}
+
+// ListAvailableSkills scans the embedded filesystem and external paths for skills
 func ListAvailableSkills() ([]SkillInfo, error) {
 	var available []SkillInfo
+	seen := make(map[string]bool)
 
+	// 1. Scan embedded skills
 	entries, err := embeddedSkills.ReadDir("embedded")
-	if err != nil {
-		return nil, fmt.Errorf("failed to read embedded skills: %w", err)
+	if err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			skillID := entry.Name()
+			info, err := GetSkillMetadata(skillID)
+			if err == nil {
+				info.Source = "binary"
+				available = append(available, info)
+				seen[skillID] = true
+			}
+		}
 	}
 
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
+	// 2. Scan external paths recursively
+	for _, rootPath := range externalSkillsPaths {
+		err := filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return nil // Skip unreadable paths
+			}
 
-		skillID := entry.Name()
-		info, err := GetSkillMetadata(skillID)
+			// We are looking for SKILL.md files
+			if d.IsDir() || d.Name() != "SKILL.md" {
+				return nil
+			}
+
+			// Found a SKILL.md file!
+			// The skill ID is the name of the parent directory
+			skillDir := filepath.Dir(path)
+			skillID := filepath.Base(skillDir)
+
+			if seen[skillID] {
+				return nil
+			}
+
+			// Get metadata from this specific file path and CHECK COMPATIBILITY
+			info, err := GetExternalSkillMetadataFromFile(path, skillID)
+			if err == nil {
+				info.Source = skillDir
+				available = append(available, info)
+				seen[skillID] = true
+			}
+			return nil
+		})
 		if err != nil {
-			// Skip skills with invalid metadata but log or handle as needed
-			continue
+			fmt.Fprintf(os.Stderr, "Error scanning external skills path %s: %v\n", rootPath, err)
 		}
-		available = append(available, info)
 	}
 
 	return available, nil
+}
+
+// GetExternalSkillMetadataFromFile extracts metadata from a specific SKILL.md file path
+func GetExternalSkillMetadataFromFile(filePath, skillID string) (SkillInfo, error) {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return SkillInfo{}, fmt.Errorf("failed to read SKILL.md from %s: %w", filePath, err)
+	}
+
+	parts := strings.Split(string(content), "---")
+	if len(parts) < 3 {
+		return SkillInfo{}, fmt.Errorf("invalid frontmatter in SKILL.md for %s", skillID)
+	}
+
+	var metadata struct {
+		Name           string   `yaml:"name"`
+		Description    string   `yaml:"description"`
+		CompatibleWith []string `yaml:"compatible-with"`
+	}
+
+	if err := yaml.Unmarshal([]byte(parts[1]), &metadata); err != nil {
+		return SkillInfo{}, fmt.Errorf("failed to parse metadata for %s: %w", skillID, err)
+	}
+
+	// Filter: Check compatibility
+	isCompatible := false
+	for _, comp := range metadata.CompatibleWith {
+		if comp == "rag-code-mcp" {
+			isCompatible = true
+			break
+		}
+	}
+	if !isCompatible {
+		return SkillInfo{}, fmt.Errorf("skill %s is not compatible with rag-code-mcp", skillID)
+	}
+
+	return SkillInfo{
+		ID:          skillID,
+		Name:        metadata.Name,
+		Description: metadata.Description,
+	}, nil
 }
 
 // GetSkillMetadata extracts metadata from the SKILL.md of a specific skill
@@ -65,12 +161,25 @@ func GetSkillMetadata(skillID string) (SkillInfo, error) {
 	}
 
 	var metadata struct {
-		Name        string `yaml:"name"`
-		Description string `yaml:"description"`
+		Name           string   `yaml:"name"`
+		Description    string   `yaml:"description"`
+		CompatibleWith []string `yaml:"compatible-with"`
 	}
 
 	if err := yaml.Unmarshal([]byte(parts[1]), &metadata); err != nil {
 		return SkillInfo{}, fmt.Errorf("failed to parse metadata for %s: %w", skillID, err)
+	}
+
+	// Filter: Check compatibility
+	isCompatible := false
+	for _, comp := range metadata.CompatibleWith {
+		if comp == "rag-code-mcp" {
+			isCompatible = true
+			break
+		}
+	}
+	if !isCompatible {
+		return SkillInfo{}, fmt.Errorf("skill %s is not compatible with rag-code-mcp (missing 'compatible-with: [rag-code-mcp]')", skillID)
 	}
 
 	return SkillInfo{
@@ -99,39 +208,95 @@ func InstallSkill(skillID string, workspaceRoot string) error {
 	// Note: This might be redundant with validateSkillID but good for defense in depth
 	// However, workspaceRoot might be relative or absolute, so we rely on skillID validation primarily.
 
+	// Try embedded first
 	srcDir := "embedded/" + skillID
+	if _, err := embeddedSkills.ReadDir(srcDir); err == nil {
+		// Verify compatibility before installing
+		if _, err := GetSkillMetadata(skillID); err != nil {
+			return fmt.Errorf("skill '%s' is not compatible: %w", skillID, err)
+		}
 
-	// Verify the skill exists in embedded FS before trying to walk
-	if _, err := embeddedSkills.ReadDir(srcDir); err != nil {
-		return fmt.Errorf("skill '%s' not found in embedded library", skillID)
+		return fs.WalkDir(embeddedSkills, srcDir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+
+			relPath, err := filepath.Rel(srcDir, path)
+			if err != nil {
+				return err
+			}
+
+			targetPath := filepath.Join(destDir, relPath)
+
+			if d.IsDir() {
+				return os.MkdirAll(targetPath, 0755)
+			}
+
+			content, err := embeddedSkills.ReadFile(path)
+			if err != nil {
+				return err
+			}
+
+			return os.WriteFile(targetPath, content, 0644)
+		})
 	}
 
-	return fs.WalkDir(embeddedSkills, srcDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+	// Try external paths RECURSIVELY
+	for _, rootPath := range externalSkillsPaths {
+		var foundDir string
+		var foundPath string
+
+		// Walk to find the skill directory
+		_ = filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			// Look for the folder that matches skillID AND contains SKILL.md
+			if d.IsDir() && d.Name() == skillID {
+				// Verify it has a SKILL.md inside
+				skillMdPath := filepath.Join(path, "SKILL.md")
+				if _, err := os.Stat(skillMdPath); err == nil {
+					foundDir = path
+					foundPath = skillMdPath
+					return fs.SkipAll // Stop searching once found
+				}
+			}
+			return nil
+		})
+
+		if foundDir != "" {
+			// Verify compatibility before installing
+			if _, err := GetExternalSkillMetadataFromFile(foundPath, skillID); err != nil {
+				return fmt.Errorf("skill '%s' found but is not compatible: %w", skillID, err)
+			}
+
+			return filepath.Walk(foundDir, func(path string, info os.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+
+				relPath, err := filepath.Rel(foundDir, path)
+				if err != nil {
+					return err
+				}
+
+				targetPath := filepath.Join(destDir, relPath)
+
+				if info.IsDir() {
+					return os.MkdirAll(targetPath, 0755)
+				}
+
+				content, err := os.ReadFile(path)
+				if err != nil {
+					return err
+				}
+
+				return os.WriteFile(targetPath, content, 0644)
+			})
 		}
+	}
 
-		// Calculate relative path from skill root
-		relPath, err := filepath.Rel(srcDir, path)
-		if err != nil {
-			return err
-		}
-
-		// Join with destination directory
-		targetPath := filepath.Join(destDir, relPath)
-
-		if d.IsDir() {
-			return os.MkdirAll(targetPath, 0755)
-		}
-
-		// Read from embed and write to disk
-		content, err := embeddedSkills.ReadFile(path)
-		if err != nil {
-			return err
-		}
-
-		return os.WriteFile(targetPath, content, 0644)
-	})
+	return fmt.Errorf("skill '%s' not found", skillID)
 }
 
 // UninstallSkill removes a skill from the workspace
@@ -141,4 +306,14 @@ func UninstallSkill(skillID string, workspaceRoot string) error {
 	}
 	destDir := filepath.Join(workspaceRoot, ".agent", "skills", skillID)
 	return os.RemoveAll(destDir)
+}
+
+// IsSkillInstalled checks if a skill is installed in the workspace
+func IsSkillInstalled(skillID string, workspaceRoot string) bool {
+	destDir := filepath.Join(workspaceRoot, ".agent", "skills", skillID)
+	// Check if directory exists and has SKILL.md
+	if _, err := os.Stat(filepath.Join(destDir, "SKILL.md")); err == nil {
+		return true
+	}
+	return false
 }

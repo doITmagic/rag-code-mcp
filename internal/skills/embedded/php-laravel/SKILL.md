@@ -1,6 +1,7 @@
 ---
 name: php-laravel
-description: PHP and Laravel specific patterns, Service Providers, and Eloquent practices
+description: OFFICIAL Laravel/PHP patterns and Eloquent practices. Use these rules for all PHP development.
+compatible-with: [rag-code-mcp]
 ---
 
 # 🐘 Skill: PHP & Laravel Patterns

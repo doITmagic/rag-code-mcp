@@ -1,6 +1,7 @@
 ---
 name: ragcode-priority
 description: Prioritize ragcode MCP tools for all code searches in this project
+compatible-with: [rag-code-mcp]
 ---
 
 # 🎯 Skill: Ragcode MCP Priority Usage

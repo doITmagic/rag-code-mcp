@@ -1,6 +1,7 @@
 ---
 name: python-best-practices
-description: Python patterns, type hinting, and project standards
+description: OFFICIAL Python project standards and type hinting rules. MANDATORY to follow.
+compatible-with: [rag-code-mcp]
 ---
 
 # 🐍 Skill: Python Best Practices

@@ -181,6 +181,21 @@ type SymbolDescriptor struct {
 - `list_package_exports` with `output_format: "json"` (Go + PHP).
 - Search-oriented tools (planned) to return compact hits.
 
+### 2.5. `SkillInfo` – Skills System
+
+```go
+type SkillInfo struct {
+    ID          string `json:"id"`
+    Name        string `json:"name"`
+    Description string `json:"description"`
+    Source      string `json:"source,omitempty"` // "binary" or absolute path
+}
+```
+
+**Used by:**
+- `list_skills` with `output_format: "json"`.
+
+
 ---
 
 ## 3. Mapping: tool → input → output
@@ -216,6 +231,22 @@ type SymbolDescriptor struct {
 - **Output:**
   - `markdown` – structured list grouped by kind (function/type/class/etc.).
   - `json` – `[]SymbolDescriptor`.
+
+### 3.4. `list_skills`
+
+- **Standard input:** (none)
+- **Output:**
+  - `markdown` – human-friendly list of available skills.
+  - `json` – `[]SkillInfo`.
+
+### 3.5. `install_skill`
+
+- **Standard input:**
+  - `skill_id` (required),
+  - `active` (boolean; required),
+  - `file_path` / `workspace_root` (optional; for workspace detection).
+- **Output:**
+  - Text confirmation of success or error.
 
 ---
 

@@ -1,6 +1,7 @@
 ---
 name: ragcode-update
 description: Guide for managing ragcode updates, health checks, and AI skills
+compatible-with: [rag-code-mcp]
 ---
 
 # 🛠️ Skill: Ragcode Maintenance & Updates

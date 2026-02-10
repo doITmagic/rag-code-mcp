@@ -1,6 +1,7 @@
 ---
 name: debugging-guide
-description: How to use ragcode tools for fast root-cause analysis and debugging
+description: RECOMMENDED 3-step reasoning workflow for debugging and root-cause analysis with ragcode tools.
+compatible-with: [rag-code-mcp]
 ---
 
 # 🐞 Skill: Debugging with Ragcode

@@ -21,7 +21,7 @@
 
 RagCode is a **Model Context Protocol (MCP) server** that instantly makes your project **AI-ready**. It enables AI assistants like **GitHub Copilot**, **Cursor**, **Windsurf**, and **Claude** to understand your entire codebase through **semantic vector search**, bridging the gap between your code and Large Language Models (LLMs).
 
-Built with the official [Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk), RagCode provides **9 powerful tools** to index, search, and analyze code, making it the ultimate solution for **AI-ready software development**.
+Built with the official [Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk), RagCode provides **11 powerful tools** to index, search, analyze code, and manage **AI Skills**, making it the ultimate solution for **AI-ready software development**.
 
 ## ⚡ One-Command Installation
 
@@ -158,7 +158,7 @@ First query triggers background indexing. Subsequent queries are instant.
 
 ---
 
-## 🛠️ 9 Powerful MCP Tools
+## 🛠️ 11 Powerful MCP Tools
 
 | Tool | Description | Use When |
 |------|-------------|----------|
@@ -171,6 +171,8 @@ First query triggers background indexing. Subsequent queries are instant.
 | `search_docs` | Search Markdown documentation | Setup, architecture info |
 | `get_code_context` | Code snippet with context | Have file:line reference |
 | `index_workspace` | Reindex codebase | After major changes |
+| `list_skills` | List available AI behaviors | Discover new capabilities |
+| `install_skill` | Activate/Deactivate a skill | Enforce project rules |
 
 📖 **[Full Tool Reference →](./docs/tool_schema_v2.md)**
 
@@ -191,6 +193,21 @@ First query triggers background indexing. Subsequent queries are instant.
 RagCode automatically detects and manages multiple workspaces with isolated indexes.
 
 📖 **[Workspace Detection →](./internal/workspace/README.md)** - Auto-detection, stable IDs, caching
+
+---
+
+## 🧠 AI Skills System
+
+RagCode includes a **Skills System** that allows you to "install" specific behaviors and best practices into your AI assistant.
+
+**What is a Skill?**
+A skill is a package of instructions (prompts) and context that tells the AI specifically how to behave in your project (e.g., "Always use table-driven tests", "Follow Laravel directory structure").
+
+**Key Tools:**
+- `list_skills`: View bundled skills (like `go-best-practices`, `debugging-guide`).
+- `install_skill`: Activate a bundled skill in your workspace.
+
+📖 **[Full Skills Documentation →](./docs/SKILLS.md)**
 
 ---
 

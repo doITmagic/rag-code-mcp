@@ -53,12 +53,8 @@ func (t *FindImplementationsTool) Execute(ctx context.Context, args map[string]i
 		packagePath = pkg
 	}
 
-	// file_path with single-workspace fallback
-	filePath, err := resolveFilePathWithFallback(args, t.workspaceManager, "find_implementations")
-	if err != nil {
-		return "", err
-	}
-	_ = filePath
+	// file_path with single-workspace fallback (no error - defers to DetectWorkspace)
+	resolveFilePathWithFallback(args, t.workspaceManager, "find_implementations")
 
 	// Try workspace detection if workspace manager is available
 	var searchMemory memory.LongTermMemory
@@ -71,7 +67,7 @@ func (t *FindImplementationsTool) Execute(ctx context.Context, args map[string]i
 			workspacePath = workspaceInfo.Root
 
 			// Detect language from file path or use first detected language
-			language := inferLanguageFromPath(filePath)
+			language := inferLanguageFromPath(extractFilePathFromParams(args))
 			if language == "" && len(workspaceInfo.Languages) > 0 {
 				language = workspaceInfo.Languages[0]
 			}

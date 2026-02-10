@@ -72,12 +72,8 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 		outputFormat = strings.ToLower(of)
 	}
 
-	// file_path with single-workspace fallback
-	filePath, err := resolveFilePathWithFallback(params, t.workspaceManager, "hybrid_search")
-	if err != nil {
-		return "", err
-	}
-	_ = filePath
+	// file_path with single-workspace fallback (no error - defers to DetectWorkspace)
+	resolveFilePathWithFallback(params, t.workspaceManager, "hybrid_search")
 
 	// Try workspace detection
 	var workspaceMem memory.LongTermMemory
@@ -90,7 +86,7 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 			workspacePath = workspaceInfo.Root
 
 			// Detect language from file path or use first detected language
-			language := inferLanguageFromPath(filePath)
+			language := inferLanguageFromPath(extractFilePathFromParams(params))
 			if language == "" && len(workspaceInfo.Languages) > 0 {
 				language = workspaceInfo.Languages[0]
 			}

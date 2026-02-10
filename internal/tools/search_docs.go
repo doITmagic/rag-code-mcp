@@ -41,12 +41,8 @@ func (t *SearchDocsTool) Description() string {
 
 // Execute executes a search in the docs index
 func (t *SearchDocsTool) Execute(ctx context.Context, params map[string]interface{}) (string, error) {
-	// file_path with single-workspace fallback
-	filePath, err := resolveFilePathWithFallback(params, t.workspaceManager, "search_docs")
-	if err != nil {
-		return "", err
-	}
-	_ = filePath
+	// file_path with single-workspace fallback (no error - defers to DetectWorkspace)
+	resolveFilePathWithFallback(params, t.workspaceManager, "search_docs")
 
 	// Try workspace detection
 	var searchMemory memory.LongTermMemory
@@ -59,7 +55,7 @@ func (t *SearchDocsTool) Execute(ctx context.Context, params map[string]interfac
 			workspacePath = workspaceInfo.Root
 
 			// Detect language from file path or use first detected language
-			language := inferLanguageFromPath(filePath)
+			language := inferLanguageFromPath(extractFilePathFromParams(params))
 			if language == "" && len(workspaceInfo.Languages) > 0 {
 				language = workspaceInfo.Languages[0]
 			}

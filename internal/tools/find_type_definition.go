@@ -61,12 +61,8 @@ func (t *FindTypeDefinitionTool) Execute(ctx context.Context, args map[string]in
 		outputFormat = strings.ToLower(of)
 	}
 
-	// file_path with single-workspace fallback
-	filePath, err := resolveFilePathWithFallback(args, t.workspaceManager, "find_type_definition")
-	if err != nil {
-		return "", err
-	}
-	_ = filePath
+	// file_path with single-workspace fallback (no error - defers to DetectWorkspace)
+	resolveFilePathWithFallback(args, t.workspaceManager, "find_type_definition")
 
 	// Try workspace detection if workspace manager is available
 	var searchMemory memory.LongTermMemory
@@ -79,7 +75,7 @@ func (t *FindTypeDefinitionTool) Execute(ctx context.Context, args map[string]in
 			workspacePath = workspaceInfo.Root
 
 			// Detect language from file path or use first detected language
-			language := inferLanguageFromPath(filePath)
+			language := inferLanguageFromPath(extractFilePathFromParams(args))
 			if language == "" && len(workspaceInfo.Languages) > 0 {
 				language = workspaceInfo.Languages[0]
 			}
@@ -124,7 +120,7 @@ func (t *FindTypeDefinitionTool) Execute(ctx context.Context, args map[string]in
 	}
 
 	// Detect language from file path to build appropriate query
-	language := inferLanguageFromPath(filePath)
+	language := inferLanguageFromPath(extractFilePathFromParams(args))
 
 	// Search for the type in the vector database
 	// Use language-appropriate keywords for better semantic matching

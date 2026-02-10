@@ -146,10 +146,12 @@ func extractFilePathFromParams(params map[string]interface{}) string {
 // the single active workspace root when only one workspace is indexed.
 // If file_path is resolved via fallback, it is injected into params so that
 // downstream DetectWorkspace calls work transparently.
-func resolveFilePathWithFallback(params map[string]interface{}, wm *workspace.Manager, toolName string) (string, error) {
+// Returns empty string (no error) when no fallback is available, allowing
+// DetectWorkspace/DetectFromParams to use its own CWD fallback.
+func resolveFilePathWithFallback(params map[string]interface{}, wm *workspace.Manager, toolName string) string {
 	filePath := extractFilePathFromParams(params)
 	if filePath != "" {
-		return filePath, nil
+		return filePath
 	}
 
 	// Fallback: if exactly one workspace is cached, use its root
@@ -157,9 +159,10 @@ func resolveFilePathWithFallback(params map[string]interface{}, wm *workspace.Ma
 		if root := wm.GetSingleWorkspaceRoot(); root != "" {
 			log.Printf("[%s] file_path not provided, using single workspace fallback: %s", toolName, root)
 			params["file_path"] = root
-			return root, nil
+			return root
 		}
 	}
 
-	return "", fmt.Errorf("file_path parameter is required for %s. Please provide a file path from your workspace", toolName)
+	log.Printf("[%s] file_path not provided and no single workspace fallback available, deferring to DetectWorkspace", toolName)
+	return ""
 }

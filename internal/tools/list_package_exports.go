@@ -63,12 +63,8 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 		outputFormat = strings.ToLower(of)
 	}
 
-	// file_path with single-workspace fallback
-	filePath, err := resolveFilePathWithFallback(args, t.workspaceManager, "list_package_exports")
-	if err != nil {
-		return "", err
-	}
-	_ = filePath
+	// file_path with single-workspace fallback (no error - defers to DetectWorkspace)
+	resolveFilePathWithFallback(args, t.workspaceManager, "list_package_exports")
 
 	// Try workspace detection if workspace manager is available
 	var searchMemory memory.LongTermMemory
@@ -81,7 +77,7 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 			workspaceInfo = wi
 
 			// Detect language from file path or use first detected language
-			language := inferLanguageFromPath(filePath)
+			language := inferLanguageFromPath(extractFilePathFromParams(args))
 			if language == "" && len(wi.Languages) > 0 {
 				language = wi.Languages[0]
 			}

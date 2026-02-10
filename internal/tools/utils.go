@@ -3,12 +3,14 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/doITmagic/rag-code-mcp/internal/codetypes"
 	"github.com/doITmagic/rag-code-mcp/internal/memory"
+	"github.com/doITmagic/rag-code-mcp/internal/workspace"
 )
 
 // readFileLines reads specific lines from a file
@@ -138,4 +140,26 @@ func extractFilePathFromParams(params map[string]interface{}) string {
 	}
 
 	return ""
+}
+
+// resolveFilePathWithFallback extracts file_path from params, falling back to
+// the single active workspace root when only one workspace is indexed.
+// If file_path is resolved via fallback, it is injected into params so that
+// downstream DetectWorkspace calls work transparently.
+func resolveFilePathWithFallback(params map[string]interface{}, wm *workspace.Manager, toolName string) (string, error) {
+	filePath := extractFilePathFromParams(params)
+	if filePath != "" {
+		return filePath, nil
+	}
+
+	// Fallback: if exactly one workspace is cached, use its root
+	if wm != nil {
+		if root := wm.GetSingleWorkspaceRoot(); root != "" {
+			log.Printf("[%s] file_path not provided, using single workspace fallback: %s", toolName, root)
+			params["file_path"] = root
+			return root, nil
+		}
+	}
+
+	return "", fmt.Errorf("file_path parameter is required for %s. Please provide a file path from your workspace", toolName)
 }

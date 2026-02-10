@@ -41,11 +41,12 @@ func (t *SearchDocsTool) Description() string {
 
 // Execute executes a search in the docs index
 func (t *SearchDocsTool) Execute(ctx context.Context, params map[string]interface{}) (string, error) {
-	// file_path is required for workspace detection
-	filePath := extractFilePathFromParams(params)
-	if filePath == "" {
-		return "", fmt.Errorf("file_path parameter is required for search_docs. Please provide a file path from your workspace")
+	// file_path with single-workspace fallback
+	filePath, err := resolveFilePathWithFallback(params, t.workspaceManager, "search_docs")
+	if err != nil {
+		return "", err
 	}
+	_ = filePath
 
 	// Try workspace detection
 	var searchMemory memory.LongTermMemory

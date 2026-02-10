@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/memory"
 )
@@ -32,6 +33,34 @@ func (m *Manager) GetAllIndexedCollectionNames() []string {
 	}
 
 	return names
+}
+
+// GetSingleWorkspaceRoot returns the workspace root if exactly one workspace is cached.
+// Returns empty string if zero or multiple workspaces are active.
+// This is used as a fallback when file_path is not provided by the AI caller.
+func (m *Manager) GetSingleWorkspaceRoot() string {
+	m.cache.mu.RLock()
+	defer m.cache.mu.RUnlock()
+
+	// Collect unique workspace roots from cache entries
+	roots := make(map[string]struct{})
+	now := time.Now()
+	for _, entry := range m.cache.entries {
+		if now.After(entry.expiresAt) {
+			continue
+		}
+		if entry.info != nil && entry.info.Root != "" {
+			roots[entry.info.Root] = struct{}{}
+		}
+	}
+
+	if len(roots) == 1 {
+		for root := range roots {
+			return root
+		}
+	}
+
+	return ""
 }
 
 // SearchAllWorkspaces searches across all indexed workspace collections

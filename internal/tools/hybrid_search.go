@@ -72,11 +72,12 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 		outputFormat = strings.ToLower(of)
 	}
 
-	// file_path is required for workspace detection
-	filePath := extractFilePathFromParams(params)
-	if filePath == "" {
-		return "", fmt.Errorf("file_path parameter is required for hybrid_search. Please provide a file path from your workspace")
+	// file_path with single-workspace fallback
+	filePath, err := resolveFilePathWithFallback(params, t.workspaceManager, "hybrid_search")
+	if err != nil {
+		return "", err
 	}
+	_ = filePath
 
 	// Try workspace detection
 	var workspaceMem memory.LongTermMemory

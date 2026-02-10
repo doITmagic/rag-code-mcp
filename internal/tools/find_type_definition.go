@@ -61,11 +61,12 @@ func (t *FindTypeDefinitionTool) Execute(ctx context.Context, args map[string]in
 		outputFormat = strings.ToLower(of)
 	}
 
-	// file_path is required for workspace detection
-	filePath := extractFilePathFromParams(args)
-	if filePath == "" {
-		return "", fmt.Errorf("file_path parameter is required for find_type_definition. Please provide a file path from your workspace")
+	// file_path with single-workspace fallback
+	filePath, err := resolveFilePathWithFallback(args, t.workspaceManager, "find_type_definition")
+	if err != nil {
+		return "", err
 	}
+	_ = filePath
 
 	// Try workspace detection if workspace manager is available
 	var searchMemory memory.LongTermMemory

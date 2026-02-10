@@ -72,11 +72,12 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 		return "", fmt.Errorf("failed to generate query embedding: %w", err)
 	}
 
-	// file_path is required for workspace detection
-	filePath := extractFilePathFromParams(params)
-	if filePath == "" {
-		return "", fmt.Errorf("file_path parameter is required for search_code. Please provide a file path from your workspace")
+	// file_path with single-workspace fallback
+	filePath, err := resolveFilePathWithFallback(params, t.workspaceManager, "search_code")
+	if err != nil {
+		return "", err
 	}
+	_ = filePath
 
 	// Try workspace-aware search first
 	if t.workspaceManager != nil {

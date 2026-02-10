@@ -63,11 +63,12 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 		outputFormat = strings.ToLower(of)
 	}
 
-	// file_path is required for workspace detection
-	filePath := extractFilePathFromParams(args)
-	if filePath == "" {
-		return "", fmt.Errorf("file_path parameter is required for list_package_exports. Please provide a file path from your workspace")
+	// file_path with single-workspace fallback
+	filePath, err := resolveFilePathWithFallback(args, t.workspaceManager, "list_package_exports")
+	if err != nil {
+		return "", err
 	}
+	_ = filePath
 
 	// Try workspace detection if workspace manager is available
 	var searchMemory memory.LongTermMemory

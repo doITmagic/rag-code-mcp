@@ -53,11 +53,12 @@ func (t *FindImplementationsTool) Execute(ctx context.Context, args map[string]i
 		packagePath = pkg
 	}
 
-	// file_path is required for workspace detection
-	filePath := extractFilePathFromParams(args)
-	if filePath == "" {
-		return "", fmt.Errorf("file_path parameter is required for find_implementations. Please provide a file path from your workspace")
+	// file_path with single-workspace fallback
+	filePath, err := resolveFilePathWithFallback(args, t.workspaceManager, "find_implementations")
+	if err != nil {
+		return "", err
 	}
+	_ = filePath
 
 	// Try workspace detection if workspace manager is available
 	var searchMemory memory.LongTermMemory

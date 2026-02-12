@@ -16,6 +16,7 @@ type SearchLocalIndexTool struct {
 	embedder         llm.Provider
 	memories         []memory.LongTermMemory // Fallback memories if workspace detection fails
 	workspaceManager *workspace.Manager      // Workspace-aware collection manager
+	searchLimit      int                     // default limit for search results
 }
 
 // NewSearchLocalIndexTool creates a new search local index tool
@@ -26,8 +27,16 @@ func NewSearchLocalIndexTool(ltm memory.LongTermMemory, embedder llm.Provider, a
 	}
 	memories = append(memories, additional...)
 	return &SearchLocalIndexTool{
-		embedder: embedder,
-		memories: memories,
+		embedder:    embedder,
+		memories:    memories,
+		searchLimit: 5, // Default fallback
+	}
+}
+
+// SetSearchLimit sets the default search limit
+func (t *SearchLocalIndexTool) SetSearchLimit(limit int) {
+	if limit > 0 {
+		t.searchLimit = limit
 	}
 }
 
@@ -38,12 +47,12 @@ func (t *SearchLocalIndexTool) SetWorkspaceManager(wm *workspace.Manager) {
 
 // Name returns the tool name
 func (t *SearchLocalIndexTool) Name() string {
-	return "search_code"
+	return "rag_search_code"
 }
 
 // Description returns the tool description
 func (t *SearchLocalIndexTool) Description() string {
-	return "Semantic code search - finds functions, classes, and methods by MEANING, not just keywords. USE THIS FIRST when exploring unfamiliar code. Returns complete source code with file path and line numbers. Better than hybrid_search for general exploration; use hybrid_search only when you need EXACT identifier matches. Supports Go, PHP, Python, HTML."
+	return "Semantic code search - finds functions, classes, and methods by MEANING, not just keywords. USE THIS FIRST when exploring unfamiliar code. Returns complete source code with file path and line numbers. Better than rag_hybrid_search for general exploration; use rag_hybrid_search only when you need EXACT identifier matches. Supports Go, PHP, Python, HTML. IMPORTANT: Always provide the 'file_path' of the file you are currently working on for better context detection.\nExample: { \"query\": \"auth middleware\", \"file_path\": \"/path/to/project/server.go\" }"
 }
 
 // Execute executes a search in the local index
@@ -53,7 +62,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 		return "", fmt.Errorf("query parameter is required")
 	}
 
-	limit := 5
+	limit := t.searchLimit
 	if l, ok := params["limit"].(float64); ok {
 		limit = int(l)
 	} else if l, ok := params["limit"].(int); ok {
@@ -72,21 +81,11 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 		return "", fmt.Errorf("failed to generate query embedding: %w", err)
 	}
 
-	// file_path is required for workspace detection
-	filePath := extractFilePathFromParams(params)
-	if filePath == "" {
-		return "", fmt.Errorf("file_path parameter is required for search_code. Please provide a file path from your workspace")
-	}
-
 	// Try workspace-aware search first
 	if t.workspaceManager != nil {
-		workspaceInfo, err := t.workspaceManager.DetectWorkspace(params)
+		workspaceInfo, err := DetectAndRegisterWorkspace(t.workspaceManager, params)
 		if err != nil {
-			// Workspace detection failed - return helpful message
-			return fmt.Sprintf("❌ Could not detect workspace from the provided file path.\n\n"+
-				"To enable workspace-aware code search, please provide a valid file_path parameter "+
-				"pointing to a file within your workspace.\n\n"+
-				"Error: %v", err), nil
+			return HandleWorkspaceDetectionError(err, "")
 		}
 
 		// Detect language from file path or query context
@@ -111,7 +110,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			// Collection doesn't exist - tell AI to index first
 			collectionName := workspaceInfo.CollectionNameForLanguage(language)
 			return fmt.Sprintf("❌ Workspace '%s' is not indexed yet.\n\n"+
-				"To enable code search, please call the 'index_workspace' tool first with:\n"+
+				"To enable code search, please call the 'rag_index_workspace' tool first with:\n"+
 				"{\n"+
 				"  \"file_path\": \"%s\"\n"+
 				"}\n\n"+
@@ -129,12 +128,12 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 		// Check if currently indexing
 		indexKey := workspaceInfo.ID + "-" + language
 		if t.workspaceManager.IsIndexing(indexKey) {
-			return fmt.Sprintf("⏳ Workspace '%s' language '%s' is currently being indexed in the background.\n"+
+			return AttachAIWarning(fmt.Sprintf("⏳ Workspace '%s' language '%s' is currently being indexed in the background.\n"+
 				"Please try again in a few moments.\n"+
 				"Workspace: %s\n"+
 				"Language: %s\n"+
 				"Collection: %s",
-				workspaceInfo.Root, language, workspaceInfo.Root, language, workspaceInfo.CollectionNameForLanguage(language)), nil
+				workspaceInfo.Root, language, workspaceInfo.Root, language, workspaceInfo.CollectionNameForLanguage(language)), workspaceInfo), nil
 		}
 
 		// Check if collection exists before searching (if memory supports it)
@@ -151,7 +150,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			if checkErr != nil || !exists {
 				// Collection doesn't exist - tell AI to index first
 				return fmt.Sprintf("❌ Workspace '%s' is not indexed yet.\n\n"+
-					"To enable code search, please call the 'index_workspace' tool first with:\n"+
+					"To enable code search, please call the 'rag_index_workspace' tool first with:\n"+
 					"{\n"+
 					"  \"file_path\": \"%s\"\n"+
 					"}\n\n"+
@@ -217,7 +216,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			// Collection might be empty - tell AI to index
 			collectionName := workspaceInfo.CollectionNameForLanguage(language)
 			return fmt.Sprintf("❌ Workspace '%s' appears to be empty or not indexed yet.\n\n"+
-				"To enable code search, please call the 'index_workspace' tool with:\n"+
+				"To enable code search, please call the 'rag_index_workspace' tool with:\n"+
 				"{\n"+
 				"  \"file_path\": \"%s\"\n"+
 				"}\n\n"+
@@ -239,15 +238,23 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 				for i, doc := range docs {
 					result += fmt.Sprintf("--- Result %d ---\n%s\n\n", i+1, doc.Content)
 				}
-				return result, nil
+				return AttachAIWarning(result, workspaceInfo), nil
 			}
 
 			descriptors := buildSymbolDescriptorsFromDocs(docs)
+			// Add workspace info to metadata of each descriptor for AI verification
+			for i := range descriptors {
+				if descriptors[i].Metadata == nil {
+					descriptors[i].Metadata = make(map[string]any)
+				}
+				descriptors[i].Metadata["workspace_root"] = workspaceInfo.Root
+			}
+
 			data, marshalErr := json.MarshalIndent(descriptors, "", "  ")
 			if marshalErr != nil {
-				return "", fmt.Errorf("failed to marshal search_code results: %w", marshalErr)
+				return "", fmt.Errorf("failed to marshal rag_search_code results: %w", marshalErr)
 			}
-			return string(data), nil
+			return AttachAIWarning(string(data), workspaceInfo), nil
 		}
 	}
 
@@ -290,7 +297,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 	descriptors := buildSymbolDescriptorsFromDocs(collected)
 	data, err := json.MarshalIndent(descriptors, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal search_code results: %w", err)
+		return "", fmt.Errorf("failed to marshal rag_search_code results: %w", err)
 	}
 	return string(data), nil
 }

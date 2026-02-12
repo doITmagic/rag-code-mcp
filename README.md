@@ -21,7 +21,7 @@
 
 RagCode is a **Model Context Protocol (MCP) server** that instantly makes your project **AI-ready**. It enables AI assistants like **GitHub Copilot**, **Cursor**, **Windsurf**, and **Claude** to understand your entire codebase through **semantic vector search**, bridging the gap between your code and Large Language Models (LLMs).
 
-Built with the official [Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk), RagCode provides **9 powerful tools** to index, search, and analyze code, making it the ultimate solution for **AI-ready software development**.
+Built with the official [Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk), RagCode provides **10 powerful tools** to index, search, and analyze code, making it the ultimate solution for **AI-ready software development**.
 
 ## ⚡ One-Command Installation
 
@@ -101,7 +101,7 @@ First query triggers background indexing. Subsequent queries are instant.
 |---------|-------------|
 | [🔒 Privacy & Security](#-privacy-first-100-local-ai) | 100% local, zero cloud dependencies |
 | [🚀 Why RagCode?](#-why-ragcode-performance-benefits) | Performance benefits, comparisons |
-| [🛠️ MCP Tools](#️-9-powerful-mcp-tools) | All 9 tools explained |
+| [🛠️ MCP Tools](#️-10-powerful-mcp-tools) | All 10 tools explained |
 | [🌐 Supported Languages](#-multi-language-code-intelligence) | Go, PHP, Python support |
 | [💻 IDE Integration](#-ide-integration) | Windsurf, Cursor, VS Code, Claude |
 | [⚙️ Configuration](./docs/CONFIGURATION.md) | Advanced settings, models, env vars |
@@ -132,12 +132,15 @@ First query triggers background indexing. Subsequent queries are instant.
 |------|----------------|--------------|---------|
 | Find authentication logic | 30-60s (read 10+ files) | 2-3s (semantic search) | **10-20x** |
 | Understand function signature | 15-30s (grep + read) | 1-2s (direct lookup) | **15x** |
-| Find all API endpoints | 60-120s (manual search) | 3-5s (hybrid search) | **20-40x** |
+| Find all API endpoints | 60-120s (manual search) | 3-5s (rag_hybrid_search) | **20-40x** |
 
 ### 98% Token Savings
 
 - **Without RagCode:** AI reads 5-10 files (~15,000 tokens) to find a function
 - **With RagCode:** AI gets exact function + context (~200 tokens)
+
+> [!TIP]
+> **Token Management:** By default, search tools return the top **5 most relevant results**. This is optimized to provide high-quality context while keeping token usage low. You can customize this by passing a `limit` parameter to any search tool.
 
 ### RagCode vs Cloud-Based Solutions
 
@@ -158,19 +161,20 @@ First query triggers background indexing. Subsequent queries are instant.
 
 ---
 
-## 🛠️ 9 Powerful MCP Tools
+## 🛠️ 10 Powerful MCP Tools
 
 | Tool | Description | Use When |
 |------|-------------|----------|
-| `search_code` | Semantic search by meaning | **First choice** for exploration |
-| `hybrid_search` | Keyword + semantic for exact matches | Need exact identifiers |
-| `get_function_details` | Complete function source code | Know exact function name |
-| `find_type_definition` | Type/class with fields and methods | Understand data models |
-| `find_implementations` | All usages and callers | Before refactoring |
-| `list_package_exports` | All exported symbols | Explore unfamiliar packages |
-| `search_docs` | Search Markdown documentation | Setup, architecture info |
-| `get_code_context` | Code snippet with context | Have file:line reference |
-| `index_workspace` | Reindex codebase | After major changes |
+| `rag_search_code` | Semantic search by meaning | **First choice** for exploration |
+| `rag_hybrid_search` | Keyword + semantic for exact matches | Need exact identifiers |
+| `rag_get_function_details` | Complete function source code | Know exact function name |
+| `rag_find_type_definition` | Type/class with fields and methods | Understand data models |
+| `rag_find_implementations` | All usages and callers | Before refactoring |
+| `rag_list_package_exports` | All exported symbols | Explore unfamiliar packages |
+| `rag_search_docs` | Search Markdown documentation | Setup, architecture info |
+| `rag_get_code_context` | Code snippet with context | Have file:line reference |
+| `rag_index_workspace` | Reindex codebase | After major changes |
+| `rag_evaluate` | AI-to-Developer feedback tool | Request AI self-evaluation |
 
 📖 **[Full Tool Reference →](./docs/tool_schema_v2.md)**
 
@@ -178,13 +182,16 @@ First query triggers background indexing. Subsequent queries are instant.
 
 ## 🌐 Multi-Language Code Intelligence
 
-| Language | Support Level | Features | Docs |
-|----------|--------------|----------|------|
-| **Go** | ✅ Full | Functions, types, interfaces, methods, AST analysis | [📖 Go Analyzer](./internal/ragcode/analyzers/golang/README.md) |
-| **PHP** | ✅ Full | Classes, methods, interfaces, traits, PHPDoc | [📖 PHP Analyzer](./internal/ragcode/analyzers/php/README.md) |
-| **PHP + Laravel** | ✅ Full | Eloquent models, routes, controllers, middleware | [📖 Laravel Analyzer](./internal/ragcode/analyzers/php/laravel/README.md) |
-| **Python** | ✅ Full | Classes, functions, decorators, type hints, mixins | [📖 Python Analyzer](./internal/ragcode/analyzers/python/README.md) |
-| **JavaScript/TypeScript** | 🔜 Planned | Coming soon (tree-sitter based) | - |
+| Language | Support Level | Features |
+|----------|--------------|----------|
+| **Go** | ✅ Full AST | Functions, types, interfaces, methods, internal dependencies |
+| **PHP + Laravel** | ✅ Full AST | Classes, methods, Eloquent models, routes, middleware |
+| **Python** | ✅ Full AST | Classes, functions, decorators, type hints |
+| **HTML** | ✅ Full AST | Semantic sections, headings, ID/Class metadata |
+| **JS / TS** | ⚡ Basic | File-level chunking, semantic search by content |
+| **Other** * | ⚡ Basic | CSS, SQL, Shell, YAML, JSON, Markdown, etc. |
+
+*\* Basic support includes intelligent line-based chunking and full semantic search capabilities.*
 
 ### Multi-Workspace Support
 
@@ -281,6 +288,13 @@ cd rag-code-mcp
 go mod download
 go run ./cmd/rag-code-mcp
 ```
+### Release Process
+
+Releases are automated via GitHub Actions and GoReleaser. To create a new release:
+
+1. Update the version in `server.json`.
+2. Push a new tag: `git tag -a v1.x.x -m "Release v1.x.x" && git push origin v1.x.x`.
+3. The GitHub Action will automatically build binaries, create a GitHub Release, and update the Homebrew Tap.
 
 ---
 

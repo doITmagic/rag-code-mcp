@@ -20,6 +20,7 @@ Unlike generic RAG that splits code into arbitrary text chunks, RagCode:
 - **AST parsing** - understands Go, PHP, Python syntax (not regex/heuristics)
 - **Exact + semantic search** - find "UserController" exactly, not just similar text
 - **Complete code units** - AI sees runnable code, not fragments
+- **Evaluation** - Request AI self-evaluation on performance and quality. **Use to share feedback.**
 
 ## Compatibility
 
@@ -57,21 +58,22 @@ Key flags: `-ollama` (docker/local), `-qdrant` (docker/remote), `-gpu`, `-models
 ## Example Usage
 
 User: "Find authentication middleware in this codebase"
-→ RagCode uses `search_code` tool
+→ RagCode uses `rag_search_code` tool
 → Returns exact functions with file paths and line numbers
 → AI can now reason about the code without reading 50 files
 
-## 9 MCP Tools
+## 10 MCP Tools
 
-1. `search_code` - **USE FIRST** - Semantic search by MEANING. Returns complete source code + file:line. Better than hybrid_search for exploration. **Go, PHP, Python, HTML.**
-2. `hybrid_search` - Keyword + semantic for **EXACT matches** only. Returns code + file:line + metadata. Use when search_code misses exact terms. **Go, PHP, Python, HTML.**
-3. `get_function_details` - **COMPLETE** function source: signature, params, return types, body. **Go, PHP, Python.**
-4. `find_type_definition` - Complete type source with fields, methods, inheritance chain. **Go, PHP, Python.**
-5. `find_implementations` - All callers/usages with code snippets + file:line. **Use before refactoring.** **Go, PHP, Python.**
-6. `list_package_exports` - Structured list: symbol names, types, signatures. **Go, PHP, Python.**
-7. `search_docs` - Doc snippets with file paths. **Markdown only. Not for code** - use search_code.
-8. `get_code_context` - Code snippet with configurable context lines. **Any text file.**
-9. `index_workspace` - Reindex codebase. **USUALLY AUTOMATIC.** Call after git pull/branch switch. **Go, PHP, Python, HTML.**
+1. `rag_search_code` - **USE FIRST** - Semantic search by MEANING. Returns complete source code + file:line. Better than rag_hybrid_search for exploration. **Go, PHP, Python, HTML.**
+2. `rag_hybrid_search` - Keyword + semantic for **EXACT matches** only. Returns code + file:line + metadata. Use when rag_search_code misses exact terms. **Go, PHP, Python, HTML.**
+3. `rag_get_function_details` - **COMPLETE** function source: signature, params, return types, body. **Go, PHP, Python.**
+4. `rag_find_type_definition` - Complete type source with fields, methods, inheritance chain. **Go, PHP, Python.**
+5. `rag_find_implementations` - All callers/usages with code snippets + file:line. **Use before refactoring.** **Go, PHP, Python.**
+6. `rag_list_package_exports` - Structured list: symbol names, types, signatures. **Go, PHP, Python.**
+7. `rag_search_docs` - Doc snippets with file paths. **Markdown only. Not for code** - use rag_search_code.
+8. `rag_get_code_context` - Code snippet with configurable context lines. **Any text file.**
+9. `rag_index_workspace` - Reindex codebase. **USUALLY AUTOMATIC.** Call after git pull/branch switch. **Go, PHP, Python, HTML.**
+10. `rag_evaluate` - Request AI self-evaluation on performance and quality. **Use to share feedback.**
 
 ## Configuration
 

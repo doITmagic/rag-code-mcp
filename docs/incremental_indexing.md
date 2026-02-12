@@ -35,8 +35,8 @@ The state of the workspace is persisted in a JSON file located at `.ragcode/stat
 
 Incremental indexing can be triggered in two ways:
 
-1. **Manual:** Via the `index_workspace` tool or the `index-all` CLI utility.
-2. **Automatic:** Whenever any MCP tool (e.g., `search_code`, `get_function_details`, `find_type_definition`, etc.) accesses an already indexed workspace. The Manager detects the collection, runs `checkAndReindexIfNeeded` in a goroutine, and if changes are detected, starts `IndexLanguage` in the background without blocking the agent's response.
+1. **Manual:** Via the `rag_index_workspace` tool or the `index-all` CLI utility.
+2. **Automatic:** Whenever any MCP tool (e.g., `rag_search_code`, `rag_get_function_details`, `rag_find_type_definition`, etc.) accesses an already indexed workspace. The Manager detects the collection, runs `checkAndReindexIfNeeded` in a goroutine, and if changes are detected, starts `IndexLanguage` in the background without blocking the agent's response.
 
 The diagram below describes the common flow used in both scenarios:
 
@@ -92,16 +92,16 @@ Finally, the in-memory state is updated with the new file information, and `stat
 
 ### Using MCP Tools
 - **First Run:** Any MCP tool receiving a `file_path` will detect the workspace and trigger collection creation + full indexing.
-- **Subsequent Runs:** The same tools check `state.json` and automatically trigger incremental re-indexing when they detect changed files. There is no need to call `index_workspace` manually.
+- **Subsequent Runs:** The same tools check `state.json` and automatically trigger incremental re-indexing when they detect changed files. There is no need to call `rag_index_workspace` manually.
 
-You can still force a manual run using `index_workspace`:
+You can still force a manual run using `rag_index_workspace`:
 
 ```bash
 # First run - indexes all files
-index_workspace --file_path /path/to/project
+rag_index_workspace --file_path /path/to/project
 
 # Subsequent runs - only indexes changed files
-index_workspace --file_path /path/to/project
+rag_index_workspace --file_path /path/to/project
 ```
 
 ### Using the CLI

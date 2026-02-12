@@ -611,6 +611,8 @@ func downloadAndExtractBinary(dest string) bool {
 	default:
 		return false
 	}
+	// Check if archive exists locally - REMOVED as per user feedback (binaries should be used directly)
+
 	url := fmt.Sprintf("https://github.com/doITmagic/rag-code-mcp/releases/latest/download/%s", archiveName)
 	log(fmt.Sprintf("Downloading from %s...", url))
 
@@ -636,7 +638,8 @@ func downloadAndExtractBinary(dest string) bool {
 		warn(fmt.Sprintf("Could not create temp file: %v", err))
 		return false
 	}
-	defer os.Remove(tmpFile.Name())
+	archivePath := tmpFile.Name()
+	defer os.Remove(archivePath)
 	defer tmpFile.Close()
 
 	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
@@ -651,6 +654,12 @@ func downloadAndExtractBinary(dest string) bool {
 		binaryName += ".exe"
 	}
 
+	return extractBinary(archivePath, binaryName, dest)
+}
+
+// extractBinary extracts a specific file from the archive.
+func extractBinary(archivePath, fileName, dest string) bool {
+
 	if runtime.GOOS == "windows" {
 		// Handle zip for Windows
 		warn("Windows archive extraction not yet implemented")
@@ -658,7 +667,7 @@ func downloadAndExtractBinary(dest string) bool {
 	}
 
 	// Extract tar.gz
-	cmd := exec.Command("tar", "-xzf", tmpFile.Name(), "-O", binaryName)
+	cmd := exec.Command("tar", "-xzf", archivePath, "-O", fileName)
 	outFile, err := os.Create(dest)
 	if err != nil {
 		warn(fmt.Sprintf("Could not create destination file: %v", err))
@@ -1183,16 +1192,16 @@ func buildMCPServerEntry(ideKey, binPath string) map[string]interface{} {
 	switch ideKey {
 	case "vs-code", "copilot":
 		entry["alwaysAllow"] = []string{
-			"search_code",
-			"search_local_index",
-			"get_function_details",
-			"find_type_definition",
-			"get_code_context",
-			"list_package_exports",
-			"find_implementations",
-			"search_docs",
-			"hybrid_search",
-			"index_workspace",
+			"rag_search_code",
+			"rag_search_local_index",
+			"rag_get_function_details",
+			"rag_find_type_definition",
+			"rag_get_code_context",
+			"rag_list_package_exports",
+			"rag_find_implementations",
+			"rag_search_docs",
+			"rag_hybrid_search",
+			"rag_index_workspace",
 		}
 	case "windsurf":
 		entry["disabled"] = false
@@ -1215,9 +1224,9 @@ func printSummary() {
 	fmt.Println("   After opening your IDE, ask the AI to index your project:")
 	fmt.Println("")
 	fmt.Println("   Suggested AI Prompt:")
-	fmt.Println("   Please use the RagCode MCP tool 'index_workspace' to index this project for semantic code search.")
+	fmt.Println("   Please use the RagCode MCP tool 'rag_index_workspace' to index this project for semantic code search.")
 	fmt.Println("   Provide the file_path parameter pointing to any file in this workspace. Once indexing completes, I'll be")
-	fmt.Println("   able to use search_code, get_function_details, and other tools to help you navigate and understand the codebase.")
+	fmt.Println("   able to use rag_search_code, rag_get_function_details, and other tools to help you navigate and understand the codebase.")
 	fmt.Println("")
 	fmt.Println("   Note: Indexing runs in the background and may take a few minutes depending on project size.")
 	fmt.Println("   You can start using search immediately - results will improve as indexing progresses.")

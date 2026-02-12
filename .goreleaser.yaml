@@ -67,6 +67,33 @@ builds:
       - -X main.Date={{.Date}}
       - -X main.BuiltBy=goreleaser
 
+  - id: index-all
+    main: ./cmd/index-all
+    binary: index-all
+    
+    env:
+      - CGO_ENABLED=0
+    
+    goos:
+      - linux
+      - darwin
+      - windows
+    
+    goarch:
+      - amd64
+      - arm64
+    
+    ignore:
+      - goos: windows
+        goarch: arm64
+    
+    ldflags:
+      - -s -w
+      - -X main.Version={{.Version}}
+      - -X main.Commit={{.Commit}}
+      - -X main.Date={{.Date}}
+      - -X main.BuiltBy=goreleaser
+
 archives:
   - id: default
     format: tar.gz
@@ -155,11 +182,24 @@ release:
     
     **Full documentation:** https://github.com/doITmagic/rag-code-mcp
 
-# Homebrew tap (optional, can be enabled later)
-# brews:
-#   - repository:
-#       owner: doITmagic
-#       name: homebrew-tap
-#     homepage: https://github.com/doITmagic/rag-code-mcp
-#     description: Semantic code navigation for Go codebases using RAG
-#     license: MIT
+# Homebrew tap configuration
+brews:
+  - repository:
+      owner: doITmagic
+      name: homebrew-tap
+      # REQUIRED: A dedicated token (HOMEBREW_TAP_TOKEN) with write access to the tap repository.
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    
+    directory: Formula
+    homepage: "https://github.com/doITmagic/rag-code-mcp"
+    description: "Semantic code navigation for Go, PHP, and Python codebases using RAG and MCP."
+    license: "MIT"
+    
+    # Custom install script to handle multiple binaries
+    install: |
+      bin.install "rag-code-mcp"
+      bin.install "ragcode-installer"
+      bin.install "index-all"
+    
+    test: |
+      system "#{bin}/rag-code-mcp --version"

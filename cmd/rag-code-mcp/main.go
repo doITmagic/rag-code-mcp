@@ -270,9 +270,10 @@ type MCPTool interface {
 
 // SearchCodeInput defines the typed input for the search_code tool.
 type SearchCodeInput struct {
-	Query    string `json:"query"`
-	Limit    int    `json:"limit,omitempty"`
-	FilePath string `json:"file_path,omitempty"`
+	Query       string `json:"query"`
+	Limit       int    `json:"limit,omitempty"`
+	FilePath    string `json:"file_path,omitempty"`
+	IncludeDocs bool   `json:"include_docs,omitempty"`
 }
 
 // SearchCodeOutput defines the typed output for the search_code tool.
@@ -702,6 +703,9 @@ func registerSearchCodeToolTyped(server *mcp.Server, tool *tools.SearchLocalInde
 		if input.FilePath != "" {
 			args["file_path"] = input.FilePath
 		}
+		if input.IncludeDocs {
+			args["include_docs"] = input.IncludeDocs
+		}
 
 		start := time.Now()
 		logger.Info("🛠️ Executing tool '%s' with args: %v", tool.Name(), args)
@@ -944,6 +948,10 @@ func getToolSchema(toolName string) map[string]interface{} {
 					"type":        "number",
 					"description": "Maximum number of results to return (default: 5)",
 				},
+				"include_docs": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Optional: Include documentation (markdown, txt, etc.) in search results. Default is false (code only).",
+				},
 			},
 			"required": []string{"query"},
 		}
@@ -1111,6 +1119,10 @@ func getToolSchema(toolName string) map[string]interface{} {
 				"limit": map[string]interface{}{
 					"type":        "number",
 					"description": "Maximum number of results to return (default: 5)",
+				},
+				"include_docs": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Optional: Include documentation (markdown, txt, etc.) in search results. Default is false (code only).",
 				},
 			},
 			"required": []string{"query"},

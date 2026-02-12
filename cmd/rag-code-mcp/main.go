@@ -1395,7 +1395,7 @@ func ensureIDERules(cfg *config.Config, filePath string) {
 - Always provide 'file_path' to tools to ensure they detect the correct project context.
 - Use 'rag_hybrid_search' if looking for exact variable names or error messages.
 - If the tool says "workspace not indexed", use 'rag_index_workspace' once.
-- **Skills System**: Use 'list_skills' to see available AI behaviors and 'install_skill' to enable them in this workspace (e.g., 'ragcode-priority', 'ragcode-update').
+- **Skills System**: Use 'rag_list_skills' to see available AI behaviors and 'rag_install_skill' to enable them in this workspace (e.g., 'ragcode-priority', 'ragcode-update').
 `
 
 	// 3. Define target rule files
@@ -1451,7 +1451,7 @@ func triggerBackgroundUpdateCheck() {
 	go func() {
 		info, err := updater.CheckForUpdates(context.Background(), Version, false)
 		if err == nil && info != nil {
-			logger.Info("🌟 New version available: %s. Run 'rag-code-mcp --update' or use the 'apply_update' tool to upgrade.", info.LatestVersion)
+			logger.Info("🌟 New version available: %s. Run 'rag-code-mcp --update' or use the 'rag_apply_update' tool to upgrade.", info.LatestVersion)
 		}
 	}()
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/doITmagic/rag-code-mcp/internal/memory"
+	"github.com/doITmagic/rag-code-mcp/internal/workspace"
 )
 
 // CheckCollectionStatus verifies if a collection exists and has data.
@@ -24,7 +25,7 @@ func CheckCollectionStatus(ctx context.Context, mem memory.LongTermMemory, colle
 		if !exists {
 			// Collection doesn't exist - tell AI to index first
 			return fmt.Sprintf("❌ Workspace '%s' is not indexed yet.\n\n"+
-				"To enable this operation, please call the 'index_workspace' tool first with:\n"+
+				"To enable this operation, please call the 'rag_index_workspace' tool first with:\n"+
 				"{\n"+
 				"  \"file_path\": \"%s\"\n"+
 				"}\n\n"+
@@ -47,7 +48,7 @@ func CheckSearchResults(resultCount int, collectionName, workspacePath string) (
 	if resultCount == 0 {
 		// Collection exists but is empty - tell AI to index
 		return fmt.Sprintf("❌ Workspace '%s' appears to be empty or not fully indexed.\n\n"+
-			"To enable this operation, please call the 'index_workspace' tool with:\n"+
+			"To enable this operation, please call the 'rag_index_workspace' tool with:\n"+
 			"{\n"+
 			"  \"file_path\": \"%s\"\n"+
 			"}\n\n"+
@@ -61,4 +62,22 @@ func CheckSearchResults(resultCount int, collectionName, workspacePath string) (
 	}
 
 	return "", nil
+}
+
+// AttachAIWarning appends a workspace detection warning to the result string if present.
+func AttachAIWarning(result string, wsInfo *workspace.Info) string {
+	if wsInfo != nil && wsInfo.AIWarning != "" {
+		return fmt.Sprintf("%s\n\n⚠️  [WORKSPACE WARNING]: %s", result, wsInfo.AIWarning)
+	}
+	return result
+}
+
+// DetectAndRegisterWorkspace is a convenience helper for tools that want to detect the workspace
+// based on params and also register it as an active workspace for future context-less fallback detection.
+func DetectAndRegisterWorkspace(wm *workspace.Manager, params map[string]interface{}) (*workspace.Info, error) {
+	info, err := wm.DetectWorkspace(params)
+	if err == nil && info != nil {
+		wm.RegisterWorkspace(info)
+	}
+	return info, err
 }

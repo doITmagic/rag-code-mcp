@@ -183,7 +183,7 @@ After configuration, verify RagCode is working:
 1. **Open your project** in the IDE
 2. **Ask your AI assistant:**
    ```
-   Use the search_code tool to find authentication functions
+   Use the rag_search_code tool to find authentication functions
    ```
 3. **Check for RagCode response** - you should see results from semantic search
 

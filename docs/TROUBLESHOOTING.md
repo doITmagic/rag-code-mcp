@@ -217,11 +217,11 @@ sudo usermod -aG docker $USER
    ```
 
 2. **Force re-index:**
-   - Use `index_workspace` tool with `file_path` parameter
+   - Use `rag_index_workspace` tool with `file_path` parameter
 
 3. **Try broader query:**
    - Instead of exact function name, describe what it does
-   - Use `search_code` before `hybrid_search`
+   - Use `rag_search_code` before `rag_hybrid_search`
 
 ---
 

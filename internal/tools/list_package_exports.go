@@ -38,11 +38,11 @@ func (t *ListPackageExportsTool) SetWorkspaceManager(wm *workspace.Manager) {
 }
 
 func (t *ListPackageExportsTool) Name() string {
-	return "list_package_exports"
+	return "rag_list_package_exports"
 }
 
 func (t *ListPackageExportsTool) Description() string {
-	return "List all public functions, classes, and types in a package/module. Returns a structured list with symbol names, types, and signatures. Use to explore an unfamiliar package or find the right function to call. Works for Go packages, PHP namespaces, Python modules."
+	return "List all public functions, classes, and types in a package/module. Returns a structured list with symbol names, types, and signatures. Use to explore an unfamiliar package or find the right function to call. Works for Go packages, PHP namespaces, Python modules. MANDATORY: You must provide the 'file_path' of the current file to allow the tool to detect the correct workspace and context.\nExample: { \"package\": \"fmt\", \"file_path\": \"/path/to/project/main.go\" }"
 }
 
 func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -63,10 +63,10 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 		outputFormat = strings.ToLower(of)
 	}
 
-	// file_path is required for workspace detection
+	// file_path is mandatory
 	filePath := extractFilePathFromParams(args)
 	if filePath == "" {
-		return "", fmt.Errorf("file_path parameter is required for list_package_exports. Please provide a file path from your workspace")
+		return "", fmt.Errorf("MANDATORY parameter 'file_path' is missing. You must provide the absolute path of the file you are currently working on.")
 	}
 
 	// Try workspace detection if workspace manager is available
@@ -75,12 +75,19 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 	var collectionName string
 
 	if t.workspaceManager != nil {
-		wi, err := t.workspaceManager.DetectWorkspace(args)
-		if err == nil && wi != nil {
+		wi, err := DetectAndRegisterWorkspace(t.workspaceManager, args)
+		if err != nil {
+			return HandleWorkspaceDetectionError(err, "")
+		}
+
+		if wi != nil {
 			workspaceInfo = wi
 
 			// Detect language from file path or use first detected language
-			language := inferLanguageFromPath(filePath)
+			language := ""
+			if filePath != "" {
+				language = inferLanguageFromPath(filePath)
+			}
 			if language == "" && len(wi.Languages) > 0 {
 				language = wi.Languages[0]
 			}

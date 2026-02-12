@@ -124,16 +124,23 @@ func (fw *FileWatcher) watchLoop() {
 	}
 }
 
+// triggerDebouncedIndex schedules a reindex after a brief period of inactivity.
+// This prevents multiple rapid file changes (e.g., during a git operation or bulk save)
+// from triggering expensive indexing operations repeatedly.
 func (fw *FileWatcher) triggerDebouncedIndex() {
 	fw.eventsMu.Lock()
 	defer fw.eventsMu.Unlock()
 
+	// Stop existing timer if running
 	if fw.timer != nil {
 		fw.timer.Stop()
 	}
 
-	// Wait 5 seconds of silence before reindexing
-	fw.timer = time.AfterFunc(5*time.Second, func() {
+	// 2-second delay is a robust middle ground to balance responsiveness for single-file
+	// edits with efficiency during bulk file operations (e.g., git checkout or large refactors).
+	delay := 2 * time.Second
+
+	fw.timer = time.AfterFunc(delay, func() {
 		log.Printf("♻️ File changes detected in %s - Triggering reindex...", fw.root)
 
 		// Trigger indexing in background

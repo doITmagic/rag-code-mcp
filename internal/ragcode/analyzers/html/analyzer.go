@@ -187,7 +187,7 @@ func shouldSkipDir(path, root string) bool {
 		return true
 	}
 	switch base {
-	case "node_modules", "vendor", "dist", "build", "public", "tmp":
+	case "node_modules", "vendor", "dist", "build":
 		return true
 	default:
 		return false

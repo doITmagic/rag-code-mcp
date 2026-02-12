@@ -391,7 +391,7 @@ func (c *QdrantClient) SearchCodeOnly(ctx context.Context, vector []float64, lim
 }
 
 // SearchByNameAndType searches for a specific symbol by exact name and type match
-// This is useful for find_type_definition where semantic search may not find the exact match
+// This is useful for rag_find_type_definition where semantic search may not find the exact match
 func (c *QdrantClient) SearchByNameAndType(ctx context.Context, name string, types []string) ([]SearchResult, error) {
 	// Build type conditions
 	typeConditions := make([]*qdrant.Condition, 0, len(types))

@@ -17,11 +17,11 @@ func NewGetCodeContextTool() *GetCodeContextTool {
 }
 
 func (t *GetCodeContextTool) Name() string {
-	return "get_code_context"
+	return "rag_get_code_context"
 }
 
 func (t *GetCodeContextTool) Description() string {
-	return "Read specific lines from a file with surrounding context - use when you have a file path and line numbers (e.g., from search results or error messages). Returns the exact code snippet with configurable context lines before/after. Works for any text file (Go, PHP, Python, HTML, config files, etc.)."
+	return "Read specific lines from a file with surrounding context - use when you have a file path and line numbers (e.g., from search results or error messages). Returns the exact code snippet with configurable context lines before/after. Works for any text file (Go, PHP, Python, HTML, config files, etc.).\nExample: { \"file_path\": \"/path/to/file.go\", \"start_line\": 10, \"end_line\": 20, \"context_lines\": 5 }"
 }
 
 func (t *GetCodeContextTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {

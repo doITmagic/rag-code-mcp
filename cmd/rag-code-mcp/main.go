@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -364,16 +365,6 @@ workspace:
 }
 
 func main() {
-	// AGGRESSIVE STARTUP DEBUG
-	f, _ := os.Create("/tmp/ragcode-startup.txt")
-	cwd, _ := os.Getwd()
-	exe, _ := os.Executable()
-	fmt.Fprintf(f, "Time: %s\n", time.Now())
-	fmt.Fprintf(f, "Exe: %s\n", exe)
-	fmt.Fprintf(f, "CWD: %s\n", cwd)
-	fmt.Fprintf(f, "Args: %v\n", os.Args)
-	f.Close()
-
 	// Define flags
 	configPath := flag.String("config", "config.yaml", "Path to configuration file")
 	ollamaBaseURLFlag := flag.String("ollama-base-url", "", "Ollama base URL (overrides config/env)")
@@ -437,7 +428,7 @@ func main() {
 	// Handle update flag
 	if *updateFlag {
 		fmt.Println("Checking for updates...")
-		info, err := updater.CheckForUpdates(Version)
+		info, err := updater.CheckForUpdates(context.Background(), Version, true)
 		if err != nil {
 			log.Fatalf("Failed to check for updates: %v", err)
 		}
@@ -447,8 +438,26 @@ func main() {
 		}
 
 		fmt.Printf("Found new version: %s\nDownloading...\n", info.LatestVersion)
-		tempFile := filepath.Join(os.TempDir(), "ragcode_update.tar.gz")
-		if err := info.DownloadAndVerify(tempFile); err != nil {
+
+		// Determine extension from asset URL
+		ext := ".tar.gz"
+		if strings.HasSuffix(info.AssetURL, ".zip") {
+			ext = ".zip"
+		}
+		// Create a unique temporary file securely
+		tmp, err := os.CreateTemp("", "ragcode_update_*"+ext)
+		if err != nil {
+			log.Fatalf("Failed to create temporary file for update: %v", err)
+		}
+		tempFile := tmp.Name()
+		// We only need the path; close the file descriptor
+		if err := tmp.Close(); err != nil {
+			log.Fatalf("Failed to close temporary file for update: %v", err)
+		}
+		// Ensure the temporary file is removed after applying the update
+		defer os.Remove(tempFile)
+
+		if err := info.DownloadAndVerify(context.Background(), tempFile); err != nil {
 			log.Fatalf("Update failed: %v", err)
 		}
 
@@ -477,12 +486,7 @@ func main() {
 	}
 
 	// Background update check
-	go func() {
-		info, err := updater.CheckForUpdates(Version)
-		if err == nil && info != nil {
-			logger.Info("🌟 New version available: %s. Run 'rag-code-mcp --update' to upgrade.", info.LatestVersion)
-		}
-	}()
+	triggerBackgroundUpdateCheck()
 
 	// Apply logging settings from config unless env vars already override them
 	applyLoggingConfig(cfg.Logging)
@@ -643,6 +647,11 @@ func main() {
 
 	indexWorkspaceTool := tools.NewIndexWorkspaceTool(workspaceManager)
 
+	listSkillsTool := tools.NewListSkillsTool()
+	installSkillTool := tools.NewInstallSkillTool(workspaceManager)
+	checkUpdateTool := tools.NewCheckUpdateTool(Version)
+	applyUpdateTool := tools.NewApplyUpdateTool(Version)
+
 	// Example: use typed ToolHandlerFor for search_code
 	registerSearchCodeToolTyped(server, searchTool, cfg)
 
@@ -655,6 +664,10 @@ func main() {
 	registerAgentTool(server, searchDocsTool, cfg)
 	registerAgentTool(server, hybridTool, cfg)
 	registerAgentTool(server, indexWorkspaceTool, cfg)
+	registerAgentTool(server, listSkillsTool, cfg)
+	registerAgentTool(server, installSkillTool, cfg)
+	registerAgentTool(server, checkUpdateTool, cfg)
+	registerAgentTool(server, applyUpdateTool, cfg)
 
 	if err := registerFileResources(server); err != nil {
 		log.Fatalf("Failed to register resources: %v", err)
@@ -708,6 +721,9 @@ func registerSearchCodeToolTyped(server *mcp.Server, tool *tools.SearchLocalInde
 
 		logger.Info("✅ Tool '%s' completed in %v", tool.Name(), duration)
 
+		// Trigger background update check (non-blocking)
+		triggerBackgroundUpdateCheck()
+
 		return nil, SearchCodeOutput{Results: result}, nil
 	})
 }
@@ -750,6 +766,9 @@ func registerAgentTool(server *mcp.Server, tool MCPTool, cfg *config.Config) {
 		}
 
 		logger.Info("✅ Tool '%s' completed in %v", tool.Name(), duration)
+
+		// Trigger background update check (non-blocking)
+		triggerBackgroundUpdateCheck()
 
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
@@ -1097,6 +1116,54 @@ func getToolSchema(toolName string) map[string]interface{} {
 			"required": []string{"query"},
 		}
 
+	case "list_skills":
+		return map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+		}
+
+	case "install_skill":
+		return map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"skill_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the skill to install or uninstall",
+				},
+				"active": map[string]interface{}{
+					"type":        "boolean",
+					"description": "True to install the skill, false to uninstall it",
+				},
+				"file_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional: file path to help detect workspace context",
+				},
+			},
+			"required": []string{"skill_id", "active"},
+		}
+
+	case "check_update":
+		return map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"force": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Force check ignoring cache (default: false)",
+				},
+			},
+		}
+
+	case "apply_update":
+		return map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"force": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Force update even if version matches (default: false)",
+				},
+			},
+		}
+
 	default:
 		return map[string]interface{}{
 			"type":       "object",
@@ -1252,6 +1319,7 @@ func ensureIDERules(cfg *config.Config, filePath string) {
 - Always provide 'file_path' to tools to ensure they detect the correct project context.
 - Use 'hybrid_search' if looking for exact variable names or error messages.
 - If the tool says "workspace not indexed", use 'index_workspace' once.
+- **Skills System**: Use 'list_skills' to see available AI behaviors and 'install_skill' to enable them in this workspace (e.g., 'ragcode-priority', 'ragcode-update').
 `
 
 	// 3. Define target rule files
@@ -1286,4 +1354,28 @@ func ensureIDERules(cfg *config.Config, filePath string) {
 			logger.Warn("Failed to write rule file %s: %v", absPath, err)
 		}
 	}
+}
+
+var (
+	lastUpdateCheck      time.Time
+	lastUpdateCheckMutex sync.Mutex
+)
+
+func triggerBackgroundUpdateCheck() {
+	lastUpdateCheckMutex.Lock()
+	defer lastUpdateCheckMutex.Unlock()
+
+	// Only check if more than 1 hour passed since last check in THIS session
+	// to avoid spamming go-routines, while updater.CheckForUpdates handles the 24h logic
+	if time.Since(lastUpdateCheck) < 1*time.Hour {
+		return
+	}
+	lastUpdateCheck = time.Now()
+
+	go func() {
+		info, err := updater.CheckForUpdates(context.Background(), Version, false)
+		if err == nil && info != nil {
+			logger.Info("🌟 New version available: %s. Run 'rag-code-mcp --update' or use the 'apply_update' tool to upgrade.", info.LatestVersion)
+		}
+	}()
 }

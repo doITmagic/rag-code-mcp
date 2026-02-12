@@ -511,9 +511,9 @@ func installBinary() {
 	}
 	var binDir string
 	if runtime.GOOS == "windows" {
-		binDir = filepath.Join(home, ".local", "share", "ragcode", "bin")
+		binDir = filepath.Join(home, installDirName, "bin")
 	} else {
-		binDir = filepath.Join(home, ".local", "share", "ragcode", "bin")
+		binDir = filepath.Join(home, installDirName, "bin")
 	}
 	if err := os.MkdirAll(binDir, 0755); err != nil {
 		fail(fmt.Sprintf("Could not create bin directory: %v", err))
@@ -588,10 +588,13 @@ func copyFile(src, dst string) error {
 			return err
 		}
 	}
-	defer destFile.Close()
+	_, copyErr := io.Copy(destFile, sourceFile)
+	closeErr := destFile.Close()
 
-	_, err = io.Copy(destFile, sourceFile)
-	return err
+	if copyErr != nil {
+		return copyErr
+	}
+	return closeErr
 }
 
 // downloadAndExtractBinary fetches the release archive and extracts the binary.
@@ -661,11 +664,17 @@ func downloadAndExtractBinary(dest string) bool {
 		warn(fmt.Sprintf("Could not create destination file: %v", err))
 		return false
 	}
-	defer outFile.Close()
 	cmd.Stdout = outFile
 
-	if err := cmd.Run(); err != nil {
-		warn(fmt.Sprintf("Failed to extract binary: %v", err))
+	runErr := cmd.Run()
+	closeErr := outFile.Close()
+
+	if runErr != nil {
+		warn(fmt.Sprintf("Failed to extract binary: %v", runErr))
+		return false
+	}
+	if closeErr != nil {
+		warn(fmt.Sprintf("Failed to finalise binary file: %v", closeErr))
 		return false
 	}
 
@@ -707,10 +716,15 @@ func addToPath(binDir string) {
 		warn(fmt.Sprintf("Could not update shell config: %v", err))
 		return
 	}
-	defer f.Close()
-
 	if _, err := f.WriteString(fmt.Sprintf("\nexport PATH=\"%s:$PATH\"\n", binDir)); err != nil {
 		warn(fmt.Sprintf("Could not write to shell config: %v", err))
+		if cerr := f.Close(); cerr != nil {
+			warn(fmt.Sprintf("Could not finalise shell config after write failure: %v", cerr))
+		}
+		return
+	}
+	if err := f.Close(); err != nil {
+		warn(fmt.Sprintf("Could not finalise shell config: %v", err))
 	} else {
 		success(fmt.Sprintf("Added to %s (restart shell to apply)", shellConfig))
 	}

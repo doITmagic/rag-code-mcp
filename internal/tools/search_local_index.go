@@ -75,10 +75,21 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 		outputFormat = strings.ToLower(of)
 	}
 
+	// Optional: include documentation in results
+	includeDocs := false
+	if inc, ok := params["include_docs"].(bool); ok {
+		includeDocs = inc
+	}
+
 	// Generate embedding for query
 	queryEmbedding, err := t.embedder.Embed(ctx, query)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate query embedding: %w", err)
+	}
+
+	// Helper interface for code-only search
+	type CodeSearcher interface {
+		SearchCodeOnly(ctx context.Context, query []float64, limit int) ([]memory.Document, error)
 	}
 
 	// Try workspace-aware search first
@@ -166,20 +177,9 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			}
 		}
 
-		// Optional: include documentation in results
-		includeDocs := false
-		if inc, ok := params["include_docs"].(bool); ok {
-			includeDocs = inc
-		}
-
 		// Search in workspace-specific collection
 		var docs []memory.Document
 		var searchErr error
-
-		// Type assertion to check if this memory supports code-only search
-		type CodeSearcher interface {
-			SearchCodeOnly(ctx context.Context, query []float64, limit int) ([]memory.Document, error)
-		}
 
 		// If include_docs is true, use generic Search (returns all types)
 		// If include_docs is false (default), try to use SearchCodeOnly
@@ -270,7 +270,17 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 		if remaining <= 0 {
 			break
 		}
-		docs, err := ltm.Search(ctx, queryEmbedding, remaining)
+		var docs []memory.Document
+		var err error
+
+		if includeDocs {
+			docs, err = ltm.Search(ctx, queryEmbedding, remaining)
+		} else if searcher, ok := ltm.(CodeSearcher); ok {
+			docs, err = searcher.SearchCodeOnly(ctx, queryEmbedding, remaining)
+		} else {
+			docs, err = ltm.Search(ctx, queryEmbedding, remaining)
+		}
+
 		if err != nil {
 			return "", fmt.Errorf("search failed: %w", err)
 		}

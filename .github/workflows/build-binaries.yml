@@ -2,6 +2,7 @@ name: Build and Commit Binaries
 
 permissions:
   contents: write
+  pull-requests: write
 
 on:
   workflow_dispatch:
@@ -35,13 +36,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          
+        
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'  # Use stable version compatible with 1.25.1
+          go-version: '1.23'
           cache: true
 
       - name: Run tests
@@ -59,22 +58,17 @@ jobs:
           go build -o bin/ragcode-installer ./cmd/install
           
           chmod +x bin/*
-          
-      - name: Check if binaries changed
-        id: check_changes
-        run: |
-          git add -f bin/
-          if git diff --cached --quiet; then
-            echo "changed=false" >> $GITHUB_OUTPUT
-          else
-            echo "changed=true" >> $GITHUB_OUTPUT
-          fi
-          
-      - name: Commit and push binaries
-        if: github.event_name == 'push' && steps.check_changes.outputs.changed == 'true'
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add -f bin/
-          git commit -m "chore: auto-build binaries [skip ci]"
-          git push
+
+      - name: Stage binaries
+        run: git add -f bin/
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: update binaries [skip ci]"
+          title: "chore: update binaries"
+          body: "Auto-generated PR to update binaries after code changes."
+          branch: "chore/update-binaries"
+          base: ${{ github.head_ref || github.ref_name }}
+          delete-branch: true

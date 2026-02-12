@@ -138,10 +138,25 @@ func (m *Manager) scanWorkspace(info *Info) (*workspaceScan, error) {
 		case ".html", ".htm":
 			addDirForLanguage(scan, dirCache, "html", filepath.Dir(path))
 			addFileForLanguage(scan, "html", path)
-		case ".md":
+		case ".md", ".markdown", ".rst", ".adoc":
 			scan.DocFiles = append(scan.DocFiles, path)
+		case ".txt":
+			// Only include .txt files if they are in a documentation directory
+			dir := strings.ToLower(filepath.Base(filepath.Dir(path)))
+			if dir == "docs" || dir == "doc" || dir == "documentation" {
+				scan.DocFiles = append(scan.DocFiles, path)
+			}
 		default:
-			// ignored
+			// Check for standard documentation files without extension or specific names
+			baseName := strings.ToUpper(filepath.Base(path))
+			if strings.HasPrefix(baseName, "README") ||
+				strings.HasPrefix(baseName, "LICENSE") ||
+				strings.HasPrefix(baseName, "CHANGELOG") ||
+				strings.HasPrefix(baseName, "CONTRIBUTING") ||
+				strings.HasPrefix(baseName, "HISTORY") ||
+				strings.HasPrefix(baseName, "NOTICE") {
+				scan.DocFiles = append(scan.DocFiles, path)
+			}
 		}
 		return nil
 	})

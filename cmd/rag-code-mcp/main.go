@@ -1223,7 +1223,7 @@ func getToolSchema(toolName string) map[string]interface{} {
 			"properties": map[string]interface{}{
 				"force": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Force update even if version matches (default: false)",
+					"description": "Force a fresh check for updates ignoring the cache (default: true).",
 				},
 			},
 		}

@@ -19,7 +19,7 @@ func NewInstallSkillTool(workspaceManager *workspace.Manager) *InstallSkillTool 
 }
 
 func (t *InstallSkillTool) Name() string {
-	return "install_skill"
+	return "rag_install_skill"
 }
 
 func (t *InstallSkillTool) Description() string {

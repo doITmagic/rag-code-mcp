@@ -742,7 +742,7 @@ func main() {
 // registerSearchCodeToolTyped registers the rag_search_code tool using the typed
 // ToolHandlerFor API from the MCP Go SDK.
 func registerSearchCodeToolTyped(server *mcp.Server, tool *tools.SearchLocalIndexTool, cfg *config.Config) {
-	mcp.AddTool[SearchCodeInput, SearchCodeOutput](server, &mcp.Tool{
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        tool.Name(),
 		Description: tool.Description(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input SearchCodeInput) (*mcp.CallToolResult, SearchCodeOutput, error) {
@@ -1180,13 +1180,13 @@ func getToolSchema(toolName string) map[string]interface{} {
 			"required": []string{"query"},
 		}
 
-	case "list_skills":
+	case "rag_list_skills":
 		return map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
 		}
 
-	case "install_skill":
+	case "rag_install_skill":
 		return map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1206,7 +1206,7 @@ func getToolSchema(toolName string) map[string]interface{} {
 			"required": []string{"skill_id", "active"},
 		}
 
-	case "check_update":
+	case "rag_check_update":
 		return map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1217,7 +1217,7 @@ func getToolSchema(toolName string) map[string]interface{} {
 			},
 		}
 
-	case "apply_update":
+	case "rag_apply_update":
 		return map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{

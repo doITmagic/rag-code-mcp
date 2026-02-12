@@ -15,7 +15,7 @@ func NewListSkillsTool() *ListSkillsTool {
 }
 
 func (t *ListSkillsTool) Name() string {
-	return "list_skills"
+	return "rag_list_skills"
 }
 
 func (t *ListSkillsTool) Description() string {

@@ -13,7 +13,7 @@ This skill instructs the AI on how to keep the `ragcode-mcp` server up to date a
 
 ### 1. Detection
 When you see a notification in the logs like:
-`🌟 New version available: X.Y.Z. Run 'apply_update' to upgrade.`
+`🌟 New version available: X.Y.Z. Run 'rag_apply_update' to upgrade.`
 
 **You MUST:**
 1. Inform the user that a new version is available.
@@ -21,11 +21,11 @@ When you see a notification in the logs like:
 3. Ask for explicit permission: *"Would you like me to apply the update for you now?"*
 
 ### 2. Manual Check
-If the user asks "is there any update?", use the `check_update` tool with `force: true`.
+If the user asks "is there any update?", use the `rag_check_update` tool with `force: true`.
 
 ### 3. Applying Update
 When the user says "Yes" or "Apply update":
-1. Call `mcp_ragcode_apply_update`.
+1. Call `rag_apply_update`.
 2. Inform the user that the installation was successful.
 3. Remind the user: *"The server needs a restart (or IDE reload) to activate the new version."*
 
@@ -34,9 +34,9 @@ When the user says "Yes" or "Apply update":
 ## 🧩 Skill Management
 
 When the user wants to enhance your capabilities:
-1. Use `list_skills` to see what is bundled in the binary.
+1. Use `rag_list_skills` to see what is bundled in the binary.
 2. Explain what each skill does based on its description.
-3. Use `install_skill(skill_id, active=true)` to enable it.
+3. Use `rag_install_skill(skill_id, active=true)` to enable it.
 
 ---
 
@@ -48,7 +48,7 @@ If the system feels slow or tools fail consistently:
 ---
 
 ## ⚡ Quick Summary of Tools:
-- `check_update`: Check GitHub for new releases.
-- `apply_update`: Download and install the latest binary.
-- `list_skills`: See available AI behaviors.
-- `install_skill`: Toggle a specific behavior on/off.
+- `rag_check_update`: Check GitHub for new releases.
+- `rag_apply_update`: Download and install the latest binary.
+- `rag_list_skills`: See available AI behaviors.
+- `rag_install_skill`: Toggle a specific behavior on/off.

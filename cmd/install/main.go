@@ -1202,6 +1202,10 @@ func buildMCPServerEntry(ideKey, binPath string) map[string]interface{} {
 			"rag_search_docs",
 			"rag_hybrid_search",
 			"rag_index_workspace",
+			"rag_list_skills",
+			"rag_install_skill",
+			"rag_check_update",
+			"rag_apply_update",
 		}
 	case "windsurf":
 		entry["disabled"] = false

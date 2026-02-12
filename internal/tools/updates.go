@@ -17,7 +17,7 @@ func NewCheckUpdateTool(version string) *CheckUpdateTool {
 	return &CheckUpdateTool{version: version}
 }
 
-func (t *CheckUpdateTool) Name() string { return "check_update" }
+func (t *CheckUpdateTool) Name() string { return "rag_check_update" }
 func (t *CheckUpdateTool) Description() string {
 	return "Checks for available ragcode-mcp updates on GitHub and reports if a newer version is available."
 }
@@ -36,7 +36,7 @@ func (t *CheckUpdateTool) Execute(ctx context.Context, args map[string]interface
 		return fmt.Sprintf("✅ You are using the latest version (%s).", t.version), nil
 	}
 
-	return fmt.Sprintf("🌟 New version available: %s\nRun 'apply_update' to upgrade.", info.LatestVersion), nil
+	return fmt.Sprintf("🌟 New version available: %s\nRun 'rag_apply_update' to upgrade.", info.LatestVersion), nil
 }
 
 type ApplyUpdateTool struct {
@@ -47,7 +47,7 @@ func NewApplyUpdateTool(version string) *ApplyUpdateTool {
 	return &ApplyUpdateTool{version: version}
 }
 
-func (t *ApplyUpdateTool) Name() string { return "apply_update" }
+func (t *ApplyUpdateTool) Name() string { return "rag_apply_update" }
 func (t *ApplyUpdateTool) Description() string {
 	return "Downloads and installs the latest version of ragcode-mcp. The server will need to be restarted after completion."
 }

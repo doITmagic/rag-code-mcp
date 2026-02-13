@@ -9,6 +9,11 @@ import (
 	"github.com/doITmagic/rag-code-mcp/internal/workspace"
 )
 
+var (
+	listAvailableSkillsFunc = skills.ListAvailableSkills
+	isSkillInstalledFunc    = skills.IsSkillInstalled
+)
+
 type ListSkillsTool struct {
 	workspaceManager *workspace.Manager
 }
@@ -28,7 +33,7 @@ func (t *ListSkillsTool) Description() string {
 }
 
 func (t *ListSkillsTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
-	available, err := skills.ListAvailableSkills()
+	available, err := listAvailableSkillsFunc()
 	if err != nil {
 		return "", fmt.Errorf("failed to list skills: %w", err)
 	}
@@ -56,7 +61,7 @@ func (t *ListSkillsTool) Execute(ctx context.Context, args map[string]interface{
 	for _, s := range available {
 		installed := false
 		if workspaceRoot != "" {
-			installed = skills.IsSkillInstalled(s.ID, workspaceRoot)
+			installed = isSkillInstalledFunc(s.ID, workspaceRoot)
 		}
 		extendedList = append(extendedList, SkillWithStatus{
 			SkillInfo: s,

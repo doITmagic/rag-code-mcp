@@ -78,3 +78,13 @@ jobs:
           git add -f bin/
           git commit -m "chore: auto-build binaries [skip ci]"
           git push
+
+      - name: Create pull request with updated binaries (main only)
+        if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && steps.check_changes.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          title: "chore: update binaries"
+          body: "Auto-generated PR to update binaries after code changes."
+          branch: "chore/update-binaries"
+          base: ${{ github.event.pull_request.base.ref }}

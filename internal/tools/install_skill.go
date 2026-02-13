@@ -8,6 +8,11 @@ import (
 	"github.com/doITmagic/rag-code-mcp/internal/workspace"
 )
 
+var (
+	installSkillFunc   = skills.InstallSkill
+	uninstallSkillFunc = skills.UninstallSkill
+)
+
 type InstallSkillTool struct {
 	workspaceManager *workspace.Manager
 }
@@ -53,13 +58,13 @@ func (t *InstallSkillTool) Execute(ctx context.Context, args map[string]interfac
 	workspaceRoot := workspaceInfo.Root
 
 	if active {
-		err = skills.InstallSkill(skillID, workspaceRoot)
+		err = installSkillFunc(skillID, workspaceRoot)
 		if err != nil {
 			return "", fmt.Errorf("failed to install skill %s: %w", skillID, err)
 		}
 		return fmt.Sprintf("✅ Skill '%s' has been successfully installed in %s/.agent/skills/%s", skillID, workspaceRoot, skillID), nil
 	} else {
-		err = skills.UninstallSkill(skillID, workspaceRoot)
+		err = uninstallSkillFunc(skillID, workspaceRoot)
 		if err != nil {
 			return "", fmt.Errorf("failed to uninstall skill %s: %w", skillID, err)
 		}

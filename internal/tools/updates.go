@@ -9,6 +9,14 @@ import (
 	"github.com/doITmagic/rag-code-mcp/internal/updater"
 )
 
+var (
+	checkForUpdates   = updater.CheckForUpdates
+	applyUpdateFunc   = updater.ApplyUpdate
+	downloadAndVerify = func(info *updater.UpdateInfo, ctx context.Context, dest string) error {
+		return info.DownloadAndVerify(ctx, dest)
+	}
+)
+
 type CheckUpdateTool struct {
 	version string
 }
@@ -27,7 +35,7 @@ func (t *CheckUpdateTool) Execute(ctx context.Context, args map[string]interface
 	if f, ok := args["force"].(bool); ok {
 		force = f
 	}
-	info, err := updater.CheckForUpdates(ctx, t.version, force)
+	info, err := checkForUpdates(ctx, t.version, force)
 	if err != nil {
 		return "", fmt.Errorf("failed to check for updates: %w", err)
 	}
@@ -58,7 +66,7 @@ func (t *ApplyUpdateTool) Execute(ctx context.Context, args map[string]interface
 		force = f
 	}
 
-	info, err := updater.CheckForUpdates(ctx, t.version, force)
+	info, err := checkForUpdates(ctx, t.version, force)
 	if err != nil {
 		return "", err
 	}
@@ -84,11 +92,11 @@ func (t *ApplyUpdateTool) Execute(ctx context.Context, args map[string]interface
 	}
 	defer os.Remove(tempPath)
 
-	if err := info.DownloadAndVerify(ctx, tempPath); err != nil {
+	if err := downloadAndVerify(info, ctx, tempPath); err != nil {
 		return "", fmt.Errorf("failed to download update: %w", err)
 	}
 
-	if err := updater.ApplyUpdate(tempPath); err != nil {
+	if err := applyUpdateFunc(tempPath); err != nil {
 		return "", fmt.Errorf("failed to install update: %w", err)
 	}
 

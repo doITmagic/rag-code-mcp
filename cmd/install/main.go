@@ -84,6 +84,26 @@ func installRuntimeBinaries() {
 		{"ragcode-installer", "./cmd/install"},
 	}
 
+	ensureLinked := func(binName, output string) {
+		if err := os.Chmod(output, 0755); err != nil {
+			warn(fmt.Sprintf("Could not set executable flag for %s: %v", output, err))
+		}
+
+		localBin := filepath.Join(home, ".local", "bin")
+		if _, err := os.Stat(localBin); err == nil {
+			linkPath := filepath.Join(localBin, binName)
+			os.Remove(linkPath)
+			if err := os.Symlink(output, linkPath); err == nil {
+				success(fmt.Sprintf("Linked %s to %s", binName, linkPath))
+			}
+		}
+	}
+
+	missingAfterLocalInstall := make([]struct {
+		name   string
+		output string
+	}, 0)
+
 	log(fmt.Sprintf("Installing runtime binaries into %s...", binDir))
 	for _, bin := range binaries { // Install/update all to ensure latest version
 		binName := bin.name
@@ -94,19 +114,7 @@ func installRuntimeBinaries() {
 
 		// If already installed (e.g. extracted from release bundle), keep it.
 		if _, err := os.Stat(output); err == nil {
-			if err := os.Chmod(output, 0755); err != nil {
-				warn(fmt.Sprintf("Could not set executable flag for %s: %v", output, err))
-			}
-
-			// CLI Tool Support: Symlink to ~/.local/bin if it exists
-			localBin := filepath.Join(home, ".local", "bin")
-			if _, err := os.Stat(localBin); err == nil {
-				linkPath := filepath.Join(localBin, binName)
-				os.Remove(linkPath)
-				if err := os.Symlink(output, linkPath); err == nil {
-					success(fmt.Sprintf("Linked %s to %s", binName, linkPath))
-				}
-			}
+			ensureLinked(binName, output)
 			continue
 		}
 
@@ -131,19 +139,36 @@ func installRuntimeBinaries() {
 		}
 
 		if _, err := os.Stat(output); err == nil {
-			if err := os.Chmod(output, 0755); err != nil {
-				warn(fmt.Sprintf("Could not set executable flag for %s: %v", output, err))
+			ensureLinked(binName, output)
+		} else {
+			missingAfterLocalInstall = append(missingAfterLocalInstall, struct {
+				name   string
+				output string
+			}{name: binName, output: output})
+		}
+	}
+
+	if len(missingAfterLocalInstall) > 0 {
+		log("Some runtime binaries are still missing after local copy/build; attempting release bundle fallback...")
+		if downloadAndExtractReleaseBundle(binDir) {
+			remaining := make([]string, 0)
+			for _, missing := range missingAfterLocalInstall {
+				if _, err := os.Stat(missing.output); err == nil {
+					ensureLinked(missing.name, missing.output)
+					continue
+				}
+				remaining = append(remaining, missing.name)
 			}
 
-			// CLI Tool Support: Symlink to ~/.local/bin if it exists
-			localBin := filepath.Join(home, ".local", "bin")
-			if _, err := os.Stat(localBin); err == nil {
-				linkPath := filepath.Join(localBin, binName)
-				os.Remove(linkPath) // Remove old link
-				if err := os.Symlink(output, linkPath); err == nil {
-					success(fmt.Sprintf("Linked %s to %s", binName, linkPath))
-				}
+			if len(remaining) > 0 {
+				fail(fmt.Sprintf("Could not install required runtime binaries: %s", strings.Join(remaining, ", ")))
 			}
+		} else {
+			missingNames := make([]string, 0, len(missingAfterLocalInstall))
+			for _, missing := range missingAfterLocalInstall {
+				missingNames = append(missingNames, missing.name)
+			}
+			fail(fmt.Sprintf("Missing runtime binaries and fallback download failed: %s", strings.Join(missingNames, ", ")))
 		}
 	}
 

@@ -49,6 +49,10 @@ func (t *InstallSkillTool) Execute(ctx context.Context, args map[string]interfac
 		return "", fmt.Errorf("parameter 'skill_id' is required")
 	}
 
+	if t.workspaceManager == nil {
+		return "", fmt.Errorf("workspace manager is not configured; cannot detect workspace for skill installation")
+	}
+
 	// Detect workspace to know where to install the skill
 	workspaceInfo, err := t.workspaceManager.DetectWorkspace(args)
 	if err != nil {

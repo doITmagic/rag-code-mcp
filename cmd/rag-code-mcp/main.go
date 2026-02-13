@@ -569,6 +569,21 @@ func main() {
 	if cfg.HealthCheck.EnableOnStartup {
 		logger.Info("Checking dependencies...")
 		models := []string{cfg.LLM.OllamaModel, cfg.LLM.OllamaEmbed}
+
+		missingModels, err := healthcheck.MissingRequiredModels(cfg.LLM.OllamaBaseURL, models)
+		if err == nil && len(missingModels) > 0 {
+			logger.Info("Missing Ollama models detected: %s", strings.Join(missingModels, ", "))
+			for _, model := range missingModels {
+				logger.Info("Pulling missing model: %s", model)
+				if pullErr := healthcheck.PullModel(cfg.LLM.OllamaBaseURL, model); pullErr != nil {
+					log.Fatalf("Failed to download required model '%s': %v", model, pullErr)
+				}
+				logger.Info("Successfully downloaded model: %s", model)
+			}
+		} else if err != nil {
+			logger.Warn("Could not check missing Ollama models before startup: %v", err)
+		}
+
 		results := healthcheck.CheckAllWithModels(cfg.LLM.OllamaBaseURL, cfg.Storage.VectorDB.URL, models)
 
 		hasErrors := false

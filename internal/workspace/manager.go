@@ -38,6 +38,10 @@ type Manager struct {
 	llm      llm.Provider
 	config   *config.Config
 
+	// Test hook to override index invocation path in unit tests.
+	// When nil, IndexLanguage is used.
+	indexLanguageFn func(ctx context.Context, info *Info, language string, collectionName string, force bool) error
+
 	// Indexing state
 	indexingMu sync.RWMutex
 	indexing   map[string]bool // workspace ID -> is indexing
@@ -124,6 +128,22 @@ func (m *Manager) GetDetectedLanguages(info *Info) []string {
 	}
 	sort.Strings(langs)
 	return langs
+}
+
+// supportsLanguageIndexing returns true when a code analyzer is available for the language.
+func (m *Manager) supportsLanguageIndexing(language string) bool {
+	if strings.TrimSpace(language) == "" {
+		return false
+	}
+	analyzerManager := ragcode.NewAnalyzerManager()
+	return analyzerManager.CodeAnalyzerForProjectType(language) != nil
+}
+
+func (m *Manager) invokeIndexLanguage(ctx context.Context, info *Info, language string, collectionName string, force bool) error {
+	if m.indexLanguageFn != nil {
+		return m.indexLanguageFn(ctx, info, language, collectionName, force)
+	}
+	return m.IndexLanguage(ctx, info, language, collectionName, force)
 }
 
 type workspaceScan struct {
@@ -536,6 +556,7 @@ func (m *Manager) GetMemoryForWorkspaceLanguage(ctx context.Context, info *Info,
 	m.StartWatcher(info.Root)
 
 	collectionName := info.CollectionNameForLanguage(language)
+	canAutoIndexLanguage := m.supportsLanguageIndexing(language)
 
 	// Check memory cache
 	m.memoryMu.RLock()
@@ -583,13 +604,17 @@ func (m *Manager) GetMemoryForWorkspaceLanguage(ctx context.Context, info *Info,
 
 		// Trigger background indexing only if auto_index is enabled
 		if m.config != nil && m.config.Workspace.AutoIndex {
+			if !canAutoIndexLanguage {
+				log.Printf("⏭️  Skipping code auto-index for non-code language '%s' in workspace '%s' (no analyzer available)", language, info.Root)
+			} else {
 			// Pass a long-lived context for background indexing
 			indexCtx := context.Background()
 			go func() {
-				if err := m.IndexLanguage(indexCtx, info, language, collectionName, false); err != nil {
+				if err := m.invokeIndexLanguage(indexCtx, info, language, collectionName, false); err != nil {
 					log.Printf("❌ Background indexing failed: %v", err)
 				}
 			}()
+			}
 		} else {
 			log.Printf("⏸️  Auto-indexing disabled for workspace '%s' language '%s'. Run manual indexing.", info.Root, language)
 		}
@@ -603,11 +628,13 @@ func (m *Manager) GetMemoryForWorkspaceLanguage(ctx context.Context, info *Info,
 
 		// Collection exists - check if files have changed and trigger incremental re-indexing
 		if m.config != nil && m.config.Workspace.AutoIndex {
-			if needsMigration {
+			if !canAutoIndexLanguage {
+				log.Printf("⏭️  Skipping code auto-index checks for non-code language '%s' in workspace '%s' (no analyzer available)", language, info.Root)
+			} else if needsMigration {
 				// If we just recreated the collection due to mismatch, trigger a full re-index immediately
 				log.Printf("🔄 Dimension mismatch resolved for '%s'. Triggering full re-index.", collectionName)
 				go func() {
-					if err := m.IndexLanguage(context.Background(), info, language, collectionName, false); err != nil {
+					if err := m.invokeIndexLanguage(context.Background(), info, language, collectionName, false); err != nil {
 						log.Printf("❌ Background indexing (after migration) failed: %v", err)
 					}
 				}()
@@ -895,11 +922,15 @@ func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string
 // checkAndReindexIfNeeded checks if any files have changed and triggers incremental re-indexing if needed
 // This is called automatically when a tool accesses an existing workspace collection
 func (m *Manager) checkAndReindexIfNeeded(ctx context.Context, info *Info, language string, collectionName string) {
+	if !m.supportsLanguageIndexing(language) {
+		return
+	}
+
 	// 1. Check if we need to migrate/re-index due to dimension mismatch or empty collection
 	_, _, needsMigration, err := m.CheckAndPrepareMigration(ctx, info, language)
 	if err == nil && needsMigration {
 		log.Printf("ℹ️ Migration or re-index needed for '%s', triggering IndexLanguage", collectionName)
-		if err := m.IndexLanguage(ctx, info, language, collectionName, false); err != nil {
+		if err := m.invokeIndexLanguage(ctx, info, language, collectionName, false); err != nil {
 			log.Printf("⚠️  Migration/Re-index failed: %v", err)
 		}
 		return
@@ -963,7 +994,7 @@ func (m *Manager) checkAndReindexIfNeeded(ctx context.Context, info *Info, langu
 	// If changes detected, trigger incremental re-indexing
 	if hasChanges {
 		log.Printf("🔄 Auto-detected file changes in workspace '%s' (language: %s), triggering incremental re-indexing...", info.Root, language)
-		if err := m.IndexLanguage(ctx, info, language, collectionName, false); err != nil {
+		if err := m.invokeIndexLanguage(ctx, info, language, collectionName, false); err != nil {
 			log.Printf("⚠️  Auto-reindex failed: %v", err)
 		}
 	}
@@ -1200,6 +1231,10 @@ func (m *Manager) DeleteLanguageCollection(ctx context.Context, info *Info, lang
 
 // StartIndexing explicitly starts background indexing for a workspace language
 func (m *Manager) StartIndexing(ctx context.Context, info *Info, language string, force bool) error {
+	if !m.supportsLanguageIndexing(language) {
+		return fmt.Errorf("no code analyzer available for language '%s'", language)
+	}
+
 	collectionName := info.CollectionNameForLanguage(language)
 
 	// Check if already indexing BEFORE starting goroutine for immediate feedback
@@ -1214,7 +1249,7 @@ func (m *Manager) StartIndexing(ctx context.Context, info *Info, language string
 	// Start background indexing
 	go func() {
 		// IndexLanguage now handles its own concurrency guarding and lock management
-		if err := m.IndexLanguage(context.Background(), info, language, collectionName, force); err != nil {
+		if err := m.invokeIndexLanguage(context.Background(), info, language, collectionName, force); err != nil {
 			log.Printf("❌ Background indexing failed: %v", err)
 		}
 	}()
@@ -1235,22 +1270,14 @@ func (m *Manager) EnsureWorkspaceIndexed(ctx context.Context, rootPath string) e
 
 	var errs []string
 
-	// Check which languages have analyzers available
-	analyzerManager := ragcode.NewAnalyzerManager()
-
-	// Helper to check if we have an analyzer for a language
-	hasAnalyzer := func(lang string) bool {
-		return analyzerManager.CodeAnalyzerForProjectType(lang) != nil
-	}
-
 	// Helper to index language
 	indexLang := func(lang string) {
-		if !hasAnalyzer(lang) {
+		if !m.supportsLanguageIndexing(lang) {
 			log.Printf("⚠️  Skipping language '%s' - no analyzer available", lang)
 			return
 		}
 		colName := info.CollectionNameForLanguage(lang)
-		if err := m.IndexLanguage(ctx, info, lang, colName, false); err != nil {
+		if err := m.invokeIndexLanguage(ctx, info, lang, colName, false); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", lang, err))
 		}
 	}

@@ -615,6 +615,9 @@ func main() {
 		cfg,
 	)
 
+	// Strategy 1: Migrate previously indexed workspaces into the persistent registry
+	workspaceManager.MigrateExistingWorkspaces()
+
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "ragcode",
 		Version: Version,

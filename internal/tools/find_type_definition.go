@@ -61,56 +61,47 @@ func (t *FindTypeDefinitionTool) Execute(ctx context.Context, args map[string]in
 		outputFormat = strings.ToLower(of)
 	}
 
-	// file_path with single-workspace fallback (no error - defers to DetectWorkspace)
-	resolveFilePathWithFallback(args, t.workspaceManager, "find_type_definition")
-
-	// Try workspace detection if workspace manager is available
+	// Resolve workspace from registry
 	var searchMemory memory.LongTermMemory
 	var workspacePath string
 	var collectionName string
+	var detectedLang string
 
 	if t.workspaceManager != nil {
-		workspaceInfo, err := t.workspaceManager.DetectWorkspace(args)
-		if err == nil && workspaceInfo != nil {
-			workspacePath = workspaceInfo.Root
+		workspaceInfo, err := t.workspaceManager.ResolveWorkspace(args)
+		if err != nil {
+			return "", err
+		}
+		workspacePath = workspaceInfo.Root
 
-			// Detect language from file path or use first detected language
-			language := inferLanguageFromPath(extractFilePathFromParams(args))
-			if language == "" && len(workspaceInfo.Languages) > 0 {
-				language = workspaceInfo.Languages[0]
-			}
-			if language == "" {
-				language = workspaceInfo.ProjectType
+		if len(workspaceInfo.Languages) > 0 {
+			detectedLang = workspaceInfo.Languages[0]
+		}
+
+		collectionName = workspaceInfo.CollectionNameForLanguage(detectedLang)
+		mem, err := t.workspaceManager.GetMemoryForWorkspaceLanguage(ctx, workspaceInfo, detectedLang)
+		if err == nil && mem != nil {
+			indexKey := workspaceInfo.ID + "-" + detectedLang
+			if t.workspaceManager.IsIndexing(indexKey) {
+				return fmt.Sprintf("⏳ Workspace '%s' language '%s' is currently being indexed in the background.\n"+
+					"Please try again in a few moments.\n"+
+					"Workspace: %s\n"+
+					"Language: %s\n"+
+					"Collection: %s",
+					workspaceInfo.Root, detectedLang, workspaceInfo.Root, detectedLang, collectionName), nil
 			}
 
-			collectionName = workspaceInfo.CollectionNameForLanguage(language)
-			mem, err := t.workspaceManager.GetMemoryForWorkspaceLanguage(ctx, workspaceInfo, language)
-			if err == nil && mem != nil {
-				// Check if indexing is in progress
-				indexKey := workspaceInfo.ID + "-" + language
-				if t.workspaceManager.IsIndexing(indexKey) {
-					return fmt.Sprintf("⏳ Workspace '%s' language '%s' is currently being indexed in the background.\n"+
-						"Please try again in a few moments.\n"+
-						"Workspace: %s\n"+
-						"Language: %s\n"+
-						"Collection: %s",
-						workspaceInfo.Root, language, workspaceInfo.Root, language, collectionName), nil
+			if msg, err := CheckCollectionStatus(ctx, mem, collectionName, workspacePath); err != nil || msg != "" {
+				if err != nil {
+					return "", err
 				}
-
-				// Check if collection exists before proceeding
-				if msg, err := CheckCollectionStatus(ctx, mem, collectionName, workspacePath); err != nil || msg != "" {
-					if err != nil {
-						return "", err
-					}
-					return msg, nil
-				}
-
-				searchMemory = mem
+				return msg, nil
 			}
+
+			searchMemory = mem
 		}
 	}
 
-	// Use workspace-specific memory or fall back to default
 	if searchMemory == nil {
 		searchMemory = t.longTermMemory
 	}
@@ -119,8 +110,7 @@ func (t *FindTypeDefinitionTool) Execute(ctx context.Context, args map[string]in
 		return "", fmt.Errorf("no long-term memory configured")
 	}
 
-	// Detect language from file path to build appropriate query
-	language := inferLanguageFromPath(extractFilePathFromParams(args))
+	language := detectedLang
 
 	// Search for the type in the vector database
 	// Use language-appropriate keywords for better semantic matching

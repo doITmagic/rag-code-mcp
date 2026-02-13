@@ -39,12 +39,18 @@ When the user wants to enhance your capabilities:
 2. Explain what each skill does based on its description.
 3. Use `install_skill(skill_id, active=true)` to enable it.
 
+Example MCP call:
+```
+mcp_ragcode_install_skill(skill_id="ragcode-update", active=true, file_path="/home/user/project/go.mod")
+```
+
 ---
 
 ## 🏥 Health Checks
 If the system feels slow or tools fail consistently:
 1. Suggest running the health check (CLI flag `--health`).
 2. Check if the workspace is indexed. If not, suggest `index_workspace`.
+3. Dacă indexarea pare suspectă sau inconsecventă, rulează explicit `index_workspace` cu `file_path` sau `workspace_root` (ex.: `mcp_ragcode_index_workspace(file_path="/home/user/project/go.mod")`) pentru a forța verificarea colecțiilor și reindexarea.
 
 ---
 

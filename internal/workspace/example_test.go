@@ -23,24 +23,6 @@ func ExampleDetector_DetectFromPath() {
 	fmt.Printf("Collection name: %s\n", info.CollectionName())
 }
 
-func ExampleDetector_DetectFromParams() {
-	detector := workspace.NewDetector()
-
-	// Simulate MCP tool parameters
-	params := map[string]interface{}{
-		"file_path": "/home/user/projects/my-app/internal/handlers/user.go",
-		"query":     "user authentication",
-	}
-
-	info, err := detector.DetectFromParams(params)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Printf("Detected workspace: %s\n", info.Root)
-	fmt.Printf("Collection: %s\n", info.CollectionName())
-}
-
 func ExampleCache() {
 	// Create cache with 5 minute TTL
 	cache := workspace.NewCache(5 * time.Minute)

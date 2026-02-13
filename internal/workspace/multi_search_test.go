@@ -1,90 +1,142 @@
 package workspace
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
 
-func TestGetSingleWorkspaceRoot_EmptyCache(t *testing.T) {
-	cache := NewCache(5 * time.Minute)
-	m := &Manager{cache: cache}
+func TestRegistry_RegisterAndFind(t *testing.T) {
+	tmp := t.TempDir()
+	regPath := filepath.Join(tmp, "workspaces.json")
+	reg := NewRegistry(regPath)
 
-	root := m.GetSingleWorkspaceRoot()
-	if root != "" {
-		t.Fatalf("expected empty string for empty cache, got %q", root)
+	info := &Info{
+		Root:      "/home/user/project-a",
+		ID:        "ws-a",
+		Languages: []string{"go"},
+	}
+	if err := reg.Register(info); err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+
+	if reg.Len() != 1 {
+		t.Fatalf("expected 1 workspace, got %d", reg.Len())
+	}
+
+	entry := reg.FindByName("project-a")
+	if entry == nil {
+		t.Fatal("FindByName returned nil")
+	}
+	if entry.Root != "/home/user/project-a" {
+		t.Fatalf("expected root /home/user/project-a, got %q", entry.Root)
+	}
+
+	entry = reg.FindByRoot("/home/user/project-a")
+	if entry == nil {
+		t.Fatal("FindByRoot returned nil")
 	}
 }
 
-func TestGetSingleWorkspaceRoot_SingleWorkspace(t *testing.T) {
-	cache := NewCache(5 * time.Minute)
-	cache.Set("/home/user/project-a/main.go", &Info{Root: "/home/user/project-a"})
+func TestRegistry_Single(t *testing.T) {
+	tmp := t.TempDir()
+	reg := NewRegistry(filepath.Join(tmp, "workspaces.json"))
 
-	m := &Manager{cache: cache}
+	if reg.Single() != nil {
+		t.Fatal("expected nil for empty registry")
+	}
 
-	root := m.GetSingleWorkspaceRoot()
-	if root != "/home/user/project-a" {
-		t.Fatalf("expected /home/user/project-a, got %q", root)
+	reg.Register(&Info{Root: "/home/user/project-a", ID: "ws-a"})
+	if s := reg.Single(); s == nil {
+		t.Fatal("expected single workspace")
+	}
+
+	reg.Register(&Info{Root: "/home/user/project-b", ID: "ws-b"})
+	if reg.Single() != nil {
+		t.Fatal("expected nil for multiple workspaces")
 	}
 }
 
-func TestGetSingleWorkspaceRoot_SingleWorkspaceMultipleCacheKeys(t *testing.T) {
-	cache := NewCache(5 * time.Minute)
-	// Same workspace root cached under different file paths
-	cache.Set("/home/user/project-a/main.go", &Info{Root: "/home/user/project-a"})
-	cache.Set("/home/user/project-a/internal/pkg/foo.go", &Info{Root: "/home/user/project-a"})
+func TestRegistry_Remove(t *testing.T) {
+	tmp := t.TempDir()
+	reg := NewRegistry(filepath.Join(tmp, "workspaces.json"))
 
-	m := &Manager{cache: cache}
+	reg.Register(&Info{Root: "/home/user/project-a", ID: "ws-a"})
+	reg.Register(&Info{Root: "/home/user/project-b", ID: "ws-b"})
 
-	root := m.GetSingleWorkspaceRoot()
-	if root != "/home/user/project-a" {
-		t.Fatalf("expected /home/user/project-a (deduplicated), got %q", root)
+	if err := reg.Remove("project-a"); err != nil {
+		t.Fatalf("Remove failed: %v", err)
+	}
+	if reg.Len() != 1 {
+		t.Fatalf("expected 1 workspace after remove, got %d", reg.Len())
 	}
 }
 
-func TestGetSingleWorkspaceRoot_MultipleWorkspaces(t *testing.T) {
-	cache := NewCache(5 * time.Minute)
-	cache.Set("/home/user/project-a/main.go", &Info{Root: "/home/user/project-a"})
-	cache.Set("/home/user/project-b/main.go", &Info{Root: "/home/user/project-b"})
+func TestRegistry_Persistence(t *testing.T) {
+	tmp := t.TempDir()
+	regPath := filepath.Join(tmp, "workspaces.json")
 
-	m := &Manager{cache: cache}
+	reg1 := NewRegistry(regPath)
+	reg1.Register(&Info{Root: "/home/user/project-a", ID: "ws-a", Languages: []string{"go"}})
 
-	root := m.GetSingleWorkspaceRoot()
-	if root != "" {
-		t.Fatalf("expected empty string for multiple workspaces, got %q", root)
+	// Load from disk
+	reg2 := NewRegistry(regPath)
+	if reg2.Len() != 1 {
+		t.Fatalf("expected 1 workspace after reload, got %d", reg2.Len())
+	}
+	entry := reg2.FindByName("project-a")
+	if entry == nil || entry.Root != "/home/user/project-a" {
+		t.Fatal("persisted workspace not found after reload")
 	}
 }
 
-func TestGetSingleWorkspaceRoot_ExpiredEntries(t *testing.T) {
-	cache := NewCache(1 * time.Millisecond)
-	cache.Set("/home/user/project-a/main.go", &Info{Root: "/home/user/project-a"})
+func TestRegistry_UpdateExisting(t *testing.T) {
+	tmp := t.TempDir()
+	reg := NewRegistry(filepath.Join(tmp, "workspaces.json"))
 
-	// Wait for cache to expire
-	time.Sleep(5 * time.Millisecond)
+	reg.Register(&Info{Root: "/home/user/project-a", ID: "ws-a", Languages: []string{"go"}})
+	reg.Register(&Info{Root: "/home/user/project-a", ID: "ws-a", Languages: []string{"go", "python"}})
 
-	m := &Manager{cache: cache}
-
-	root := m.GetSingleWorkspaceRoot()
-	if root != "" {
-		t.Fatalf("expected empty string for expired cache, got %q", root)
+	if reg.Len() != 1 {
+		t.Fatalf("expected 1 workspace (updated), got %d", reg.Len())
+	}
+	entry := reg.FindByRoot("/home/user/project-a")
+	if len(entry.Languages) != 2 {
+		t.Fatalf("expected 2 languages after update, got %d", len(entry.Languages))
 	}
 }
 
-func TestGetSingleWorkspaceRoot_MixedExpiredAndValid(t *testing.T) {
-	cache := NewCache(1 * time.Millisecond)
-	cache.Set("/home/user/project-old/main.go", &Info{Root: "/home/user/project-old"})
+func TestRegistry_FormatList(t *testing.T) {
+	tmp := t.TempDir()
+	reg := NewRegistry(filepath.Join(tmp, "workspaces.json"))
 
-	// Wait for first entry to expire
-	time.Sleep(5 * time.Millisecond)
+	msg := reg.FormatList()
+	if msg == "" {
+		t.Fatal("expected non-empty message for empty registry")
+	}
 
-	// Add a fresh entry with a new cache (longer TTL)
-	// We need to directly manipulate the cache since NewCache sets TTL globally
-	cache.ttl = 5 * time.Minute
-	cache.Set("/home/user/project-new/main.go", &Info{Root: "/home/user/project-new"})
+	reg.Register(&Info{Root: "/home/user/project-a", ID: "ws-a"})
+	reg.Register(&Info{Root: "/home/user/project-b", ID: "ws-b"})
 
-	m := &Manager{cache: cache}
-
-	root := m.GetSingleWorkspaceRoot()
-	if root != "/home/user/project-new" {
-		t.Fatalf("expected /home/user/project-new (only valid entry), got %q", root)
+	msg = reg.FormatList()
+	if msg == "" {
+		t.Fatal("expected non-empty formatted list")
 	}
 }
+
+func TestRegistry_FileCreation(t *testing.T) {
+	tmp := t.TempDir()
+	subDir := filepath.Join(tmp, "nested", "dir")
+	regPath := filepath.Join(subDir, "workspaces.json")
+
+	reg := NewRegistry(regPath)
+	reg.Register(&Info{Root: "/home/user/project-a", ID: "ws-a"})
+
+	if _, err := os.Stat(regPath); os.IsNotExist(err) {
+		t.Fatal("registry file was not created")
+	}
+}
+
+// Keep time import used for IndexedAt checks
+var _ = time.Now

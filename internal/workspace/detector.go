@@ -297,45 +297,6 @@ func (d *Detector) DetectFromPath(filePath string) (*Info, error) {
 	)
 }
 
-// DetectFromParams detects workspace from MCP tool parameters
-func (d *Detector) DetectFromParams(params map[string]interface{}) (*Info, error) {
-	// Priority 1: Check for explicit workspace_root parameter
-	if workspaceRoot, ok := params["workspace_root"]; ok {
-		if rootPath, ok := workspaceRoot.(string); ok && rootPath != "" {
-			return d.DetectFromPath(rootPath)
-		}
-	}
-
-	// Priority 2: Extract file path from standard parameters
-	pathParams := []string{
-		"file_path",
-		"filePath",
-		"path",
-		"file",
-		"source_file",
-		"target_file",
-		"directory",
-		"dir",
-	}
-
-	// Try to find a file path in parameters
-	for _, param := range pathParams {
-		if value, ok := params[param]; ok {
-			if path, ok := value.(string); ok && path != "" {
-				return d.DetectFromPath(path)
-			}
-		}
-	}
-
-	// Fallback: use current working directory of the server
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, fmt.Errorf("no file path in params and failed to get cwd: %w", err)
-	}
-
-	return d.DetectFromPath(cwd)
-}
-
 // findMarkers checks for workspace markers in a directory
 func (d *Detector) findMarkers(dir string) ([]string, string, []string) {
 	var found []string

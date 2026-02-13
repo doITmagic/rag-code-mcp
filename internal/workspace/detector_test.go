@@ -87,67 +87,32 @@ func TestDetector_DetectFromPath_NoMarkers(t *testing.T) {
 	}
 }
 
-func TestDetector_DetectFromParams(t *testing.T) {
-	// Create test workspace
+func TestDetector_DetectFromPath_WalkUp(t *testing.T) {
+	// Create test workspace with .git at root
 	tmpDir := t.TempDir()
 	gitDir := filepath.Join(tmpDir, ".git")
 	if err := os.MkdirAll(gitDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	testFile := filepath.Join(tmpDir, "main.go")
+	// Create a deep file
+	deepDir := filepath.Join(tmpDir, "src", "internal")
+	if err := os.MkdirAll(deepDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	testFile := filepath.Join(deepDir, "main.go")
 	if err := os.WriteFile(testFile, []byte("package main"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	detector := NewDetector()
-
-	tests := []struct {
-		name   string
-		params map[string]interface{}
-		want   string
-	}{
-		{
-			name: "workspace_root parameter",
-			params: map[string]interface{}{
-				"workspace_root": tmpDir,
-			},
-			want: tmpDir,
-		},
-		{
-			name: "file_path parameter",
-			params: map[string]interface{}{
-				"file_path": testFile,
-			},
-			want: tmpDir,
-		},
-		{
-			name: "filePath parameter",
-			params: map[string]interface{}{
-				"filePath": testFile,
-			},
-			want: tmpDir,
-		},
-		{
-			name: "path parameter",
-			params: map[string]interface{}{
-				"path": testFile,
-			},
-			want: tmpDir,
-		},
+	info, err := detector.DetectFromPath(testFile)
+	if err != nil {
+		t.Fatalf("DetectFromPath failed: %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			info, err := detector.DetectFromParams(tt.params)
-			if err != nil {
-				t.Fatalf("DetectFromParams failed: %v", err)
-			}
-
-			if info.Root != tt.want {
-				t.Errorf("Expected root %s, got %s", tt.want, info.Root)
-			}
-		})
+	if info.Root != tmpDir {
+		t.Errorf("Expected root %s, got %s", tmpDir, info.Root)
 	}
 }
 

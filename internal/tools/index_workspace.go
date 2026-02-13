@@ -40,10 +40,17 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 		return "", fmt.Errorf("workspace manager not configured")
 	}
 
-	// Detect workspace from params
+	// Detect workspace from params (walk-up to find real root)
 	workspaceInfo, err := t.workspaceManager.DetectWorkspace(params)
 	if err != nil {
 		return "", fmt.Errorf("failed to detect workspace: %w", err)
+	}
+
+	// Register workspace so other tools can resolve it without path detection
+	if reg := t.workspaceManager.GetRegistry(); reg != nil {
+		if err := reg.Register(workspaceInfo); err != nil {
+			log.Printf("⚠️ Failed to register workspace: %v", err)
+		}
 	}
 
 	// Optional: allow specifying specific language to index

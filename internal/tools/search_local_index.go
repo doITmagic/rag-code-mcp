@@ -72,34 +72,16 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 		return "", fmt.Errorf("failed to generate query embedding: %w", err)
 	}
 
-	// file_path with single-workspace fallback (no error - defers to DetectWorkspace)
-	resolveFilePathWithFallback(params, t.workspaceManager, "search_code")
-
-	// Try workspace-aware search first
+	// Resolve workspace from registry
 	if t.workspaceManager != nil {
-		workspaceInfo, err := t.workspaceManager.DetectWorkspace(params)
+		workspaceInfo, err := t.workspaceManager.ResolveWorkspace(params)
 		if err != nil {
-			// Workspace detection failed - return helpful message
-			return fmt.Sprintf("❌ Could not detect workspace from the provided file path.\n\n"+
-				"To enable workspace-aware code search, please provide a valid file_path parameter "+
-				"pointing to a file within your workspace.\n\n"+
-				"Error: %v", err), nil
+			return "", err
 		}
 
-		// Detect language from file path or query context
 		language := ""
-		if filePath := extractFilePathFromParams(params); filePath != "" {
-			language = inferLanguageFromPath(filePath)
-		}
-
-		// If no language detected from path, use first detected language in workspace
-		if language == "" && len(workspaceInfo.Languages) > 0 {
+		if len(workspaceInfo.Languages) > 0 {
 			language = workspaceInfo.Languages[0]
-		}
-
-		// Fallback to ProjectType
-		if language == "" {
-			language = workspaceInfo.ProjectType
 		}
 
 		// Get workspace-specific memory for the detected language

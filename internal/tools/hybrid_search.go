@@ -72,52 +72,44 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 		outputFormat = strings.ToLower(of)
 	}
 
-	// file_path with single-workspace fallback (no error - defers to DetectWorkspace)
-	resolveFilePathWithFallback(params, t.workspaceManager, "hybrid_search")
-
-	// Try workspace detection
+	// Resolve workspace from registry
 	var workspaceMem memory.LongTermMemory
 	var workspacePath string
 	var collectionName string
 
 	if t.workspaceManager != nil {
-		workspaceInfo, err := t.workspaceManager.DetectWorkspace(params)
-		if err == nil && workspaceInfo != nil {
-			workspacePath = workspaceInfo.Root
+		workspaceInfo, err := t.workspaceManager.ResolveWorkspace(params)
+		if err != nil {
+			return "", err
+		}
+		workspacePath = workspaceInfo.Root
 
-			// Detect language from file path or use first detected language
-			language := inferLanguageFromPath(extractFilePathFromParams(params))
-			if language == "" && len(workspaceInfo.Languages) > 0 {
-				language = workspaceInfo.Languages[0]
-			}
-			if language == "" {
-				language = workspaceInfo.ProjectType
+		language := ""
+		if len(workspaceInfo.Languages) > 0 {
+			language = workspaceInfo.Languages[0]
+		}
+
+		collectionName = workspaceInfo.CollectionNameForLanguage(language)
+		mem, err := t.workspaceManager.GetMemoryForWorkspaceLanguage(ctx, workspaceInfo, language)
+		if err == nil && mem != nil {
+			indexKey := workspaceInfo.ID + "-" + language
+			if t.workspaceManager.IsIndexing(indexKey) {
+				return fmt.Sprintf("⏳ Workspace '%s' language '%s' is currently being indexed in the background.\n"+
+					"Please try again in a few moments.\n"+
+					"Workspace: %s\n"+
+					"Language: %s\n"+
+					"Collection: %s",
+					workspaceInfo.Root, language, workspaceInfo.Root, language, collectionName), nil
 			}
 
-			collectionName = workspaceInfo.CollectionNameForLanguage(language)
-			mem, err := t.workspaceManager.GetMemoryForWorkspaceLanguage(ctx, workspaceInfo, language)
-			if err == nil && mem != nil {
-				// Check if indexing is in progress
-				indexKey := workspaceInfo.ID + "-" + language
-				if t.workspaceManager.IsIndexing(indexKey) {
-					return fmt.Sprintf("⏳ Workspace '%s' language '%s' is currently being indexed in the background.\n"+
-						"Please try again in a few moments.\n"+
-						"Workspace: %s\n"+
-						"Language: %s\n"+
-						"Collection: %s",
-						workspaceInfo.Root, language, workspaceInfo.Root, language, collectionName), nil
+			if msg, err := CheckCollectionStatus(ctx, mem, collectionName, workspacePath); err != nil || msg != "" {
+				if err != nil {
+					return "", err
 				}
-
-				// Check if collection exists before proceeding
-				if msg, err := CheckCollectionStatus(ctx, mem, collectionName, workspacePath); err != nil || msg != "" {
-					if err != nil {
-						return "", err
-					}
-					return msg, nil
-				}
-
-				workspaceMem = mem
+				return msg, nil
 			}
+
+			workspaceMem = mem
 		}
 	}
 

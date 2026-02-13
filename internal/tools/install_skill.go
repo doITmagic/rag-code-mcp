@@ -25,7 +25,7 @@ func (t *InstallSkillTool) Name() string {
 func (t *InstallSkillTool) Description() string {
 	return `Installs or uninstalls an AI skill to/from the current workspace. 
 Param 'skill_id' is the unique identifier of the skill (e.g., 'go-best-practices', 'ragcode-priority').
-Param 'active' (bool) determines if it should be installed (true) or removed (false).
+Param 'active' (bool) determines if it should be installed (true) or removed (false). This flag is MANDATORY; omitting it will return an error even for installs.
 Param 'file_path' (string) is HIGHLY RECOMMENDED to help detect the correct workspace root.
 
 EXAMPLES:
@@ -44,12 +44,10 @@ func (t *InstallSkillTool) Execute(ctx context.Context, args map[string]interfac
 		return "", fmt.Errorf("parameter 'skill_id' is required")
 	}
 
-	// Detect workspace to know where to install the skill
-	workspaceInfo, err := t.workspaceManager.DetectWorkspace(args)
+	// Resolve workspace from registry
+	workspaceInfo, err := t.workspaceManager.ResolveWorkspace(args)
 	if err != nil {
-		return "", fmt.Errorf("could not detect workspace for skill installation: %w\n\n"+
-			"TIP: If automatic detection fails, please provide an explicit 'file_path' or 'workspace_root' "+
-			"to a directory in your project containing workspace markers (like .git, go.mod, package.json).", err)
+		return "", fmt.Errorf("could not resolve workspace for skill installation: %w", err)
 	}
 
 	workspaceRoot := workspaceInfo.Root

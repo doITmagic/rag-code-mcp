@@ -37,12 +37,10 @@ func (t *ListSkillsTool) Execute(ctx context.Context, args map[string]interface{
 		return "No skills found in the binary.", nil
 	}
 
-	// Try to detect workspace to check installation status
+	// Resolve workspace from registry to check installation status
 	var workspaceRoot string
 	if t.workspaceManager != nil {
-		// Even if args are empty, try to detect from CWD or other means
-		// We pass the empty args to DetectWorkspace which has fallback logic
-		info, err := t.workspaceManager.DetectWorkspace(args)
+		info, err := t.workspaceManager.ResolveWorkspace(args)
 		if err == nil && info != nil {
 			workspaceRoot = info.Root
 		}

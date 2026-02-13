@@ -98,6 +98,19 @@ func TestInstallSkillTool_WorkspaceResolveError(t *testing.T) {
 	}
 }
 
+func TestInstallSkillTool_NilWorkspaceManager(t *testing.T) {
+	defer restoreSkillToolStubs()()
+
+	tool := NewInstallSkillTool(nil)
+	_, err := tool.Execute(context.Background(), map[string]interface{}{
+		"skill_id": "anything",
+		"active":   true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "workspace manager is not configured") {
+		t.Fatalf("expected nil workspace manager error, got %v", err)
+	}
+}
+
 func TestListSkillsTool_WithWorkspace(t *testing.T) {
 	defer restoreSkillToolStubs()()
 	mgr, info := newTestWorkspaceManager(t)

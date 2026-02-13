@@ -71,19 +71,9 @@ func (t *ListSkillsTool) Execute(ctx context.Context, args map[string]interface{
 		output = "⚠️  Warning: Could not detect active workspace. 'installed' status may be inaccurate.\nProvide 'file_path' argument to detect workspace.\n\n" + output
 	}
 
-	output += "\n\n---\n💡 Want to add your own skill?\n"
-	output += "Create a folder in .agent/skills/ (or define RAGCODE_SKILLS_PATH) with a SKILL.md file.\n"
-	output += "IMPORTANT: You MUST include 'compatible-with: [rag-code-mcp]' in the frontmatter!\n\n"
-	output += "Example SKILL.md:\n"
-	output += "```yaml\n"
-	output += "---\n"
-	output += "name: my-new-skill\n"
-	output += "description: Description of what this skill does\n"
-	output += "compatible-with: [rag-code-mcp]\n"
-	output += "---\n\n"
-	output += "# My New Skill\n"
-	output += "Instructions for the AI...\n"
-	output += "```"
+	output += "\n\n---\n💡 Tip:\n"
+	output += "This command lists skills bundled in the current ragcode binary.\n"
+	output += "Use 'rag_install_skill' with one of the listed IDs to install/uninstall a skill in this workspace."
 
 	return output, nil
 }

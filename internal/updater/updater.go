@@ -254,7 +254,7 @@ func CheckForUpdates(ctx context.Context, currentVersion string, force bool) (*U
 		updateAvailable = true
 	}
 
-	// Always save cache after successful network call, even if update info is nil (meaning we are on latest)
+	// Always save cache after successful network call, including when no update is available.
 	if err := SaveUpdateCache(info); err != nil {
 		// Log error but don't fail the update check itself
 		fmt.Fprintf(os.Stderr, "[WARN] Failed to save update cache: %v\n", err)
@@ -503,6 +503,14 @@ func unzip(src, dest string) error {
 			return err
 		}
 
+		remainingBudget := maxExtractedZipSize - totalExtracted
+		if remainingBudget <= 0 {
+			return fmt.Errorf("archive exceeds maximum extraction size (%d bytes)", maxExtractedZipSize)
+		}
+		if f.UncompressedSize64 > 0 && f.UncompressedSize64 > uint64(remainingBudget) {
+			return fmt.Errorf("archive exceeds maximum extraction size (%d bytes)", maxExtractedZipSize)
+		}
+
 		// Use fixed mode 0644 for extracted files for better security consistency
 		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 		if err != nil {
@@ -517,7 +525,19 @@ func unzip(src, dest string) error {
 			return err
 		}
 
-		written, copyErr := io.Copy(outFile, rc)
+		limitedReader := io.LimitReader(rc, remainingBudget)
+		written, copyErr := io.Copy(outFile, limitedReader)
+
+		overLimitErr := error(nil)
+		if copyErr == nil && written == remainingBudget {
+			var probe [1]byte
+			n, probeErr := rc.Read(probe[:])
+			if probeErr != nil && probeErr != io.EOF {
+				overLimitErr = probeErr
+			} else if n > 0 {
+				overLimitErr = fmt.Errorf("archive exceeds maximum extraction size (%d bytes)", maxExtractedZipSize)
+			}
+		}
 
 		closeErr := outFile.Close()
 		rcErr := rc.Close()
@@ -525,11 +545,11 @@ func unzip(src, dest string) error {
 		if copyErr != nil {
 			return copyErr
 		}
+		if overLimitErr != nil {
+			return overLimitErr
+		}
 
 		totalExtracted += written
-		if totalExtracted > maxExtractedZipSize {
-			return fmt.Errorf("archive exceeds maximum extraction size (%d bytes)", maxExtractedZipSize)
-		}
 
 		if closeErr != nil {
 			return closeErr

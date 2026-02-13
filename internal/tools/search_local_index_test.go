@@ -37,9 +37,6 @@ func TestSearchLocalIndexTool_IncludeDocs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mem := NewMockSpyMemory()
-			// MockSpyMemory needs to implement LongTermMemory. 
-            // In search_hybrid_test.go it embedded *memory.InMemoryLongTermMemory which implements it.
-            // Ensure NewMockSpyMemory is available (it is in search_hybrid_test.go which is same package).
 			tool := NewSearchLocalIndexTool(mem, &mockProvider{})
 
 			_, _ = tool.Execute(ctx, tt.params)

@@ -64,6 +64,22 @@
     {
       "name": "rag_evaluate",
       "description": "Request a performance and quality evaluation of RagCode MCP"
+    },
+    {
+      "name": "rag_list_skills",
+      "description": "Lists all available AI skills bundled within the ragcode binary"
+    },
+    {
+      "name": "rag_install_skill",
+      "description": "Installs or uninstalls an AI skill to/from the current workspace"
+    },
+    {
+      "name": "rag_check_update",
+      "description": "Checks for available ragcode-mcp updates on GitHub"
+    },
+    {
+      "name": "rag_apply_update",
+      "description": "Downloads and installs the latest version of ragcode-mcp"
     }
   ],
   "resources": [

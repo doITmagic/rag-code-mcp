@@ -200,10 +200,6 @@ func (t *FindTypeDefinitionTool) Execute(ctx context.Context, args map[string]in
 
 	// Fallback to semantic search if exact search didn't find anything
 	{
-		type CodeSearcher interface {
-			SearchCodeOnly(ctx context.Context, query []float64, limit int) ([]memory.Document, error)
-		}
-
 		if codeSearcher, ok := searchMemory.(CodeSearcher); ok {
 			results, err = codeSearcher.SearchCodeOnly(ctx, queryEmbedding, 50)
 		} else {

@@ -155,15 +155,24 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 
 	// 2. Gather semantic candidates (more than the limit to allow lexical filtering)
 	// Prefer SearchCodeOnly to exclude markdown documentation
-	type CodeSearcher interface {
-		SearchCodeOnly(ctx context.Context, query []float64, limit int) ([]memory.Document, error)
+
+	// Optional: include documentation in results
+	includeDocs := false
+	if inc, ok := params["include_docs"].(bool); ok {
+		includeDocs = inc
 	}
 
 	fetchLimit := int(math.Max(float64(limit*5), 10))
 	var docs []memory.Document
-	if codeSearcher, ok := searchMemory.(CodeSearcher); ok {
+
+	// If include_docs is true, use generic Search (returns all types)
+	// If include_docs is false (default), try to use SearchCodeOnly
+	if includeDocs {
+		docs, err = searchMemory.Search(ctx, queryEmbedding, fetchLimit)
+	} else if codeSearcher, ok := searchMemory.(CodeSearcher); ok {
 		docs, err = codeSearcher.SearchCodeOnly(ctx, queryEmbedding, fetchLimit)
 	} else {
+		// Fallback if SearchCodeOnly not implemented
 		docs, err = searchMemory.Search(ctx, queryEmbedding, fetchLimit)
 	}
 	if err != nil {

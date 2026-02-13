@@ -1,6 +1,8 @@
 package healthcheck
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -25,6 +27,144 @@ type OllamaModel struct {
 // OllamaTagsResponse represents response from /api/tags
 type OllamaTagsResponse struct {
 	Models []OllamaModel `json:"models"`
+}
+
+func normalizeModelName(name string) (string, string) {
+	if !strings.Contains(name, ":") {
+		return name, "latest"
+	}
+	parts := strings.SplitN(name, ":", 2)
+	return parts[0], parts[1]
+}
+
+func fetchInstalledModels(baseURL string) ([]OllamaModel, error) {
+	if baseURL == "" {
+		baseURL = "http://localhost:11434"
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/api/tags", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ollama returned status %d", resp.StatusCode)
+	}
+
+	var tags OllamaTagsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tags); err != nil {
+		return nil, err
+	}
+
+	return tags.Models, nil
+}
+
+// MissingRequiredModels returns required models that are not installed in Ollama.
+func MissingRequiredModels(baseURL string, requiredModels []string) ([]string, error) {
+	if len(requiredModels) == 0 {
+		return nil, nil
+	}
+
+	models, err := fetchInstalledModels(baseURL)
+	if err != nil {
+		return nil, err
+	}
+
+	missing := make([]string, 0)
+	for _, requiredModel := range requiredModels {
+		requiredModel = strings.TrimSpace(requiredModel)
+		if requiredModel == "" {
+			continue
+		}
+
+		reqBase, reqTag := normalizeModelName(requiredModel)
+		found := false
+
+		for _, m := range models {
+			mBase, mTag := normalizeModelName(m.Name)
+			if reqBase == mBase && reqTag == mTag {
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			missing = append(missing, requiredModel)
+		}
+	}
+
+	return missing, nil
+}
+
+// PullModel downloads a model in Ollama. Returns error when model cannot be pulled.
+func PullModel(baseURL, name string) error {
+	if baseURL == "" {
+		baseURL = "http://localhost:11434"
+	}
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("model name is required")
+	}
+
+	body, err := json.Marshal(map[string]string{"name": name})
+	if err != nil {
+		return err
+	}
+
+	resp, err := http.Post(baseURL+"/api/pull", "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		return fmt.Errorf("failed to pull model '%s': %w", name, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to pull model '%s': ollama returned status %d", name, resp.StatusCode)
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	buf := make([]byte, 0, 1024)
+	scanner.Buffer(buf, 1024*1024)
+	lastLine := ""
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		lastLine = line
+
+		var chunk map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &chunk); err != nil {
+			continue
+		}
+
+		if errMsg, ok := chunk["error"].(string); ok && strings.TrimSpace(errMsg) != "" {
+			return fmt.Errorf("failed to pull model '%s': %s", name, errMsg)
+		}
+
+		if status, ok := chunk["status"].(string); ok && status == "success" {
+			return nil
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("failed to pull model '%s': %w", name, err)
+	}
+
+	if lastLine != "" {
+		return fmt.Errorf("failed to pull model '%s': %s", name, lastLine)
+	}
+
+	return fmt.Errorf("failed to pull model '%s': pull did not report success", name)
 }
 
 // CheckOllama verifies Ollama is running and accessible
@@ -79,22 +219,13 @@ func CheckOllamaWithModels(baseURL string, requiredModels []string) CheckResult 
 			return result
 		}
 
-		// Normalize helper: returns model name and tag
-		normalize := func(name string) (string, string) {
-			if !strings.Contains(name, ":") {
-				return name, "latest"
-			}
-			parts := strings.SplitN(name, ":", 2)
-			return parts[0], parts[1]
-		}
-
 		var missing []string
 		for _, requiredModel := range requiredModels {
-			reqBase, reqTag := normalize(requiredModel)
+			reqBase, reqTag := normalizeModelName(requiredModel)
 			found := false
 
 			for _, m := range tags.Models {
-				mBase, mTag := normalize(m.Name)
+				mBase, mTag := normalizeModelName(m.Name)
 				if reqBase == mBase && reqTag == mTag {
 					found = true
 					break

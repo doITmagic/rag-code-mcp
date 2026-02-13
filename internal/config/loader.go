@@ -74,8 +74,8 @@ func DefaultConfig() *Config {
 		LLM: LLMConfig{
 			Provider:         "ollama",
 			OllamaBaseURL:    "http://localhost:11434",
-			OllamaModel:      "phi3:medium",
-			OllamaEmbed:      "mxbai-embed-large",
+			OllamaModel:      "qwen2.5-coder:0.5b",
+			OllamaEmbed:      "qwen3-embedding:0.6b",
 			LlamafileBaseURL: "http://localhost:8080",
 			Temperature:      0.7,
 			MaxTokens:        2048,
@@ -83,8 +83,8 @@ func DefaultConfig() *Config {
 			MaxRetries:       3,
 			// Legacy fields for backward compatibility
 			BaseURL:    "http://localhost:11434",
-			Model:      "phi3:medium",
-			EmbedModel: "mxbai-embed-large",
+			Model:      "qwen2.5-coder:0.5b",
+			EmbedModel: "qwen3-embedding:0.6b",
 		},
 		Memory: MemoryConfig{
 			ShortTermSize:  10,

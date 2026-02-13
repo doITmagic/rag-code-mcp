@@ -87,11 +87,6 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 		return "", fmt.Errorf("failed to generate query embedding: %w", err)
 	}
 
-	// Helper interface for code-only search
-	type CodeSearcher interface {
-		SearchCodeOnly(ctx context.Context, query []float64, limit int) ([]memory.Document, error)
-	}
-
 	// Try workspace-aware search first
 	if t.workspaceManager != nil {
 		workspaceInfo, err := DetectAndRegisterWorkspace(t.workspaceManager, params)

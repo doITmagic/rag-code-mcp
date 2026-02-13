@@ -21,11 +21,20 @@ import (
 	"github.com/doITmagic/rag-code-mcp/internal/storage"
 )
 
+// QdrantInterface defines the required operations for vector storage management
+type QdrantInterface interface {
+	CollectionExists(ctx context.Context, name string) (bool, error)
+	GetCollectionInfo(ctx context.Context, name string) (*storage.CollectionInfo, error)
+	GetCollectionPointCount(ctx context.Context, name string) (uint64, error)
+	CreateCollection(ctx context.Context, name string, dimension int) error
+	DeleteCollection(ctx context.Context, name string) error
+}
+
 // Manager manages workspace detection, collection management, and indexing
 type Manager struct {
 	detector *Detector
 	cache    *Cache
-	qdrant   *storage.QdrantClient
+	qdrant   QdrantInterface
 	llm      llm.Provider
 	config   *config.Config
 
@@ -288,7 +297,7 @@ func (m *Manager) NeedsReindex(info *Info, language string) (bool, error) {
 }
 
 // NewManager creates a new workspace manager
-func NewManager(qdrant *storage.QdrantClient, llm llm.Provider, cfg *config.Config) *Manager {
+func NewManager(qdrant QdrantInterface, llm llm.Provider, cfg *config.Config) *Manager {
 	// Create detector with config or defaults
 	var detector *Detector
 	if cfg != nil && cfg.Workspace.Enabled {
@@ -536,22 +545,9 @@ func (m *Manager) GetMemoryForWorkspaceLanguage(ctx context.Context, info *Info,
 	}
 	m.memoryMu.RUnlock()
 
-	// Create collection-specific client FIRST (before checking existence)
-	collectionConfig := storage.QdrantConfig{
-		URL:        m.config.Storage.VectorDB.URL,
-		APIKey:     m.config.Storage.VectorDB.APIKey,
-		Collection: collectionName,
-	}
-
-	collectionClient, err := storage.NewQdrantClient(collectionConfig)
+	// Check if collection exists in Qdrant using global client
+	exists, err := m.qdrant.CollectionExists(ctx, collectionName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create collection client: %w", err)
-	}
-
-	// Check if collection exists in Qdrant using collection-specific client
-	exists, err := collectionClient.CollectionExists(ctx, collectionName)
-	if err != nil {
-		collectionClient.Close()
 		return nil, fmt.Errorf("failed to check collection: %w", err)
 	}
 
@@ -570,23 +566,16 @@ func (m *Manager) GetMemoryForWorkspaceLanguage(ctx context.Context, info *Info,
 			m.memoryMu.RUnlock()
 
 			if currentCount >= m.config.Workspace.MaxWorkspaces {
-				collectionClient.Close()
 				return nil, fmt.Errorf("workspace limit reached (%d/%d). Increase max_workspaces in config or clean up old workspaces",
 					currentCount, m.config.Workspace.MaxWorkspaces)
 			}
 		}
 
 		// Get embedding dimension from LLM
-		testEmbed, err := m.llm.Embed(ctx, "test")
-		if err != nil {
-			collectionClient.Close()
-			return nil, fmt.Errorf("failed to get embedding dimension: %w", err)
-		}
-		vectorDim := len(testEmbed)
+		vectorDim := int(m.llm.GetEmbeddingDimension())
 
-		// Create collection using collection-specific client
-		if err := collectionClient.CreateCollection(ctx, collectionName, vectorDim); err != nil {
-			collectionClient.Close()
+		// Create collection using global client
+		if err := m.qdrant.CreateCollection(ctx, collectionName, vectorDim); err != nil {
 			return nil, fmt.Errorf("failed to create collection: %w", err)
 		}
 
@@ -605,10 +594,38 @@ func (m *Manager) GetMemoryForWorkspaceLanguage(ctx context.Context, info *Info,
 			log.Printf("⏸️  Auto-indexing disabled for workspace '%s' language '%s'. Run manual indexing.", info.Root, language)
 		}
 	} else {
+		// Collection exists - check for dimension mismatch SYNCHRONOUSLY
+		// This prevents "Vector dimension error" when changing embedding models
+		_, _, needsMigration, err := m.CheckAndPrepareMigration(ctx, info, language)
+		if err != nil {
+			log.Printf("⚠️  Migration check failed for workspace '%s': %v", info.Root, err)
+		}
+
 		// Collection exists - check if files have changed and trigger incremental re-indexing
 		if m.config != nil && m.config.Workspace.AutoIndex {
-			go m.checkAndReindexIfNeeded(context.Background(), info, language, collectionName)
+			if needsMigration {
+				// If we just recreated the collection due to mismatch, trigger a full re-index immediately
+				log.Printf("🔄 Dimension mismatch resolved for '%s'. Triggering full re-index.", collectionName)
+				go func() {
+					if err := m.IndexLanguage(context.Background(), info, language, collectionName, false); err != nil {
+						log.Printf("❌ Background indexing (after migration) failed: %v", err)
+					}
+				}()
+			} else {
+				go m.checkAndReindexIfNeeded(context.Background(), info, language, collectionName)
+			}
 		}
+	}
+
+	// Create collection-specific client for memory instance
+	collectionConfig := storage.QdrantConfig{
+		URL:        m.config.Storage.VectorDB.URL,
+		APIKey:     m.config.Storage.VectorDB.APIKey,
+		Collection: collectionName,
+	}
+	collectionClient, err := storage.NewQdrantClient(collectionConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create collection client: %w", err)
 	}
 
 	// Create memory instance with collection-specific client

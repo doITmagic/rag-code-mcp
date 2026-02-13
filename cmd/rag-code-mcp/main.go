@@ -689,7 +689,7 @@ func main() {
 	indexWorkspaceTool := tools.NewIndexWorkspaceTool(workspaceManager)
 	evaluateTool := tools.NewEvaluateRagCodeTool(workspaceManager)
 
-	listSkillsTool := tools.NewListSkillsTool()
+	listSkillsTool := tools.NewListSkillsTool(workspaceManager)
 	installSkillTool := tools.NewInstallSkillTool(workspaceManager)
 	checkUpdateTool := tools.NewCheckUpdateTool(Version)
 	applyUpdateTool := tools.NewApplyUpdateTool(Version)

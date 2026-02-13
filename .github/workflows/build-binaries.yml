@@ -59,16 +59,31 @@ jobs:
           
           chmod +x bin/*
 
-      - name: Stage binaries
-        run: git add -f bin/
+      - name: Check if binaries changed
+        id: check_changes
+        run: |
+          git add -f bin/
+          if git diff --cached --quiet; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Create Pull Request
+      - name: Commit and push binaries
+        if: github.event_name == 'push' && steps.check_changes.outputs.changed == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add -f bin/
+          git commit -m "chore: auto-build binaries [skip ci]"
+          git push
+
+      - name: Create pull request with updated binaries (main only)
+        if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && steps.check_changes.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "chore: update binaries [skip ci]"
           title: "chore: update binaries"
           body: "Auto-generated PR to update binaries after code changes."
           branch: "chore/update-binaries"
-          base: ${{ github.head_ref || github.ref_name }}
-          delete-branch: true
+          base: ${{ github.event.pull_request.base.ref }}

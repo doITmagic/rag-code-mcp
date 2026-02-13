@@ -37,8 +37,8 @@ const (
 	qdrantImage     = "qdrant/qdrant:latest"
 	ollamaContainer = "ragcode-ollama"
 	qdrantContainer = "ragcode-qdrant"
-	defaultModel    = "phi3:medium"
-	defaultEmbed    = "mxbai-embed-large"
+	defaultModel    = "qwen2.5-coder:0.5b"
+	defaultEmbed    = "qwen3-embedding:0.6b"
 	installDirName  = ".local/share/ragcode"
 )
 
@@ -145,6 +145,24 @@ func installRuntimeBinaries() {
 				}
 			}
 		}
+	}
+
+	// Transparency: Copy config.yaml if it exists locally
+	configName := "config.yaml"
+	if srcPath, ok := findLocalBinaryPath(configName); ok {
+		output := filepath.Join(binDir, configName)
+		log(fmt.Sprintf(" - Found %s at %s, copying to %s...", configName, srcPath, binDir))
+		if !sameFile(srcPath, output) {
+			if err := copyFile(srcPath, output); err != nil {
+				warn(fmt.Sprintf("Failed to copy config.yaml: %v", err))
+			} else {
+				success("Configuration file copied successfully")
+			}
+		} else {
+			log(" - config.yaml already in place")
+		}
+	} else {
+		log(" - No local config.yaml found, server will auto-generate one on first run")
 	}
 }
 
@@ -1156,7 +1174,44 @@ type ModelList struct {
 func provisionModels() {
 	log("Checking AI models...")
 
-	required := []string{defaultModel, defaultEmbed}
+	modelToPull := defaultModel
+	embedToPull := defaultEmbed
+
+	// Transparency: Try to read models from the config we just installed
+	home, _ := os.UserHomeDir()
+	configPath := filepath.Join(home, installDirName, "bin", "config.yaml")
+	if data, err := os.ReadFile(configPath); err == nil {
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			// Simple YAML parser for the installer (no external dependencies)
+			if strings.HasPrefix(line, "ollama_model:") {
+				val := strings.TrimSpace(strings.TrimPrefix(line, "ollama_model:"))
+				// Remove comments
+				if idx := strings.Index(val, "#"); idx != -1 {
+					val = strings.TrimSpace(val[:idx])
+				}
+				val = strings.Trim(val, "\"'")
+				if val != "" {
+					modelToPull = val
+				}
+			}
+			if strings.HasPrefix(line, "ollama_embed:") {
+				val := strings.TrimSpace(strings.TrimPrefix(line, "ollama_embed:"))
+				// Remove comments
+				if idx := strings.Index(val, "#"); idx != -1 {
+					val = strings.TrimSpace(val[:idx])
+				}
+				val = strings.Trim(val, "\"'")
+				if val != "" {
+					embedToPull = val
+				}
+			}
+		}
+		log(fmt.Sprintf("Using models from config.yaml: %s, %s", modelToPull, embedToPull))
+	}
+
+	required := []string{modelToPull, embedToPull}
 
 	// Get installed models
 	resp, err := http.Get("http://localhost:11434/api/tags")

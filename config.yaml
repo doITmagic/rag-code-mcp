@@ -4,8 +4,10 @@
 llm:
   provider: ollama
   ollama_base_url: http://localhost:11434
-  ollama_model: phi3:medium
-  ollama_embed: mxbai-embed-large
+  # Ultra-lightweight coding model (< 1B params)
+  ollama_model: qwen2.5-coder:0.5b
+  # Recommended small embedding model (0.6B params)
+  ollama_embed: qwen3-embedding:0.6b
   temperature: 0.7
   max_tokens: 1024
   timeout: 60s

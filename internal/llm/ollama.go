@@ -131,7 +131,9 @@ func (p *OllamaLLMProvider) lookupHardcodedDimension() uint64 {
 	switch p.embedName {
 	case "mxbai-embed-large":
 		return 1024
-	case "nomic-embed-text":
+	case "nomic-embed-text", "nomic-embed-text:latest", "nomic-embed-text-v1.5":
+		return 768
+	case "nomic-embed-text-v2-moe", "nomic-embed-text-v2-moe:latest":
 		return 768
 	case "all-minilm":
 		return 384
@@ -139,16 +141,46 @@ func (p *OllamaLLMProvider) lookupHardcodedDimension() uint64 {
 		return 1024
 	case "bge-small-en-v1.5":
 		return 384
-	case "phi3", "phi3:medium", "phi3:14b":
+	case "phi3", "phi3:medium", "phi3:14b", "phi3:latest":
 		return 3072
 	case "phi3:mini", "phi3:4b":
 		return 3072
+	case "qwen2.5-coder", "qwen2.5-coder:latest", "qwen2.5-coder:7b", "qwen2.5-coder:14b", "qwen2.5-coder:32b":
+		return 3584
+	case "qwen2.5-coder:1.5b", "qwen2.5-coder:0.5b":
+		return 1536
+	case "qwen3-embedding", "qwen3-embedding:0.6b", "qwen3-embedding:latest":
+		return 1024
+	case "qwen3-embedding:4b":
+		return 2560
+	case "qwen3-embedding:8b":
+		return 4096
+	case "deepseek-coder", "deepseek-coder:6.7b", "deepseek-coder-v2":
+		return 4096
+	case "deepseek-coder:1.3b":
+		return 2048
+	case "codellama", "codellama:7b", "codellama:13b":
+		return 4096
+	case "starcoder2:3b":
+		return 3072
+	case "starcoder2:7b", "starcoder2:15b":
+		return 6144
 	case "llama3", "llama3:8b":
 		return 4096
 	case "mistral", "mistral:7b":
 		return 4096
 	case "granite3.1-dense:8b":
 		return 4096
+	case "snowflake-arctic-embed", "snowflake-arctic-embed:latest":
+		return 1024
+	case "snowflake-arctic-embed:m":
+		return 768
+	case "snowflake-arctic-embed:xs":
+		return 384
+	case "bge-large-en-v1.5":
+		return 1024
+	case "jina-embeddings-v2-base-en":
+		return 768
 	default:
 		return 0 // Unknown
 	}

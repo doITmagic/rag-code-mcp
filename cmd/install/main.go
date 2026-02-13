@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -90,10 +92,30 @@ func installRuntimeBinaries() {
 		}
 		output := filepath.Join(binDir, binName)
 
-		// Option 1: Check if pre-built binary exists in current directory
-		if _, err := os.Stat(binName); err == nil {
-			log(fmt.Sprintf(" - Found %s in current directory, copying...", binName))
-			if err := copyFile(binName, output); err != nil {
+		// If already installed (e.g. extracted from release bundle), keep it.
+		if _, err := os.Stat(output); err == nil {
+			if err := os.Chmod(output, 0755); err != nil {
+				warn(fmt.Sprintf("Could not set executable flag for %s: %v", output, err))
+			}
+
+			// CLI Tool Support: Symlink to ~/.local/bin if it exists
+			localBin := filepath.Join(home, ".local", "bin")
+			if _, err := os.Stat(localBin); err == nil {
+				linkPath := filepath.Join(localBin, binName)
+				os.Remove(linkPath)
+				if err := os.Symlink(output, linkPath); err == nil {
+					success(fmt.Sprintf("Linked %s to %s", binName, linkPath))
+				}
+			}
+			continue
+		}
+
+		// Option 1: Check if pre-built binary exists near current execution context
+		if srcPath, ok := findLocalBinaryPath(binName); ok {
+			log(fmt.Sprintf(" - Found %s at %s, copying...", binName, srcPath))
+			if sameFile(srcPath, output) {
+				log(fmt.Sprintf(" - %s already installed at destination", binName))
+			} else if err := copyFile(srcPath, output); err != nil {
 				fail(fmt.Sprintf("Failed to copy %s: %v", binName, err))
 			}
 		} else if _, err := os.Stat(bin.pkg); err == nil {
@@ -161,16 +183,168 @@ func success(msg string) { fmt.Printf("%s✓ %s%s\n", green, msg, reset) }
 func warn(msg string)    { fmt.Printf("%s! %s%s\n", yellow, msg, reset) }
 func fail(msg string)    { fmt.Printf("%s✗ %s%s\n", red, msg, reset); os.Exit(1) }
 
+func findRunningRagCodePIDsUnix() ([]int, error) {
+	cmd := exec.Command("pgrep", "-x", "rag-code-mcp")
+	out, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	selfPID := os.Getpid()
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	pids := make([]int, 0, len(lines))
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		pid, convErr := strconv.Atoi(line)
+		if convErr != nil {
+			continue
+		}
+		if pid == selfPID {
+			continue
+		}
+		if isZombieProcessUnix(pid) {
+			continue
+		}
+
+		// Double-check command name/path for additional safety.
+		if isRagCodeProcessPID(pid) {
+			pids = append(pids, pid)
+		}
+	}
+
+	return pids, nil
+}
+
+func isRagCodeProcessPID(pid int) bool {
+	pidStr := strconv.Itoa(pid)
+
+	commOut, err := exec.Command("ps", "-p", pidStr, "-o", "comm=").Output()
+	if err == nil {
+		if strings.TrimSpace(string(commOut)) == "rag-code-mcp" {
+			return true
+		}
+	}
+
+	argsOut, err := exec.Command("ps", "-p", pidStr, "-o", "args=").Output()
+	if err != nil {
+		return false
+	}
+	args := strings.TrimSpace(string(argsOut))
+	if args == "" {
+		return false
+	}
+
+	fields := strings.Fields(args)
+	if len(fields) == 0 {
+		return false
+	}
+
+	return filepath.Base(fields[0]) == "rag-code-mcp"
+}
+
+func isProcessAliveUnix(pid int) bool {
+	if exec.Command("kill", "-0", strconv.Itoa(pid)).Run() != nil {
+		return false
+	}
+	if isZombieProcessUnix(pid) {
+		return false
+	}
+	return true
+}
+
+func isZombieProcessUnix(pid int) bool {
+	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "stat=").Output()
+	if err != nil {
+		return false
+	}
+	status := strings.TrimSpace(string(out))
+	if status == "" {
+		return false
+	}
+	return strings.HasPrefix(status, "Z")
+}
+
+func terminateProcessesUnix(pids []int, signal string) (failed []int, permissionDenied bool) {
+	for _, pid := range pids {
+		cmd := exec.Command("kill", signal, strconv.Itoa(pid))
+		if err := cmd.Run(); err != nil {
+			// If process already exited, treat as success.
+			if !isProcessAliveUnix(pid) {
+				continue
+			}
+			failed = append(failed, pid)
+			errText := strings.ToLower(err.Error())
+			if strings.Contains(errText, "operation not permitted") || strings.Contains(errText, "permission denied") {
+				permissionDenied = true
+			}
+		}
+	}
+
+	return failed, permissionDenied
+}
+
+func stopRunningRagCodeProcessesUnix(actionLabel string) {
+	pids, err := findRunningRagCodePIDsUnix()
+	if err != nil {
+		warn(fmt.Sprintf("Could not inspect running rag-code-mcp processes: %v", err))
+		return
+	}
+	if len(pids) == 0 {
+		log("No running MCP server processes found (this is normal)")
+		return
+	}
+
+	_, permissionDenied := terminateProcessesUnix(pids, "-TERM")
+	time.Sleep(600 * time.Millisecond)
+
+	remaining := make([]int, 0, len(pids))
+	for _, pid := range pids {
+		if isProcessAliveUnix(pid) {
+			remaining = append(remaining, pid)
+		}
+	}
+
+	if len(remaining) > 0 {
+		_, permissionDeniedKill := terminateProcessesUnix(remaining, "-KILL")
+		permissionDenied = permissionDenied || permissionDeniedKill
+		time.Sleep(250 * time.Millisecond)
+	}
+
+	stillAlive := 0
+	for _, pid := range pids {
+		if isProcessAliveUnix(pid) {
+			stillAlive++
+		}
+	}
+
+	if stillAlive == 0 {
+		success(actionLabel)
+		return
+	}
+
+	if permissionDenied {
+		warn(fmt.Sprintf("Some rag-code-mcp processes could not be stopped due to permissions (%d remaining)", stillAlive))
+		return
+	}
+
+	warn(fmt.Sprintf("Some rag-code-mcp processes are still running (%d remaining)", stillAlive))
+}
+
 func stopRunningBinaries() {
 	log("Stopping any running RagCode processes...")
 	if runtime.GOOS == "windows" {
 		_ = exec.Command("taskkill", "/F", "/IM", "rag-code-mcp.exe", "/T").Run()
 	} else {
-		// Stop any running rag-code-mcp processes
-		// We use pkill -f to match the process name or full command line
-		_ = exec.Command("pkill", "-f", "rag-code-mcp").Run()
-		// Give it a short moment to release file handles
-		time.Sleep(500 * time.Millisecond)
+		stopRunningRagCodeProcessesUnix("Stopped running MCP server processes")
 	}
 }
 
@@ -252,20 +426,18 @@ func killProcessOnPort(port int) {
 func stopRunningServers() {
 	log("Checking for running rag-code-mcp processes...")
 
-	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		cmd = exec.Command("taskkill", "/F", "/IM", "rag-code-mcp.exe")
+		cmd := exec.Command("taskkill", "/F", "/IM", "rag-code-mcp.exe")
+		err := cmd.Run()
+		if err == nil {
+			success("Stopped running MCP server processes")
+			time.Sleep(500 * time.Millisecond) // Give processes time to clean up
+		} else {
+			// Not an error if no processes found - just means nothing was running
+			log("No running MCP server processes found (this is normal)")
+		}
 	} else {
-		cmd = exec.Command("pkill", "-f", "rag-code-mcp")
-	}
-
-	err := cmd.Run()
-	if err == nil {
-		success("Stopped running MCP server processes")
-		time.Sleep(500 * time.Millisecond) // Give processes time to clean up
-	} else {
-		// Not an error if no processes found - just means nothing was running
-		log("No running MCP server processes found (this is normal)")
+		stopRunningRagCodeProcessesUnix("Stopped running MCP server processes")
 	}
 }
 
@@ -525,10 +697,15 @@ func installBinary() {
 	}
 	outputBin := filepath.Join(binDir, binaryName)
 
-	// Option 1: Check if binary exists in current directory (from extracted archive)
-	if _, err := os.Stat(binaryName); err == nil {
-		log(fmt.Sprintf("Found %s in current directory, copying to %s...", binaryName, binDir))
-		if err := copyFile(binaryName, outputBin); err != nil {
+	// Option 1: Check if binary exists locally (current dir or executable dir)
+	if srcPath, ok := findLocalBinaryPath(binaryName); ok {
+		log(fmt.Sprintf("Found %s at %s, copying to %s...", binaryName, srcPath, binDir))
+		if sameFile(srcPath, outputBin) {
+			success("Binary already installed")
+			addToPath(binDir)
+			return
+		}
+		if err := copyFile(srcPath, outputBin); err != nil {
 			fail(fmt.Sprintf("Failed to copy binary: %v", err))
 		}
 		if err := os.Chmod(outputBin, 0755); err != nil {
@@ -539,9 +716,9 @@ func installBinary() {
 		return
 	}
 
-	// Option 2: Try downloading pre-built archive
-	if downloadAndExtractBinary(outputBin) {
-		success("Binary downloaded and installed successfully")
+	// Option 2: Try downloading pre-built release bundle with all runtime binaries
+	if downloadAndExtractReleaseBundle(binDir) {
+		success("Release archive downloaded and binaries installed successfully")
 		addToPath(binDir)
 		return
 	}
@@ -560,6 +737,151 @@ func installBinary() {
 	}
 	success("Binary built successfully")
 	addToPath(binDir)
+}
+
+func sameFile(a, b string) bool {
+	absA, errA := filepath.Abs(a)
+	absB, errB := filepath.Abs(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return absA == absB
+}
+
+func findLocalBinaryPath(binaryName string) (string, bool) {
+	seen := map[string]bool{}
+
+	tryPath := func(path string) (string, bool) {
+		if path == "" {
+			return "", false
+		}
+		abs, err := filepath.Abs(path)
+		if err == nil {
+			if seen[abs] {
+				return "", false
+			}
+			seen[abs] = true
+			path = abs
+		}
+
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			return "", false
+		}
+		return path, true
+	}
+
+	if cwd, err := os.Getwd(); err == nil {
+		if p, ok := tryPath(filepath.Join(cwd, binaryName)); ok {
+			return p, true
+		}
+	}
+
+	if exePath, err := os.Executable(); err == nil {
+		if p, ok := tryPath(filepath.Join(filepath.Dir(exePath), binaryName)); ok {
+			return p, true
+		}
+
+		if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
+			if p, ok := tryPath(filepath.Join(filepath.Dir(resolved), binaryName)); ok {
+				return p, true
+			}
+		}
+	}
+
+	return "", false
+}
+
+func getReleaseArchiveName() string {
+	arch := runtime.GOARCH
+	switch runtime.GOOS {
+	case "linux":
+		return fmt.Sprintf("rag-code-mcp_linux_%s.tar.gz", arch)
+	case "darwin":
+		return fmt.Sprintf("rag-code-mcp_darwin_%s.tar.gz", arch)
+	case "windows":
+		return fmt.Sprintf("rag-code-mcp_windows_%s.zip", arch)
+	default:
+		return ""
+	}
+}
+
+func downloadReleaseArchiveToTemp() (string, bool) {
+	archiveName := getReleaseArchiveName()
+	if archiveName == "" {
+		return "", false
+	}
+
+	url := fmt.Sprintf("https://github.com/doITmagic/rag-code-mcp/releases/latest/download/%s", archiveName)
+	log(fmt.Sprintf("Downloading from %s...", url))
+
+	resp, err := http.Get(url)
+	if err != nil {
+		warn(fmt.Sprintf("Failed to download: %v", err))
+		return "", false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		if resp.StatusCode == 404 {
+			warn("Release not found (404). Skipping download.")
+		} else {
+			warn(fmt.Sprintf("Download failed with status %d", resp.StatusCode))
+		}
+		return "", false
+	}
+
+	tempPattern := "ragcode-*.tar.gz"
+	if runtime.GOOS == "windows" {
+		tempPattern = "ragcode-*.zip"
+	}
+
+	tmpFile, err := os.CreateTemp("", tempPattern)
+	if err != nil {
+		warn(fmt.Sprintf("Could not create temp file: %v", err))
+		return "", false
+	}
+	archivePath := tmpFile.Name()
+
+	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+		tmpFile.Close()
+		os.Remove(archivePath)
+		warn(fmt.Sprintf("Error downloading archive: %v", err))
+		return "", false
+	}
+	if err := tmpFile.Close(); err != nil {
+		os.Remove(archivePath)
+		warn(fmt.Sprintf("Could not close archive file: %v", err))
+		return "", false
+	}
+
+	return archivePath, true
+}
+
+// downloadAndExtractReleaseBundle fetches the release archive and extracts all runtime binaries.
+func downloadAndExtractReleaseBundle(destDir string) bool {
+	archivePath, ok := downloadReleaseArchiveToTemp()
+	if !ok {
+		return false
+	}
+	defer os.Remove(archivePath)
+
+	binaries := []string{"rag-code-mcp", "index-all", "ragcode-installer"}
+	if runtime.GOOS == "windows" {
+		for i := range binaries {
+			binaries[i] += ".exe"
+		}
+	}
+
+	for _, binaryName := range binaries {
+		dest := filepath.Join(destDir, binaryName)
+		if !extractBinary(archivePath, binaryName, dest) {
+			warn(fmt.Sprintf("Failed to extract %s from release archive", binaryName))
+			return false
+		}
+	}
+
+	return true
 }
 
 // copyFile copies a file from src to dst
@@ -599,54 +921,11 @@ func copyFile(src, dst string) error {
 
 // downloadAndExtractBinary fetches the release archive and extracts the binary.
 func downloadAndExtractBinary(dest string) bool {
-	var archiveName string
-	arch := runtime.GOARCH
-	switch runtime.GOOS {
-	case "linux":
-		archiveName = fmt.Sprintf("rag-code-mcp_linux_%s.tar.gz", arch)
-	case "darwin":
-		archiveName = fmt.Sprintf("rag-code-mcp_darwin_%s.tar.gz", arch)
-	case "windows":
-		archiveName = fmt.Sprintf("rag-code-mcp_windows_%s.zip", arch)
-	default:
+	archivePath, ok := downloadReleaseArchiveToTemp()
+	if !ok {
 		return false
 	}
-	// Check if archive exists locally - REMOVED as per user feedback (binaries should be used directly)
-
-	url := fmt.Sprintf("https://github.com/doITmagic/rag-code-mcp/releases/latest/download/%s", archiveName)
-	log(fmt.Sprintf("Downloading from %s...", url))
-
-	resp, err := http.Get(url)
-	if err != nil {
-		warn(fmt.Sprintf("Failed to download: %v", err))
-		return false
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		if resp.StatusCode == 404 {
-			warn("Release not found (404). Skipping download.")
-		} else {
-			warn(fmt.Sprintf("Download failed with status %d", resp.StatusCode))
-		}
-		return false
-	}
-
-	// Create temp file for archive
-	tmpFile, err := os.CreateTemp("", "ragcode-*.tar.gz")
-	if err != nil {
-		warn(fmt.Sprintf("Could not create temp file: %v", err))
-		return false
-	}
-	archivePath := tmpFile.Name()
 	defer os.Remove(archivePath)
-	defer tmpFile.Close()
-
-	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
-		warn(fmt.Sprintf("Error downloading archive: %v", err))
-		return false
-	}
-	tmpFile.Close()
 
 	// Extract binary from archive
 	binaryName := "rag-code-mcp"

@@ -75,6 +75,12 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 		outputFormat = strings.ToLower(of)
 	}
 
+	// Optional: include documentation in results
+	includeDocs := false
+	if inc, ok := params["include_docs"].(bool); ok {
+		includeDocs = inc
+	}
+
 	// Generate embedding for query
 	queryEmbedding, err := t.embedder.Embed(ctx, query)
 	if err != nil {
@@ -166,19 +172,18 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			}
 		}
 
-		// Search in workspace-specific collection, preferring code-only search
-		// Try SearchCodeOnly first (excludes markdown), fall back to Search
+		// Search in workspace-specific collection
 		var docs []memory.Document
 		var searchErr error
 
-		// Type assertion to check if this memory supports code-only search
-		type CodeSearcher interface {
-			SearchCodeOnly(ctx context.Context, query []float64, limit int) ([]memory.Document, error)
-		}
-
-		if searcher, ok := workspaceMem.(CodeSearcher); ok {
+		// If include_docs is true, use generic Search (returns all types)
+		// If include_docs is false (default), try to use SearchCodeOnly
+		if includeDocs {
+			docs, searchErr = workspaceMem.Search(ctx, queryEmbedding, limit)
+		} else if searcher, ok := workspaceMem.(CodeSearcher); ok {
 			docs, searchErr = searcher.SearchCodeOnly(ctx, queryEmbedding, limit)
 		} else {
+			// Fallback if SearchCodeOnly not implemented
 			docs, searchErr = workspaceMem.Search(ctx, queryEmbedding, limit)
 		}
 
@@ -260,7 +265,17 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 		if remaining <= 0 {
 			break
 		}
-		docs, err := ltm.Search(ctx, queryEmbedding, remaining)
+		var docs []memory.Document
+		var err error
+
+		if includeDocs {
+			docs, err = ltm.Search(ctx, queryEmbedding, remaining)
+		} else if searcher, ok := ltm.(CodeSearcher); ok {
+			docs, err = searcher.SearchCodeOnly(ctx, queryEmbedding, remaining)
+		} else {
+			docs, err = ltm.Search(ctx, queryEmbedding, remaining)
+		}
+
 		if err != nil {
 			return "", fmt.Errorf("search failed: %w", err)
 		}

@@ -145,10 +145,6 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 
 	// Get more results to cover all package symbols
 	// Prefer SearchCodeOnly to exclude markdown documentation
-	type CodeSearcher interface {
-		SearchCodeOnly(ctx context.Context, query []float64, limit int) ([]memory.Document, error)
-	}
-
 	var results []memory.Document
 	if codeSearcher, ok := searchMemory.(CodeSearcher); ok {
 		results, err = codeSearcher.SearchCodeOnly(ctx, queryEmbedding, 100)

@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -269,9 +270,10 @@ type MCPTool interface {
 
 // SearchCodeInput defines the typed input for the rag_search_code tool.
 type SearchCodeInput struct {
-	Query    string `json:"query"`
-	Limit    int    `json:"limit,omitempty"`
-	FilePath string `json:"file_path,omitempty"`
+	Query       string `json:"query"`
+	Limit       int    `json:"limit,omitempty"`
+	FilePath    string `json:"file_path,omitempty"`
+	IncludeDocs bool   `json:"include_docs,omitempty"`
 }
 
 // SearchCodeOutput defines the typed output for the rag_search_code tool.
@@ -367,16 +369,6 @@ health_check:
 }
 
 func main() {
-	// AGGRESSIVE STARTUP DEBUG
-	f, _ := os.Create("/tmp/ragcode-startup.txt")
-	cwd, _ := os.Getwd()
-	exe, _ := os.Executable()
-	fmt.Fprintf(f, "Time: %s\n", time.Now())
-	fmt.Fprintf(f, "Exe: %s\n", exe)
-	fmt.Fprintf(f, "CWD: %s\n", cwd)
-	fmt.Fprintf(f, "Args: %v\n", os.Args)
-	f.Close()
-
 	// Define flags
 	configPath := flag.String("config", "config.yaml", "Path to configuration file")
 	ollamaBaseURLFlag := flag.String("ollama-base-url", "", "Ollama base URL (overrides config/env)")
@@ -440,7 +432,7 @@ func main() {
 	// Handle update flag
 	if *updateFlag {
 		fmt.Println("Checking for updates...")
-		info, err := updater.CheckForUpdates(Version)
+		info, err := updater.CheckForUpdates(context.Background(), Version, true)
 		if err != nil {
 			log.Fatalf("Failed to check for updates: %v", err)
 		}
@@ -450,8 +442,26 @@ func main() {
 		}
 
 		fmt.Printf("Found new version: %s\nDownloading...\n", info.LatestVersion)
-		tempFile := filepath.Join(os.TempDir(), "ragcode_update.tar.gz")
-		if err := info.DownloadAndVerify(tempFile); err != nil {
+
+		// Determine extension from asset URL
+		ext := ".tar.gz"
+		if strings.HasSuffix(info.AssetURL, ".zip") {
+			ext = ".zip"
+		}
+		// Create a unique temporary file securely
+		tmp, err := os.CreateTemp("", "ragcode_update_*"+ext)
+		if err != nil {
+			log.Fatalf("Failed to create temporary file for update: %v", err)
+		}
+		tempFile := tmp.Name()
+		// We only need the path; close the file descriptor
+		if err := tmp.Close(); err != nil {
+			log.Fatalf("Failed to close temporary file for update: %v", err)
+		}
+		// Ensure the temporary file is removed after applying the update
+		defer os.Remove(tempFile)
+
+		if err := info.DownloadAndVerify(context.Background(), tempFile); err != nil {
 			log.Fatalf("Update failed: %v", err)
 		}
 
@@ -480,12 +490,7 @@ func main() {
 	}
 
 	// Background update check
-	go func() {
-		info, err := updater.CheckForUpdates(Version)
-		if err == nil && info != nil {
-			logger.Info("🌟 New version available: %s. Run 'rag-code-mcp --update' to upgrade.", info.LatestVersion)
-		}
-	}()
+	triggerBackgroundUpdateCheck()
 
 	// Apply logging settings from config unless env vars already override them
 	applyLoggingConfig(cfg.Logging)
@@ -684,6 +689,11 @@ func main() {
 	indexWorkspaceTool := tools.NewIndexWorkspaceTool(workspaceManager)
 	evaluateTool := tools.NewEvaluateRagCodeTool(workspaceManager)
 
+	listSkillsTool := tools.NewListSkillsTool(workspaceManager)
+	installSkillTool := tools.NewInstallSkillTool(workspaceManager)
+	checkUpdateTool := tools.NewCheckUpdateTool(Version)
+	applyUpdateTool := tools.NewApplyUpdateTool(Version)
+
 	// Example: use typed ToolHandlerFor for rag_search_code
 	registerSearchCodeToolTyped(server, searchTool, cfg)
 
@@ -697,6 +707,10 @@ func main() {
 	registerAgentTool(server, searchDocsTool, cfg)
 	registerAgentTool(server, hybridTool, cfg)
 	registerAgentTool(server, indexWorkspaceTool, cfg)
+	registerAgentTool(server, listSkillsTool, cfg)
+	registerAgentTool(server, installSkillTool, cfg)
+	registerAgentTool(server, checkUpdateTool, cfg)
+	registerAgentTool(server, applyUpdateTool, cfg)
 	registerAgentTool(server, evaluateTool, cfg)
 	logger.Info("All tools registered successfully")
 
@@ -728,7 +742,7 @@ func main() {
 // registerSearchCodeToolTyped registers the rag_search_code tool using the typed
 // ToolHandlerFor API from the MCP Go SDK.
 func registerSearchCodeToolTyped(server *mcp.Server, tool *tools.SearchLocalIndexTool, cfg *config.Config) {
-	mcp.AddTool[SearchCodeInput, SearchCodeOutput](server, &mcp.Tool{
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        tool.Name(),
 		Description: tool.Description(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input SearchCodeInput) (*mcp.CallToolResult, SearchCodeOutput, error) {
@@ -740,6 +754,9 @@ func registerSearchCodeToolTyped(server *mcp.Server, tool *tools.SearchLocalInde
 		}
 		if input.FilePath != "" {
 			args["file_path"] = input.FilePath
+		}
+		if input.IncludeDocs {
+			args["include_docs"] = input.IncludeDocs
 		}
 
 		start := time.Now()
@@ -759,6 +776,9 @@ func registerSearchCodeToolTyped(server *mcp.Server, tool *tools.SearchLocalInde
 		}
 
 		logger.Info("✅ Tool '%s' completed in %v", tool.Name(), duration)
+
+		// Trigger background update check (non-blocking)
+		triggerBackgroundUpdateCheck()
 
 		return nil, SearchCodeOutput{Results: result}, nil
 	})
@@ -802,6 +822,9 @@ func registerAgentTool(server *mcp.Server, tool MCPTool, cfg *config.Config) {
 		}
 
 		logger.Info("✅ Tool '%s' completed in %v", tool.Name(), duration)
+
+		// Trigger background update check (non-blocking)
+		triggerBackgroundUpdateCheck()
 
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
@@ -977,6 +1000,10 @@ func getToolSchema(toolName string) map[string]interface{} {
 					"type":        "number",
 					"description": "Maximum number of results to return (default: 10)",
 				},
+				"include_docs": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Optional: Include documentation (markdown, txt, etc.) in search results. Default is false (code only).",
+				},
 			},
 			"required": []string{"query"},
 		}
@@ -1145,8 +1172,60 @@ func getToolSchema(toolName string) map[string]interface{} {
 					"type":        "number",
 					"description": "Maximum number of results to return (default: 10)",
 				},
+				"include_docs": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Optional: Include documentation (markdown, txt, etc.) in search results. Default is false (code only).",
+				},
 			},
 			"required": []string{"query"},
+		}
+
+	case "rag_list_skills":
+		return map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+		}
+
+	case "rag_install_skill":
+		return map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"skill_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the skill to install or uninstall",
+				},
+				"active": map[string]interface{}{
+					"type":        "boolean",
+					"description": "True to install the skill, false to uninstall it",
+				},
+				"file_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional: file path to help detect workspace context",
+				},
+			},
+			"required": []string{"skill_id", "active"},
+		}
+
+	case "rag_check_update":
+		return map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"force": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Force check ignoring cache (default: false)",
+				},
+			},
+		}
+
+	case "rag_apply_update":
+		return map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"force": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Force a fresh check for updates ignoring the cache (default: true).",
+				},
+			},
 		}
 
 	case "rag_evaluate":
@@ -1316,6 +1395,7 @@ func ensureIDERules(cfg *config.Config, filePath string) {
 - Always provide 'file_path' to tools to ensure they detect the correct project context.
 - Use 'rag_hybrid_search' if looking for exact variable names or error messages.
 - If the tool says "workspace not indexed", use 'rag_index_workspace' once.
+- **Skills System**: Use 'rag_list_skills' to see available AI behaviors and 'rag_install_skill' to enable them in this workspace (e.g., 'ragcode-priority', 'ragcode-update').
 `
 
 	// 3. Define target rule files
@@ -1350,6 +1430,31 @@ func ensureIDERules(cfg *config.Config, filePath string) {
 			logger.Warn("Failed to write rule file %s: %v", absPath, err)
 		}
 	}
+}
+
+var (
+	lastUpdateCheckUnixNano int64
+)
+
+func triggerBackgroundUpdateCheck() {
+	now := time.Now().UnixNano()
+	last := atomic.LoadInt64(&lastUpdateCheckUnixNano)
+	// Only check if more than 1 hour passed since last check in THIS session
+	// to avoid spamming goroutines, while updater.CheckForUpdates handles the 24h logic.
+	if last != 0 && now-last < int64(time.Hour) {
+		return
+	}
+
+	if !atomic.CompareAndSwapInt64(&lastUpdateCheckUnixNano, last, now) {
+		return
+	}
+
+	go func() {
+		info, err := updater.CheckForUpdates(context.Background(), Version, false)
+		if err == nil && info != nil {
+			logger.Info("🌟 New version available: %s. Run 'rag-code-mcp --update' or use the 'rag_apply_update' tool to upgrade.", info.LatestVersion)
+		}
+	}()
 }
 
 // extractFilePathsFromRoots converts MCP roots to a slice of absolute file paths

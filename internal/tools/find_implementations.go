@@ -133,9 +133,6 @@ func (t *FindImplementationsTool) Execute(ctx context.Context, args map[string]i
 	}
 
 	// Prefer SearchCodeOnly to exclude markdown documentation
-	type CodeSearcher interface {
-		SearchCodeOnly(ctx context.Context, query []float64, limit int) ([]memory.Document, error)
-	}
 
 	var results []memory.Document
 	if codeSearcher, ok := searchMemory.(CodeSearcher); ok {

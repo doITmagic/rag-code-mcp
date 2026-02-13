@@ -1,7 +1,9 @@
 package updater
 
 import (
+	"archive/zip"
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,9 +15,130 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/Masterminds/semver/v3"
 )
+
+type UpdateCache struct {
+	LastCheck     time.Time   `json:"last_check"`
+	LatestVersion string      `json:"latest_version"`
+	UpdateDetails *UpdateInfo `json:"update_details,omitempty"`
+}
+
+var (
+	cacheFile  = "update_cache.json"
+	cacheMutex sync.Mutex
+)
+
+func getCachePath() (string, error) {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get user config dir: %w", err)
+	}
+
+	appConfigDir := filepath.Join(configDir, "rag-code-mcp")
+	if err := os.MkdirAll(appConfigDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create config dir: %w", err)
+	}
+
+	return filepath.Join(appConfigDir, cacheFile), nil
+}
+
+func GetCachedUpdate() (*UpdateCache, error) {
+	cacheMutex.Lock()
+	defer cacheMutex.Unlock()
+
+	path, err := getCachePath()
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var cache UpdateCache
+	if err := json.Unmarshal(data, &cache); err != nil {
+		return nil, err
+	}
+	return &cache, nil
+}
+
+func SaveUpdateCache(info *UpdateInfo) error {
+	cacheMutex.Lock()
+	defer cacheMutex.Unlock()
+
+	cache := UpdateCache{
+		LastCheck: time.Now(),
+	}
+	if info != nil {
+		cache.LatestVersion = info.LatestVersion
+		cache.UpdateDetails = info
+	}
+
+	data, err := json.Marshal(cache)
+	if err != nil {
+		return err
+	}
+
+	path, err := getCachePath()
+	if err != nil {
+		return err
+	}
+
+	// Write to a temporary file in the same directory and atomically replace
+	dir := filepath.Dir(path)
+	tmpFile, err := os.CreateTemp(dir, "update_cache_*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmpFile.Name()
+
+	// Ensure cleanup if we fail before rename
+	success := false
+	defer func() {
+		if !success {
+			if err := tmpFile.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "[WARN] Failed to close temporary cache file during cleanup: %v\n", err)
+			}
+			if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
+				fmt.Fprintf(os.Stderr, "[WARN] Failed to remove temporary cache file during cleanup: %v\n", err)
+			}
+		}
+	}()
+
+	if _, err := tmpFile.Write(data); err != nil {
+		return err
+	}
+	if err := tmpFile.Sync(); err != nil {
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+
+	// On success, rename the temp file to the final path (atomic on same filesystem).
+	// On Windows, os.Rename may not reliably replace an existing file, so remove it first.
+	if runtime.GOOS == "windows" {
+		if _, err := os.Stat(path); err == nil {
+			if err := os.Remove(path); err != nil {
+				return fmt.Errorf("failed to remove existing cache file: %w", err)
+			}
+		}
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+
+	// Set restrictive permissions; treat as best-effort if it fails (notably on some filesystems or Windows)
+	if err := os.Chmod(path, 0600); err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to set restrictive permissions on cache: %v\n", err)
+	}
+
+	success = true
+	return nil
+}
 
 const (
 	GitHubOwner = "doITmagic"
@@ -30,9 +153,36 @@ type UpdateInfo struct {
 }
 
 // CheckForUpdates queries GitHub for the latest release and compares it with the current version.
-func CheckForUpdates(currentVersion string) (*UpdateInfo, error) {
+// If force is false, it returns cached results if available and less than 24 hours old.
+func CheckForUpdates(ctx context.Context, currentVersion string, force bool) (*UpdateInfo, error) {
 	if currentVersion == "" || currentVersion == "dev" {
 		return nil, nil // Skip checks for dev versions
+	}
+
+	if !force {
+		cache, err := GetCachedUpdate()
+		if err == nil && cache != nil {
+			// Check if cache is fresh (24h)
+			if time.Since(cache.LastCheck) < 24*time.Hour {
+				// Still need to compare versions because currentVersion might have changed
+				curr, errCurr := semver.NewVersion(currentVersion)
+				if cache.UpdateDetails != nil {
+					latest, errLatest := semver.NewVersion(cache.UpdateDetails.LatestVersion)
+					if errCurr == nil && errLatest == nil {
+						if latest.GreaterThan(curr) {
+							return cache.UpdateDetails, nil
+						}
+						// Already on latest (or newer) version according to cache
+						return nil, nil
+					}
+					// If semver parsing fails for current or cached version, treat as cache miss
+					// and fall through to the network-based check below.
+				} else if errCurr == nil {
+					// Fresh cache with no update details means no update was available last check
+					return nil, nil
+				}
+			}
+		}
 	}
 
 	curr, err := semver.NewVersion(currentVersion)
@@ -41,7 +191,14 @@ func CheckForUpdates(currentVersion string) (*UpdateInfo, error) {
 	}
 
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", GitHubOwner, GitHubRepo)
-	resp, err := http.Get(url)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch latest release: %w", err)
 	}
@@ -68,43 +225,53 @@ func CheckForUpdates(currentVersion string) (*UpdateInfo, error) {
 		return nil, fmt.Errorf("invalid latest version %q: %w", release.TagName, err)
 	}
 
-	if !latest.GreaterThan(curr) {
-		return nil, nil // No update needed
-	}
-
+	// Always record the latest version/tag so callers can cache this information
+	// even when no update is required. Additional update details (asset URLs,
+	// checksums) are only populated when a newer version is actually available.
 	info := &UpdateInfo{
 		LatestVersion: latest.String(),
 		Tag:           release.TagName,
 	}
 
-	// Match asset for current platform
-	archiveName := fmt.Sprintf("rag-code-mcp_%s_%s", runtime.GOOS, runtime.GOARCH)
-	if runtime.GOOS == "windows" {
-		archiveName += ".zip"
-	} else {
-		archiveName += ".tar.gz"
-	}
-
-	for _, asset := range release.Assets {
-		if asset.Name == archiveName {
-			info.AssetURL = asset.BrowserDownloadURL
+	updateAvailable := latest.GreaterThan(curr)
+	if updateAvailable {
+		archiveName := fmt.Sprintf("rag-code-mcp_%s_%s", runtime.GOOS, runtime.GOARCH)
+		if runtime.GOOS == "windows" {
+			archiveName += ".zip"
+		} else {
+			archiveName += ".tar.gz"
 		}
-		if asset.Name == "checksums.txt" {
-			info.ChecksumURL = asset.BrowserDownloadURL
+
+		for _, asset := range release.Assets {
+			if asset.Name == archiveName {
+				info.AssetURL = asset.BrowserDownloadURL
+			}
+			if asset.Name == "checksums.txt" {
+				info.ChecksumURL = asset.BrowserDownloadURL
+			}
+		}
+
+		if info.AssetURL == "" {
+			return nil, fmt.Errorf("no asset found for platform %s/%s", runtime.GOOS, runtime.GOARCH)
 		}
 	}
 
-	if info.AssetURL == "" {
-		return nil, fmt.Errorf("no asset found for platform %s/%s", runtime.GOOS, runtime.GOARCH)
+	// Always save cache after successful network call, including when no update is available.
+	if err := SaveUpdateCache(info); err != nil {
+		// Log error but don't fail the update check itself
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to save update cache: %v\n", err)
 	}
 
-	return info, nil
+	if updateAvailable {
+		return info, nil
+	}
+	return nil, nil
 }
 
 // DownloadAndVerify downloads the archive and checks its integrity.
-func (info *UpdateInfo) DownloadAndVerify(destPath string) error {
+func (info *UpdateInfo) DownloadAndVerify(ctx context.Context, destPath string) error {
 	// 1. Download archive
-	if err := downloadFile(info.AssetURL, destPath); err != nil {
+	if err := downloadFile(ctx, info.AssetURL, destPath); err != nil {
 		return fmt.Errorf("failed to download asset: %w", err)
 	}
 
@@ -113,7 +280,13 @@ func (info *UpdateInfo) DownloadAndVerify(destPath string) error {
 		return fmt.Errorf("no checksum URL available")
 	}
 
-	resp, err := http.Get(info.ChecksumURL)
+	req, err := http.NewRequestWithContext(ctx, "GET", info.ChecksumURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create checksum request: %w", err)
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to download checksums: %w", err)
 	}
@@ -182,9 +355,9 @@ func ApplyUpdate(archivePath string) error {
 			return fmt.Errorf("failed to extract tar.gz: %w", err)
 		}
 	} else if strings.HasSuffix(archivePath, ".zip") {
-		// Basic unzip command for windows/linux if available
-		// Ideally use archive/zip in Go for better cross-platform
-		return fmt.Errorf("zip extraction not yet implemented in updater")
+		if err := unzip(archivePath, tempDir); err != nil {
+			return fmt.Errorf("failed to extract zip: %w", err)
+		}
 	}
 
 	newBinPath := filepath.Join(tempDir, binaryName)
@@ -197,6 +370,14 @@ func ApplyUpdate(archivePath string) error {
 	// but it's safer to move the old one to a .old suffix and move the new one in.
 	oldBinPath := self + ".old"
 	if err := os.Rename(self, oldBinPath); err != nil {
+		if runtime.GOOS == "windows" {
+			// Fallback: write as .new and tell user
+			newBinPermanent := self + ".new"
+			if err := moveFile(newBinPath, newBinPermanent); err != nil {
+				return fmt.Errorf("failed to write new binary: %w", err)
+			}
+			return fmt.Errorf("could not replace running binary on Windows: %w. New version saved to %s. Please close the server and rename it manually.", err, filepath.Base(newBinPermanent))
+		}
 		return fmt.Errorf("failed to move current binary to %s: %w", oldBinPath, err)
 	}
 
@@ -230,8 +411,15 @@ func moveFile(src, dst string) error {
 	return os.WriteFile(dst, input, 0755)
 }
 
-func downloadFile(url, dest string) error {
-	resp, err := http.Get(url)
+func downloadFile(ctx context.Context, url, dest string) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return err
+	}
+
+	// Longer timeout for binary download
+	client := &http.Client{Timeout: 5 * time.Minute}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -245,10 +433,14 @@ func downloadFile(url, dest string) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
 
-	_, err = io.Copy(out, resp.Body)
-	return err
+	_, copyErr := io.Copy(out, resp.Body)
+	closeErr := out.Close()
+
+	if copyErr != nil {
+		return copyErr
+	}
+	return closeErr
 }
 
 func calculateSHA256(path string) (string, error) {
@@ -269,4 +461,104 @@ func calculateSHA256(path string) (string, error) {
 func getAssetName(url string) string {
 	parts := strings.Split(url, "/")
 	return parts[len(parts)-1]
+}
+
+const maxExtractedZipSize = 200 * 1024 * 1024 // 200 MiB safety limit
+
+func unzip(src, dest string) error {
+	r, err := zip.OpenReader(src)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+
+	totalExtracted := int64(0)
+
+	for _, f := range r.File {
+		// Normalize ZIP entry name to prevent ZipSlip, including backslash separators
+		cleanName := strings.ReplaceAll(f.Name, "\\", "/")
+		cleanName = filepath.Clean(cleanName)
+
+		cleanDest := filepath.Clean(dest)
+		fpath := filepath.Join(cleanDest, cleanName)
+
+		// Check for ZipSlip (Directory traversal) using filepath.Rel
+		rel, err := filepath.Rel(cleanDest, fpath)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			return fmt.Errorf("illegal file path: %s", f.Name)
+		}
+
+		// Security: Reject non-regular files (symlinks, devices, etc.)
+		info := f.FileInfo()
+		if !info.Mode().IsRegular() && !info.IsDir() {
+			continue
+		}
+
+		if info.IsDir() {
+			if err := os.MkdirAll(fpath, 0755); err != nil {
+				return err
+			}
+			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(fpath), 0755); err != nil {
+			return err
+		}
+
+		remainingBudget := maxExtractedZipSize - totalExtracted
+		if remainingBudget <= 0 {
+			return fmt.Errorf("archive exceeds maximum extraction size (%d bytes)", maxExtractedZipSize)
+		}
+		if f.UncompressedSize64 > 0 && f.UncompressedSize64 > uint64(remainingBudget) {
+			return fmt.Errorf("archive exceeds maximum extraction size (%d bytes)", maxExtractedZipSize)
+		}
+
+		// Use fixed mode 0644 for extracted files for better security consistency
+		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+		if err != nil {
+			return err
+		}
+
+		rc, err := f.Open()
+		if err != nil {
+			if cerr := outFile.Close(); cerr != nil {
+				return fmt.Errorf("failed to open zip entry: %w; additionally failed to close destination file: %v", err, cerr)
+			}
+			return err
+		}
+
+		limitedReader := io.LimitReader(rc, remainingBudget)
+		written, copyErr := io.Copy(outFile, limitedReader)
+
+		overLimitErr := error(nil)
+		if copyErr == nil && written == remainingBudget {
+			var probe [1]byte
+			n, probeErr := rc.Read(probe[:])
+			if probeErr != nil && probeErr != io.EOF {
+				overLimitErr = probeErr
+			} else if n > 0 {
+				overLimitErr = fmt.Errorf("archive exceeds maximum extraction size (%d bytes)", maxExtractedZipSize)
+			}
+		}
+
+		closeErr := outFile.Close()
+		rcErr := rc.Close()
+
+		if copyErr != nil {
+			return copyErr
+		}
+		if overLimitErr != nil {
+			return overLimitErr
+		}
+
+		totalExtracted += written
+
+		if closeErr != nil {
+			return closeErr
+		}
+		if rcErr != nil {
+			return rcErr
+		}
+	}
+	return nil
 }

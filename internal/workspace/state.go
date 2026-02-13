@@ -55,8 +55,8 @@ func LoadState(path string) (*WorkspaceState, error) {
 
 // SaveState saves workspace state to disk
 func (s *WorkspaceState) Save(path string) error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -67,10 +67,15 @@ func (s *WorkspaceState) Save(path string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 
 	s.LastIndexed = time.Now()
-	return json.NewEncoder(f).Encode(s)
+	encodeErr := json.NewEncoder(f).Encode(s)
+	closeErr := f.Close()
+
+	if encodeErr != nil {
+		return encodeErr
+	}
+	return closeErr
 }
 
 // UpdateFile updates the state for a file

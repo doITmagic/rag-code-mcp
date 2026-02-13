@@ -461,12 +461,16 @@ func getAssetName(url string) string {
 	return parts[len(parts)-1]
 }
 
+const maxExtractedZipSize = 200 * 1024 * 1024 // 200 MiB safety limit
+
 func unzip(src, dest string) error {
 	r, err := zip.OpenReader(src)
 	if err != nil {
 		return err
 	}
 	defer r.Close()
+
+	totalExtracted := int64(0)
 
 	for _, f := range r.File {
 		// Normalize ZIP entry name to prevent ZipSlip, including backslash separators
@@ -478,7 +482,7 @@ func unzip(src, dest string) error {
 
 		// Check for ZipSlip (Directory traversal) using filepath.Rel
 		rel, err := filepath.Rel(cleanDest, fpath)
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		if err != nil || strings.HasPrefix(rel, "..") {
 			return fmt.Errorf("illegal file path: %s", f.Name)
 		}
 
@@ -513,7 +517,7 @@ func unzip(src, dest string) error {
 			return err
 		}
 
-		_, copyErr := io.Copy(outFile, rc)
+		written, copyErr := io.Copy(outFile, rc)
 
 		closeErr := outFile.Close()
 		rcErr := rc.Close()
@@ -521,6 +525,12 @@ func unzip(src, dest string) error {
 		if copyErr != nil {
 			return copyErr
 		}
+
+		totalExtracted += written
+		if totalExtracted > maxExtractedZipSize {
+			return fmt.Errorf("archive exceeds maximum extraction size (%d bytes)", maxExtractedZipSize)
+		}
+
 		if closeErr != nil {
 			return closeErr
 		}

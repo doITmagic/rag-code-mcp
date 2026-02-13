@@ -142,3 +142,13 @@ func UninstallSkill(skillID string, workspaceRoot string) error {
 	destDir := filepath.Join(workspaceRoot, ".agent", "skills", skillID)
 	return os.RemoveAll(destDir)
 }
+
+// IsSkillInstalled checks whether a skill folder exists within the workspace
+func IsSkillInstalled(skillID, workspaceRoot string) bool {
+	if err := validateSkillID(skillID); err != nil {
+		return false
+	}
+	path := filepath.Join(workspaceRoot, ".agent", "skills", skillID)
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}

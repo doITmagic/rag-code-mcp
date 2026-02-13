@@ -155,9 +155,6 @@ func (t *HybridSearchTool) Execute(ctx context.Context, params map[string]interf
 
 	// 2. Gather semantic candidates (more than the limit to allow lexical filtering)
 	// Prefer SearchCodeOnly to exclude markdown documentation
-	type CodeSearcher interface {
-		SearchCodeOnly(ctx context.Context, query []float64, limit int) ([]memory.Document, error)
-	}
 
 	// Optional: include documentation in results
 	includeDocs := false

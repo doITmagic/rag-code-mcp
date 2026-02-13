@@ -12,7 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -1433,20 +1433,21 @@ func ensureIDERules(cfg *config.Config, filePath string) {
 }
 
 var (
-	lastUpdateCheck      time.Time
-	lastUpdateCheckMutex sync.Mutex
+	lastUpdateCheckUnixNano int64
 )
 
 func triggerBackgroundUpdateCheck() {
-	lastUpdateCheckMutex.Lock()
-	defer lastUpdateCheckMutex.Unlock()
-
+	now := time.Now().UnixNano()
+	last := atomic.LoadInt64(&lastUpdateCheckUnixNano)
 	// Only check if more than 1 hour passed since last check in THIS session
-	// to avoid spamming go-routines, while updater.CheckForUpdates handles the 24h logic
-	if time.Since(lastUpdateCheck) < 1*time.Hour {
+	// to avoid spamming goroutines, while updater.CheckForUpdates handles the 24h logic.
+	if last != 0 && now-last < int64(time.Hour) {
 		return
 	}
-	lastUpdateCheck = time.Now()
+
+	if !atomic.CompareAndSwapInt64(&lastUpdateCheckUnixNano, last, now) {
+		return
+	}
 
 	go func() {
 		info, err := updater.CheckForUpdates(context.Background(), Version, false)

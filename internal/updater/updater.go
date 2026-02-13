@@ -99,8 +99,12 @@ func SaveUpdateCache(info *UpdateInfo) error {
 	success := false
 	defer func() {
 		if !success {
-			tmpFile.Close()
-			os.Remove(tmpName)
+			if err := tmpFile.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "[WARN] Failed to close temporary cache file during cleanup: %v\n", err)
+			}
+			if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
+				fmt.Fprintf(os.Stderr, "[WARN] Failed to remove temporary cache file during cleanup: %v\n", err)
+			}
 		}
 	}()
 
@@ -229,29 +233,27 @@ func CheckForUpdates(ctx context.Context, currentVersion string, force bool) (*U
 		Tag:           release.TagName,
 	}
 
-	// Always populate asset and checksum URLs if found in release
-	archiveName := fmt.Sprintf("rag-code-mcp_%s_%s", runtime.GOOS, runtime.GOARCH)
-	if runtime.GOOS == "windows" {
-		archiveName += ".zip"
-	} else {
-		archiveName += ".tar.gz"
-	}
-
-	for _, asset := range release.Assets {
-		if asset.Name == archiveName {
-			info.AssetURL = asset.BrowserDownloadURL
+	updateAvailable := latest.GreaterThan(curr)
+	if updateAvailable {
+		archiveName := fmt.Sprintf("rag-code-mcp_%s_%s", runtime.GOOS, runtime.GOARCH)
+		if runtime.GOOS == "windows" {
+			archiveName += ".zip"
+		} else {
+			archiveName += ".tar.gz"
 		}
-		if asset.Name == "checksums.txt" {
-			info.ChecksumURL = asset.BrowserDownloadURL
-		}
-	}
 
-	updateAvailable := false
-	if latest.GreaterThan(curr) {
+		for _, asset := range release.Assets {
+			if asset.Name == archiveName {
+				info.AssetURL = asset.BrowserDownloadURL
+			}
+			if asset.Name == "checksums.txt" {
+				info.ChecksumURL = asset.BrowserDownloadURL
+			}
+		}
+
 		if info.AssetURL == "" {
 			return nil, fmt.Errorf("no asset found for platform %s/%s", runtime.GOOS, runtime.GOARCH)
 		}
-		updateAvailable = true
 	}
 
 	// Always save cache after successful network call, including when no update is available.

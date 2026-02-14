@@ -4,6 +4,32 @@ import (
 	"time"
 )
 
+// DefaultWorkspaceDetectionMarkers defines default files/directories used to
+// detect workspace roots across config generation and runtime detection.
+var DefaultWorkspaceDetectionMarkers = []string{
+	".git",
+	"go.mod",
+	"package.json",
+	"Cargo.toml",
+	"pyproject.toml",
+	"setup.py",
+	"requirements.txt",
+	"composer.json",
+	"pom.xml",
+	"build.gradle",
+	"Gemfile",
+	"Package.swift",
+	".ragcode",
+	".agent",
+	".idea",
+	".vscode",
+	".vs",
+	".cursor",
+	".windsurf",
+	"AGENTS.md",
+	"CLAUDE.md",
+}
+
 // Config represents the global application configuration
 type Config struct {
 	// LLM configuration
@@ -172,7 +198,8 @@ type WorkspaceConfig struct {
 	MaxWorkspaces int `yaml:"max_workspaces"`
 
 	// DetectionMarkers are files/directories used to identify workspace roots
-	// Default: [".git", "go.mod", "package.json", "Cargo.toml", "pyproject.toml"]
+	// Default includes language markers plus workspace metadata/IDE markers
+	// (e.g. .ragcode, .agent, .idea, .cursor, AGENTS.md, CLAUDE.md)
 	DetectionMarkers []string `yaml:"detection_markers"`
 
 	// ExcludePatterns are glob patterns for paths to exclude from workspace detection

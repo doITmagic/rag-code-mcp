@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/doITmagic/rag-code-mcp/internal/config"
 )
 
 // Detector detects workspace roots from file paths
@@ -31,32 +33,7 @@ type Detector struct {
 // NewDetector creates a new workspace detector with default markers
 func NewDetector() *Detector {
 	return &Detector{
-		markers: []string{
-			".git",               // Git repository (highest priority)
-			"go.mod",             // Go project
-			"composer.json",      // PHP/Laravel project
-			"artisan",            // Laravel project (specific)
-			"package.json",       // Node.js project
-			"Cargo.toml",         // Rust project
-			"pyproject.toml",     // Python project (PEP 518)
-			"setup.py",           // Python project (legacy)
-			"pom.xml",            // Maven project (Java)
-			"build.gradle",       // Gradle project (Java/Kotlin)
-			"tsconfig.json",      // TypeScript project
-			"tailwind.config.js", // Tailwind CSS
-			"tailwind.config.ts", // Tailwind CSS (TS)
-			"vite.config.js",     // Vite project
-			"vite.config.ts",     // Vite project (TS)
-			"next.config.js",     // Next.js project
-			"deno.json",          // Deno project
-			"Makefile",           // Generic automated build
-			"Dockerfile",         // Docker project
-			"docker-compose.yml", // Docker compose project
-			"Gemfile",            // Ruby project
-			"mix.exs",            // Elixir project
-			".project",           // Generic project marker
-			".vscode",            // VS Code workspace
-		},
+		markers: append([]string(nil), config.DefaultWorkspaceDetectionMarkers...),
 		excludePatterns: []string{
 			// Only exclude common cache/temp directories in home or system paths
 			// Don't exclude test temp directories

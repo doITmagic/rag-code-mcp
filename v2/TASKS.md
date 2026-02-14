@@ -26,3 +26,32 @@ Deliver a modular V2 detection core that is deterministic, testable, and safe fo
 - 4.1 Validate behavior with AI-like end-to-end scenarios.
 - 4.2 Add observability (reason codes, fallback counters, ambiguity counters).
 - 4.3 Create release checklist and rollback plan.
+
+## Task 5: Issue #21 hardening (Path Resolver V2)
+### Subtasks
+- 5.1 Add branch-aware context key (`workspace_root + branch + head + worktree_id`).
+- 5.2 Add response metadata envelope in all relevant tool responses.
+- 5.3 Add `branch_mismatch_risk` computation (`low|medium|high`).
+- 5.4 Add deterministic confidence and fallback semantics.
+
+## Task 6: Feedback and promotion workflow
+### Subtasks
+- 6.1 Add request-side `path_feedback` schema (`mismatch`, suggested path, optional reason).
+- 6.2 Store suggested paths as candidates, not as trusted context.
+- 6.3 Promote candidate paths only after successful resolution and execution.
+- 6.4 Add audit logs for feedback ingestion and promotion events.
+
+## Implementation Checklist (Phase 1 / Phase 2)
+
+### Phase 1 - Core metadata and deterministic safety
+- [ ] **[P0]** Implement branch-aware `path_context_key` (`workspace_root + branch + head + worktree_id`).
+- [ ] **[P0]** Add response metadata envelope (`path_resolution_source`, `path_resolution_confidence`, `used_fallback`).
+- [ ] **[P0]** Add `branch_mismatch_risk` computation (`low|medium|high`) with deterministic rules.
+- [ ] **[P0]** Add invalidation hardening (branch isolation + anti-loop behavior on missing paths).
+- [ ] **[P1]** Add confidence decay policy on HEAD mismatch/rewrite.
+
+### Phase 2 - Feedback loop and promotion workflow
+- [ ] **[P0]** Add request-side `path_feedback` contract and validation.
+- [ ] **[P0]** Persist suggestions as non-trusted candidates.
+- [ ] **[P0]** Promote candidate paths only after successful resolution + execution.
+- [ ] **[P1]** Add audit logs and metrics for feedback ingestion/promotion.

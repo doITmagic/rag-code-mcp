@@ -26,3 +26,45 @@ Create AI-like end-to-end test coverage for deterministic detection behavior.
 - 4.1 Add regression tests for previously observed path-detection failures.
 - 4.2 Add stress tests with multiple repositories and ambiguous roots.
 - 4.3 Add snapshot tests for stable error payloads and contract outputs.
+
+## Task 5: Response metadata coverage (Issue #21)
+### Subtasks
+- 5.1 Assert `path_resolution_source` for each resolution path (`workspace_root`, `file_path`, alias, roots).
+- 5.2 Assert `path_resolution_confidence` is deterministic per source and invalidation state.
+- 5.3 Assert `used_fallback` toggles correctly in fallback paths.
+- 5.4 Assert `path_context_key` and branch metadata are present and stable.
+
+## Task 6: Invalidation and anti-loop tests
+### Subtasks
+- 6.1 Validate cache isolation across branch switches and worktree contexts.
+- 6.2 Validate confidence decay on HEAD mismatch/rewrite.
+- 6.3 Validate fallback TTL behavior and stale-entry expiration.
+- 6.4 Validate no infinite retry loops on repeated missing-path resolution.
+
+## Task 7: Feedback-loop tests
+### Subtasks
+- 7.1 Validate `path_feedback.status=mismatch` updates candidate pool.
+- 7.2 Validate suggested path is not promoted before successful execution.
+- 7.3 Validate promotion occurs only after successful resolution + execution signal.
+
+## Task 8: Branch mismatch risk tests
+### Subtasks
+- 8.1 Validate `branch_mismatch_risk=low` for expected branch/head matches.
+- 8.2 Validate `branch_mismatch_risk=medium` for same-branch/head-changed states.
+- 8.3 Validate `branch_mismatch_risk=high` for branch mismatch or fallback-only confidence.
+
+## Implementation Checklist by Phase
+
+### Phase 1 - Metadata, invalidation, and safety coverage
+- [ ] **[P0]** Add assertions for `path_resolution_source` across all decision paths.
+- [ ] **[P0]** Add assertions for `path_resolution_confidence` stability.
+- [ ] **[P0]** Add assertions for `used_fallback` correctness.
+- [ ] **[P0]** Add assertions for `path_context_key` and branch metadata.
+- [ ] **[P0]** Add anti-loop tests for repeated invalid/missing path retries.
+- [ ] **[P1]** Add TTL/decay tests for fallback and HEAD rewrite behavior.
+
+### Phase 2 - Feedback and promotion flow coverage
+- [ ] **[P0]** Add tests for `path_feedback.status=mismatch` ingestion.
+- [ ] **[P0]** Add tests proving no promotion before successful execution.
+- [ ] **[P0]** Add tests proving promotion only after successful resolution + execution.
+- [ ] **[P1]** Add tests for feedback audit signals/metrics emission.

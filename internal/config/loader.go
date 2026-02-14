@@ -138,7 +138,7 @@ func DefaultConfig() *Config {
 			Enabled:            true,
 			AutoIndex:          true,
 			MaxWorkspaces:      10,
-			DetectionMarkers:   []string{".git", "go.mod", "package.json", "Cargo.toml", "pyproject.toml", "pom.xml"},
+			DetectionMarkers:   append([]string(nil), DefaultWorkspaceDetectionMarkers...),
 			ExcludePatterns:    []string{"node_modules", ".git", "vendor", "target", "build", "dist", ".venv"},
 			CollectionPrefix:   "ragcode",
 			IndexInclude:       []string{}, // Empty means use global rag_code.include

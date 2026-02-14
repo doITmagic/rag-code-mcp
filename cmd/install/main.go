@@ -962,26 +962,8 @@ func copyFile(src, dst string) error {
 	return closeErr
 }
 
-// downloadAndExtractBinary fetches the release archive and extracts the binary.
-func downloadAndExtractBinary(dest string) bool {
-	archivePath, ok := downloadReleaseArchiveToTemp()
-	if !ok {
-		return false
-	}
-	defer os.Remove(archivePath)
-
-	// Extract binary from archive
-	binaryName := "rag-code-mcp"
-	if runtime.GOOS == "windows" {
-		binaryName += ".exe"
-	}
-
-	return extractBinary(archivePath, binaryName, dest)
-}
-
 // extractBinary extracts a specific file from the archive.
 func extractBinary(archivePath, fileName, dest string) bool {
-
 	if runtime.GOOS == "windows" {
 		// Handle zip for Windows
 		warn("Windows archive extraction not yet implemented")

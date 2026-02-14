@@ -333,6 +333,15 @@ workspace:
     - build.gradle
     - Gemfile
     - Package.swift
+    - .ragcode
+    - .agent
+    - .idea
+    - .vscode
+    - .vs
+    - .cursor
+    - .windsurf
+    - AGENTS.md
+    - CLAUDE.md
   exclude_patterns:
     - node_modules
     - .git
@@ -1361,7 +1370,7 @@ func ensureIDERules(cfg *config.Config, filePath string) {
 	}
 
 	workspaceRoot := ""
-	markers := []string{".git", "go.mod", "package.json", "composer.json"}
+	markers := append([]string(nil), config.DefaultWorkspaceDetectionMarkers...)
 	if cfg != nil && len(cfg.Workspace.DetectionMarkers) > 0 {
 		markers = cfg.Workspace.DetectionMarkers
 	}
@@ -1415,6 +1424,8 @@ func ensureIDERules(cfg *config.Config, filePath string) {
 
 	// 3. Define target rule files
 	targets := []string{
+		"AGENTS.md",                       // Agent instruction file (Cursor/Windsurf ecosystem)
+		"CLAUDE.md",                       // Claude Code project instructions
 		".cursorrules",                    // Cursor
 		".windsurfrules",                  // Windsurf
 		".clinerules",                     // Cline

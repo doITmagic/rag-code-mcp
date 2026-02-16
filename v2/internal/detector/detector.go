@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/doITmagic/rag-code-mcp/v2/internal/contract"
-	"github.com/doITmagic/rag-code-mcp/v2/internal/resolver"
+	"github.com/doITmagic/rag-code-mcp/v2/pkg/workspace"
 )
 
 // Options configures the detector behavior.
@@ -85,7 +85,7 @@ func New(opts Options) *Detector {
 }
 
 // DetectFromFilePath implements resolver.Detector.
-func (d *Detector) DetectFromFilePath(ctx context.Context, filePath string) (*resolver.WorkspaceCandidate, *contract.ResolveWorkspaceError) {
+func (d *Detector) DetectFromFilePath(ctx context.Context, filePath string) (*contract.WorkspaceCandidate, *contract.ResolveWorkspaceError) {
 	path := strings.TrimSpace(filePath)
 	if path == "" {
 		return nil, &contract.ResolveWorkspaceError{
@@ -95,10 +95,30 @@ func (d *Detector) DetectFromFilePath(ctx context.Context, filePath string) (*re
 		}
 	}
 
-	abs, err := filepath.Abs(path)
+	result, err := workspace.FindRoot(ctx, path, d.opts.Markers, d.opts.MaxDepth)
+
 	if err != nil {
-		return nil, wrapPathErr("resolve absolute path", err)
+		return nil, &contract.ResolveWorkspaceError{
+			Code:    contract.ErrorInternal,
+			Message: fmt.Sprintf("pkg/detector error: %v", err),
+			Reason:  contract.ReasonInvalidPath,
+		}
 	}
+
+	if result == nil {
+		return nil, nil // No root found
+	}
+
+	abs, _ := filepath.Abs(result.Root) // workspace already does this but let's be safe
+	return &contract.WorkspaceCandidate{
+		Root:       abs,
+		Reason:     contract.ReasonFilePath,
+		Confidence: 1.0,
+		Metadata: map[string]any{
+			"marker": result.Marker,
+		},
+	}, nil
+}
 	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
 		abs = resolved
 	}
@@ -130,7 +150,7 @@ func (d *Detector) DetectFromFilePath(ctx context.Context, filePath string) (*re
 	return d.walkUp(startDir)
 }
 
-func (d *Detector) walkUp(start string) (*resolver.WorkspaceCandidate, *contract.ResolveWorkspaceError) {
+func (d *Detector) walkUp(start string) (*contract.WorkspaceCandidate, *contract.ResolveWorkspaceError) {
 	dir := start
 	depth := 0
 	for {
@@ -163,7 +183,7 @@ func (d *Detector) walkUp(start string) (*resolver.WorkspaceCandidate, *contract
 	}
 }
 
-func (d *Detector) inspectDir(dir string) (*resolver.WorkspaceCandidate, *contract.ResolveWorkspaceError) {
+func (d *Detector) inspectDir(dir string) (*contract.WorkspaceCandidate, *contract.ResolveWorkspaceError) {
 	markers := make([]string, 0)
 	for _, marker := range d.opts.Markers {
 		candidate := filepath.Join(dir, marker)
@@ -177,14 +197,14 @@ func (d *Detector) inspectDir(dir string) (*resolver.WorkspaceCandidate, *contra
 	if err := d.ensureAllowed(dir); err != nil {
 		return nil, err
 	}
-	return &resolver.WorkspaceCandidate{
+	return &contract.WorkspaceCandidate{
 		Root:    dir,
 		Markers: markers,
 		Reason:  contract.ReasonFilePath,
 	}, nil
 }
 
-func (d *Detector) detectFromMetadata(start string) (*resolver.WorkspaceCandidate, *contract.ResolveWorkspaceError) {
+func (d *Detector) detectFromMetadata(start string) (*contract.WorkspaceCandidate, *contract.ResolveWorkspaceError) {
 	if d.opts.MetadataFileName == "" {
 		return nil, nil
 	}

@@ -18,6 +18,13 @@ type ClientCapabilities struct {
 // ContractVersion tracks breaking changes in resolver contracts.
 const ContractVersion = "v2"
 
+// PathFeedback allows the IDE to provide corrections or suggestions to the resolver.
+type PathFeedback struct {
+	Mismatch      bool   `json:"mismatch"`
+	SuggestedPath string `json:"suggested_path,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+}
+
 // ResolveWorkspaceRequest is the canonical resolver input shared by all tools.
 type ResolveWorkspaceRequest struct {
 	WorkspaceRoot string             `json:"workspace_root,omitempty"`
@@ -27,6 +34,7 @@ type ResolveWorkspaceRequest struct {
 	Client        ClientInfo         `json:"client,omitempty"`
 	Capabilities  ClientCapabilities `json:"capabilities"`
 	StrictMode    bool               `json:"strict_mode"`
+	Feedback      *PathFeedback      `json:"feedback,omitempty"`
 }
 
 // ReasonCode explains how the resolver reached a decision or why it failed.
@@ -75,17 +83,37 @@ type Candidate struct {
 	Reason  string   `json:"reason,omitempty"`
 }
 
+// WorkspaceCandidate represents a potential workspace resolution during internal processing.
+type WorkspaceCandidate struct {
+	Root       string
+	Name       string
+	Markers    []string
+	Reason     ReasonCode
+	Confidence float64
+	Source     string
+}
+
+// ResponseMetadata captures diagnostics and resolution quality metrics.
+type ResponseMetadata struct {
+	Confidence   float64 `json:"confidence"`
+	Source       string  `json:"source,omitempty"`
+	UsedFallback bool    `json:"used_fallback"`
+}
+
 // ResolveWorkspaceResponse represents the resolver output for success cases.
 type ResolveWorkspaceResponse struct {
-	ResolvedRoot         string      `json:"resolved_root,omitempty"`
-	WorkspaceID          string      `json:"workspace_id,omitempty"`
-	MarkersFound         []string    `json:"markers_found,omitempty"`
-	Branch               string      `json:"branch,omitempty"`
-	HeadSHA              string      `json:"head_sha,omitempty"`
-	ReindexRequired      bool        `json:"reindex_required"`
-	Reason               ReasonCode  `json:"reason,omitempty"`
-	RequiresConfirmation bool        `json:"requires_confirmation"`
-	Candidates           []Candidate `json:"candidates,omitempty"`
+	ResolvedRoot         string           `json:"resolved_root,omitempty"`
+	WorkspaceID          string           `json:"workspace_id,omitempty"`
+	MarkersFound         []string         `json:"markers_found,omitempty"`
+	Branch               string           `json:"branch,omitempty"`
+	HeadSHA              string           `json:"head_sha,omitempty"`
+	WorktreeID           string           `json:"worktree_id,omitempty"`
+	MismatchRisk         string           `json:"mismatch_risk,omitempty"` // low|medium|high
+	ReindexRequired      bool             `json:"reindex_required"`
+	Metadata             ResponseMetadata `json:"metadata"`
+	Reason               ReasonCode       `json:"reason,omitempty"`
+	RequiresConfirmation bool             `json:"requires_confirmation"`
+	Candidates           []Candidate      `json:"candidates,omitempty"`
 }
 
 // hasValue returns true when the string contains non-whitespace characters.

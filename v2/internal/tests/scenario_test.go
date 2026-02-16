@@ -38,7 +38,7 @@ func TestResolverScenarios(t *testing.T) {
 			expectRoot:   "/detected/root",
 			expectReason: contract.ReasonFilePath,
 			deps: resolver.Dependencies{
-				Detector: &fakeDetector{candidate: &resolver.WorkspaceCandidate{Root: "/detected/root", Reason: contract.ReasonFilePath}},
+				Detector: &fakeDetector{candidate: &contract.WorkspaceCandidate{Root: "/detected/root", Reason: contract.ReasonFilePath}},
 			},
 		},
 		{
@@ -47,7 +47,7 @@ func TestResolverScenarios(t *testing.T) {
 			expectRoot:   "/alias/root",
 			expectReason: contract.ReasonWorkspaceAlias,
 			deps: resolver.Dependencies{
-				Registry: &fakeRegistry{candidate: &resolver.WorkspaceCandidate{Root: "/alias/root", Reason: contract.ReasonWorkspaceAlias}},
+				Registry: &fakeRegistry{candidate: &contract.WorkspaceCandidate{Root: "/alias/root", Reason: contract.ReasonWorkspaceAlias}},
 			},
 		},
 		{
@@ -142,11 +142,11 @@ func TestResolverScenarios(t *testing.T) {
 }
 
 type fakeDetector struct {
-	candidate *resolver.WorkspaceCandidate
+	candidate *contract.WorkspaceCandidate
 	err       *contract.ResolveWorkspaceError
 }
 
-func (f *fakeDetector) DetectFromFilePath(ctx context.Context, filePath string) (*resolver.WorkspaceCandidate, *contract.ResolveWorkspaceError) {
+func (f *fakeDetector) DetectFromFilePath(ctx context.Context, filePath string) (*contract.WorkspaceCandidate, *contract.ResolveWorkspaceError) {
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -154,16 +154,21 @@ func (f *fakeDetector) DetectFromFilePath(ctx context.Context, filePath string) 
 }
 
 type fakeRegistry struct {
-	candidate *resolver.WorkspaceCandidate
+	candidate *contract.WorkspaceCandidate
 	err       *contract.ResolveWorkspaceError
 }
 
-func (f *fakeRegistry) ResolveAlias(ctx context.Context, alias string) (*resolver.WorkspaceCandidate, *contract.ResolveWorkspaceError) {
+func (f *fakeRegistry) ResolveAlias(ctx context.Context, alias string) (*contract.WorkspaceCandidate, *contract.ResolveWorkspaceError) {
 	if f.err != nil {
 		return nil, f.err
 	}
 	return f.candidate, nil
 }
+
+func (f *fakeRegistry) RecordFeedback(ctx context.Context, feedback *contract.PathFeedback) error {
+	return nil
+}
+
 
 type branchstateAnnotator struct {
 	mgr *branchstate.Manager

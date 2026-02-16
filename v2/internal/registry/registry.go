@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
@@ -9,9 +10,20 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/doITmagic/rag-code-mcp/v2/internal/contract"
 )
 
-const registrySchemaVersion = "v1"
+const (
+	registrySchemaVersion = "v1"
+	registryStoreVersion  = "v2"
+)
+
+type registryStore struct {
+	Version    string            `json:"version"`
+	Entries    []*Entry          `json:"entries"`
+	Candidates []*CandidateEntry `json:"candidates,omitempty"`
+}
 
 // Entry represents a persisted workspace selection.
 type Entry struct {
@@ -24,29 +36,53 @@ type Entry struct {
 	LastUsedAt    time.Time `json:"last_used_at"`
 }
 
-// Registry persists confirmed workspaces for deterministic reuse.
+// CandidateEntry tracks un-trusted path suggestions.
+type CandidateEntry struct {
+	Root       string    `json:"root"`
+	Count      int       `json:"count"`
+	LastSeenAt time.Time `json:"last_seen_at"`
+	Reason     string    `json:"reason,omitempty"`
+}
+
+// Registry persists confirmed workspaces and tracks feedback candidates.
 type Registry struct {
-	path      string
-	entries   map[string]*Entry
-	indexRoot map[string]string
-	indexName map[string][]string
-	clock     func() time.Time
-	mu        sync.Mutex
+	path       string
+	entries    map[string]*Entry
+	candidates map[string]*CandidateEntry
+	indexRoot  map[string]string
+	indexName  map[string][]string
+	clock      func() time.Time
+	mu         sync.Mutex
 }
 
 // New creates a registry backed by the given file path.
 func New(path string) (*Registry, error) {
 	r := &Registry{
-		path:      path,
-		entries:   make(map[string]*Entry),
-		indexRoot: make(map[string]string),
-		indexName: make(map[string][]string),
-		clock:     time.Now,
+		path:       path,
+		entries:    make(map[string]*Entry),
+		candidates: make(map[string]*CandidateEntry),
+		indexRoot:  make(map[string]string),
+		indexName:  make(map[string][]string),
+		clock:      time.Now,
 	}
 	if err := r.load(); err != nil {
 		return nil, err
 	}
 	return r, nil
+}
+
+// ResolveAlias implements resolver.Registry.
+func (r *Registry) ResolveAlias(ctx context.Context, alias string) (*contract.WorkspaceCandidate, *contract.ResolveWorkspaceError) {
+	entries := r.LookupByName(alias)
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	entry := entries[0]
+	return &contract.WorkspaceCandidate{
+		Root:   entry.Root,
+		Name:   entry.Name,
+		Reason: contract.ReasonWorkspaceAlias,
+	}, nil
 }
 
 // Upsert confirms a workspace selection and updates timestamps.
@@ -84,6 +120,10 @@ func (r *Registry) Upsert(root, name, client string) (*Entry, error) {
 		lower := strings.ToLower(name)
 		r.indexName[lower] = append(r.indexName[lower], id)
 	}
+
+	// Promote from candidate if present
+	delete(r.candidates, strings.ToLower(root))
+
 	return entry, r.save()
 }
 
@@ -159,7 +199,7 @@ func (r *Registry) Cleanup(cutoff time.Time) error {
 	return r.save()
 }
 
-// load loads existing registry entries from disk.
+// load loads existing registry entries and candidates from disk.
 func (r *Registry) load() error {
 	data, err := os.ReadFile(r.path)
 	if err != nil {
@@ -168,40 +208,94 @@ func (r *Registry) load() error {
 		}
 		return err
 	}
+
+	// Try loading V2 store first
+	var store registryStore
+	if err := json.Unmarshal(data, &store); err == nil && store.Version != "" {
+		for _, entry := range store.Entries {
+			r.addEntry(entry)
+		}
+		for _, cand := range store.Candidates {
+			r.candidates[strings.ToLower(cand.Root)] = cand
+		}
+		return nil
+	}
+
+	// Fallback to V1 (array of entries)
 	var entries []*Entry
 	if err := json.Unmarshal(data, &entries); err != nil {
 		return err
 	}
 	for _, entry := range entries {
-		if entry.ID == "" {
-			entry.ID = hashRoot(entry.Root)
-		}
-		r.entries[entry.ID] = entry
-		r.indexRoot[strings.ToLower(entry.Root)] = entry.ID
-		if entry.Name != "" {
-			lower := strings.ToLower(entry.Name)
-			r.indexName[lower] = append(r.indexName[lower], entry.ID)
-		}
+		r.addEntry(entry)
 	}
 	return nil
 }
 
-func (r *Registry) save() error {
-	entries := make([]*Entry, 0, len(r.entries))
-	for _, entry := range r.entries {
-		entries = append(entries, entry)
+func (r *Registry) addEntry(entry *Entry) {
+	if entry.ID == "" {
+		entry.ID = hashRoot(entry.Root)
 	}
+	r.entries[entry.ID] = entry
+	r.indexRoot[strings.ToLower(entry.Root)] = entry.ID
+	if entry.Name != "" {
+		lower := strings.ToLower(entry.Name)
+		r.indexName[lower] = append(r.indexName[lower], entry.ID)
+	}
+}
+
+func (r *Registry) save() error {
+	store := registryStore{
+		Version: registryStoreVersion,
+		Entries: make([]*Entry, 0, len(r.entries)),
+	}
+	for _, entry := range r.entries {
+		store.Entries = append(store.Entries, entry)
+	}
+	for _, cand := range r.candidates {
+		store.Candidates = append(store.Candidates, cand)
+	}
+
 	if err := os.MkdirAll(filepath.Dir(r.path), 0o755); err != nil {
 		return err
 	}
-	payload, err := json.MarshalIndent(entries, "", "  ")
+	payload, err := json.MarshalIndent(store, "", "  ")
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(r.path, payload, 0o644)
 }
 
+// RecordFeedback captures IDE suggestions for future promotion.
+func (r *Registry) RecordFeedback(ctx context.Context, feedback *contract.PathFeedback) error {
+	if feedback == nil || feedback.SuggestedPath == "" {
+		return nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	root := strings.ToLower(filepath.Clean(feedback.SuggestedPath))
+	cand, ok := r.candidates[root]
+	if !ok {
+		cand = &CandidateEntry{
+			Root: feedback.SuggestedPath,
+		}
+		r.candidates[root] = cand
+	}
+
+	cand.Count++
+	cand.LastSeenAt = r.clock()
+	if feedback.Reason != "" {
+		cand.Reason = feedback.Reason
+	}
+
+	return r.save()
+}
+
 func hashRoot(root string) string {
 	sum := sha1.Sum([]byte(strings.ToLower(filepath.Clean(root))))
 	return hex.EncodeToString(sum[:])
 }
+
+// hashRoot returns a content-based identifier for a root path.

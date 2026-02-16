@@ -110,7 +110,7 @@ type resolverRegistry struct {
 	registry *registry.Registry
 }
 
-func (r *resolverRegistry) ResolveAlias(_ context.Context, alias string) (*resolver.WorkspaceCandidate, *contract.ResolveWorkspaceError) {
+func (r *resolverRegistry) ResolveAlias(_ context.Context, alias string) (*contract.WorkspaceCandidate, *contract.ResolveWorkspaceError) {
 	entries := r.registry.LookupByName(alias)
 	if len(entries) == 0 {
 		return nil, &contract.ResolveWorkspaceError{
@@ -121,9 +121,13 @@ func (r *resolverRegistry) ResolveAlias(_ context.Context, alias string) (*resol
 	}
 
 	entry := entries[0]
-	return &resolver.WorkspaceCandidate{
+	return &contract.WorkspaceCandidate{
 		Root:   entry.Root,
 		Name:   entry.Name,
 		Reason: contract.ReasonWorkspaceAlias,
 	}, nil
+}
+
+func (r *resolverRegistry) RecordFeedback(_ context.Context, feedback *contract.PathFeedback) error {
+	return nil
 }

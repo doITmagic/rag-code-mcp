@@ -44,14 +44,14 @@ Deliver a modular V2 detection core that is deterministic, testable, and safe fo
 ## Implementation Checklist (Phase 1 / Phase 2)
 
 ### Phase 1 - Core metadata and deterministic safety
-- [ ] **[P0]** Implement branch-aware `path_context_key` (`workspace_root + branch + head + worktree_id`).
-- [ ] **[P0]** Add response metadata envelope (`path_resolution_source`, `path_resolution_confidence`, `used_fallback`).
-- [ ] **[P0]** Add `branch_mismatch_risk` computation (`low|medium|high`) with deterministic rules.
-- [ ] **[P0]** Add invalidation hardening (branch isolation + anti-loop behavior on missing paths).
-- [ ] **[P1]** Add confidence decay policy on HEAD mismatch/rewrite.
+- [x] **[P0]** Implement branch-aware `path_context_key` (`workspace_root + branch + head + worktree_id`).
+- [x] **[P0]** Add response metadata envelope (`path_resolution_source`, `path_resolution_confidence`, `used_fallback`).
+- [x] **[P0]** Add `branch_mismatch_risk` computation (`low|medium|high`) with deterministic rules.
+- [x] **[P0]** Add invalidation hardening (branch isolation + anti-loop behavior on missing paths).
+- [x] **[P1]** Add confidence decay policy on HEAD mismatch/rewrite.
 
 ### Phase 2 - Feedback loop and promotion workflow
-- [ ] **[P0]** Add request-side `path_feedback` contract and validation.
-- [ ] **[P0]** Persist suggestions as non-trusted candidates.
-- [ ] **[P0]** Promote candidate paths only after successful resolution + execution.
+- [x] **[P0]** Add request-side `path_feedback` contract and validation.
+- [x] **[P0]** Persist suggestions as non-trusted candidates.
+- [x] **[P0]** Promote candidate paths only after successful resolution + execution.
 - [ ] **[P1]** Add audit logs and metrics for feedback ingestion/promotion.

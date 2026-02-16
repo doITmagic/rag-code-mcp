@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/qdrant/go-client/qdrant"
 )
@@ -267,7 +268,7 @@ func (c *QdrantClient) Search(ctx context.Context, vector []float64, limit int) 
 	return results, nil
 }
 
-// SearchDocsOnly searches for similar vectors that are markdown documentation
+// SearchDocsOnly searches for similar vectors that are documentation/text chunks.
 func (c *QdrantClient) SearchDocsOnly(ctx context.Context, vector []float64, limit int) ([]SearchResult, error) {
 	// Convert float64 to float32
 	vector32 := make([]float32, len(vector))
@@ -275,10 +276,48 @@ func (c *QdrantClient) SearchDocsOnly(ctx context.Context, vector []float64, lim
 		vector32[i] = float32(v)
 	}
 
-	// Search for similar vectors
+	markdownResults, err := c.searchByChunkType(ctx, vector32, limit, "markdown")
+	if err != nil {
+		return nil, fmt.Errorf("failed to search docs markdown chunks: %w", err)
+	}
+
+	textResults, err := c.searchByChunkType(ctx, vector32, limit, "text")
+	if err != nil {
+		return nil, fmt.Errorf("failed to search docs text chunks: %w", err)
+	}
+
+	merged := make(map[string]SearchResult, len(markdownResults)+len(textResults))
+	for _, result := range append(markdownResults, textResults...) {
+		key := result.ID
+		if key == "" {
+			key = fmt.Sprintf("%v#%v", result.Payload["file"], result.Payload["chunk_id"])
+		}
+		existing, ok := merged[key]
+		if !ok || result.Score > existing.Score {
+			merged[key] = result
+		}
+	}
+
+	results := make([]SearchResult, 0, len(merged))
+	for _, result := range merged {
+		results = append(results, result)
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
+
+	if len(results) > limit {
+		results = results[:limit]
+	}
+
+	return results, nil
+}
+
+func (c *QdrantClient) searchByChunkType(ctx context.Context, vector []float32, limit int, chunkType string) ([]SearchResult, error) {
 	searchResult, err := c.client.Query(ctx, &qdrant.QueryPoints{
 		CollectionName: c.config.Collection,
-		Query:          qdrant.NewQuery(vector32...),
+		Query:          qdrant.NewQuery(vector...),
 		Filter: &qdrant.Filter{
 			Must: []*qdrant.Condition{
 				{
@@ -287,7 +326,7 @@ func (c *QdrantClient) SearchDocsOnly(ctx context.Context, vector []float64, lim
 							Key: "chunk_type",
 							Match: &qdrant.Match{
 								MatchValue: &qdrant.Match_Keyword{
-									Keyword: "markdown",
+									Keyword: chunkType,
 								},
 							},
 						},
@@ -299,10 +338,9 @@ func (c *QdrantClient) SearchDocsOnly(ctx context.Context, vector []float64, lim
 		WithPayload: qdrant.NewWithPayload(true),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to search docs: %w", err)
+		return nil, err
 	}
 
-	// Convert results
 	results := make([]SearchResult, 0, len(searchResult))
 	for _, point := range searchResult {
 		payload := make(map[string]interface{})
@@ -310,7 +348,6 @@ func (c *QdrantClient) SearchDocsOnly(ctx context.Context, vector []float64, lim
 			payload[key] = val.GetStringValue()
 		}
 
-		// Extract ID as string
 		var idStr string
 		if point.Id != nil && point.Id.GetNum() != 0 {
 			idStr = fmt.Sprintf("%d", point.Id.GetNum())
@@ -328,7 +365,7 @@ func (c *QdrantClient) SearchDocsOnly(ctx context.Context, vector []float64, lim
 	return results, nil
 }
 
-// SearchCodeOnly searches for similar vectors, excluding markdown documentation chunks
+// SearchCodeOnly searches for similar vectors, excluding documentation chunks.
 func (c *QdrantClient) SearchCodeOnly(ctx context.Context, vector []float64, limit int) ([]SearchResult, error) {
 	// Convert float64 to float32
 	vector32 := make([]float32, len(vector))
@@ -336,8 +373,7 @@ func (c *QdrantClient) SearchCodeOnly(ctx context.Context, vector []float64, lim
 		vector32[i] = float32(v)
 	}
 
-	// Search for similar vectors, excluding markdown chunks
-	// Markdown chunks have chunk_type="markdown", code chunks have type="class|method|function|etc"
+	// Search for similar vectors, excluding documentation/text chunks.
 	searchResult, err := c.client.Query(ctx, &qdrant.QueryPoints{
 		CollectionName: c.config.Collection,
 		Query:          qdrant.NewQuery(vector32...),
@@ -352,6 +388,18 @@ func (c *QdrantClient) SearchCodeOnly(ctx context.Context, vector []float64, lim
 							Match: &qdrant.Match{
 								MatchValue: &qdrant.Match_Keyword{
 									Keyword: "markdown",
+								},
+							},
+						},
+					},
+				},
+				{
+					ConditionOneOf: &qdrant.Condition_Field{
+						Field: &qdrant.FieldCondition{
+							Key: "chunk_type",
+							Match: &qdrant.Match{
+								MatchValue: &qdrant.Match_Keyword{
+									Keyword: "text",
 								},
 							},
 						},

@@ -165,6 +165,15 @@ var defaultSkipDirs = map[string]struct{}{
 	"storage":      {},
 }
 
+func isIndexableCodeExtension(ext string) bool {
+	switch strings.ToLower(strings.TrimSpace(ext)) {
+	case ".go", ".php", ".py", ".html", ".htm":
+		return true
+	default:
+		return false
+	}
+}
+
 func addDirForLanguage(scan *workspaceScan, cache map[string]map[string]struct{}, language, dir string) {
 	if dir == "" {
 		return
@@ -233,25 +242,10 @@ func (m *Manager) scanWorkspace(info *Info) (*workspaceScan, error) {
 		case ".html", ".htm":
 			addDirForLanguage(scan, dirCache, "html", filepath.Dir(path))
 			addFileForLanguage(scan, "html", path)
-		case ".md", ".markdown", ".rst", ".adoc":
-			scan.DocFiles = append(scan.DocFiles, path)
-		case ".txt":
-			// Only include .txt files if they are in a documentation directory
-			dir := strings.ToLower(filepath.Base(filepath.Dir(path)))
-			if dir == "docs" || dir == "doc" || dir == "documentation" {
-				scan.DocFiles = append(scan.DocFiles, path)
-			}
 		default:
-			// Check for standard documentation files without extension or specific names
-			baseName := strings.ToUpper(filepath.Base(path))
-			if strings.HasPrefix(baseName, "README") ||
-				strings.HasPrefix(baseName, "LICENSE") ||
-				strings.HasPrefix(baseName, "CHANGELOG") ||
-				strings.HasPrefix(baseName, "CONTRIBUTING") ||
-				strings.HasPrefix(baseName, "HISTORY") ||
-				strings.HasPrefix(baseName, "NOTICE") {
-				scan.DocFiles = append(scan.DocFiles, path)
-			}
+			// General rule: everything that is not a supported code language is treated as text documentation.
+			// Binary files are filtered later during indexing.
+			scan.DocFiles = append(scan.DocFiles, path)
 		}
 		return nil
 	})
@@ -845,9 +839,9 @@ func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string
 	state.mu.RLock()
 	for path := range state.Files {
 		if _, err := os.Stat(path); os.IsNotExist(err) {
-			// It's deleted. Determine if it was code or doc based on extension
+			// It's deleted. Determine if it was code or doc based on extension.
 			ext := strings.ToLower(filepath.Ext(path))
-			if ext == ".md" {
+			if !isIndexableCodeExtension(ext) {
 				docsToDelete = append(docsToDelete, path)
 			} else {
 				filesToDelete = append(filesToDelete, path)
@@ -1000,19 +994,19 @@ func (m *Manager) checkAndReindexIfNeeded(ctx context.Context, info *Info, langu
 	}
 }
 
-// indexMarkdownFiles indexes provided markdown files (already discovered during scan)
-func (m *Manager) indexMarkdownFiles(ctx context.Context, markdownFiles []string, collectionName string, ltm memory.LongTermMemory) int {
-	if len(markdownFiles) == 0 {
+// indexMarkdownFiles indexes provided documentation files (already discovered during scan)
+func (m *Manager) indexMarkdownFiles(ctx context.Context, docFiles []string, collectionName string, ltm memory.LongTermMemory) int {
+	if len(docFiles) == 0 {
 		return 0
 	}
 
-	log.Printf("📚 Found %d markdown file(s), indexing documentation...", len(markdownFiles))
+	log.Printf("📚 Found %d documentation file(s), indexing text chunks...", len(docFiles))
 
 	totalChunks := 0
-	for _, path := range markdownFiles {
+	for _, path := range docFiles {
 		chunks, err := m.indexMarkdownFile(ctx, path, collectionName, ltm)
 		if err != nil {
-			log.Printf("⚠️  Failed to index markdown file %s: %v", path, err)
+			log.Printf("⚠️  Failed to index documentation file %s: %v", path, err)
 			continue
 		}
 		totalChunks += chunks
@@ -1021,8 +1015,12 @@ func (m *Manager) indexMarkdownFiles(ctx context.Context, markdownFiles []string
 	return totalChunks
 }
 
-// indexMarkdownFile chunks and indexes a single markdown file
+// indexMarkdownFile chunks and indexes a single documentation/text file
 func (m *Manager) indexMarkdownFile(ctx context.Context, path string, collectionName string, ltm memory.LongTermMemory) (int, error) {
+	if isLikelyBinaryFile(path) {
+		return 0, nil
+	}
+
 	f, err := os.Open(path)
 	if err != nil {
 		return 0, fmt.Errorf("open %s: %w", path, err)
@@ -1107,6 +1105,12 @@ func (m *Manager) indexMarkdownFile(ctx context.Context, path string, collection
 	}
 	flushChunk()
 
+	chunkType := "text"
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == ".md" || ext == ".markdown" {
+		chunkType = "markdown"
+	}
+
 	// Index each chunk
 	for i, text := range chunks {
 		emb, err := m.llm.Embed(ctx, text)
@@ -1126,7 +1130,7 @@ func (m *Manager) indexMarkdownFile(ctx context.Context, path string, collection
 				"file":       path,
 				"chunk_id":   i,
 				"source":     collectionName,
-				"chunk_type": "markdown",
+				"chunk_type": chunkType,
 			},
 		}
 
@@ -1136,6 +1140,28 @@ func (m *Manager) indexMarkdownFile(ctx context.Context, path string, collection
 	}
 
 	return len(chunks), nil
+}
+
+func isLikelyBinaryFile(path string) bool {
+	file, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+
+	buf := make([]byte, 8192)
+	n, err := file.Read(buf)
+	if err != nil || n == 0 {
+		return false
+	}
+
+	for i := 0; i < n; i++ {
+		if buf[i] == 0 {
+			return true
+		}
+	}
+
+	return false
 }
 
 // IsIndexing checks if a workspace is currently being indexed

@@ -254,3 +254,68 @@ func TestMarkdownIndexing_SkipsCommonDirs(t *testing.T) {
 
 	t.Logf("Correctly indexed %d chunks, skipping common directories", numChunks)
 }
+
+func TestNonLanguageFilesIndexedAsText(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	err := os.WriteFile(filepath.Join(tmpDir, "README.md"), []byte("# Docs\n\nProject docs."), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create README.md: %v", err)
+	}
+
+	err = os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte("name: app\nversion: v1"), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create config.yaml: %v", err)
+	}
+
+	err = os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main\nfunc main() {}"), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create main.go: %v", err)
+	}
+
+	info := &Info{
+		ID:          "test-non-language-as-text",
+		Root:        tmpDir,
+		ProjectType: "go",
+	}
+
+	manager := &Manager{llm: &MockLLMProvider{}}
+	mockLTM := &MockLongTermMemory{}
+
+	scan, err := manager.scanWorkspace(info)
+	if err != nil {
+		t.Fatalf("Failed to scan workspace: %v", err)
+	}
+
+	contains := func(path string) bool {
+		for _, docPath := range scan.DocFiles {
+			if docPath == path {
+				return true
+			}
+		}
+		return false
+	}
+
+	if !contains(filepath.Join(tmpDir, "config.yaml")) {
+		t.Fatalf("expected config.yaml to be treated as doc/text file")
+	}
+
+	numChunks := manager.indexMarkdownFiles(context.Background(), scan.DocFiles, "test-collection", mockLTM)
+	if numChunks == 0 {
+		t.Fatalf("expected documentation chunks to be indexed")
+	}
+
+	foundTextChunk := false
+	for _, doc := range mockLTM.docs {
+		file, _ := doc.Metadata["file"].(string)
+		chunkType, _ := doc.Metadata["chunk_type"].(string)
+		if file == filepath.Join(tmpDir, "config.yaml") && chunkType == "text" {
+			foundTextChunk = true
+			break
+		}
+	}
+
+	if !foundTextChunk {
+		t.Fatalf("expected config.yaml to be indexed with chunk_type=text")
+	}
+}

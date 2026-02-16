@@ -169,6 +169,30 @@ func TestSearchDocsTool_HappyPath(t *testing.T) {
 	}
 }
 
+func TestSelectDocsSearchLanguage_MarkdownFallsBackToProjectLanguage(t *testing.T) {
+	info := &workspace.Info{
+		ProjectType: "go",
+		Languages:   []string{"go", "markdown"},
+	}
+
+	got := selectDocsSearchLanguage("/tmp/README.md", info)
+	if got != "go" {
+		t.Fatalf("expected fallback language 'go', got '%s'", got)
+	}
+}
+
+func TestSelectDocsSearchLanguage_ConfigFileFallsBackToDetectedCodeLanguage(t *testing.T) {
+	info := &workspace.Info{
+		ProjectType: "unknown",
+		Languages:   []string{"markdown", "python"},
+	}
+
+	got := selectDocsSearchLanguage("/tmp/config.yaml", info)
+	if got != "python" {
+		t.Fatalf("expected fallback language 'python', got '%s'", got)
+	}
+}
+
 func TestHybridSearchTool_NoMemoryConfigured(t *testing.T) {
 	tool := NewHybridSearchTool(nil, &mockProvider{})
 	ctx := context.Background()

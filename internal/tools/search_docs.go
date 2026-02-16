@@ -3,9 +3,11 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/doITmagic/rag-code-mcp/internal/llm"
 	"github.com/doITmagic/rag-code-mcp/internal/memory"
+	"github.com/doITmagic/rag-code-mcp/internal/ragcode"
 	"github.com/doITmagic/rag-code-mcp/internal/workspace"
 )
 
@@ -61,17 +63,7 @@ func (t *SearchDocsTool) Execute(ctx context.Context, params map[string]interfac
 		if workspaceInfo != nil {
 			workspacePath = workspaceInfo.Root
 
-			// Detect language from file path or use first detected language
-			language := ""
-			if filePath != "" {
-				language = inferLanguageFromPath(filePath)
-			}
-			if language == "" && len(workspaceInfo.Languages) > 0 {
-				language = workspaceInfo.Languages[0]
-			}
-			if language == "" {
-				language = workspaceInfo.ProjectType
-			}
+			language := selectDocsSearchLanguage(filePath, workspaceInfo)
 
 			collectionName = workspaceInfo.CollectionNameForLanguage(language)
 			mem, err := t.workspaceManager.GetMemoryForWorkspaceLanguage(ctx, workspaceInfo, language)
@@ -172,4 +164,43 @@ func (t *SearchDocsTool) Execute(ctx context.Context, params map[string]interfac
 	}
 
 	return result, nil
+}
+
+func selectDocsSearchLanguage(filePath string, workspaceInfo *workspace.Info) string {
+	if workspaceInfo == nil {
+		return inferLanguageFromPath(filePath)
+	}
+
+	inferred := inferLanguageFromPath(filePath)
+	if isIndexableCodeLanguage(inferred) {
+		return inferred
+	}
+
+	projectType := strings.TrimSpace(workspaceInfo.ProjectType)
+	if isIndexableCodeLanguage(projectType) {
+		return projectType
+	}
+
+	for _, language := range workspaceInfo.Languages {
+		if isIndexableCodeLanguage(language) {
+			return language
+		}
+	}
+
+	if inferred != "" {
+		return inferred
+	}
+	if len(workspaceInfo.Languages) > 0 {
+		return workspaceInfo.Languages[0]
+	}
+	return workspaceInfo.ProjectType
+}
+
+func isIndexableCodeLanguage(language string) bool {
+	lang := strings.ToLower(strings.TrimSpace(language))
+	if lang == "" || lang == "unknown" {
+		return false
+	}
+	analyzerManager := ragcode.NewAnalyzerManager()
+	return analyzerManager.CodeAnalyzerForProjectType(lang) != nil
 }

@@ -59,6 +59,7 @@ temp/
 scripts/
 .ragcode/
 .agent/skills/
+build-binaries.sh
 
 # Debug logs
 startup_debug.txt

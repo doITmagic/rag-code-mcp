@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/doITmagic/rag-code-mcp/v2/internal/branchstate"
-	"github.com/doITmagic/rag-code-mcp/v2/internal/contract"
-	"github.com/doITmagic/rag-code-mcp/v2/internal/resolver"
+	"github.com/doITmagic/rag-code-mcp/v2/pkg/workspace/branchstate"
+	"github.com/doITmagic/rag-code-mcp/v2/pkg/workspace/contract"
+	"github.com/doITmagic/rag-code-mcp/v2/pkg/workspace/resolver"
 )
 
 type scenario struct {

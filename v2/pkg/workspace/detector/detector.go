@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/doITmagic/rag-code-mcp/v2/internal/contract"
+	"github.com/doITmagic/rag-code-mcp/v2/pkg/workspace/contract"
 )
 
 // Options configures the detector behavior.

@@ -9,11 +9,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/doITmagic/rag-code-mcp/v2/internal/branchstate"
-	"github.com/doITmagic/rag-code-mcp/v2/internal/contract"
-	"github.com/doITmagic/rag-code-mcp/v2/internal/detector"
-	"github.com/doITmagic/rag-code-mcp/v2/internal/registry"
-	"github.com/doITmagic/rag-code-mcp/v2/internal/resolver"
+	"github.com/doITmagic/rag-code-mcp/v2/pkg/workspace/branchstate"
+	"github.com/doITmagic/rag-code-mcp/v2/pkg/workspace/contract"
+	"github.com/doITmagic/rag-code-mcp/v2/pkg/workspace/detector"
+	"github.com/doITmagic/rag-code-mcp/v2/pkg/workspace/registry"
+	"github.com/doITmagic/rag-code-mcp/v2/pkg/workspace/resolver"
 )
 
 func main() {
@@ -129,5 +129,9 @@ func (r *resolverRegistry) ResolveAlias(_ context.Context, alias string) (*contr
 }
 
 func (r *resolverRegistry) RecordFeedback(_ context.Context, feedback *contract.PathFeedback) error {
+	return nil
+}
+
+func (r *resolverRegistry) PromoteCandidate(_ context.Context, workspaceID, root string, executionSuccess bool) error {
 	return nil
 }

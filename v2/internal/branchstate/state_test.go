@@ -15,9 +15,11 @@ type fakeGit struct {
 	branch string
 	sha    string
 	err    error
+	calls  int
 }
 
 func (f *fakeGit) run(ctx context.Context, root string, args ...string) (string, error) {
+	f.calls++
 	if f.err != nil {
 		return "", f.err
 	}
@@ -99,5 +101,43 @@ func TestCompareAndUpdate_DetachedHead(t *testing.T) {
 	}
 	if reason != contract.ReasonHeadChanged && reason != contract.ReasonBranchChanged && reason != contract.ReasonFirstSeen {
 		t.Fatalf("expected reason for reindex, got %s", reason)
+	}
+}
+
+func TestCompareAndUpdate_UsesCacheTTL(t *testing.T) {
+	now := time.Unix(0, 0)
+	fake := &fakeGit{branch: "main", sha: "abc"}
+	manager := &Manager{
+		clock:     func() time.Time { return now },
+		gitRunner: fake.run,
+		cache:     make(map[string]cachedGitState),
+		cacheTTL:  2 * time.Second,
+	}
+
+	tmp := t.TempDir()
+	_, _, _, err := manager.CompareAndUpdate(context.Background(), tmp)
+	if err != nil {
+		t.Fatalf("unexpected err on first compare: %v", err)
+	}
+	firstCalls := fake.calls
+	if firstCalls == 0 {
+		t.Fatalf("expected git calls on first read")
+	}
+
+	_, _, _, err = manager.CompareAndUpdate(context.Background(), tmp)
+	if err != nil {
+		t.Fatalf("unexpected err on second compare: %v", err)
+	}
+	if fake.calls != firstCalls {
+		t.Fatalf("expected cached git state within TTL; calls before=%d after=%d", firstCalls, fake.calls)
+	}
+
+	now = now.Add(3 * time.Second)
+	_, _, _, err = manager.CompareAndUpdate(context.Background(), tmp)
+	if err != nil {
+		t.Fatalf("unexpected err after ttl expiry: %v", err)
+	}
+	if fake.calls <= firstCalls {
+		t.Fatalf("expected git calls to refresh after TTL expiry")
 	}
 }

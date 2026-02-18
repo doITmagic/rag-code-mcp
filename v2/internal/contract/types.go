@@ -1,6 +1,9 @@
 package contract
 
-import "strings"
+import (
+	"path/filepath"
+	"strings"
+)
 
 // ClientInfo captures identifying metadata about the MCP client/IDE.
 type ClientInfo struct {
@@ -20,9 +23,11 @@ const ContractVersion = "v2"
 
 // PathFeedback allows the IDE to provide corrections or suggestions to the resolver.
 type PathFeedback struct {
-	Mismatch      bool   `json:"mismatch"`
-	SuggestedPath string `json:"suggested_path,omitempty"`
-	Reason        string `json:"reason,omitempty"`
+	Status             string `json:"status,omitempty"`
+	Mismatch           bool   `json:"mismatch"`
+	SuggestedPath      string `json:"suggested_path,omitempty"`
+	ExecutionSucceeded bool   `json:"execution_succeeded,omitempty"`
+	Reason             string `json:"reason,omitempty"`
 }
 
 // ResolveWorkspaceRequest is the canonical resolver input shared by all tools.
@@ -98,22 +103,35 @@ type ResponseMetadata struct {
 	Confidence   float64 `json:"confidence"`
 	Source       string  `json:"source,omitempty"`
 	UsedFallback bool    `json:"used_fallback"`
+
+	WorkspaceRoot  string `json:"workspace_root,omitempty"`
+	GitBranch      string `json:"git_branch,omitempty"`
+	GitHead        string `json:"git_head,omitempty"`
+	WorktreeID     string `json:"worktree_id,omitempty"`
+	PathContextKey string `json:"path_context_key,omitempty"`
 }
 
 // ResolveWorkspaceResponse represents the resolver output for success cases.
 type ResolveWorkspaceResponse struct {
-	ResolvedRoot         string           `json:"resolved_root,omitempty"`
-	WorkspaceID          string           `json:"workspace_id,omitempty"`
-	MarkersFound         []string         `json:"markers_found,omitempty"`
-	Branch               string           `json:"branch,omitempty"`
-	HeadSHA              string           `json:"head_sha,omitempty"`
-	WorktreeID           string           `json:"worktree_id,omitempty"`
-	MismatchRisk         string           `json:"mismatch_risk,omitempty"` // low|medium|high
-	ReindexRequired      bool             `json:"reindex_required"`
-	Metadata             ResponseMetadata `json:"metadata"`
-	Reason               ReasonCode       `json:"reason,omitempty"`
-	RequiresConfirmation bool             `json:"requires_confirmation"`
-	Candidates           []Candidate      `json:"candidates,omitempty"`
+	ResolvedRoot             string           `json:"resolved_root,omitempty"`
+	WorkspaceID              string           `json:"workspace_id,omitempty"`
+	MarkersFound             []string         `json:"markers_found,omitempty"`
+	PathResolutionSource     string           `json:"path_resolution_source,omitempty"`
+	PathResolutionConfidence float64          `json:"path_resolution_confidence,omitempty"`
+	UsedFallback             bool             `json:"used_fallback"`
+	WorkspaceRoot            string           `json:"workspace_root,omitempty"`
+	GitBranch                string           `json:"git_branch,omitempty"`
+	GitHead                  string           `json:"git_head,omitempty"`
+	PathContextKey           string           `json:"path_context_key,omitempty"`
+	Branch                   string           `json:"branch,omitempty"`
+	HeadSHA                  string           `json:"head_sha,omitempty"`
+	WorktreeID               string           `json:"worktree_id,omitempty"`
+	MismatchRisk             string           `json:"mismatch_risk,omitempty"` // low|medium|high
+	ReindexRequired          bool             `json:"reindex_required"`
+	Metadata                 ResponseMetadata `json:"metadata"`
+	Reason                   ReasonCode       `json:"reason,omitempty"`
+	RequiresConfirmation     bool             `json:"requires_confirmation"`
+	Candidates               []Candidate      `json:"candidates,omitempty"`
 }
 
 // hasValue returns true when the string contains non-whitespace characters.
@@ -123,6 +141,12 @@ func hasValue(v string) bool {
 
 // ValidateRequest performs lightweight validation before resolver processing.
 func ValidateRequest(req ResolveWorkspaceRequest) *ResolveWorkspaceError {
+	if req.Feedback != nil {
+		if err := validateFeedback(req.Feedback); err != nil {
+			return err
+		}
+	}
+
 	if hasValue(req.WorkspaceRoot) || hasValue(req.FilePath) || hasValue(req.Workspace) {
 		return nil
 	}
@@ -136,4 +160,47 @@ func ValidateRequest(req ResolveWorkspaceRequest) *ResolveWorkspaceError {
 		Message: "provide workspace_root, file_path, workspace alias, or client roots",
 		Reason:  ReasonNoContext,
 	}
+}
+
+func validateFeedback(feedback *PathFeedback) *ResolveWorkspaceError {
+	status := strings.ToLower(strings.TrimSpace(feedback.Status))
+	suggested := strings.TrimSpace(feedback.SuggestedPath)
+
+	if status != "" && status != "mismatch" {
+		return &ResolveWorkspaceError{
+			Code:    ErrorInvalidPath,
+			Message: "feedback.status must be empty or 'mismatch'",
+			Reason:  ReasonInvalidPath,
+		}
+	}
+
+	isMismatch := feedback.Mismatch || status == "mismatch"
+	if isMismatch && suggested == "" {
+		return &ResolveWorkspaceError{
+			Code:    ErrorInvalidPath,
+			Message: "feedback with mismatch requires suggested_path",
+			Reason:  ReasonInvalidPath,
+		}
+	}
+
+	if suggested != "" {
+		cleaned := filepath.Clean(suggested)
+		if cleaned == "." || strings.HasPrefix(cleaned, "..") {
+			return &ResolveWorkspaceError{
+				Code:    ErrorInvalidPath,
+				Message: "feedback.suggested_path must be a valid path",
+				Reason:  ReasonInvalidPath,
+			}
+		}
+	}
+
+	if feedback.ExecutionSucceeded && suggested == "" {
+		return &ResolveWorkspaceError{
+			Code:    ErrorInvalidPath,
+			Message: "feedback.execution_succeeded requires suggested_path",
+			Reason:  ReasonInvalidPath,
+		}
+	}
+
+	return nil
 }

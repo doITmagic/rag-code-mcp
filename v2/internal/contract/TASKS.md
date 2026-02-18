@@ -40,12 +40,12 @@ Define stable, deterministic request/response contracts for workspace resolution
 ## Implementation Checklist by Phase
 
 ### Phase 1 - Contract expansion for resolver metadata
-- [ ] **[P0]** Add response fields: `path_resolution_source`, `path_resolution_confidence`, `used_fallback`.
-- [ ] **[P0]** Add context fields: `path_context_key`, `worktree_id`, `git_branch`, `git_head`.
-- [ ] **[P0]** Add risk field: `branch_mismatch_risk` enum (`low|medium|high`).
-- [ ] **[P1]** Add backward-compatible defaults for clients not yet reading new metadata fields.
+- [x] **[P0]** Add response fields: `path_resolution_source`, `path_resolution_confidence`, `used_fallback`.
+- [x] **[P0]** Add context fields: `path_context_key`, `worktree_id`, `git_branch`, `git_head`.
+- [x] **[P0]** Add risk field: `branch_mismatch_risk` enum (`low|medium|high`).
+- [x] **[P1]** Add backward-compatible defaults for clients not yet reading new metadata fields.
 
 ### Phase 2 - Feedback contract and validation
-- [ ] **[P0]** Add `path_feedback` object to request contract.
-- [ ] **[P0]** Validate `path_feedback.status=mismatch` and suggested-path constraints.
-- [ ] **[P1]** Add exhaustive contract tests for invalid feedback combinations.
+- [x] **[P0]** Add `path_feedback` object to request contract.
+- [x] **[P0]** Validate `path_feedback.status=mismatch` and suggested-path constraints.
+- [x] **[P1]** Add exhaustive contract tests for invalid feedback combinations.

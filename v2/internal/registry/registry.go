@@ -19,6 +19,21 @@ const (
 	registryStoreVersion  = "v2"
 )
 
+// AuditSink receives auditable registry lifecycle events.
+type AuditSink interface {
+	Record(ctx context.Context, event string, fields map[string]any)
+}
+
+type noopAuditSink struct{}
+
+func (noopAuditSink) Record(ctx context.Context, event string, fields map[string]any) {}
+
+// Metrics captures registry counters relevant to feedback/promotion workflow.
+type Metrics struct {
+	FeedbackIngested   int `json:"feedback_ingested"`
+	CandidatesPromoted int `json:"candidates_promoted"`
+}
+
 type registryStore struct {
 	Version    string            `json:"version"`
 	Entries    []*Entry          `json:"entries"`
@@ -52,6 +67,8 @@ type Registry struct {
 	indexRoot  map[string]string
 	indexName  map[string][]string
 	clock      func() time.Time
+	audit      AuditSink
+	metrics    Metrics
 	mu         sync.Mutex
 }
 
@@ -64,11 +81,30 @@ func New(path string) (*Registry, error) {
 		indexRoot:  make(map[string]string),
 		indexName:  make(map[string][]string),
 		clock:      time.Now,
+		audit:      noopAuditSink{},
 	}
 	if err := r.load(); err != nil {
 		return nil, err
 	}
 	return r, nil
+}
+
+// SetAuditSink configures an optional sink for auditable lifecycle events.
+func (r *Registry) SetAuditSink(sink AuditSink) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if sink == nil {
+		r.audit = noopAuditSink{}
+		return
+	}
+	r.audit = sink
+}
+
+// MetricsSnapshot returns a copy of registry counters.
+func (r *Registry) MetricsSnapshot() Metrics {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.metrics
 }
 
 // ResolveAlias implements resolver.Registry.
@@ -121,10 +157,64 @@ func (r *Registry) Upsert(root, name, client string) (*Entry, error) {
 		r.indexName[lower] = append(r.indexName[lower], id)
 	}
 
-	// Promote from candidate if present
-	delete(r.candidates, strings.ToLower(root))
-
 	return entry, r.save()
+}
+
+// PromoteCandidate promotes a suggested path candidate to a confirmed entry only when execution succeeded.
+func (r *Registry) PromoteCandidate(ctx context.Context, root, client string, executionSucceeded bool) error {
+	if !executionSucceeded || strings.TrimSpace(root) == "" {
+		return nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	cleanRoot := filepath.Clean(root)
+	normalized := strings.ToLower(cleanRoot)
+	candidate, ok := r.candidates[normalized]
+	if !ok {
+		return nil
+	}
+
+	id := hashRoot(cleanRoot)
+	now := r.clock()
+	name := filepath.Base(cleanRoot)
+	if existing, exists := r.entries[id]; exists {
+		existing.LastUsedAt = now
+		if client != "" {
+			existing.Client = client
+		}
+		if existing.Name == "" {
+			existing.Name = name
+		}
+	} else {
+		entry := &Entry{
+			SchemaVersion: registrySchemaVersion,
+			ID:            id,
+			Root:          cleanRoot,
+			Name:          name,
+			Client:        client,
+			ConfirmedAt:   now,
+			LastUsedAt:    now,
+		}
+		r.entries[id] = entry
+		r.indexRoot[normalized] = id
+		if entry.Name != "" {
+			lower := strings.ToLower(entry.Name)
+			r.indexName[lower] = append(r.indexName[lower], id)
+		}
+	}
+
+	delete(r.candidates, normalized)
+	r.metrics.CandidatesPromoted++
+	r.audit.Record(ctx, "registry.candidate_promoted", map[string]any{
+		"root":                cleanRoot,
+		"client":              client,
+		"execution_succeeded": executionSucceeded,
+		"candidate_count":     candidate.Count,
+	})
+
+	return r.save()
 }
 
 // LookupByID returns an entry by ID.
@@ -289,6 +379,12 @@ func (r *Registry) RecordFeedback(ctx context.Context, feedback *contract.PathFe
 	if feedback.Reason != "" {
 		cand.Reason = feedback.Reason
 	}
+	r.metrics.FeedbackIngested++
+	r.audit.Record(ctx, "registry.feedback_ingested", map[string]any{
+		"suggested_path": feedback.SuggestedPath,
+		"reason":         feedback.Reason,
+		"count":          cand.Count,
+	})
 
 	return r.save()
 }

@@ -2,8 +2,36 @@ package php
 
 import (
 	"github.com/VKCOM/php-parser/pkg/ast"
-	"github.com/doITmagic/rag-code-mcp/internal/codetypes"
 )
+
+// ParamInfo describes a function or method parameter
+type ParamInfo struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+// ReturnInfo describes a function or method return value
+type ReturnInfo struct {
+	Type        string `json:"type"`
+	Description string `json:"description"`
+}
+
+// CodeChunk represents a semantically meaningful piece of code
+type CodeChunk struct {
+	Type               string         `json:"type"`
+	Name               string         `json:"name"`
+	Package            string         `json:"package"`
+	Language           string         `json:"language"`
+	FilePath           string         `json:"file_path"`
+	StartLine          int            `json:"start_line"`
+	EndLine            int            `json:"end_line"`
+	SelectionStartLine int            `json:"selection_start_line,omitempty"`
+	SelectionEndLine   int            `json:"selection_end_line,omitempty"`
+	Signature          string         `json:"signature"`
+	Docstring          string         `json:"docstring"`
+	Code               string         `json:"code"`
+	Metadata           map[string]any `json:"metadata,omitempty"`
+}
 
 // PackageInfo contains comprehensive information about a PHP namespace/package
 // In PHP context, this represents a namespace or the global scope
@@ -74,40 +102,40 @@ type TraitInfo struct {
 
 // MethodInfo describes a class/interface/trait method
 type MethodInfo struct {
-	Name        string                 `json:"name"`
-	Signature   string                 `json:"signature"`
-	Description string                 `json:"description"`
-	Parameters  []codetypes.ParamInfo  `json:"parameters"`
-	ReturnType  string                 `json:"return_type,omitempty"`
-	Returns     []codetypes.ReturnInfo `json:"returns,omitempty"`
-	Visibility  string                 `json:"visibility"` // public, protected, private
-	IsStatic    bool                   `json:"is_static"`
-	IsAbstract  bool                   `json:"is_abstract"`
-	IsFinal     bool                   `json:"is_final"`
-	ClassName   string                 `json:"class_name,omitempty"` // Parent class/interface/trait
-	FilePath    string                 `json:"file_path,omitempty"`
-	StartLine   int                    `json:"start_line,omitempty"`
-	EndLine     int                    `json:"end_line,omitempty"`
-	Code        string                 `json:"code,omitempty"`
+	Name        string       `json:"name"`
+	Signature   string       `json:"signature"`
+	Description string       `json:"description"`
+	Parameters  []ParamInfo  `json:"parameters"`
+	ReturnType  string       `json:"return_type,omitempty"`
+	Returns     []ReturnInfo `json:"returns,omitempty"`
+	Visibility  string       `json:"visibility"` // public, protected, private
+	IsStatic    bool         `json:"is_static"`
+	IsAbstract  bool         `json:"is_abstract"`
+	IsFinal     bool         `json:"is_final"`
+	ClassName   string       `json:"class_name,omitempty"` // Parent class/interface/trait
+	FilePath    string       `json:"file_path,omitempty"`
+	StartLine   int          `json:"start_line,omitempty"`
+	EndLine     int          `json:"end_line,omitempty"`
+	Code        string       `json:"code,omitempty"`
 }
 
 // FunctionInfo describes a global function or method
 type FunctionInfo struct {
-	Name        string                 `json:"name"`
-	Signature   string                 `json:"signature"`
-	Description string                 `json:"description"`
-	Parameters  []codetypes.ParamInfo  `json:"parameters"`
-	ReturnType  string                 `json:"return_type,omitempty"`
-	Returns     []codetypes.ReturnInfo `json:"returns,omitempty"`
-	Namespace   string                 `json:"namespace,omitempty"`
-	IsMethod    bool                   `json:"is_method"`
-	ClassName   string                 `json:"class_name,omitempty"` // If method
-	Visibility  string                 `json:"visibility,omitempty"` // If method
-	IsStatic    bool                   `json:"is_static,omitempty"`  // If method
-	FilePath    string                 `json:"file_path,omitempty"`
-	StartLine   int                    `json:"start_line,omitempty"`
-	EndLine     int                    `json:"end_line,omitempty"`
-	Code        string                 `json:"code,omitempty"`
+	Name        string       `json:"name"`
+	Signature   string       `json:"signature"`
+	Description string       `json:"description"`
+	Parameters  []ParamInfo  `json:"parameters"`
+	ReturnType  string       `json:"return_type,omitempty"`
+	Returns     []ReturnInfo `json:"returns,omitempty"`
+	Namespace   string       `json:"namespace,omitempty"`
+	IsMethod    bool         `json:"is_method"`
+	ClassName   string       `json:"class_name,omitempty"` // If method
+	Visibility  string       `json:"visibility,omitempty"` // If method
+	IsStatic    bool         `json:"is_static,omitempty"`  // If method
+	FilePath    string       `json:"file_path,omitempty"`
+	StartLine   int          `json:"start_line,omitempty"`
+	EndLine     int          `json:"end_line,omitempty"`
+	Code        string       `json:"code,omitempty"`
 }
 
 // PropertyInfo describes a class/trait property

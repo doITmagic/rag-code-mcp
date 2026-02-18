@@ -12,7 +12,7 @@ import (
 
 func init() {
 	// Register for common languages that don't have specialized AST parsers yet
-	exts := []string{".js", ".ts", ".jsx", ".tsx", ".css", ".scss", ".sql", ".sh", ".bash", ".vue", ".svelte", ".yaml", ".yml", ".json"}
+	exts := []string{".ts", ".jsx", ".tsx", ".css", ".scss", ".sql", ".sh", ".bash", ".vue", ".svelte", ".yaml", ".yml", ".json"}
 	pkgParser.Register(NewAnalyzer("generic", exts))
 }
 

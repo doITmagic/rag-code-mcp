@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/doITmagic/rag-code-mcp/v2/internal/contract"
-	"github.com/doITmagic/rag-code-mcp/v2/pkg/workspace"
 )
 
 // Options configures the detector behavior.
@@ -95,30 +94,10 @@ func (d *Detector) DetectFromFilePath(ctx context.Context, filePath string) (*co
 		}
 	}
 
-	result, err := workspace.FindRoot(ctx, path, d.opts.Markers, d.opts.MaxDepth)
-
+	abs, err := filepath.Abs(path)
 	if err != nil {
-		return nil, &contract.ResolveWorkspaceError{
-			Code:    contract.ErrorInternal,
-			Message: fmt.Sprintf("pkg/detector error: %v", err),
-			Reason:  contract.ReasonInvalidPath,
-		}
+		return nil, wrapPathErr("resolve absolute path", err)
 	}
-
-	if result == nil {
-		return nil, nil // No root found
-	}
-
-	abs, _ := filepath.Abs(result.Root) // workspace already does this but let's be safe
-	return &contract.WorkspaceCandidate{
-		Root:       abs,
-		Reason:     contract.ReasonFilePath,
-		Confidence: 1.0,
-		Metadata: map[string]any{
-			"marker": result.Marker,
-		},
-	}, nil
-}
 	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
 		abs = resolved
 	}
@@ -198,9 +177,11 @@ func (d *Detector) inspectDir(dir string) (*contract.WorkspaceCandidate, *contra
 		return nil, err
 	}
 	return &contract.WorkspaceCandidate{
-		Root:    dir,
-		Markers: markers,
-		Reason:  contract.ReasonFilePath,
+		Root:       dir,
+		Markers:    markers,
+		Reason:     contract.ReasonFilePath,
+		Source:     "file_path",
+		Confidence: 0.95,
 	}, nil
 }
 
@@ -238,6 +219,8 @@ func (d *Detector) detectFromMetadata(start string) (*contract.WorkspaceCandidat
 		}
 	}
 	candidate.Reason = contract.ReasonRootsList
+	candidate.Source = "metadata"
+	candidate.Confidence = 0.85
 	return candidate, nil
 }
 

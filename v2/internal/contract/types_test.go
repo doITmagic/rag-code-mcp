@@ -104,3 +104,80 @@ func TestReasonCodesCoverage(t *testing.T) {
 		reasonSet[reason] = true
 	}
 }
+
+func TestValidateRequestFeedback(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     ResolveWorkspaceRequest
+		wantErr bool
+	}{
+		{
+			name: "feedback mismatch needs suggestion",
+			req: ResolveWorkspaceRequest{
+				WorkspaceRoot: "/tmp/project",
+				Feedback:      &PathFeedback{Mismatch: true},
+			},
+			wantErr: true,
+		},
+		{
+			name: "feedback invalid status rejected",
+			req: ResolveWorkspaceRequest{
+				WorkspaceRoot: "/tmp/project",
+				Feedback:      &PathFeedback{Status: "ok", SuggestedPath: "/tmp/project"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "feedback mismatch status accepted",
+			req: ResolveWorkspaceRequest{
+				WorkspaceRoot: "/tmp/project",
+				Feedback:      &PathFeedback{Status: "mismatch", SuggestedPath: "/tmp/project"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "feedback invalid suggested path rejected",
+			req: ResolveWorkspaceRequest{
+				WorkspaceRoot: "/tmp/project",
+				Feedback:      &PathFeedback{Status: "mismatch", SuggestedPath: "../tmp/project"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "feedback valid suggestion accepted",
+			req: ResolveWorkspaceRequest{
+				WorkspaceRoot: "/tmp/project",
+				Feedback:      &PathFeedback{Mismatch: true, SuggestedPath: "/tmp/project"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "execution succeeded requires suggested path",
+			req: ResolveWorkspaceRequest{
+				WorkspaceRoot: "/tmp/project",
+				Feedback:      &PathFeedback{ExecutionSucceeded: true},
+			},
+			wantErr: true,
+		},
+		{
+			name: "execution succeeded with valid suggested path",
+			req: ResolveWorkspaceRequest{
+				WorkspaceRoot: "/tmp/project",
+				Feedback:      &PathFeedback{Status: "mismatch", SuggestedPath: "/tmp/project", ExecutionSucceeded: true},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateRequest(tt.req)
+			if tt.wantErr && err == nil {
+				t.Fatalf("expected validation error")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+		})
+	}
+}

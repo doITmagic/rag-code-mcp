@@ -158,6 +158,18 @@ func parseTag(line string, doc *PHPDocInfo) {
 	}
 }
 
+// convertPHPDocToReturnInfo converts PHPDoc returns to ReturnInfo
+func convertPHPDocToReturnInfo(docReturns []ReturnDoc) []ReturnInfo {
+	returns := make([]ReturnInfo, len(docReturns))
+	for i, r := range docReturns {
+		returns[i] = ReturnInfo{
+			Type:        r.Type,
+			Description: r.Description,
+		}
+	}
+	return returns
+}
+
 // extractPHPDocFromToken extracts PHPDoc from a specific token (for classes)
 func extractPHPDocFromToken(tok *token.Token) *PHPDocInfo {
 	if tok == nil || tok.FreeFloating == nil {

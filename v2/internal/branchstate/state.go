@@ -6,12 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/v2/internal/contract"
-	"github.com/doITmagic/rag-code-mcp/v2/pkg/workspace"
 )
 
 var ErrGitMetadataUnavailable = errors.New("git metadata unavailable")
@@ -34,19 +35,21 @@ const currentSchemaVersion = "v1"
 
 // Manager handles branch state persistence and comparisons.
 type Manager struct {
-	clock    func() time.Time
-	cache    map[string]cachedGitState
-	cacheTTL time.Duration
-	mu       sync.Mutex
-	logger   Logger
+	clock     func() time.Time
+	gitRunner func(ctx context.Context, root string, args ...string) (string, error)
+	cache     map[string]cachedGitState
+	cacheTTL  time.Duration
+	mu        sync.Mutex
+	logger    Logger
 }
 
 // NewManager creates a branch state manager.
 func NewManager(opts ...Option) *Manager {
 	mgr := &Manager{
-		clock:    time.Now,
-		cache:    make(map[string]cachedGitState),
-		cacheTTL: 2 * time.Second,
+		clock:     time.Now,
+		gitRunner: gitCommand,
+		cache:     make(map[string]cachedGitState),
+		cacheTTL:  2 * time.Second,
 	}
 	for _, opt := range opts {
 		opt(mgr)
@@ -91,7 +94,7 @@ func (m *Manager) CompareAndUpdate(ctx context.Context, workspaceRoot string) (*
 
 	current, err := m.readGitState(ctx, workspaceRoot)
 	if err != nil {
-		if errors.Is(err, ErrGitMetadataUnavailable) || errors.Is(err, workspace.ErrNotARepository) {
+		if errors.Is(err, ErrGitMetadataUnavailable) {
 			m.log(ctx, "branchstate.git_metadata_unavailable", map[string]any{"workspace_root": workspaceRoot})
 			return nil, false, contract.ReasonRootsUnavailable, nil
 		}
@@ -102,7 +105,8 @@ func (m *Manager) CompareAndUpdate(ctx context.Context, workspaceRoot string) (*
 		}
 	}
 
-	reindex := persisted == nil || persisted.LastBranch != current.LastBranch || persisted.LastHeadSHA != current.LastHeadSHA || persisted.LastWorktreeID != current.LastWorktreeID
+	worktreeChanged := persisted != nil && strings.TrimSpace(persisted.LastWorktreeID) != "" && persisted.LastWorktreeID != current.LastWorktreeID
+	reindex := persisted == nil || persisted.LastBranch != current.LastBranch || persisted.LastHeadSHA != current.LastHeadSHA || worktreeChanged
 	reason := contract.ReasonCode("")
 	if reindex {
 		state := &State{
@@ -210,21 +214,51 @@ func (m *Manager) readGitState(ctx context.Context, root string) (*State, error)
 	}
 	m.mu.Unlock()
 
-	pkgState, err := workspace.GetState(ctx, root)
+	branch, err := m.gitRunner(ctx, root, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		m.storeCache(root, nil, err)
+		return nil, err
+	}
+	head, err := m.gitRunner(ctx, root, "rev-parse", "HEAD")
 	if err != nil {
 		m.storeCache(root, nil, err)
 		return nil, err
 	}
 
+	branch = strings.TrimSpace(branch)
+	head = strings.TrimSpace(head)
+	if branch == "HEAD" {
+		branch = "detached"
+	}
+
 	state := &State{
 		SchemaVersion:  currentSchemaVersion,
-		LastBranch:     pkgState.Branch,
-		LastHeadSHA:    pkgState.HeadSHA,
-		LastWorktreeID: pkgState.WorktreeID,
+		LastBranch:     branch,
+		LastHeadSHA:    head,
+		LastWorktreeID: deriveWorktreeID(root),
 		LastIndexedAt:  m.clock(),
 	}
 	m.storeCache(root, state, nil)
 	return state, nil
+}
+
+func gitCommand(ctx context.Context, root string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = root
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		text := strings.ToLower(string(out))
+		if strings.Contains(text, "not a git repository") {
+			return "", ErrGitMetadataUnavailable
+		}
+		return "", err
+	}
+	return string(out), nil
+}
+
+func deriveWorktreeID(root string) string {
+	cleanRoot := filepath.Clean(strings.TrimSpace(root))
+	return cleanRoot
 }
 
 func (m *Manager) storeCache(root string, state *State, err error) {

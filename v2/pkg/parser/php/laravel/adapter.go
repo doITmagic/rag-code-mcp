@@ -7,11 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/doITmagic/rag-code-mcp/internal/codetypes"
-	"github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/php"
+	"github.com/doITmagic/rag-code-mcp/v2/pkg/parser/php"
 )
 
-// Adapter implements codetypes.PathAnalyzer for Laravel projects
+// Adapter implements path analysis for Laravel projects
 // It wraps the standard PHP analyzer and adds Laravel-specific analysis
 type Adapter struct {
 	phpAnalyzer *php.CodeAnalyzer
@@ -25,7 +24,7 @@ func NewAdapter() *Adapter {
 }
 
 // AnalyzePaths implements the PathAnalyzer interface
-func (a *Adapter) AnalyzePaths(paths []string) ([]codetypes.CodeChunk, error) {
+func (a *Adapter) AnalyzePaths(paths []string) ([]php.CodeChunk, error) {
 	// 1. Run standard PHP analysis
 	chunks, err := a.phpAnalyzer.AnalyzePaths(paths)
 	if err != nil {
@@ -63,7 +62,7 @@ func (a *Adapter) AnalyzePaths(paths []string) ([]codetypes.CodeChunk, error) {
 	return chunks, nil
 }
 
-func (a *Adapter) enrichChunks(chunks []codetypes.CodeChunk, info *LaravelInfo) {
+func (a *Adapter) enrichChunks(chunks []php.CodeChunk, info *LaravelInfo) {
 	// Create lookup maps for faster access
 	models := make(map[string]EloquentModel)
 	for _, m := range info.Models {
@@ -164,11 +163,11 @@ func (a *Adapter) findRouteFiles(paths []string) []string {
 	return routeFiles
 }
 
-func (a *Adapter) convertRoutesToChunks(routes []Route) []codetypes.CodeChunk {
-	var chunks []codetypes.CodeChunk
+func (a *Adapter) convertRoutesToChunks(routes []Route) []php.CodeChunk {
+	var chunks []php.CodeChunk
 
 	for _, route := range routes {
-		chunk := codetypes.CodeChunk{
+		chunk := php.CodeChunk{
 			Name:      fmt.Sprintf("%s %s", route.Method, route.URI),
 			Type:      "route",
 			Language:  "php",

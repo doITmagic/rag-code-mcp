@@ -169,6 +169,9 @@ func (f *fakeRegistry) RecordFeedback(ctx context.Context, feedback *contract.Pa
 	return nil
 }
 
+func (f *fakeRegistry) PromoteCandidate(ctx context.Context, root, client string, executionSucceeded bool) error {
+	return nil
+}
 
 type branchstateAnnotator struct {
 	mgr *branchstate.Manager

@@ -4,83 +4,173 @@ import (
 	"strings"
 
 	"github.com/VKCOM/php-parser/pkg/ast"
+	"github.com/doITmagic/rag-code-mcp/v2/pkg/parser/php"
 )
 
-// EloquentRelation represents a relationship between models
-type EloquentRelation struct {
-	Name       string `json:"name"`
-	Type       string `json:"type"`       // belongsTo, hasMany, etc.
-	Related    string `json:"related"`    // Related class name
-	ForeignKey string `json:"foreign_key,omitempty"`
-	LocalKey   string `json:"local_key,omitempty"`
+// EloquentAnalyzer extracts Eloquent model information from PHP package info
+type EloquentAnalyzer struct {
+	packageInfo *php.PackageInfo
+	astHelper   *ASTPropertyExtractor
 }
 
-// Detector detects Laravel-specific patterns in PHP code
-type Detector struct {
-	astHelper *ASTHelper
-}
-
-// NewDetector creates a new Laravel pattern detector
-func NewDetector() *Detector {
-	return &Detector{
-		astHelper: NewASTHelper(),
+// NewEloquentAnalyzer creates a new Eloquent analyzer
+func NewEloquentAnalyzer(packageInfo *php.PackageInfo) *EloquentAnalyzer {
+	return &EloquentAnalyzer{
+		packageInfo: packageInfo,
+		astHelper:   NewASTPropertyExtractor(),
 	}
 }
 
-// IsEloquentModel checks if a class extends an Eloquent base model
-func (d *Detector) IsEloquentModel(n *ast.StmtClass, extends string) bool {
-	if extends == "" {
+// AnalyzeModels detects Eloquent models in the package and extracts Laravel-specific features
+func (a *EloquentAnalyzer) AnalyzeModels() []EloquentModel {
+	var models []EloquentModel
+
+	for _, class := range a.packageInfo.Classes {
+		if a.isEloquentModel(class) {
+			model := a.extractEloquentModel(class)
+			models = append(models, model)
+		}
+	}
+
+	return models
+}
+
+// isEloquentModel checks if a class extends an Eloquent base model or a Laravel
+// Authenticatable user model.
+func (a *EloquentAnalyzer) isEloquentModel(class php.ClassInfo) bool {
+	if class.Extends == "" {
 		return false
 	}
+
 	// Check if extends Model or Illuminate\Database\Eloquent\Model
+	extends := class.Extends
 	if extends == "Model" ||
 		extends == "Eloquent\\Model" ||
 		extends == "Illuminate\\Database\\Eloquent\\Model" ||
-		strings.HasSuffix(extends, "\\Model") ||
-		extends == "Authenticatable" ||
-		strings.HasSuffix(extends, "\\Authenticatable") {
+		strings.HasSuffix(extends, "\\Model") {
 		return true
+	}
+
+	// Treat Laravel user classes that extend Authenticatable as Eloquent models
+	if extends == "Authenticatable" || strings.HasSuffix(extends, "\\Authenticatable") {
+		return true
+	}
+
+	return false
+}
+
+// extractEloquentModel extracts Eloquent-specific features from a class
+func (a *EloquentAnalyzer) extractEloquentModel(class php.ClassInfo) EloquentModel {
+	model := EloquentModel{
+		ClassName:   class.Name,
+		Namespace:   class.Namespace,
+		FullName:    class.FullName,
+		Description: class.Description,
+		FilePath:    class.FilePath,
+		StartLine:   class.StartLine,
+		EndLine:     class.EndLine,
+		Timestamps:  true, // Default in Laravel
+		SoftDeletes: a.usesSoftDeletes(class),
+	}
+
+	// Extract property arrays ($fillable, $guarded, $casts, etc.)
+	model.Fillable = a.extractStringArray(class, "fillable")
+	model.Guarded = a.extractStringArray(class, "guarded")
+	model.Hidden = a.extractStringArray(class, "hidden")
+	model.Visible = a.extractStringArray(class, "visible")
+	model.Appends = a.extractStringArray(class, "appends")
+	model.Dates = a.extractStringArray(class, "dates")
+	model.Casts = a.extractCastsArray(class)
+	model.Table = a.extractStringProperty(class, "table")
+	model.PrimaryKey = a.extractStringProperty(class, "primaryKey")
+
+	// Extract relations from methods
+	model.Relations = a.extractRelations(class)
+
+	// Extract scopes
+	model.Scopes = a.extractScopes(class)
+
+	// Extract accessors and mutators
+	model.Attributes = a.extractAttributes(class)
+
+	return model
+}
+
+// usesSoftDeletes checks if the model uses the SoftDeletes trait
+func (a *EloquentAnalyzer) usesSoftDeletes(class php.ClassInfo) bool {
+	for _, trait := range class.Uses {
+		if strings.Contains(trait, "SoftDeletes") {
+			return true
+		}
 	}
 	return false
 }
 
-// ExtractEloquentMetadata extracts Eloquent-specific features from a class node
-func (d *Detector) ExtractEloquentMetadata(n *ast.StmtClass) map[string]any {
-	meta := make(map[string]any)
-	meta["laravel_type"] = "model"
-
-	h := d.astHelper
-	if table := h.ExtractStringProperty(n, "table"); table != "" {
-		meta["table"] = table
-	}
-	if fillable := h.ExtractStringArray(n, "fillable"); len(fillable) > 0 {
-		meta["fillable"] = fillable
-	}
-	if guarded := h.ExtractStringArray(n, "guarded"); len(guarded) > 0 {
-		meta["guarded"] = guarded
-	}
-	if hidden := h.ExtractStringArray(n, "hidden"); len(hidden) > 0 {
-		meta["hidden"] = hidden
+// extractStringArray extracts a protected/private array property (e.g., $fillable)
+func (a *EloquentAnalyzer) extractStringArray(class php.ClassInfo, propertyName string) []string {
+	// Get AST node for this class
+	if a.packageInfo.ClassNodes == nil {
+		return nil
 	}
 
-	// Relations are extracted from methods
-	relations := d.ExtractRelations(n)
-	if len(relations) > 0 {
-		meta["relations"] = relations
+	classNode, exists := a.packageInfo.ClassNodes[class.FullName]
+	if !exists {
+		return nil
 	}
 
-	return meta
+	result := a.astHelper.ExtractStringArrayFromClass(classNode, propertyName)
+	return result
 }
 
-// ExtractRelations scans class methods for Eloquent relationship calls
-func (d *Detector) ExtractRelations(n *ast.StmtClass) []EloquentRelation {
+// extractCastsArray extracts the $casts array as a map
+func (a *EloquentAnalyzer) extractCastsArray(class php.ClassInfo) map[string]string {
+	// Get AST node for this class
+	if a.packageInfo.ClassNodes == nil {
+		return nil
+	}
+
+	classNode, exists := a.packageInfo.ClassNodes[class.FullName]
+	if !exists {
+		return nil
+	}
+
+	return a.astHelper.ExtractMapFromClass(classNode, "casts")
+}
+
+// extractStringProperty extracts a simple string property (e.g., $table)
+func (a *EloquentAnalyzer) extractStringProperty(class php.ClassInfo, propertyName string) string {
+	// Get AST node for this class
+	if a.packageInfo.ClassNodes == nil {
+		return ""
+	}
+
+	classNode, exists := a.packageInfo.ClassNodes[class.FullName]
+	if !exists {
+		return ""
+	}
+
+	return a.astHelper.ExtractStringPropertyFromClass(classNode, propertyName)
+}
+
+// extractRelations detects relationship methods (hasOne, hasMany, belongsTo, etc.)
+func (a *EloquentAnalyzer) extractRelations(class php.ClassInfo) []EloquentRelation {
 	var relations []EloquentRelation
 
-	for _, stmt := range n.Stmts {
-		if method, ok := stmt.(*ast.StmtClassMethod); ok {
-			rel := d.detectRelationInMethod(method)
-			if rel != nil {
-				relations = append(relations, *rel)
+	// Get AST node for this class
+	if a.packageInfo.ClassNodes == nil {
+		return relations
+	}
+
+	classNode, exists := a.packageInfo.ClassNodes[class.FullName]
+	if !exists {
+		return relations
+	}
+
+	// Walk through class methods in AST
+	for _, stmt := range classNode.Stmts {
+		if methodNode, ok := stmt.(*ast.StmtClassMethod); ok {
+			if relation := a.detectRelationFromAST(class, methodNode); relation != nil {
+				relations = append(relations, *relation)
 			}
 		}
 	}
@@ -88,41 +178,71 @@ func (d *Detector) ExtractRelations(n *ast.StmtClass) []EloquentRelation {
 	return relations
 }
 
-func (d *Detector) detectRelationInMethod(method *ast.StmtClassMethod) *EloquentRelation {
-	// Look for return $this->belongsTo(...), etc.
-	// This is a simplified version of the v1 logic
-	if method.Stmt == nil {
-		return nil
-	}
+// detectRelationFromAST checks if a method AST node is a relationship definition
+// and uses the enclosing class information to build fully-qualified related
+// model names when possible.
+func (a *EloquentAnalyzer) detectRelationFromAST(class php.ClassInfo, methodNode *ast.StmtClassMethod) *EloquentRelation {
+	// Extract method calls from the method body
+	calls := a.astHelper.ExtractMethodCalls(methodNode)
 
-	compound, ok := method.Stmt.(*ast.StmtCompound)
-	if !ok {
-		return nil
-	}
+	for _, call := range calls {
+		// Check if it's a $this->relationshipMethod() call
+		if call.Object == "this" {
+			relationType := ""
 
-	for _, stmt := range compound.Stmts {
-		if ret, ok := stmt.(*ast.StmtReturn); ok {
-			if call, ok := ret.Expr.(*ast.ExprMethodCall); ok {
-				methodName := d.extractIdentifier(call.Method)
-				types := map[string]bool{
-					"belongsTo": true, "hasMany": true, "hasOne": true,
-					"belongsToMany": true, "morphTo": true, "morphMany": true,
-					"morphOne": true, "morphToMany": true, "morphedByMany": true,
-				}
+			switch call.Method {
+			case "hasOne", "hasMany", "belongsTo", "belongsToMany",
+				"hasManyThrough", "morphTo", "morphMany", "morphToMany",
+				"morphedByMany":
+				relationType = call.Method
+			default:
+				continue
+			}
 
-				if types[methodName] {
-					rel := &EloquentRelation{
-						Name: d.extractIdentifier(method.Name),
-						Type: methodName,
+			// Get method name from AST
+			var methodName string
+			if nameNode, ok := methodNode.Name.(*ast.Identifier); ok {
+				methodName = string(nameNode.Value)
+			}
+
+			// Extract related model from first argument
+			relatedModel := ""
+			foreignKey := ""
+			localKey := ""
+
+			if len(call.Args) > 0 {
+				// First arg is usually Model::class. We normalize to a fully qualified
+				// class name when possible so that downstream tools can reason about
+				// relations more easily.
+				relatedModel = strings.TrimSuffix(call.Args[0], "::class")
+				relatedModel = strings.TrimPrefix(relatedModel, "\\")
+
+				// If we only have a short class name (e.g. "Role")
+				if relatedModel != "" && !strings.Contains(relatedModel, "\\") {
+					// Check imports first
+					if fullClass, ok := class.Imports[relatedModel]; ok {
+						relatedModel = fullClass
+					} else if class.Namespace != "" && class.Namespace != "global" {
+						// Fallback to current namespace
+						relatedModel = class.Namespace + "\\" + relatedModel
 					}
-					// Extract related class from first argument
-					if len(call.Args) > 0 {
-						if arg, ok := call.Args[0].(*ast.Argument); ok {
-							rel.Related = d.extractRelatedClass(arg.Expr)
-						}
-					}
-					return rel
 				}
+			}
+
+			if len(call.Args) > 1 {
+				foreignKey = call.Args[1]
+			}
+
+			if len(call.Args) > 2 {
+				localKey = call.Args[2]
+			}
+
+			return &EloquentRelation{
+				Name:         methodName,
+				Type:         relationType,
+				RelatedModel: relatedModel,
+				ForeignKey:   foreignKey,
+				LocalKey:     localKey,
 			}
 		}
 	}
@@ -130,117 +250,80 @@ func (d *Detector) detectRelationInMethod(method *ast.StmtClassMethod) *Eloquent
 	return nil
 }
 
-// RouteInfo represents metadata for a Laravel route
-type RouteInfo struct {
-	Method     string `json:"method"`      // GET, POST, etc.
-	Uri        string `json:"uri"`         // /users/{id}
-	Action     string `json:"action"`      // UserController@index
-	Controller string `json:"controller"`  // UserController
-	Function   string `json:"function"`    // index
-	Middleware []string `json:"middleware,omitempty"`
-}
+// extractScopes detects query scopes (methods starting with "scope")
+func (a *EloquentAnalyzer) extractScopes(class php.ClassInfo) []EloquentScope {
+	var scopes []EloquentScope
 
-// IsRouteDefinition checks if a static call is a Laravel route definition
-func (d *Detector) IsRouteDefinition(n *ast.ExprStaticCall) bool {
-	class := d.astHelper.ExtractNodeName(n.Class)
-	if class != "Route" && class != "\\Route" && !strings.HasSuffix(class, "\\Route") {
-		return false
-	}
-
-	method := d.astHelper.ExtractIdentifier(n.Method)
-	methods := map[string]bool{
-		"get": true, "post": true, "put": true, "patch": true,
-		"delete": true, "options": true, "any": true, "match": true,
-		"resource": true, "apiResource": true,
-	}
-
-	return methods[strings.ToLower(method)]
-}
-
-// ExtractRouteInfo extracts details from a Route static call
-func (d *Detector) ExtractRouteInfo(n *ast.ExprStaticCall) *RouteInfo {
-	if !d.IsRouteDefinition(n) {
-		return nil
-	}
-
-	info := &RouteInfo{
-		Method: d.astHelper.ExtractIdentifier(n.Method),
-	}
-
-	// First argument is usually the URI
-	if len(n.Args) > 0 {
-		if arg, ok := n.Args[0].(*ast.Argument); ok {
-			info.Uri = d.astHelper.ExtractStringFromExpr(arg.Expr)
+	for _, method := range class.Methods {
+		if strings.HasPrefix(method.Name, "scope") && len(method.Name) > 5 {
+			scopeName := strings.ToLower(string(method.Name[5])) + method.Name[6:]
+			scopes = append(scopes, EloquentScope{
+				Name:        scopeName,
+				MethodName:  method.Name,
+				Description: method.Description,
+				StartLine:   method.StartLine,
+				EndLine:     method.EndLine,
+			})
 		}
 	}
 
-	// Second argument is the action (string or array)
-	if len(n.Args) > 1 {
-		if arg, ok := n.Args[1].(*ast.Argument); ok {
-			d.populateActionInfo(info, arg.Expr)
+	return scopes
+}
+
+// extractAttributes detects accessors and mutators
+func (a *EloquentAnalyzer) extractAttributes(class php.ClassInfo) []EloquentAttribute {
+	var attributes []EloquentAttribute
+
+	for _, method := range class.Methods {
+		if attr := a.detectAttribute(method); attr != nil {
+			attributes = append(attributes, *attr)
 		}
 	}
 
-	return info
+	return attributes
 }
 
-func (d *Detector) populateActionInfo(info *RouteInfo, expr ast.Vertex) {
-	switch e := expr.(type) {
-	case *ast.ScalarString:
-		// 'UserController@index'
-		action := strings.Trim(string(e.Value), "'\"")
-		info.Action = action
-		if parts := strings.Split(action, "@"); len(parts) == 2 {
-			info.Controller = parts[0]
-			info.Function = parts[1]
-		}
-	case *ast.ExprArray:
-		// [UserController::class, 'index']
-		if len(e.Items) >= 2 {
-			// Controller
-			if item, ok := e.Items[0].(*ast.ExprArrayItem); ok {
-				info.Controller = d.astHelper.ExtractNodeName(item.Val)
-			}
-			// Action
-			if item, ok := e.Items[1].(*ast.ExprArrayItem); ok {
-				info.Function = d.astHelper.ExtractStringFromExpr(item.Val)
-			}
-			if info.Controller != "" && info.Function != "" {
-				info.Action = info.Controller + "@" + info.Function
-			}
+// detectAttribute checks if a method is an accessor or mutator
+func (a *EloquentAnalyzer) detectAttribute(method php.MethodInfo) *EloquentAttribute {
+	name := method.Name
+
+	// Accessor pattern: getXxxAttribute
+	if strings.HasPrefix(name, "get") && strings.HasSuffix(name, "Attribute") && len(name) > 12 {
+		attrName := name[3 : len(name)-9] // Remove "get" and "Attribute"
+		return &EloquentAttribute{
+			Name:        a.snakeCase(attrName),
+			MethodName:  name,
+			Type:        "accessor",
+			Description: method.Description,
+			StartLine:   method.StartLine,
+			EndLine:     method.EndLine,
 		}
 	}
-}
 
-func (d *Detector) extractIdentifier(n ast.Vertex) string {
-	if ident, ok := n.(*ast.Identifier); ok {
-		return string(ident.Value)
-	}
-	return ""
-}
-
-func (d *Detector) extractRelatedClass(n ast.Vertex) string {
-	switch expr := n.(type) {
-	case *ast.ExprClassConstFetch:
-		// User::class
-		return d.extractName(expr.Class)
-	case *ast.ScalarString:
-		// 'App\Models\User'
-		return strings.Trim(string(expr.Value), "'\"")
-	}
-	return ""
-}
-
-func (d *Detector) extractName(n ast.Vertex) string {
-	switch nm := n.(type) {
-	case *ast.Name:
-		var parts []string
-		for _, p := range nm.Parts {
-			if np, ok := p.(*ast.NamePart); ok {
-				parts = append(parts, string(np.Value))
-			}
+	// Mutator pattern: setXxxAttribute
+	if strings.HasPrefix(name, "set") && strings.HasSuffix(name, "Attribute") && len(name) > 12 {
+		attrName := name[3 : len(name)-9] // Remove "set" and "Attribute"
+		return &EloquentAttribute{
+			Name:        a.snakeCase(attrName),
+			MethodName:  name,
+			Type:        "mutator",
+			Description: method.Description,
+			StartLine:   method.StartLine,
+			EndLine:     method.EndLine,
 		}
-		return strings.Join(parts, "\\")
 	}
-	return ""
+
+	return nil
+}
+
+// snakeCase converts CamelCase to snake_case
+func (a *EloquentAnalyzer) snakeCase(s string) string {
+	var result strings.Builder
+	for i, r := range s {
+		if i > 0 && r >= 'A' && r <= 'Z' {
+			result.WriteRune('_')
+		}
+		result.WriteRune(r)
+	}
+	return strings.ToLower(result.String())
 }

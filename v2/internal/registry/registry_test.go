@@ -10,6 +10,14 @@ import (
 	"github.com/doITmagic/rag-code-mcp/v2/internal/contract"
 )
 
+type testAuditSink struct {
+	events []string
+}
+
+func (s *testAuditSink) Record(ctx context.Context, event string, fields map[string]any) {
+	s.events = append(s.events, event)
+}
+
 func TestRegistryUpsertAndLookup(t *testing.T) {
 	tmp := filepath.Join(t.TempDir(), "registry.json")
 	r, err := New(tmp)
@@ -93,6 +101,9 @@ func TestFeedbackAndPromotion(t *testing.T) {
 		t.Fatalf("new registry: %v", err)
 	}
 
+	sink := &testAuditSink{}
+	r.SetAuditSink(sink)
+
 	// 1. Record feedback
 	feedback := &contract.PathFeedback{
 		SuggestedPath: "/suggested/path",
@@ -107,8 +118,16 @@ func TestFeedbackAndPromotion(t *testing.T) {
 		t.Fatalf("candidate not stored correctly")
 	}
 
-	// 2. Promote via Upsert
-	if _, err := r.Upsert("/suggested/path", "promoted", "ide"); err != nil {
+	// 2. No promotion without execution signal
+	if err := r.PromoteCandidate(ctx, "/suggested/path", "ide", false); err != nil {
+		t.Fatalf("unexpected promote error: %v", err)
+	}
+	if _, ok := r.candidates[strings.ToLower(filepath.Clean("/suggested/path"))]; !ok {
+		t.Fatalf("candidate should remain until execution signal")
+	}
+
+	// 3. Promote with execution signal
+	if err := r.PromoteCandidate(ctx, "/suggested/path", "ide", true); err != nil {
 		t.Fatalf("promotion failed: %v", err)
 	}
 
@@ -120,5 +139,17 @@ func TestFeedbackAndPromotion(t *testing.T) {
 	// Entry should exist
 	if _, ok := r.LookupByRoot("/suggested/path"); !ok {
 		t.Fatalf("entry should exist after promotion")
+	}
+
+	metrics := r.MetricsSnapshot()
+	if metrics.FeedbackIngested != 1 {
+		t.Fatalf("expected feedback_ingested=1, got %d", metrics.FeedbackIngested)
+	}
+	if metrics.CandidatesPromoted != 1 {
+		t.Fatalf("expected candidates_promoted=1, got %d", metrics.CandidatesPromoted)
+	}
+
+	if len(sink.events) < 2 {
+		t.Fatalf("expected audit events for feedback + promotion")
 	}
 }

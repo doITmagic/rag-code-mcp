@@ -3,7 +3,7 @@ package laravel
 import (
 	"strings"
 
-	"github.com/doITmagic/rag-code-mcp/internal/ragcode/analyzers/php"
+	"github.com/doITmagic/rag-code-mcp/v2/pkg/parser/php"
 )
 
 // ControllerAnalyzer detects and analyzes Laravel controllers

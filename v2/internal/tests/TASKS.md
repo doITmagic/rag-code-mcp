@@ -56,15 +56,15 @@ Create AI-like end-to-end test coverage for deterministic detection behavior.
 ## Implementation Checklist by Phase
 
 ### Phase 1 - Metadata, invalidation, and safety coverage
-- [ ] **[P0]** Add assertions for `path_resolution_source` across all decision paths.
-- [ ] **[P0]** Add assertions for `path_resolution_confidence` stability.
-- [ ] **[P0]** Add assertions for `used_fallback` correctness.
-- [ ] **[P0]** Add assertions for `path_context_key` and branch metadata.
-- [ ] **[P0]** Add anti-loop tests for repeated invalid/missing path retries.
-- [ ] **[P1]** Add TTL/decay tests for fallback and HEAD rewrite behavior.
+- [x] **[P0]** Add assertions for `path_resolution_source` across all decision paths.
+- [x] **[P0]** Add assertions for `path_resolution_confidence` stability.
+- [x] **[P0]** Add assertions for `used_fallback` correctness.
+- [x] **[P0]** Add assertions for `path_context_key` and branch metadata.
+- [x] **[P0]** Add anti-loop tests for repeated invalid/missing path retries.
+- [x] **[P1]** Add TTL/decay tests for fallback and HEAD rewrite behavior.
 
 ### Phase 2 - Feedback and promotion flow coverage
-- [ ] **[P0]** Add tests for `path_feedback.status=mismatch` ingestion.
-- [ ] **[P0]** Add tests proving no promotion before successful execution.
-- [ ] **[P0]** Add tests proving promotion only after successful resolution + execution.
-- [ ] **[P1]** Add tests for feedback audit signals/metrics emission.
+- [x] **[P0]** Add tests for `path_feedback.status=mismatch` ingestion.
+- [x] **[P0]** Add tests proving no promotion before successful execution.
+- [x] **[P0]** Add tests proving promotion only after successful resolution + execution.
+- [x] **[P1]** Add tests for feedback audit signals/metrics emission.

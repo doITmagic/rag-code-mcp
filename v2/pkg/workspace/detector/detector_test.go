@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/doITmagic/rag-code-mcp/v2/internal/contract"
+	"github.com/doITmagic/rag-code-mcp/v2/pkg/workspace/contract"
 )
 
 func TestDetectFromFilePathMarkers(t *testing.T) {

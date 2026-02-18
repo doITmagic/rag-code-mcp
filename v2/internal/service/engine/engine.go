@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/doITmagic/rag-code-mcp/v2/internal/branchstate"
-	"github.com/doITmagic/rag-code-mcp/v2/internal/contract"
-	"github.com/doITmagic/rag-code-mcp/v2/internal/detector"
+	"github.com/doITmagic/rag-code-mcp/v2/pkg/workspace/branchstate"
+	"github.com/doITmagic/rag-code-mcp/v2/pkg/workspace/contract"
+	"github.com/doITmagic/rag-code-mcp/v2/pkg/workspace/detector"
 	"github.com/doITmagic/rag-code-mcp/v2/internal/service/indexer"
 	"github.com/doITmagic/rag-code-mcp/v2/internal/service/search"
 	"github.com/doITmagic/rag-code-mcp/v2/pkg/parser"

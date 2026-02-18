@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/doITmagic/rag-code-mcp/v2/internal/contract"
+	"github.com/doITmagic/rag-code-mcp/v2/pkg/workspace/contract"
 )
 
 type testAuditSink struct {

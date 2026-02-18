@@ -4,7 +4,7 @@ import (
 	context "context"
 	testing "testing"
 
-	"github.com/doITmagic/rag-code-mcp/v2/internal/contract"
+	"github.com/doITmagic/rag-code-mcp/v2/pkg/workspace/contract"
 )
 
 func TestResolveWorkspaceRoot(t *testing.T) {

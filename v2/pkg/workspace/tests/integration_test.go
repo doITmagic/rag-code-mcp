@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/doITmagic/rag-code-mcp/v2/internal/contract"
-	"github.com/doITmagic/rag-code-mcp/v2/internal/registry"
-	"github.com/doITmagic/rag-code-mcp/v2/internal/resolver"
+	"github.com/doITmagic/rag-code-mcp/v2/pkg/workspace/contract"
+	"github.com/doITmagic/rag-code-mcp/v2/pkg/workspace/registry"
+	"github.com/doITmagic/rag-code-mcp/v2/pkg/workspace/resolver"
 )
 
 type ToggleableAnnotator struct {

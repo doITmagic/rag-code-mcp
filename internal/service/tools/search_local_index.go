@@ -3,64 +3,58 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
-	"github.com/doITmagic/rag-code-mcp/internal/memory"
-	"github.com/doITmagic/rag-code-mcp/internal/workspace"
-	"github.com/doITmagic/rag-code-mcp/pkg/llm"
+	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
+	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 )
 
-// SearchLocalIndexTool searches the local vector index
+// SearchLocalIndexTool implements the rag_search_code MCP tool.
 type SearchLocalIndexTool struct {
-	embedder         llm.Provider
-	memories         []memory.LongTermMemory // Fallback memories if workspace detection fails
-	workspaceManager *workspace.Manager      // Workspace-aware collection manager
-	searchLimit      int                     // default limit for search results
+	engine      *engine.Engine
+	searchLimit int
 }
 
-// NewSearchLocalIndexTool creates a new search local index tool
-func NewSearchLocalIndexTool(ltm memory.LongTermMemory, embedder llm.Provider, additional ...memory.LongTermMemory) *SearchLocalIndexTool {
-	memories := make([]memory.LongTermMemory, 0, 1+len(additional))
-	if ltm != nil {
-		memories = append(memories, ltm)
-	}
-	memories = append(memories, additional...)
+// NewSearchLocalIndexTool creates a new search tool backed by the Engine.
+func NewSearchLocalIndexTool(eng *engine.Engine) *SearchLocalIndexTool {
 	return &SearchLocalIndexTool{
-		embedder:    embedder,
-		memories:    memories,
-		searchLimit: 5, // Default fallback
+		engine:      eng,
+		searchLimit: 5,
 	}
 }
 
-// SetSearchLimit sets the default search limit
+// SetSearchLimit overrides the default result limit.
 func (t *SearchLocalIndexTool) SetSearchLimit(limit int) {
 	if limit > 0 {
 		t.searchLimit = limit
 	}
 }
 
-// SetWorkspaceManager sets the workspace manager for workspace-aware searching
-func (t *SearchLocalIndexTool) SetWorkspaceManager(wm *workspace.Manager) {
-	t.workspaceManager = wm
-}
-
-// Name returns the tool name
+// Name returns the MCP tool name.
 func (t *SearchLocalIndexTool) Name() string {
 	return "rag_search_code"
 }
 
-// Description returns the tool description
+// Description returns the MCP tool description.
 func (t *SearchLocalIndexTool) Description() string {
-	return "Semantic code search - finds functions, classes, and methods by MEANING, not just keywords. USE THIS FIRST when exploring unfamiliar code. Returns complete source code with file path and line numbers. Better than rag_hybrid_search for general exploration; use rag_hybrid_search only when you need EXACT identifier matches. Supports Go, PHP, Python, HTML. IMPORTANT: Always provide the 'file_path' of the file you are currently working on for better context detection.\nExample: { \"query\": \"auth middleware\", \"file_path\": \"/path/to/project/server.go\" }"
+	return "Semantic code search - finds functions, classes, and methods by MEANING, not just keywords. " +
+		"USE THIS FIRST when exploring unfamiliar code. Returns complete source code with file path and line numbers. " +
+		"Better than rag_hybrid_search for general exploration; use rag_hybrid_search only when you need EXACT identifier matches. " +
+		"Supports Go, PHP, Python, HTML. IMPORTANT: Always provide the 'file_path' of the file you are currently working on for better context detection.\n" +
+		"Example: { \"query\": \"auth middleware\", \"file_path\": \"/path/to/project/server.go\" }"
 }
 
-// Execute executes a search in the local index
+// Execute runs the semantic search and returns JSON results.
 func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]interface{}) (string, error) {
 	query, ok := params["query"].(string)
-	if !ok {
+	if !ok || strings.TrimSpace(query) == "" {
 		return "", fmt.Errorf("query parameter is required")
 	}
+
+	// Simplified parameter extraction: strict 'file_path' only.
+	filePath, _ := params["file_path"].(string)
 
 	limit := t.searchLimit
 	if l, ok := params["limit"].(float64); ok {
@@ -69,240 +63,85 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 		limit = l
 	}
 
-	// Optional output format: json (default) or markdown
-	outputFormat := "json"
-	if of, ok := params["output_format"].(string); ok && of != "" {
-		outputFormat = strings.ToLower(of)
-	}
-
-	// Optional: include documentation in results
 	includeDocs := false
 	if inc, ok := params["include_docs"].(bool); ok {
 		includeDocs = inc
 	}
 
-	// Generate embedding for query
-	queryEmbedding, err := t.embedder.Embed(ctx, query)
+	result, err := t.engine.SearchCode(ctx, filePath, query, limit, includeDocs)
 	if err != nil {
-		return "", fmt.Errorf("failed to generate query embedding: %w", err)
+		var notIndexed *engine.ErrNotIndexed
+		var indexingStarted *engine.ErrIndexingStarted
+		var indexingInProgress *engine.ErrIndexingInProgress
+
+		if errors.As(err, &indexingStarted) {
+			return fmt.Sprintf("🚀 Workspace '%s' was not indexed. Background indexing has been STARTED automatically.\n"+
+				"Please wait a few moments and try your search again.\n"+
+				"You can continue with other tasks while indexing completes.", indexingStarted.WorkspaceRoot), nil
+		}
+
+		if errors.As(err, &indexingInProgress) {
+			return fmt.Sprintf("⏳ Workspace '%s' is currently being indexed.\n"+
+				"Search results will be available once indexing completes. Please try again shortly.",
+				indexingInProgress.WorkspaceRoot), nil
+		}
+
+		if errors.As(err, &notIndexed) {
+			// Should be rare now with auto-indexing, but good as fallback
+			return fmt.Sprintf("❌ Workspace '%s' is not indexed yet.\n"+
+				"Please use 'rag_index_workspace' to index it manually.",
+				notIndexed.WorkspaceRoot), nil
+		}
+
+		return "", fmt.Errorf("search failed: %w", err)
 	}
 
-	// Try workspace-aware search first
-	if t.workspaceManager != nil {
-		workspaceInfo, err := DetectAndRegisterWorkspace(t.workspaceManager, params)
-		if err != nil {
-			return HandleWorkspaceDetectionError(err, "")
-		}
-
-		// Detect language from file path or query context
-		language := ""
-		if filePath := extractFilePathFromParams(params); filePath != "" {
-			language = inferLanguageFromPath(filePath)
-		}
-
-		// If no language detected from path, use first detected language in workspace
-		if language == "" && len(workspaceInfo.Languages) > 0 {
-			language = workspaceInfo.Languages[0]
-		}
-
-		// Fallback to ProjectType
-		if language == "" {
-			language = workspaceInfo.ProjectType
-		}
-
-		// Get workspace-specific memory for the detected language
-		workspaceMem, err := t.workspaceManager.GetMemoryForWorkspaceLanguage(ctx, workspaceInfo, language)
-		if err != nil {
-			// Collection doesn't exist - tell AI to index first
-			collectionName := workspaceInfo.CollectionNameForLanguage(language)
-			return fmt.Sprintf("❌ Workspace '%s' is not indexed yet.\n\n"+
-				"To enable code search, please call the 'rag_index_workspace' tool first with:\n"+
-				"{\n"+
-				"  \"file_path\": \"%s\"\n"+
-				"}\n\n"+
-				"Details:\n"+
-				"- Workspace: %s\n"+
-				"- Language: %s\n"+
-				"- Collection: %s (not created yet)\n",
-				workspaceInfo.Root,
-				workspaceInfo.Root,
-				workspaceInfo.Root,
-				language,
-				collectionName), nil
-		}
-
-		// Check if currently indexing
-		indexKey := workspaceInfo.ID + "-" + language
-		if t.workspaceManager.IsIndexing(indexKey) {
-			return AttachAIWarning(fmt.Sprintf("⏳ Workspace '%s' language '%s' is currently being indexed in the background.\n"+
-				"Please try again in a few moments.\n"+
+	if len(result.Results) == 0 {
+		return fmt.Sprintf(
+			"🔍 No code results found for query: '%s'\n"+
 				"Workspace: %s\n"+
-				"Language: %s\n"+
-				"Collection: %s",
-				workspaceInfo.Root, language, workspaceInfo.Root, language, workspaceInfo.CollectionNameForLanguage(language)), workspaceInfo), nil
-		}
-
-		// Check if collection exists before searching (if memory supports it)
-		collectionName := workspaceInfo.CollectionNameForLanguage(language)
-
-		// Type assertion to check if this memory supports collection existence checking
-		type CollectionChecker interface {
-			CollectionExists(ctx context.Context, name string) (bool, error)
-		}
-
-		if checker, ok := workspaceMem.(CollectionChecker); ok {
-			exists, checkErr := checker.CollectionExists(ctx, collectionName)
-
-			if checkErr != nil || !exists {
-				// Collection doesn't exist - tell AI to index first
-				return fmt.Sprintf("❌ Workspace '%s' is not indexed yet.\n\n"+
-					"To enable code search, please call the 'rag_index_workspace' tool first with:\n"+
-					"{\n"+
-					"  \"file_path\": \"%s\"\n"+
-					"}\n\n"+
-					"Details:\n"+
-					"- Workspace: %s\n"+
-					"- Language: %s\n"+
-					"- Collection: %s (not created yet)\n",
-					workspaceInfo.Root,
-					workspaceInfo.Root,
-					workspaceInfo.Root,
-					language,
-					collectionName), nil
-			}
-		}
-
-		// Search in workspace-specific collection
-		var docs []memory.Document
-		var searchErr error
-
-		// If include_docs is true, use generic Search (returns all types)
-		// If include_docs is false (default), try to use SearchCodeOnly
-		if includeDocs {
-			docs, searchErr = workspaceMem.Search(ctx, queryEmbedding, limit)
-		} else if searcher, ok := workspaceMem.(CodeSearcher); ok {
-			docs, searchErr = searcher.SearchCodeOnly(ctx, queryEmbedding, limit)
-		} else {
-			// Fallback if SearchCodeOnly not implemented
-			docs, searchErr = workspaceMem.Search(ctx, queryEmbedding, limit)
-		}
-
-		if searchErr != nil {
-			// Check for vector dimension mismatch (common when changing models)
-			errLower := strings.ToLower(searchErr.Error())
-			if strings.Contains(errLower, "dimension mismatch") ||
-				(strings.Contains(errLower, "expected:") && (strings.Contains(errLower, "vector") || strings.Contains(errLower, "dimension"))) {
-				return fmt.Sprintf("❌ Vector dimension mismatch in collection '%s'.\n\n"+
-					"This usually happens when you change the embedding model (e.g., from nomic to mxbai).\n"+
-					"To fix this, please delete and recreate the index by running:\n"+
-					"{\n"+
-					"  \"file_path\": \"%s\",\n"+
-					"  \"recreate\": true\n"+
-					"}\n\n"+
-					"Error details: %v",
-					collectionName, workspaceInfo.Root, searchErr), nil
-			}
-			// IMPORTANT: Return the actual error instead of falling through to the fallback
-			return "", fmt.Errorf("search failed in workspace-specific collection '%s': %w", collectionName, searchErr)
-		}
-
-		// If search succeeds but returns no results, check if collection is empty
-		if len(docs) == 0 {
-			// Collection might be empty - tell AI to index
-			collectionName := workspaceInfo.CollectionNameForLanguage(language)
-			return fmt.Sprintf("❌ Workspace '%s' appears to be empty or not indexed yet.\n\n"+
-				"To enable code search, please call the 'rag_index_workspace' tool with:\n"+
-				"{\n"+
-				"  \"file_path\": \"%s\"\n"+
-				"}\n\n"+
-				"Details:\n"+
-				"- Workspace: %s\n"+
-				"- Language: %s\n"+
-				"- Collection: %s (exists but may be empty)\n",
-				workspaceInfo.Root,
-				workspaceInfo.Root,
-				workspaceInfo.Root,
-				language,
-				collectionName), nil
-		}
-
-		if len(docs) > 0 {
-			if outputFormat == "markdown" {
-				result := fmt.Sprintf("🔍 Found %d relevant code snippets in workspace '%s':\n\n",
-					len(docs), workspaceInfo.Root)
-				for i, doc := range docs {
-					result += fmt.Sprintf("--- Result %d ---\n%s\n\n", i+1, doc.Content)
-				}
-				return AttachAIWarning(result, workspaceInfo), nil
-			}
-
-			descriptors := buildSymbolDescriptorsFromDocs(docs)
-			// Add workspace info to metadata of each descriptor for AI verification
-			for i := range descriptors {
-				if descriptors[i].Metadata == nil {
-					descriptors[i].Metadata = make(map[string]any)
-				}
-				descriptors[i].Metadata["workspace_root"] = workspaceInfo.Root
-			}
-
-			data, marshalErr := json.MarshalIndent(descriptors, "", "  ")
-			if marshalErr != nil {
-				return "", fmt.Errorf("failed to marshal rag_search_code results: %w", marshalErr)
-			}
-			return AttachAIWarning(string(data), workspaceInfo), nil
-		}
+				"Collection: %s\n"+
+				"Make sure the code is indexed and the query is relevant to the codebase.",
+			query,
+			result.WorkspaceRoot,
+			result.Collection,
+		), nil
 	}
 
-	// Fallback: search in default memories
-	if len(t.memories) == 0 {
-		return "", fmt.Errorf("no long-term memories configured for search")
-	}
+	descriptors := searchResultsToDescriptors(result.Results, result.WorkspaceRoot)
 
-	collected := make([]memory.Document, 0)
-	remaining := limit
-
-	for _, ltm := range t.memories {
-		if remaining <= 0 {
-			break
-		}
-		var docs []memory.Document
-		var err error
-
-		if includeDocs {
-			docs, err = ltm.Search(ctx, queryEmbedding, remaining)
-		} else if searcher, ok := ltm.(CodeSearcher); ok {
-			docs, err = searcher.SearchCodeOnly(ctx, queryEmbedding, remaining)
-		} else {
-			docs, err = ltm.Search(ctx, queryEmbedding, remaining)
-		}
-
+	if result.MismatchRisk != "" && result.MismatchRisk != "low" {
+		// Prepend a warning for medium/high mismatch risk
+		warning := fmt.Sprintf("⚠️  Branch mismatch risk: %s — results may be from a different branch. Consider re-indexing.\n\n", result.MismatchRisk)
+		data, err := json.MarshalIndent(descriptors, "", "  ")
 		if err != nil {
-			return "", fmt.Errorf("search failed: %w", err)
+			return "", fmt.Errorf("failed to marshal results: %w", err)
 		}
-		collected = append(collected, docs...)
-		remaining = limit - len(collected)
+		return warning + string(data), nil
 	}
 
-	if len(collected) == 0 {
-		if outputFormat == "markdown" {
-			return "No relevant code found.", nil
-		}
-		// Empty JSON array to indicate no results in a structured way
-		return "[]", nil
-	}
-
-	if outputFormat == "markdown" {
-		result := fmt.Sprintf("Found %d relevant code snippets:\n\n", len(collected))
-		for i, doc := range collected {
-			result += fmt.Sprintf("--- Result %d ---\n%s\n\n", i+1, doc.Content)
-		}
-		return result, nil
-	}
-
-	descriptors := buildSymbolDescriptorsFromDocs(collected)
 	data, err := json.MarshalIndent(descriptors, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal rag_search_code results: %w", err)
+		return "", fmt.Errorf("failed to marshal results: %w", err)
 	}
 	return string(data), nil
+}
+
+// searchResultsToDescriptors converts storage.SearchResult slice to a JSON-friendly structure.
+func searchResultsToDescriptors(results []storage.SearchResult, workspaceRoot string) []map[string]any {
+	out := make([]map[string]any, 0, len(results))
+	for _, r := range results {
+		desc := make(map[string]any)
+		// Copy all payload fields directly
+		for k, v := range r.Point.Payload {
+			desc[k] = v
+		}
+		desc["score"] = r.Score
+		desc["id"] = r.Point.ID
+		if workspaceRoot != "" {
+			desc["workspace_root"] = workspaceRoot
+		}
+		out = append(out, desc)
+	}
+	return out
 }

@@ -4,17 +4,18 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/doITmagic/rag-code-mcp/v2/pkg/embedding"
+	"github.com/doITmagic/rag-code-mcp/v2/internal/service/internalutil"
+	"github.com/doITmagic/rag-code-mcp/v2/pkg/llm"
 	"github.com/doITmagic/rag-code-mcp/v2/pkg/storage"
 )
 
 type Service struct {
-	embedder embedding.Client
+	embedder llm.Provider
 	store    storage.VectorStore
 }
 
 // NewService creates a new search service.
-func NewService(embedder embedding.Client, store storage.VectorStore) *Service {
+func NewService(embedder llm.Provider, store storage.VectorStore) *Service {
 	return &Service{
 		embedder: embedder,
 		store:    store,
@@ -23,10 +24,11 @@ func NewService(embedder embedding.Client, store storage.VectorStore) *Service {
 
 // Search performs a semantic search in the given collection.
 func (s *Service) Search(ctx context.Context, collection string, queryText string, limit int) ([]storage.SearchResult, error) {
-	vector, err := s.embedder.Embed(ctx, queryText)
+	vector64, err := s.embedder.Embed(ctx, queryText)
 	if err != nil {
 		return nil, fmt.Errorf("search embedding failed: %w", err)
 	}
+	vector := internalutil.Float64To32(vector64)
 
 	res, err := s.store.Search(ctx, collection, storage.SearchQuery{
 		Vector: vector,

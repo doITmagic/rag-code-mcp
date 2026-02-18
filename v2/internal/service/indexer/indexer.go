@@ -8,19 +8,20 @@ import (
 	"os"
 	"strings"
 
-	"github.com/doITmagic/rag-code-mcp/v2/pkg/embedding"
+	"github.com/doITmagic/rag-code-mcp/v2/internal/service/internalutil"
+	"github.com/doITmagic/rag-code-mcp/v2/pkg/llm"
 	"github.com/doITmagic/rag-code-mcp/v2/pkg/parser"
 	"github.com/doITmagic/rag-code-mcp/v2/pkg/storage"
 )
 
 // Service orchestrates the indexing process.
 type Service struct {
-	embedder embedding.Client
+	embedder llm.Provider
 	store    storage.VectorStore
 }
 
 // NewService creates a new indexer service.
-func NewService(embedder embedding.Client, store storage.VectorStore) *Service {
+func NewService(embedder llm.Provider, store storage.VectorStore) *Service {
 	return &Service{
 		embedder: embedder,
 		store:    store,
@@ -71,10 +72,11 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 				embedText = sym.Docstring + "\n" + embedText
 			}
 
-			vector, err := s.embedder.Embed(ctx, embedText)
+			vector64, err := s.embedder.Embed(ctx, embedText)
 			if err != nil {
 				return fmt.Errorf("failed to embed symbol %s: %w", sym.Name, err)
 			}
+			vector := internalutil.Float64To32(vector64)
 
 			// Unique ID based on path, name and range
 			idKey := fmt.Sprintf("%s:%s:%d:%d", sym.FilePath, sym.Name, sym.StartLine, sym.EndLine)
@@ -92,9 +94,9 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 	}
 
 	// Ensure collection exists
-	dim, err := s.embedder.Dimension(ctx)
-	if err != nil {
-		return err
+	dim := int(s.embedder.GetEmbeddingDimension())
+	if dim == 0 {
+		return fmt.Errorf("embedding dimension is zero; provider not initialized")
 	}
 
 	exists, err := s.store.CollectionExists(ctx, collection)

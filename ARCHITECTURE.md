@@ -1,129 +1,220 @@
-# V2 Detection Core - Simple and Modular Architecture
+# Harta Arhitecturii rag-code-mcp
 
-## Objective
-An isolated module for workspace detection + branch state (variant 2), easy to test and integrate into tools.
+## pkg/workspace/ — Detecție și rezolvare workspace
 
-## Structure
+### contract/types.go
+- `ResolveWorkspaceRequest` — input: `FilePath`, `WorkspaceRoot`, `Workspace`, `Roots[]`
+- `ResolveWorkspaceResponse` — output: `ResolvedRoot`, `WorkspaceID`, `MismatchRisk`, `MarkersFound[]`, `Branch`, `HeadSHA`
+- `WorkspaceCandidate` — candidat intern: `Root`, `Markers[]`, `Reason`, `Confidence`
+- `DeriveWorkspaceID(root, branch, worktree)` — generează ID-ul unic al workspace-ului
+- `DerivePathContextKey(root, branch, head, worktree)` — cheie pentru invalidare cache
 
-```text
-/
-  ARCHITECTURE.md
-  internal/
-    contract/
-      # DTOs and public contracts for the resolver
-    resolver/
-      # Single orchestrator: resolves workspace, ambiguity, fail-fast behavior
-    detector/
-      # Root detection via markers + path/allowed-roots validation
-    branchstate/
-      # Branch/HEAD reading and persisted-state comparison
-    registry/
-      # Persistence for confirmed workspaces (e.g., workspaces.json)
-    tests/
-      # Table-driven tests, AI-like scenarios
-```
+### contract/workspace_id.go
+- `DeriveWorkspaceID()` și `DerivePathContextKey()` — implementare
 
-## Module Responsibilities
+### detector/detector.go
+- `Detector.DetectFromFilePath(ctx, filePath)` → `*WorkspaceCandidate`
+  - Urcă în directoare până găsește markeri (go.mod, composer.json, .git, etc.)
+  - Returnează `Markers[]` — lista markerilor găsiți (IMPORTANT: din markeri deducem limbajul)
+  - `DefaultOptions().Markers` — lista completă de markeri suportați
 
-1. `contract`
-   - defines standard input/output for all tools.
-   - includes deterministic error codes (`NO_CONTEXT`, `AMBIGUOUS_WORKSPACE`, `OUTSIDE_ALLOWED_ROOTS`).
+### resolver/resolver.go
+- `Resolver.Resolve(ctx, ResolveWorkspaceRequest)` → `*ResolveWorkspaceResponse`
+  - Cascadă: workspace_root → file_path (Detector) → alias (Registry) → roots list
+  - Apelează BranchAnnotator pentru git metadata
+  - Setează `MismatchRisk` (low/medium/high)
 
-2. `resolver`
-   - single entry point for all tools.
-   - priority: `workspace_root` > `file_path` > active roots > confirmation > fail-fast.
-   - contains no tool-specific logic.
+### registry/registry.go
+- Persistă workspace-uri confirmate pe disk (JSON)
+- `ResolveAlias()`, `RecordFeedback()`, `PromoteCandidate()`
 
-3. `detector`
-   - searches markers (`.git`, `go.mod`, `.ragcode`, `.agent`, etc.).
-   - validates security boundaries and allowed paths.
+### branchstate/state.go
+- `Manager.CompareAndUpdate(ctx, root)` → branch, HEAD, worktreeID
+- Detectează schimbări de branch (trigger pentru reindexare)
 
-4. `branchstate`
-   - reads current branch + head SHA.
-   - compares with `last_branch` and `last_head_sha`.
-   - sets `reindex_required=true` when a mismatch is detected.
+---
 
-5. `registry`
-   - stores workspaces confirmed by user/client.
-   - uses a local JSON file for cross-session persistent context.
+## pkg/parser/ — Parsare cod sursă
 
-6. `tests`
-   - real AI scenarios: missing `file_path`, invalid path, multi-workspace, branch switch, detached HEAD.
-   - validates deterministic behavior and clear error messages.
+### parser.go
+- Registry global de analyzers (map[name]Analyzer)
+- `Register(Analyzer)` — înregistrează un analyzer
+- `GetByFile(filePath) Analyzer` — returnează analyzer-ul potrivit după extensie (CanHandle)
+- `GetByName(name) Analyzer` — returnează analyzer după nume ("go", "php", etc.)
+- `Analyzer` interface: `Name() string`, `CanHandle(filePath) bool`, `Analyze(ctx, path) (*Result, error)`
+- `Symbol` struct: Name, Type, Package, Content, Signature, Docstring, StartLine, EndLine, FilePath, Language
+- `Result` struct: `Symbols[]`, `Language string`
 
-## Key Rules (V2)
+### go/analyzer.go
+- Analyzer pentru Go, se înregistrează cu `Name()="go"`, `CanHandle(".go")`
 
-- No opaque fallback.
-- If context is ambiguous: require explicit confirmation.
-- If context is insufficient: fail fast with an actionable error.
-- All tools must use the same `resolver`.
+### php/analyzer.go + php/laravel/
+- Analyzer pentru PHP + Laravel (Eloquent, Controllers, Routes)
 
-## Issue #21 Alignment (Path Resolver V2)
+### python/analyzer.go
+- Analyzer pentru Python
 
-The V2 detection core is the foundation for issue #21 and should expose branch-aware and explainable path resolution behavior.
+### html/analyzer.go
+- Analyzer pentru HTML
 
-### 1. Branch-aware context key
+### generic/analyzer.go
+- Fallback pentru limbaje fără analyzer specific
 
-Resolver context identity should be computed as:
+---
 
-```text
-workspace_root + git_branch + git_head (+ worktree_id)
-```
+## pkg/storage/ — Stocare vectori
 
-This prevents cache collisions between branches/worktrees and keeps branch-specific state isolated.
+### interface.go
+- `VectorStore` interface:
+  - `Upsert(ctx, collection, []Point)`
+  - `Search(ctx, collection, SearchQuery)` → `[]SearchResult`
+  - `SearchCodeOnly(ctx, collection, SearchQuery)` → `[]SearchResult` (filtrează chunk_type=code)
+  - `SearchDocsOnly(ctx, collection, SearchQuery)` → `[]SearchResult` (filtrează chunk_type=doc)
+  - `SearchByChunkType(ctx, collection, SearchQuery, chunkType)`
+  - `CollectionExists(ctx, name)` → bool
+  - `CreateCollection(ctx, name, dimension)`
+  - `GetCollectionInfo(ctx, name)` → `*CollectionInfo`
+- `Point` struct: ID, Vector[]float32, Payload map[string]any
+- `SearchResult` struct: Point, Score float32
+- `SearchQuery` struct: Vector, Limit, Filter, MinScore
 
-### 2. Explicit path-resolution metadata
+### qdrant.go
+- `NewQdrantStore(host, port, tls, apiKey)` → `VectorStore`
+- Implementare Qdrant pentru toate metodele din interface
 
-Relevant tool responses should expose a consistent metadata envelope:
+---
 
-- `resolved_file_path`
-- `path_resolution_source`
-- `path_resolution_confidence`
-- `used_fallback`
-- `workspace_root`
-- `git_branch`
-- `git_head`
-- `worktree_id` (when available)
-- `path_context_key`
-- `branch_mismatch_risk`
+## pkg/llm/ — Embedding și LLM
 
-`reason` remains mandatory for deterministic observability.
+### provider.go
+- `Provider` interface: `Embed(ctx, text)` → `[]float64`, `GetEmbeddingDimension()` → uint64
 
-### 3. Invalidation and anti-loop policy
+### ollama.go
+- `OllamaProvider` — implementare cu langchaingo/ollama
 
-- Isolate/invalidate state on branch switch.
-- Decay confidence on HEAD mismatch/rewrite.
-- Keep short TTL for fallback entries.
-- Avoid infinite retry loops on missing/invalid paths.
+---
 
-### 4. AI <-> resolver feedback loop
+## internal/service/ — Servicii interne
 
-Request payloads may provide structured feedback:
+### engine/engine.go
+- `Engine` struct: indexer, search, detector, branchManager
+- `NewEngine(indexer, search)` — constructor
+- `WorkspaceContext` struct: Root, ID, Branch, WorktreeID
+  - **LIPSĂ**: Markers[] — detectorul le returnează dar engine-ul le aruncă!
+- `DetectContext(ctx, path)` → `*WorkspaceContext`
+  - Apelează detector.DetectFromFilePath → obține Root + Markers (Markers se pierd!)
+  - Apelează branchManager.CompareAndUpdate → obține Branch, WorktreeID
+  - Calculează ID cu contract.DeriveWorkspaceID
+- `IndexWorkspace(ctx, path, language)` — indexează un workspace
+- `SearchCode(ctx, filePath, query, limit, includeDocs)` → `*SearchCodeResult`
+  - Apelează DetectContext → obține wctx
+  - Apelează inferLanguage(filePath, wctx) — **PROBLEMA**: hardcodat, nu folosește Markers
+  - Calculează collection = "ragcode-{wctx.ID}-{lang}"
+  - Verifică CollectionExists
+  - Apelează search.Search sau search.SearchCodeOnly
+- `inferLanguage(filePath, wctx)` — **DE REFĂCUT**: trebuie să folosească:
+  1. parser.GetByFile(filePath).Name() — din extensia fișierului
+  2. wctx.Markers — din markerii workspace-ului (go.mod→go, composer.json→php)
+  - Dar wctx nu are Markers! Trebuie adăugat.
 
-```text
-path_feedback.status = "mismatch"
-path_feedback.suggested_file_path
-path_feedback.reason (optional)
-```
+### indexer/indexer.go
+- `Service.IndexItems(ctx, collection, []parser.Symbol)` — embed + upsert în Qdrant
+- Generează ID unic per simbol: sha256(filePath:name:startLine:endLine)
 
-Suggested paths are stored as candidates and promoted only after a successful resolution + execution cycle.
+### search/search.go
+- `Service.Search(ctx, collection, queryText, limit)` → `[]storage.SearchResult`
+  - Embed queryText cu LLM → vector → store.Search
+- `Service.SearchCodeOnly(ctx, collection, queryText, limit)` → `[]storage.SearchResult`
+- `Service.CollectionExists(ctx, collection)` → bool
 
-### 5. Branch mismatch risk signal
+### internalutil/float.go
+- `Float64To32([]float64)` → `[]float32` — conversie pentru vectori
 
-Resolver should return `branch_mismatch_risk` with values:
+---
 
-- `low`: branch/head match expected context.
-- `medium`: branch matches but head changed.
-- `high`: branch mismatch or fallback-driven uncertainty.
+## internal/service/tools/ — Tool-uri MCP
 
-## Module Dependencies
+### workspace_helpers.go
+- `DetectAndRegisterWorkspace(manager, params)` — **VECHI**: folosește internal/workspace
+- `AttachAIWarning(result, wsResp)` — adaugă warning dacă MismatchRisk != "low"
+- `HandleWorkspaceDetectionError(err, path)` — formatează erori de detecție
+- `extractFilePathFromParams(params)` — extrage file_path din params MCP
+- `inferLanguageFromPath(filePath)` — **DUPLICAT cu engine.inferLanguage!**
 
-```
-contract -> resolver -> {detector, branchstate, registry} -> tests
-```
+### search_interfaces.go
+- `CodeSearcher` interface: `SearchCodeOnly(ctx, collection, query)` → `[]storage.SearchResult`
 
-Each module exposes a focused API but the resolver orchestrates them all. 
-- detector provides root candidates.
-- branchstate annotates responses with reindex decisions.
-- registry persists confirmations for future runs.
-- tests run cross-module matrices to ensure deterministic behavior.
+### search_local_index.go — `rag_search_code`
+- **STARE ACTUALĂ**: folosește `internal/memory` și `internal/workspace` (VECHI, nu compilează)
+- **CE TREBUIE**: să primească `*engine.Engine` și să apeleze `engine.SearchCode()`
+
+### hybrid_search.go — `rag_hybrid_search`
+- **STARE ACTUALĂ**: folosește `internal/memory`, `internal/workspace`, `internal/llm` (VECHI)
+- Logică complexă: 60% semantic + 40% lexical scoring
+
+### find_implementations.go — `rag_find_implementations`
+- **STARE ACTUALĂ**: folosește `internal/memory`, `internal/workspace` (VECHI)
+
+### find_type_definition.go — `rag_find_type_definition`
+- **STARE ACTUALĂ**: folosește `internal/memory`, `internal/workspace` (VECHI)
+
+### get_function_details.go — `rag_get_function_details`
+- **STARE ACTUALĂ**: folosește `internal/memory`, `internal/workspace` (VECHI)
+
+### list_package_exports.go — `rag_list_package_exports`
+- **STARE ACTUALĂ**: folosește `internal/memory`, `internal/workspace` (VECHI)
+
+### search_docs.go — `rag_search_docs`
+- **STARE ACTUALĂ**: folosește `internal/memory`, `internal/workspace` (VECHI)
+
+### index_workspace.go — `rag_index_workspace`
+- **STARE ACTUALĂ**: folosește `internal/memory`, `internal/workspace` (VECHI)
+
+### get_code_context.go — `rag_get_code_context`
+- Citește fișiere direct de pe disk (nu folosește Qdrant) — probabil OK
+
+### install_skill.go — `rag_install_skill`
+- Instalează skill-uri în workspace — probabil nu depinde de memory/workspace
+
+### list_skills.go — `rag_list_skills`
+- Listează skill-uri disponibile
+
+### updates.go — `rag_check_update`, `rag_apply_update`
+- Verifică și aplică update-uri
+
+### evaluate_ragcode.go — `rag_evaluate`
+- Evaluare calitate
+
+### utils.go
+- `buildSymbolDescriptorsFromDocs(docs)` — construiește descriptori din rezultate search
+- `buildSymbolsFromResults(results)` — mapează payload Qdrant → parser.Symbol
+
+---
+
+## Probleme identificate și plan de rezolvare
+
+### Problema 1: WorkspaceContext pierde Markers
+- `engine.detectRoot()` apelează `detector.DetectFromFilePath()` care returnează `WorkspaceCandidate` cu `Markers[]`
+- Dar `detectRoot()` returnează doar `string` (root), aruncând Markers
+- **Fix**: `WorkspaceContext` trebuie să includă `Markers []string`
+
+### Problema 2: inferLanguage duplicat și hardcodat
+- Există în `engine.go` (hardcodat cu switch pe extensii)
+- Există în `workspace_helpers.go` (`inferLanguageFromPath` — același lucru)
+- Logica corectă există în `inspirations/rag-code-mcp/internal/workspace/language_detection.go`:
+  - `GetPrimaryLanguage(root, markers)` — din markeri (go.mod→go, composer.json→php)
+- **Fix**: O singură funcție în engine care folosește:
+  1. `parser.GetByFile(filePath).Name()` — din extensia fișierului (prioritate 1)
+  2. Markers din WorkspaceContext — din markerii detectați (prioritate 2, fallback)
+
+### Problema 3: Tool-urile folosesc pachete vechi (internal/memory, internal/workspace)
+- Toate tool-urile din `internal/service/tools/` importă `internal/memory` și `internal/workspace`
+- Aceste pachete nu mai există în noua structură
+- **Fix**: Tool-urile trebuie să primească `*engine.Engine` și să apeleze metodele lui
+
+### Ordinea de rezolvare:
+1. Fix `WorkspaceContext` să includă `Markers[]` (engine.go)
+2. Fix `inferLanguage` să folosească `parser.GetByFile` + Markers (engine.go)
+3. Adaugă metode în Engine pentru fiecare operație necesară tool-urilor
+4. Rescrie tool-urile să folosească Engine în loc de internal/memory + internal/workspace
+5. Compilare și teste

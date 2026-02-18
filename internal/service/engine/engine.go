@@ -3,100 +3,214 @@ package engine
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/doITmagic/rag-code-mcp/internal/config"
 	"github.com/doITmagic/rag-code-mcp/internal/service/indexer"
 	"github.com/doITmagic/rag-code-mcp/internal/service/search"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
+	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 	"github.com/doITmagic/rag-code-mcp/pkg/workspace/branchstate"
 	"github.com/doITmagic/rag-code-mcp/pkg/workspace/contract"
 	"github.com/doITmagic/rag-code-mcp/pkg/workspace/detector"
+	"github.com/doITmagic/rag-code-mcp/pkg/workspace/registry"
+	"github.com/doITmagic/rag-code-mcp/pkg/workspace/resolver"
 )
 
 // Engine is the high-level orchestrator for RAG operations.
 type Engine struct {
-	indexer       *indexer.Service
-	search        *search.Service
-	detector      *detector.Detector
-	branchManager *branchstate.Manager
+	indexer  *indexer.Service
+	search   *search.Service
+	resolver *resolver.Resolver
+	config   *config.Config
+
+	// indexingJobs tracks active background indexing jobs.
+	// Key: workspace ID, Value: start time
+	indexingJobs sync.Map
 }
 
-// NewEngine creates a new Engine instance.
-func NewEngine(idx *indexer.Service, srv *search.Service) *Engine {
-	return &Engine{
-		indexer:       idx,
-		search:        srv,
-		detector:      detector.New(detector.DefaultOptions()),
-		branchManager: branchstate.NewManager(),
+// NewEngine creates a new Engine with all workspace dependencies wired up.
+// registryPath is the path to the persistent registry file (e.g. ~/.ragcode/registry.json).
+func NewEngine(idx *indexer.Service, srv *search.Service, registryPath string, cfg *config.Config) *Engine {
+	det := detector.New(detector.DefaultOptions())
+	branchMgr := branchstate.NewManager()
+
+	var reg *registry.Registry
+	if registryPath != "" {
+		if r, err := registry.New(registryPath); err == nil {
+			reg = r
+		}
 	}
+
+	res := resolver.New(resolver.Dependencies{
+		Detector:        det,
+		Registry:        reg,
+		BranchAnnotator: branchMgr,
+	})
+
+	return &Engine{
+		indexer:  idx,
+		search:   srv,
+		resolver: res,
+		config:   cfg,
+	}
+}
+
+// Config returns the engine configuration.
+func (e *Engine) Config() *config.Config {
+	return e.config
 }
 
 // WorkspaceContext provides information about a detected workspace.
 type WorkspaceContext struct {
-	Root       string
-	ID         string
-	Branch     string
-	WorktreeID string
+	Root         string
+	ID           string
+	Branch       string
+	WorktreeID   string
+	MismatchRisk string
 }
 
-// DetectContext detects the workspace context for a given path.
+// DetectContext resolves the workspace context for a given path using the full resolver cascade.
 func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceContext, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("path is empty")
 	}
 
-	root, err := e.detectRoot(ctx, path)
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve path: %w", err)
+	}
+
+	resp, wsErr := e.resolver.Resolve(ctx, contract.ResolveWorkspaceRequest{
+		FilePath: abs,
+	})
+	if wsErr != nil {
+		return nil, fmt.Errorf("workspace detection failed: %s", wsErr.Message)
+	}
+
+	return &WorkspaceContext{
+		Root:         resp.ResolvedRoot,
+		ID:           resp.WorkspaceID,
+		Branch:       resp.Branch,
+		WorktreeID:   resp.WorktreeID,
+		MismatchRisk: resp.MismatchRisk,
+	}, nil
+}
+
+// SearchCodeResult wraps search results with workspace context.
+type SearchCodeResult struct {
+	Results       []storage.SearchResult
+	WorkspaceRoot string
+	Collection    string
+	Language      string
+	MismatchRisk  string
+}
+
+// ErrNotIndexed is returned when a workspace collection doesn't exist yet and indexing hasn't started.
+type ErrNotIndexed struct {
+	WorkspaceRoot string
+	Collection    string
+	Language      string
+}
+
+func (e *ErrNotIndexed) Error() string {
+	return fmt.Sprintf("workspace '%s' is not indexed yet (collection: %s)", e.WorkspaceRoot, e.Collection)
+}
+
+// ErrIndexingInProgress is returned when a workspace is currently being indexed.
+type ErrIndexingInProgress struct {
+	WorkspaceRoot string
+}
+
+func (e *ErrIndexingInProgress) Error() string {
+	return fmt.Sprintf("indexing in progress for %s", e.WorkspaceRoot)
+}
+
+// ErrIndexingStarted is returned when indexing was automatically triggered.
+type ErrIndexingStarted struct {
+	WorkspaceRoot string
+}
+
+func (e *ErrIndexingStarted) Error() string {
+	return fmt.Sprintf("started background indexing for %s", e.WorkspaceRoot)
+}
+
+// SearchCode detects the workspace from filePath, resolves the correct collection,
+// and performs a semantic search. includeDocs=false searches code only.
+// If the collection does not exist, it triggers background indexing.
+func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, limit int, includeDocs bool) (*SearchCodeResult, error) {
+	wctx, err := e.DetectContext(ctx, filePath)
 	if err != nil {
 		return nil, err
 	}
 
-	branch := "main"
-	worktreeID := root
-	if e.branchManager != nil {
-		state, _, _, stateErr := e.branchManager.CompareAndUpdate(ctx, root)
-		if stateErr == nil && state != nil {
-			if strings.TrimSpace(state.LastBranch) != "" {
-				branch = state.LastBranch
-			}
-			if strings.TrimSpace(state.LastWorktreeID) != "" {
-				worktreeID = state.LastWorktreeID
-			}
-		}
+	// Detect language from file extension using the parser registry
+	lang := "go" // default fallback
+	if a := parser.GetByFile(filePath); a != nil {
+		lang = a.Name()
 	}
 
-	id := contract.DeriveWorkspaceID(root, branch, worktreeID)
+	collection := fmt.Sprintf("ragcode-%s-%s", wctx.ID, lang)
 
-	return &WorkspaceContext{
-		Root:       root,
-		ID:         id,
-		Branch:     branch,
-		WorktreeID: worktreeID,
+	exists, err := e.search.CollectionExists(ctx, collection)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check collection: %w", err)
+	}
+
+	if !exists {
+		// Check if already indexing
+		if _, ok := e.indexingJobs.Load(wctx.ID); ok {
+			return nil, &ErrIndexingInProgress{WorkspaceRoot: wctx.Root}
+		}
+
+		// Trigger background indexing
+		e.StartIndexingAsync(wctx.Root, wctx.ID)
+		return nil, &ErrIndexingStarted{WorkspaceRoot: wctx.Root}
+	}
+
+	var results []storage.SearchResult
+	if includeDocs {
+		results, err = e.search.Search(ctx, collection, queryText, limit)
+	} else {
+		results, err = e.search.SearchCodeOnly(ctx, collection, queryText, limit)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("search failed: %w", err)
+	}
+
+	return &SearchCodeResult{
+		Results:       results,
+		WorkspaceRoot: wctx.Root,
+		Collection:    collection,
+		Language:      lang,
+		MismatchRisk:  wctx.MismatchRisk,
 	}, nil
 }
 
-func (e *Engine) detectRoot(ctx context.Context, path string) (string, error) {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return "", fmt.Errorf("failed to resolve path: %w", err)
+// StartIndexingAsync starts the indexing process in a background goroutine.
+func (e *Engine) StartIndexingAsync(root, id string) {
+	if _, loaded := e.indexingJobs.LoadOrStore(id, time.Now()); loaded {
+		return // Already running
 	}
 
-	if e.detector != nil {
-		candidate, detErr := e.detector.DetectFromFilePath(ctx, abs)
-		if detErr == nil && candidate != nil && strings.TrimSpace(candidate.Root) != "" {
-			return candidate.Root, nil
+	go func() {
+		defer e.indexingJobs.Delete(id)
+		log.Printf("[INFO] 🚀 Starting background indexing for: %s", root)
+
+		// Create a detached context for the background job
+		ctx := context.Background()
+
+		if err := e.IndexWorkspace(ctx, root); err != nil {
+			log.Printf("[ERROR] Background indexing failed for %s: %v", root, err)
+		} else {
+			log.Printf("[INFO] ✅ Background indexing completed for: %s", root)
 		}
-	}
-
-	info, statErr := os.Stat(abs)
-	if statErr != nil {
-		return "", fmt.Errorf("failed to stat path: %w", statErr)
-	}
-	if info.IsDir() {
-		return abs, nil
-	}
-	return filepath.Dir(abs), nil
+	}()
 }
 
 // IndexWorkspace indexes all files in a workspace.
@@ -106,7 +220,6 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string) error {
 		return err
 	}
 
-	// Walk and group symbols
 	langSymbols := make(map[string][]parser.Symbol)
 
 	err = filepath.WalkDir(wctx.Root, func(p string, d os.DirEntry, err error) error {
@@ -114,69 +227,47 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string) error {
 			return nil
 		}
 		if d.IsDir() {
-			// Skip hidden dirs (like .git, .vendor, .venv)
-			if strings.HasPrefix(d.Name(), ".") || d.Name() == "vendor" || d.Name() == "node_modules" || d.Name() == "venv" {
+			name := d.Name()
+			if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" ||
+				name == "venv" || name == "__pycache__" || name == "dist" || name == "build" {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 
-		analyzer := parser.GetByFile(p)
-		if analyzer == nil {
+		a := parser.GetByFile(p)
+		if a == nil {
 			return nil
 		}
 
-		res, err := analyzer.Analyze(ctx, p)
+		res, err := a.Analyze(ctx, p)
 		if err != nil {
 			return nil
 		}
 
-		langSymbols[analyzer.Name()] = append(langSymbols[analyzer.Name()], res.Symbols...)
+		// Ensure map entry exists
+		if _, ok := langSymbols[a.Name()]; !ok {
+			langSymbols[a.Name()] = make([]parser.Symbol, 0)
+		}
+		langSymbols[a.Name()] = append(langSymbols[a.Name()], res.Symbols...)
 		return nil
 	})
-
 	if err != nil {
 		return err
 	}
 
 	for lang, symbols := range langSymbols {
 		collection := fmt.Sprintf("ragcode-%s-%s", wctx.ID, lang)
-		// Add branch to metadata for each symbol before indexing
 		for i := range symbols {
 			if symbols[i].Metadata == nil {
 				symbols[i].Metadata = make(map[string]any)
 			}
 			symbols[i].Metadata["branch"] = wctx.Branch
 		}
-
 		if err := e.indexer.IndexItems(ctx, collection, symbols); err != nil {
 			return fmt.Errorf("failed to index %s: %w", lang, err)
 		}
 	}
 
 	return nil
-}
-
-// Query performs a search across common language collections in a workspace.
-func (e *Engine) Query(ctx context.Context, path string, queryText string, limit int) ([]any, error) {
-	wctx, err := e.DetectContext(ctx, path)
-	if err != nil {
-		return nil, err
-	}
-
-	langs := []string{"go", "php", "python"}
-	var allResults []any
-
-	for _, lang := range langs {
-		collection := fmt.Sprintf("ragcode-%s-%s", wctx.ID, lang)
-		res, err := e.search.Search(ctx, collection, queryText, limit)
-		if err != nil {
-			continue // Collection might not exist
-		}
-		for _, r := range res {
-			allResults = append(allResults, r)
-		}
-	}
-
-	return allResults, nil
 }

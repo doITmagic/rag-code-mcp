@@ -1,15 +1,20 @@
 package config
 
 import (
+	_ "embed"
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
+
+//go:embed default.yaml
+var defaultConfigBytes []byte
 
 // Load reads and parses the configuration file
 func Load(path string) (*Config, error) {
@@ -68,87 +73,55 @@ func Save(path string, cfg *Config) error {
 	return nil
 }
 
-// DefaultConfig returns a default configuration
+// DefaultConfig returns a default configuration structure
 func DefaultConfig() *Config {
-	return &Config{
-		LLM: LLMConfig{
-			Provider:         "ollama",
-			OllamaBaseURL:    "http://localhost:11434",
-			OllamaModel:      "qwen2.5-coder:0.5b",
-			OllamaEmbed:      "qwen3-embedding:0.6b",
-			LlamafileBaseURL: "http://localhost:8080",
-			Temperature:      0.7,
-			MaxTokens:        2048,
-			Timeout:          60 * time.Second,
-			MaxRetries:       3,
-			// Legacy fields for backward compatibility
-			BaseURL:    "http://localhost:11434",
-			Model:      "qwen2.5-coder:0.5b",
-			EmbedModel: "qwen3-embedding:0.6b",
-		},
-		Memory: MemoryConfig{
-			ShortTermSize:  10,
-			EnableLongTerm: false,
-		},
-		Storage: StorageConfig{
-			VectorDB: VectorDBConfig{
-				Provider:   "qdrant",
-				URL:        "http://localhost:6333",
-				Collection: "do-ai",
+	// Parse the embedded default YAML to ensure struct defaults match file defaults
+	var cfg Config
+	if err := yaml.Unmarshal(defaultConfigBytes, &cfg); err != nil {
+		// Fallback to hardcoded defaults if parsing fails (should not happen)
+		log.Printf("[WARN] Failed to parse embedded default config: %v", err)
+		return &Config{
+			LLM: LLMConfig{
+				Provider:      "ollama",
+				OllamaBaseURL: "http://localhost:11434",
+				OllamaModel:   "phi3:medium",
+				OllamaEmbed:   "mxbai-embed-large",
+				MaxTokens:     1024,
+				Timeout:       60 * time.Second,
 			},
-			Redis: RedisConfig{
-				Enabled: false,
-				URL:     "localhost:6379",
-				DB:      0,
+			Storage: StorageConfig{
+				VectorDB: VectorDBConfig{URL: "http://localhost:6333"},
 			},
-			SQLite: SQLiteConfig{
-				Path: "./data/do-ai.db",
-			},
-		},
-		Server: ServerConfig{
-			Host:            "0.0.0.0",
-			Port:            8080,
-			EnableWebSocket: true,
-		},
-		Logging: LoggingConfig{
-			Level:     "info",
-			Format:    "text",
-			Output:    "stdout",
-			MaxSizeMB: 10,
-		},
-		RagCode: RagCodeConfig{
-			Enabled:        false,
-			IndexOnStartup: false,
-			Paths:          []string{"./internal", "./cmd"},
-			Collection:     "do-ai-code",
-			Model:          "",
-			Include:        []string{"**/*.go"},
-			Exclude:        []string{"**/*_test.go", "vendor/**", ".git/**", "testdata/**"},
-			SearchLimit:    5,
-		},
-		Docs: DocsConfig{
-			Collection: "do-ai-docs",
-			ReadmePath: "./README.md",
-			DocsPaths:  []string{"./docs"},
-		},
-		APIDocs: APIDocsConfig{
-			Collection: "do-ai-api-docs",
-		},
-		Workspace: WorkspaceConfig{
-			Enabled:            true,
-			AutoIndex:          true,
-			MaxWorkspaces:      10,
-			DetectionMarkers:   append([]string(nil), DefaultWorkspaceDetectionMarkers...),
-			ExcludePatterns:    []string{"node_modules", ".git", "vendor", "target", "build", "dist", ".venv"},
-			CollectionPrefix:   "ragcode",
-			IndexInclude:       []string{}, // Empty means use global rag_code.include
-			IndexExclude:       []string{}, // Empty means use global rag_code.exclude
-			AutoCreateIDERules: true,
-		},
-		HealthCheck: HealthCheckConfig{
-			EnableOnStartup: true,
-		},
+			Logging: LoggingConfig{Level: "info"},
+		}
 	}
+	return &cfg
+}
+
+// EnsureConfigExists creates a default config.yaml if it doesn't exist
+func EnsureConfigExists(configPath string) error {
+	// Check if config file already exists
+	if _, err := os.Stat(configPath); err == nil {
+		return nil // File exists, nothing to do
+	}
+
+	log.Printf("📝 Config file not found, creating default configuration at: %s", configPath)
+
+	// Ensure directory exists
+	dir := filepath.Dir(configPath)
+	if dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create config directory: %w", err)
+		}
+	}
+
+	// Write embedded config content
+	if err := os.WriteFile(configPath, defaultConfigBytes, 0644); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	log.Printf("✓ Created default configuration file: %s", configPath)
+	return nil
 }
 
 // applyEnvOverrides applies environment variable overrides to the configuration

@@ -1,0 +1,64 @@
+# RagCode MCP Server Configuration
+# Auto-generated on first run
+
+llm:
+  provider: ollama
+  ollama_base_url: http://localhost:11434
+  ollama_model: phi3:medium
+  ollama_embed: mxbai-embed-large
+  temperature: 0.7
+  max_tokens: 1024
+  timeout: 60s
+  max_retries: 3
+
+storage:
+  vector_db:
+    url: http://localhost:6333
+    api_key: ""
+
+logging:
+  level: debug
+  format: text
+  output: file
+  path: mcp.log
+
+# Multi-workspace configuration
+workspace:
+  enabled: true
+  auto_index: true
+  max_workspaces: 10
+  # Markers to detect project root
+  detection_markers:
+    - .git
+    - go.mod
+    - package.json
+    - Cargo.toml
+    - pyproject.toml
+    - setup.py
+    - requirements.txt
+    - composer.json
+    - pom.xml
+    - build.gradle
+    - Gemfile
+    - Package.swift
+    - .ragcode
+    - .agent
+    - .idea
+    - .vscode
+    - .vs
+    - .cursor
+    - .windsurf
+  # Folders to ignore during indexing
+  exclude_patterns:
+    - node_modules
+    - .git
+    - vendor
+    - target
+    - build
+    - dist
+    - .venv
+  collection_prefix: ragcode
+  auto_create_ide_rules: true
+
+health_check:
+  enable_on_startup: true

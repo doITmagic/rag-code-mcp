@@ -3,12 +3,21 @@ package storage
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/qdrant/go-client/qdrant"
 )
 
+type qdrantClient interface {
+	CollectionExists(ctx context.Context, collectionName string) (bool, error)
+	CreateCollection(ctx context.Context, req *qdrant.CreateCollection) error
+	Upsert(ctx context.Context, req *qdrant.UpsertPoints) (*qdrant.UpdateResult, error)
+	Query(ctx context.Context, req *qdrant.QueryPoints) ([]*qdrant.ScoredPoint, error)
+	GetCollectionInfo(ctx context.Context, collectionName string) (*qdrant.CollectionInfo, error)
+}
+
 type QdrantStore struct {
-	client *qdrant.Client
+	client qdrantClient
 }
 
 func NewQdrantStore(host string, port int, useTLS bool, apiKey string) (*QdrantStore, error) {
@@ -27,6 +36,11 @@ func NewQdrantStore(host string, port int, useTLS bool, apiKey string) (*QdrantS
 	}
 
 	return &QdrantStore{client: client}, nil
+}
+
+// NewQdrantStoreWithClient is exposed for tests to inject a fake client.
+func NewQdrantStoreWithClient(client qdrantClient) *QdrantStore {
+	return &QdrantStore{client: client}
 }
 
 func (s *QdrantStore) CollectionExists(ctx context.Context, name string) (bool, error) {
@@ -63,49 +77,227 @@ func (s *QdrantStore) Upsert(ctx context.Context, collection string, points []Po
 }
 
 func (s *QdrantStore) Search(ctx context.Context, collection string, query SearchQuery) ([]SearchResult, error) {
-	limit := uint64(query.Limit)
-	if limit == 0 {
-		limit = 10
-	}
-
+	limit := normalizeLimit(query.Limit)
 	withPayload := true
 	resp, err := s.client.Query(ctx, &qdrant.QueryPoints{
 		CollectionName: collection,
 		Query:          qdrant.NewQuery(query.Vector...),
 		Limit:          &limit,
 		WithPayload:    &qdrant.WithPayloadSelector{SelectorOptions: &qdrant.WithPayloadSelector_Enable{Enable: withPayload}},
+		Filter:         buildFilter(query.Filter),
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	results := make([]SearchResult, len(resp))
-	for i, r := range resp {
-		results[i] = SearchResult{
-			Score: r.Score,
-			Point: Point{
-				ID:      r.Id.GetUuid(), // Simplified for now, assuming UUID
-				Payload: s.payloadToMap(r.Payload),
-			},
+	return s.toSearchResults(resp), nil
+}
+
+func (s *QdrantStore) SearchDocsOnly(ctx context.Context, collection string, query SearchQuery) ([]SearchResult, error) {
+	markdown, err := s.searchByChunkType(ctx, collection, query, "markdown")
+	if err != nil {
+		return nil, fmt.Errorf("search docs markdown: %w", err)
+	}
+	text, err := s.searchByChunkType(ctx, collection, query, "text")
+	if err != nil {
+		return nil, fmt.Errorf("search docs text: %w", err)
+	}
+
+	merged := make(map[string]SearchResult)
+	for _, result := range append(markdown, text...) {
+		key := result.Point.ID
+		if key == "" {
+			file := fmt.Sprintf("%v", result.Point.Payload["file"])
+			chunkID := fmt.Sprintf("%v", result.Point.Payload["chunk_id"])
+			key = file + "#" + chunkID
 		}
+		if existing, ok := merged[key]; !ok || result.Score > existing.Score {
+			merged[key] = result
+		}
+	}
+
+	results := make([]SearchResult, 0, len(merged))
+	for _, r := range merged {
+		results = append(results, r)
+	}
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
+	if len(results) > int(query.Limit) && query.Limit > 0 {
+		results = results[:query.Limit]
 	}
 	return results, nil
 }
 
+func (s *QdrantStore) SearchCodeOnly(ctx context.Context, collection string, query SearchQuery) ([]SearchResult, error) {
+	limit := normalizeLimit(query.Limit)
+	withPayload := true
+	filter := &qdrant.Filter{
+		MustNot: []*qdrant.Condition{
+			matchKeyword("chunk_type", "markdown"),
+			matchKeyword("chunk_type", "text"),
+		},
+	}
+	baseFilter := buildFilter(query.Filter)
+	if baseFilter != nil {
+		filter.Must = append(filter.Must, baseFilter.Must...)
+		filter.Should = append(filter.Should, baseFilter.Should...)
+		filter.MustNot = append(filter.MustNot, baseFilter.MustNot...)
+	}
+
+	resp, err := s.client.Query(ctx, &qdrant.QueryPoints{
+		CollectionName: collection,
+		Query:          qdrant.NewQuery(query.Vector...),
+		Limit:          &limit,
+		WithPayload:    &qdrant.WithPayloadSelector{SelectorOptions: &qdrant.WithPayloadSelector_Enable{Enable: withPayload}},
+		Filter:         filter,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("search code: %w", err)
+	}
+	return s.toSearchResults(resp), nil
+}
+
+func (s *QdrantStore) SearchByChunkType(ctx context.Context, collection string, query SearchQuery, chunkType string) ([]SearchResult, error) {
+	return s.searchByChunkType(ctx, collection, query, chunkType)
+}
+
 func (s *QdrantStore) mapToPayload(m map[string]interface{}) map[string]*qdrant.Value {
-	res := make(map[string]*qdrant.Value)
+	res := make(map[string]*qdrant.Value, len(m))
 	for k, v := range m {
-		val, _ := qdrant.NewValue(fmt.Sprintf("%v", v))
-		res[k] = val
+		res[k] = qdrant.NewValueString(fmt.Sprintf("%v", v))
 	}
 	return res
 }
 
 func (s *QdrantStore) payloadToMap(p map[string]*qdrant.Value) map[string]interface{} {
-	res := make(map[string]interface{})
+	res := make(map[string]interface{}, len(p))
 	for k, v := range p {
-		// This is a simplification; a full converter would check the kind of value
 		res[k] = v.GetStringValue()
 	}
 	return res
+}
+
+func (s *QdrantStore) GetCollectionInfo(ctx context.Context, name string) (*CollectionInfo, error) {
+	info, err := s.client.GetCollectionInfo(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	if info == nil {
+		return nil, fmt.Errorf("collection info is nil")
+	}
+
+	var vectorSize uint64
+	if info.Config != nil && info.Config.Params != nil && info.Config.Params.VectorsConfig != nil {
+		if params := info.Config.Params.VectorsConfig.GetParams(); params != nil {
+			vectorSize = params.Size
+		} else if paramsMap := info.Config.Params.VectorsConfig.GetParamsMap(); paramsMap != nil {
+			for _, entry := range paramsMap.Map {
+				if entry != nil {
+					vectorSize = entry.Size
+					break
+				}
+			}
+		}
+	}
+
+	return &CollectionInfo{
+		PointsCount: info.GetPointsCount(),
+		VectorSize:  vectorSize,
+	}, nil
+}
+
+func (s *QdrantStore) GetCollectionPointCount(ctx context.Context, name string) (uint64, error) {
+	info, err := s.client.GetCollectionInfo(ctx, name)
+	if err != nil {
+		return 0, err
+	}
+	if info == nil {
+		return 0, nil
+	}
+	return info.GetPointsCount(), nil
+}
+
+func (s *QdrantStore) searchByChunkType(ctx context.Context, collection string, query SearchQuery, chunkType string) ([]SearchResult, error) {
+	limit := normalizeLimit(query.Limit)
+	withPayload := true
+	resp, err := s.client.Query(ctx, &qdrant.QueryPoints{
+		CollectionName: collection,
+		Query:          qdrant.NewQuery(query.Vector...),
+		Filter: &qdrant.Filter{
+			Must: []*qdrant.Condition{matchKeyword("chunk_type", chunkType)},
+		},
+		Limit:       &limit,
+		WithPayload: &qdrant.WithPayloadSelector{SelectorOptions: &qdrant.WithPayloadSelector_Enable{Enable: withPayload}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.toSearchResults(resp), nil
+}
+
+func (s *QdrantStore) toSearchResults(points []*qdrant.ScoredPoint) []SearchResult {
+	results := make([]SearchResult, len(points))
+	for i, r := range points {
+		results[i] = SearchResult{
+			Score: r.Score,
+			Point: Point{
+				ID:      pointIDToString(r.Id),
+				Payload: s.payloadToMap(r.Payload),
+			},
+		}
+	}
+	return results
+}
+
+func matchKeyword(key, value string) *qdrant.Condition {
+	return &qdrant.Condition{
+		ConditionOneOf: &qdrant.Condition_Field{
+			Field: &qdrant.FieldCondition{
+				Key: key,
+				Match: &qdrant.Match{
+					MatchValue: &qdrant.Match_Keyword{Keyword: value},
+				},
+			},
+		},
+	}
+}
+
+func buildFilter(filters map[string]interface{}) *qdrant.Filter {
+	if len(filters) == 0 {
+		return nil
+	}
+	filter := &qdrant.Filter{}
+	for key, val := range filters {
+		switch typed := val.(type) {
+		case string:
+			filter.Must = append(filter.Must, matchKeyword(key, typed))
+		case []string:
+			cond := make([]*qdrant.Condition, 0, len(typed))
+			for _, v := range typed {
+				cond = append(cond, matchKeyword(key, v))
+			}
+			filter.Should = append(filter.Should, cond...)
+		default:
+			filter.Must = append(filter.Must, matchKeyword(key, fmt.Sprintf("%v", val)))
+		}
+	}
+	return filter
+}
+
+func pointIDToString(id *qdrant.PointId) string {
+	if id == nil {
+		return ""
+	}
+	if num := id.GetNum(); num != 0 {
+		return fmt.Sprintf("%d", num)
+	}
+	return id.GetUuid()
+}
+
+func normalizeLimit(limit int) uint64 {
+	if limit <= 0 {
+		return 10
+	}
+	return uint64(limit)
 }

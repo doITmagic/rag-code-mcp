@@ -16,6 +16,7 @@ type qdrantClient interface {
 	Upsert(ctx context.Context, req *qdrant.UpsertPoints) (*qdrant.UpdateResult, error)
 	Query(ctx context.Context, req *qdrant.QueryPoints) ([]*qdrant.ScoredPoint, error)
 	GetCollectionInfo(ctx context.Context, collectionName string) (*qdrant.CollectionInfo, error)
+	Delete(ctx context.Context, req *qdrant.DeletePoints) (*qdrant.UpdateResult, error)
 }
 
 type QdrantStore struct {
@@ -217,6 +218,24 @@ func (s *QdrantStore) GetCollectionPointCount(ctx context.Context, name string) 
 		return 0, nil
 	}
 	return info.GetPointsCount(), nil
+}
+
+func (s *QdrantStore) DeleteByFilter(ctx context.Context, collection string, key string, value interface{}) error {
+	wait := true
+	_, err := s.client.Delete(ctx, &qdrant.DeletePoints{
+		CollectionName: collection,
+		Points: &qdrant.PointsSelector{
+			PointsSelectorOneOf: &qdrant.PointsSelector_Filter{
+				Filter: &qdrant.Filter{
+					Must: []*qdrant.Condition{
+						matchKeyword(key, fmt.Sprintf("%v", value)),
+					},
+				},
+			},
+		},
+		Wait: &wait,
+	})
+	return err
 }
 
 func (s *QdrantStore) searchByChunkType(ctx context.Context, collection string, query SearchQuery, chunkType string) ([]SearchResult, error) {

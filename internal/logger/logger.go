@@ -62,6 +62,17 @@ func (l *SimpleLogger) Warn(format string, args ...interface{}) {
 	}
 }
 
+// Highlight logs a message with CYAN color for terminal output.
+func (l *SimpleLogger) Highlight(format string, args ...interface{}) {
+	if l.shouldLog("info") {
+		// Cyan: \033[36m, Reset: \033[0m
+		fmt.Fprintf(os.Stderr, "\033[36m[SEARCH] "+format+"\033[0m\n", args...)
+		if l.logFile != nil {
+			fmt.Fprintf(l.logFile, "[SEARCH] "+format+"\n", args...)
+		}
+	}
+}
+
 // Helper: ResolveLogPath expands tilde and makes path absolute.
 func ResolveLogPath(path string) (string, error) {
 	if path == "" {

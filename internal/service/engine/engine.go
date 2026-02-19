@@ -13,6 +13,7 @@ import (
 	"github.com/doITmagic/rag-code-mcp/internal/config"
 	"github.com/doITmagic/rag-code-mcp/internal/service/indexer"
 	"github.com/doITmagic/rag-code-mcp/internal/service/search"
+	"github.com/doITmagic/rag-code-mcp/internal/skills"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 	"github.com/doITmagic/rag-code-mcp/pkg/workspace/branchstate"
@@ -20,6 +21,7 @@ import (
 	"github.com/doITmagic/rag-code-mcp/pkg/workspace/detector"
 	"github.com/doITmagic/rag-code-mcp/pkg/workspace/registry"
 	"github.com/doITmagic/rag-code-mcp/pkg/workspace/resolver"
+	"github.com/doITmagic/rag-code-mcp/pkg/workspace/watch"
 )
 
 // Engine is the high-level orchestrator for RAG operations.
@@ -28,6 +30,7 @@ type Engine struct {
 	search   *search.Service
 	resolver *resolver.Resolver
 	config   *config.Config
+	watchers *watch.Manager
 
 	// indexingJobs tracks active background indexing jobs.
 	// Key: workspace ID, Value: start time
@@ -53,11 +56,20 @@ func NewEngine(idx *indexer.Service, srv *search.Service, registryPath string, c
 		BranchAnnotator: branchMgr,
 	})
 
+	var watcherMgr *watch.Manager
+	if cfg != nil && cfg.Workspace.WatchEnabled && cfg.Workspace.AutoIndex {
+		watcherMgr = watch.NewManager(watch.Options{
+			Debounce:        cfg.Workspace.WatchDebounce,
+			ExcludePatterns: cfg.Workspace.ExcludePatterns,
+		})
+	}
+
 	return &Engine{
 		indexer:  idx,
 		search:   srv,
 		resolver: res,
 		config:   cfg,
+		watchers: watcherMgr,
 	}
 }
 
@@ -237,6 +249,14 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string) error {
 		return err
 	}
 
+	if e.config != nil && e.config.Workspace.AutoInstallSSESkill {
+		if !skills.IsSkillInstalled("ragcode-sse", wctx.Root) {
+			if err := skills.InstallSkill("ragcode-sse", wctx.Root); err != nil {
+				log.Printf("[WARN] Failed to install ragcode-sse skill for %s: %v", wctx.Root, err)
+			}
+		}
+	}
+
 	langSymbols := make(map[string][]parser.Symbol)
 
 	err = filepath.WalkDir(wctx.Root, func(p string, d os.DirEntry, err error) error {
@@ -286,5 +306,31 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string) error {
 		}
 	}
 
+	if e.watchers != nil {
+		if err := e.watchers.Start(wctx.Root, e.handleWatchChange); err != nil {
+			log.Printf("[WARN] Failed to start watcher for %s: %v", wctx.Root, err)
+		}
+	}
+
+	return nil
+}
+
+// StopWatchers stops all workspace watchers.
+func (e *Engine) StopWatchers() {
+	if e.watchers == nil {
+		return
+	}
+	e.watchers.StopAll()
+}
+
+func (e *Engine) handleWatchChange(ctx context.Context, root string) error {
+	wctx, err := e.DetectContext(ctx, root)
+	if err != nil {
+		return err
+	}
+	if _, ok := e.indexingJobs.Load(wctx.ID); ok {
+		return nil
+	}
+	e.StartIndexingAsync(wctx.Root, wctx.ID)
 	return nil
 }

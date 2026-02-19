@@ -227,6 +227,11 @@ func applyEnvOverrides(cfg *Config) {
 			cfg.Workspace.AutoCreateIDERules = v
 		}
 	}
+	if wsSSESkill := os.Getenv("WORKSPACE_AUTO_INSTALL_SSE_SKILL"); wsSSESkill != "" {
+		if v, err := strconv.ParseBool(wsSSESkill); err == nil {
+			cfg.Workspace.AutoInstallSSESkill = v
+		}
+	}
 
 	// HealthCheck configuration overrides
 	if healthOnStartup := os.Getenv("HEALTH_CHECK_ON_STARTUP"); healthOnStartup != "" {

@@ -2,7 +2,11 @@ package storage
 
 import (
 	"context"
+
+	"github.com/qdrant/go-client/qdrant"
 )
+
+type UpdateResult = qdrant.UpdateResult
 
 // Point represents a single vector entry in the database.
 type Point struct {
@@ -34,7 +38,7 @@ type CollectionInfo struct {
 // VectorStore is the generic interface for any vector database.
 type VectorStore interface {
 	// Upsert adds or updates points in a collection.
-	Upsert(ctx context.Context, collection string, points []Point) error
+	Upsert(ctx context.Context, collection string, points []Point) (*UpdateResult, error)
 
 	// Search finds the nearest neighbors.
 	Search(ctx context.Context, collection string, query SearchQuery) ([]SearchResult, error)

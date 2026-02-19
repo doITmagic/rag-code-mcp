@@ -13,6 +13,7 @@ llm:
 
 storage:
   vector_db:
+    provider: qdrant
     url: http://localhost:6333
     api_key: ""
 
@@ -59,6 +60,9 @@ workspace:
     - .venv
   collection_prefix: ragcode
   auto_create_ide_rules: true
+  auto_install_sse_skill: true
+  watch_enabled: true
+  watch_debounce: 1s
 
 health_check:
   enable_on_startup: true

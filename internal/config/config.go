@@ -238,6 +238,16 @@ type WorkspaceConfig struct {
 	// in workspace roots to ensure AI follows the "Golden Rule"
 	// Default: true
 	AutoCreateIDERules bool `yaml:"auto_create_ide_rules"`
+
+	// AutoInstallSSESkill installs the ragcode-sse skill into detected workspaces.
+	AutoInstallSSESkill bool `yaml:"auto_install_sse_skill"`
+
+	// WatchEnabled controls filesystem watchers for incremental reindexing.
+	WatchEnabled bool `yaml:"watch_enabled"`
+
+	// WatchDebounce configures debounce duration for filesystem events.
+	// Example: 5s
+	WatchDebounce time.Duration `yaml:"watch_debounce"`
 }
 
 // HealthCheckConfig contains health check settings

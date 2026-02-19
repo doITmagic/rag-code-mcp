@@ -6,6 +6,7 @@ require (
 	github.com/Masterminds/semver/v3 v3.4.0
 	github.com/PuerkitoBio/goquery v1.11.0
 	github.com/VKCOM/php-parser v0.8.2
+	github.com/fsnotify/fsnotify v1.7.0
 	github.com/modelcontextprotocol/go-sdk v1.3.1
 	github.com/qdrant/go-client v1.16.2
 	github.com/stretchr/testify v1.11.1

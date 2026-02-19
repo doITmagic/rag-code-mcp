@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
+	"github.com/doITmagic/rag-code-mcp/internal/healthcheck"
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
 	"github.com/doITmagic/rag-code-mcp/internal/service/indexer"
@@ -25,9 +26,9 @@ import (
 )
 
 var (
-	Version = "1.1.21"
+	Version = "2.0.0"
 	Commit  = "none"
-	Date    = "unknown"
+	Date    = "22.02.2026"
 )
 
 func main() {
@@ -62,6 +63,23 @@ func main() {
 
 	// Apply CLI overrides
 	config.ApplyCLIOverrides(cfg, *ollamaURLFlag, *ollamaModel, *ollamaEmbed, *qdrantURLFlag)
+
+	// Kill any existing processes on the HTTP port before health checks
+	if *httpPort > 0 {
+		if err := utils.KillProcessesOnPort(*httpPort); err != nil {
+			logger.Instance.Warn("Failed to kill processes on port %d: %v", *httpPort, err)
+		}
+	}
+
+	// Health checks
+	models := []string{cfg.LLM.OllamaModel, cfg.LLM.OllamaEmbed}
+	health := healthcheck.CheckAllWithModels(cfg.LLM.OllamaBaseURL, cfg.Storage.VectorDB.URL, models)
+	for _, h := range health {
+		if h.Status != "ok" {
+			log.Fatalf("Health check failed for %s: %s\n%s", h.Service, h.Message, healthcheck.GetRemediation(health))
+		}
+	}
+	logger.Instance.Info("Health checks passed")
 
 	// LLM Provider
 	ollamaProvider, err := llm.NewOllamaLLMProvider(cfg.LLM)
@@ -148,6 +166,7 @@ func main() {
 
 	// Cleanup
 	logger.Instance.Info("Shutting down...")
+	eng.StopWatchers()
 	if httpServer != nil {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()

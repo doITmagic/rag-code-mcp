@@ -59,7 +59,7 @@ func (s *QdrantStore) CreateCollection(ctx context.Context, name string, dimensi
 	})
 }
 
-func (s *QdrantStore) Upsert(ctx context.Context, collection string, points []Point) error {
+func (s *QdrantStore) Upsert(ctx context.Context, collection string, points []Point) (*UpdateResult, error) {
 	qPoints := make([]*qdrant.PointStruct, len(points))
 	for i, p := range points {
 		qPoints[i] = &qdrant.PointStruct{
@@ -70,12 +70,11 @@ func (s *QdrantStore) Upsert(ctx context.Context, collection string, points []Po
 	}
 
 	wait := true
-	_, err := s.client.Upsert(ctx, &qdrant.UpsertPoints{
+	return s.client.Upsert(ctx, &qdrant.UpsertPoints{
 		CollectionName: collection,
 		Points:         qPoints,
 		Wait:           &wait,
 	})
-	return err
 }
 
 func (s *QdrantStore) Search(ctx context.Context, collection string, query SearchQuery) ([]SearchResult, error) {
@@ -321,7 +320,11 @@ func ParseQdrantURL(rawURL string) (host string, port int) {
 	}
 	if p := u.Port(); p != "" {
 		if n, err := strconv.Atoi(p); err == nil {
-			port = n
+			// If the port is 6333 (REST), we default to 6334 (gRPC) to avoid protocol mismatch.
+			// The qdrant-go-client requires gRPC.
+			if n != 6333 {
+				port = n
+			}
 		}
 	}
 	return

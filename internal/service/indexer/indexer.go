@@ -116,7 +116,7 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 		if end > len(allPoints) {
 			end = len(allPoints)
 		}
-		if err := s.store.Upsert(ctx, collection, allPoints[i:end]); err != nil {
+		if _, err := s.store.Upsert(ctx, collection, allPoints[i:end]); err != nil {
 			return fmt.Errorf("failed to upsert batch: %w", err)
 		}
 	}

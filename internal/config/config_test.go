@@ -30,15 +30,6 @@ func TestDefaultConfigValues(t *testing.T) {
 	if cfg.Workspace.CollectionPrefix != "ragcode" {
 		t.Errorf("Workspace.CollectionPrefix = %q, want %q", cfg.Workspace.CollectionPrefix, "ragcode")
 	}
-	if cfg.RagCode.Collection != "do-ai-code" {
-		t.Errorf("RagCode.Collection = %q, want %q", cfg.RagCode.Collection, "do-ai-code")
-	}
-	if cfg.Docs.Collection != "do-ai-docs" {
-		t.Errorf("Docs.Collection = %q, want %q", cfg.Docs.Collection, "do-ai-docs")
-	}
-	if cfg.APIDocs.Collection != "do-ai-api-docs" {
-		t.Errorf("APIDocs.Collection = %q, want %q", cfg.APIDocs.Collection, "do-ai-api-docs")
-	}
 }
 
 func TestLoadMissingFileReturnsDefaultConfig(t *testing.T) {

@@ -17,6 +17,7 @@ storage:
   vector_db:
     url: http://localhost:6333
     api_key: ""
+    skip_compatibility_check: true
 
 logging:
   level: debug
@@ -53,3 +54,6 @@ workspace:
   collection_prefix: ragcode
   index_include: []
   index_exclude: []
+  auto_install_sse_skill: true
+  watch_enabled: true
+  watch_debounce: 5s

@@ -1,0 +1,230 @@
+package watch
+
+import (
+	"context"
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/fsnotify/fsnotify"
+)
+
+var defaultExcludeDirs = map[string]struct{}{
+	".git":         {},
+	".idea":        {},
+	".vscode":      {},
+	".vs":          {},
+	".cursor":      {},
+	".windsurf":    {},
+	".ragcode":     {},
+	"node_modules": {},
+	"vendor":       {},
+	"dist":         {},
+	"build":        {},
+	"target":       {},
+	".venv":        {},
+	"__pycache__":  {},
+}
+
+var defaultHiddenAllowlist = map[string]struct{}{
+	".git":      {},
+	".ragcode":  {},
+	".agent":    {},
+	".idea":     {},
+	".vscode":   {},
+	".vs":       {},
+	".cursor":   {},
+	".windsurf": {},
+}
+
+const defaultDebounce = 1 * time.Second
+
+// Options configures watcher behavior.
+type Options struct {
+	Debounce        time.Duration
+	ExcludePatterns []string
+}
+
+// FileWatcher handles file system notifications for a workspace.
+type FileWatcher struct {
+	watcher  *fsnotify.Watcher
+	root     string
+	stopChan chan struct{}
+	stopOnce sync.Once
+	mu       sync.Mutex
+	timer    *time.Timer
+	debounce time.Duration
+	onChange func(context.Context, string) error
+	exclude  map[string]struct{}
+}
+
+// NewFileWatcher creates a new file watcher for the given root directory.
+func NewFileWatcher(root string, opts Options, onChange func(context.Context, string) error) (*FileWatcher, error) {
+	w, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, err
+	}
+
+	debounce := opts.Debounce
+	if debounce <= 0 {
+		debounce = defaultDebounce
+	}
+
+	return &FileWatcher{
+		watcher:  w,
+		root:     root,
+		stopChan: make(chan struct{}),
+		debounce: debounce,
+		onChange: onChange,
+		exclude:  normalizeExclude(opts.ExcludePatterns),
+	}, nil
+}
+
+// Start begins watching the directory tree.
+func (fw *FileWatcher) Start() {
+	if isInvalidRoot(fw.root) {
+		log.Printf("[ERROR] Cannot start watcher on invalid root directory: %s", fw.root)
+		return
+	}
+
+	err := filepath.WalkDir(fw.root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if fw.shouldSkipDir(path, d.Name(), path == fw.root) {
+				return filepath.SkipDir
+			}
+			if err := fw.watcher.Add(path); err != nil {
+				log.Printf("[WARN] Unable to watch %s: %v", path, err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("[WARN] Error walking directory for watcher setup: %v", err)
+	}
+
+	log.Printf("👀 Watcher started for %s", fw.root)
+	go fw.watchLoop()
+}
+
+func (fw *FileWatcher) watchLoop() {
+	defer fw.watcher.Close()
+
+	for {
+		select {
+		case event, ok := <-fw.watcher.Events:
+			if !ok {
+				return
+			}
+			if event.Op&fsnotify.Chmod == fsnotify.Chmod {
+				continue
+			}
+			if event.Op&fsnotify.Create == fsnotify.Create {
+				info, err := os.Stat(event.Name)
+				if err == nil && info.IsDir() {
+					base := filepath.Base(event.Name)
+					if !fw.shouldSkipDir(event.Name, base, false) {
+						if err := fw.watcher.Add(event.Name); err != nil {
+							log.Printf("[WARN] Unable to watch new dir %s: %v", event.Name, err)
+						}
+					}
+				}
+			}
+
+			fw.triggerDebouncedIndex()
+
+		case err, ok := <-fw.watcher.Errors:
+			if !ok {
+				return
+			}
+			log.Printf("[ERROR] Watcher error: %v", err)
+
+		case <-fw.stopChan:
+			return
+		}
+	}
+}
+
+func (fw *FileWatcher) triggerDebouncedIndex() {
+	fw.mu.Lock()
+	defer fw.mu.Unlock()
+
+	if fw.timer != nil {
+		fw.timer.Stop()
+	}
+
+	fw.timer = time.AfterFunc(fw.debounce, func() {
+		log.Printf("♻️ File changes detected in %s - Triggering reindex...", fw.root)
+		if fw.onChange == nil {
+			return
+		}
+		ctx := context.Background()
+		if err := fw.onChange(ctx, fw.root); err != nil {
+			log.Printf("[ERROR] Auto-reindexing failed: %v", err)
+		} else {
+			log.Printf("✅ Auto-reindexing complete for %s", fw.root)
+		}
+	})
+}
+
+// Stop terminates the watcher.
+func (fw *FileWatcher) Stop() {
+	fw.stopOnce.Do(func() {
+		close(fw.stopChan)
+	})
+}
+
+func (fw *FileWatcher) shouldSkipDir(path, base string, isRoot bool) bool {
+	if isRoot {
+		return false
+	}
+	if _, skip := fw.exclude[strings.ToLower(base)]; skip {
+		return true
+	}
+	if strings.HasPrefix(base, ".") {
+		_, allowed := defaultHiddenAllowlist[strings.ToLower(base)]
+		return !allowed
+	}
+	return false
+}
+
+func normalizeExclude(patterns []string) map[string]struct{} {
+	if len(patterns) == 0 {
+		return defaultExcludeDirs
+	}
+	result := make(map[string]struct{}, len(patterns))
+	for _, pattern := range patterns {
+		trimmed := strings.TrimSpace(pattern)
+		if trimmed == "" {
+			continue
+		}
+		result[strings.ToLower(trimmed)] = struct{}{}
+	}
+	return result
+}
+
+func isInvalidRoot(root string) bool {
+	clean := filepath.Clean(strings.TrimSpace(root))
+	if clean == "" || clean == "." {
+		return true
+	}
+	if clean == string(os.PathSeparator) {
+		return true
+	}
+	home, err := os.UserHomeDir()
+	if err == nil {
+		homeClean := filepath.Clean(home)
+		if clean == homeClean {
+			return true
+		}
+	}
+	if clean == os.TempDir() {
+		return true
+	}
+	return false
+}

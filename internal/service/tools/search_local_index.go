@@ -121,7 +121,9 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			return response.JSON()
 		}
 
-		return "", fmt.Errorf("search failed: %w", err)
+		response.Status = "error"
+		response.Error = fmt.Sprintf("search failed: %v", err)
+		return response.JSON()
 	}
 
 	response.Context = ContextMetadata{

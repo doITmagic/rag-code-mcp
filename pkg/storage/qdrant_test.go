@@ -81,7 +81,7 @@ func TestQdrantStoreUpsertPayloadMapping(t *testing.T) {
 			"active":   true,
 		},
 	}}
-	if err := store.Upsert(context.Background(), "col", points); err != nil {
+	if _, err := store.Upsert(context.Background(), "col", points); err != nil {
 		t.Fatalf("upsert err: %v", err)
 	}
 	if len(fake.upsertRequests) != 1 {

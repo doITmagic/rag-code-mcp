@@ -64,8 +64,12 @@ func TestCheckUpdateTool_Error(t *testing.T) {
 	}
 
 	tool := NewCheckUpdateTool("1.0.0")
-	if _, err := tool.Execute(context.Background(), nil); err == nil {
-		t.Fatalf("expected error")
+	msg, err := tool.Execute(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(msg, "\"status\": \"error\"") {
+		t.Fatalf("expected error status in response, got %s", msg)
 	}
 }
 

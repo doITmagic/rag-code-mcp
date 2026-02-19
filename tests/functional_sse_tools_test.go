@@ -307,6 +307,21 @@ func TestFunctionalSSETools(t *testing.T) {
 	msg = waitForResponse(t, sse.outCh, "eval-1", 20*time.Second)
 	_ = parseToolText(t, msg)
 
+	// rag_index_workspace
+	sendJSONRPC(t, baseURL, sse.sessionID, "index-1", "tools/call", map[string]any{
+		"name": "rag_index_workspace",
+		"arguments": map[string]any{
+			"file_path": filePath,
+			"recreate":  true,
+		},
+	})
+	msg = waitForResponse(t, sse.outCh, "index-1", 20*time.Second)
+	respIndex := parseToolText(t, msg)
+	statusIndex, _ := respIndex["status"].(string)
+	if statusIndex != "indexing_started" {
+		t.Fatalf("expected indexing_started, got %s", statusIndex)
+	}
+
 	// rag_search_code with indexing wait
 	deadline := time.Now().Add(2 * time.Minute)
 	for {

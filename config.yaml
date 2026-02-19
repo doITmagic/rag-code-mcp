@@ -51,6 +51,7 @@ workspace:
     - build
     - dist
     - .venv
+    - inspirations
   collection_prefix: ragcode
   index_include: []
   index_exclude: []

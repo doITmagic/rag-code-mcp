@@ -21,6 +21,10 @@ import (
 	"github.com/doITmagic/rag-code-mcp/internal/service/tools"
 	"github.com/doITmagic/rag-code-mcp/internal/utils"
 	"github.com/doITmagic/rag-code-mcp/pkg/llm"
+	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/go"
+	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/html"
+	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/php"
+	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/python"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -119,6 +123,7 @@ func main() {
 
 	// Register Tools
 	tools.NewSearchLocalIndexTool(eng).Register(server)
+	tools.NewIndexWorkspaceTool(eng).Register(server)
 	tools.NewListSkillsTool(eng).Register(server)
 	tools.NewInstallSkillTool(eng).Register(server)
 	tools.NewEvaluateRagCodeTool(eng, cfg).Register(server)

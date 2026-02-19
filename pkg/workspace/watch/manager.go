@@ -7,7 +7,7 @@ import (
 )
 
 // OnChangeFunc is invoked when file changes are detected for a workspace.
-type OnChangeFunc func(ctx context.Context, root string) error
+type OnChangeFunc func(ctx context.Context, root string, changedFiles []string) error
 
 // Watcher abstracts a filesystem watcher implementation.
 type Watcher interface {
@@ -31,7 +31,7 @@ type Manager struct {
 func NewManager(opts Options) *Manager {
 	return &Manager{
 		opts:     opts,
-		factory: defaultFactory,
+		factory:  defaultFactory,
 		watchers: make(map[string]Watcher),
 	}
 }

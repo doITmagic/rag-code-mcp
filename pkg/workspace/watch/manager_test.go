@@ -40,10 +40,10 @@ func TestManagerStartStop(t *testing.T) {
 		return watcher, nil
 	})
 
-	if err := mgr.Start("/tmp/project", func(ctx context.Context, root string) error { return nil }); err != nil {
+	if err := mgr.Start("/tmp/project", func(ctx context.Context, root string, files []string) error { return nil }); err != nil {
 		t.Fatalf("start watcher: %v", err)
 	}
-	if err := mgr.Start("/tmp/project", func(ctx context.Context, root string) error { return nil }); err != nil {
+	if err := mgr.Start("/tmp/project", func(ctx context.Context, root string, files []string) error { return nil }); err != nil {
 		t.Fatalf("start watcher second time: %v", err)
 	}
 
@@ -73,10 +73,10 @@ func TestManagerStopAll(t *testing.T) {
 		return fw, nil
 	})
 
-	if err := mgr.Start("/tmp/project-a", func(ctx context.Context, root string) error { return nil }); err != nil {
+	if err := mgr.Start("/tmp/project-a", func(ctx context.Context, root string, files []string) error { return nil }); err != nil {
 		t.Fatalf("start watcher a: %v", err)
 	}
-	if err := mgr.Start("/tmp/project-b", func(ctx context.Context, root string) error { return nil }); err != nil {
+	if err := mgr.Start("/tmp/project-b", func(ctx context.Context, root string, files []string) error { return nil }); err != nil {
 		t.Fatalf("start watcher b: %v", err)
 	}
 

@@ -74,8 +74,10 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 		return response.JSON()
 	}
 
+	recreate, _ := params["recreate"].(bool)
+
 	// Trigger async indexing
-	t.engine.StartIndexingAsync(wctx.Root, wctx.ID)
+	t.engine.StartIndexingAsync(wctx.Root, wctx.ID, nil, recreate)
 
 	response := ToolResponse{
 		Status:  "indexing_started",

@@ -37,7 +37,7 @@ Send message: http://localhost:3000/messages
 {
   "jsonrpc": "2.0",
   "id": "request-001",
-  "method": "call_tool",
+  "method": "tools/call",
   "params": {
     "name": "rag_search_code",
     "arguments": {
@@ -49,7 +49,7 @@ Send message: http://localhost:3000/messages
 }
 ```
 
-Use other MCP methods such as `list_tools`, `ping`, etc.
+Use other MCP methods such as `tools/list`, `ping`, etc.
 
 ---
 
@@ -69,7 +69,7 @@ curl -X POST http://localhost:3000/messages \
      -d '{
   "jsonrpc": "2.0",
   "id": "search-001",
-  "method": "call_tool",
+  "method": "tools/call",
   "params": {
     "name": "rag_search_code",
     "arguments": {
@@ -95,7 +95,7 @@ MSG_URL = "http://localhost:3000/messages"
 payload = {
     "jsonrpc": "2.0",
     "id": "list-tools",
-    "method": "list_tools",
+    "method": "tools/list",
     "params": {}
 }
 
@@ -111,7 +111,7 @@ Any SSE client works; just keep reading events and match IDs.
 
 ## 🧭 Discover Available Tools
 
-1. Call `list_tools` via JSON-RPC to enumerate every MCP tool (rag_search_code, rag_index_workspace, etc.).
+1. Call `tools/list` via JSON-RPC to enumerate every MCP tool (rag_search_code, rag_index_workspace, etc.).
 2. Inspect each tool's `input_schema` to learn required arguments.
 
 ---

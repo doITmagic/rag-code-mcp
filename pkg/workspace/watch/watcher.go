@@ -50,19 +50,20 @@ type Options struct {
 
 // FileWatcher handles file system notifications for a workspace.
 type FileWatcher struct {
-	watcher  *fsnotify.Watcher
-	root     string
-	stopChan chan struct{}
-	stopOnce sync.Once
-	mu       sync.Mutex
-	timer    *time.Timer
-	debounce time.Duration
-	onChange func(context.Context, string) error
-	exclude  map[string]struct{}
+	watcher      *fsnotify.Watcher
+	root         string
+	stopChan     chan struct{}
+	stopOnce     sync.Once
+	mu           sync.Mutex
+	timer        *time.Timer
+	debounce     time.Duration
+	onChange     func(context.Context, string, []string) error
+	exclude      map[string]struct{}
+	changedFiles map[string]struct{}
 }
 
 // NewFileWatcher creates a new file watcher for the given root directory.
-func NewFileWatcher(root string, opts Options, onChange func(context.Context, string) error) (*FileWatcher, error) {
+func NewFileWatcher(root string, opts Options, onChange func(context.Context, string, []string) error) (*FileWatcher, error) {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
@@ -74,12 +75,13 @@ func NewFileWatcher(root string, opts Options, onChange func(context.Context, st
 	}
 
 	return &FileWatcher{
-		watcher:  w,
-		root:     root,
-		stopChan: make(chan struct{}),
-		debounce: debounce,
-		onChange: onChange,
-		exclude:  normalizeExclude(opts.ExcludePatterns),
+		watcher:      w,
+		root:         root,
+		stopChan:     make(chan struct{}),
+		debounce:     debounce,
+		onChange:     onChange,
+		exclude:      normalizeExclude(opts.ExcludePatterns),
+		changedFiles: make(map[string]struct{}),
 	}, nil
 }
 
@@ -136,6 +138,10 @@ func (fw *FileWatcher) watchLoop() {
 				}
 			}
 
+			fw.mu.Lock()
+			fw.changedFiles[event.Name] = struct{}{}
+			fw.mu.Unlock()
+
 			fw.triggerDebouncedIndex()
 
 		case err, ok := <-fw.watcher.Errors:
@@ -159,12 +165,27 @@ func (fw *FileWatcher) triggerDebouncedIndex() {
 	}
 
 	fw.timer = time.AfterFunc(fw.debounce, func() {
-		log.Printf("♻️ File changes detected in %s - Triggering reindex...", fw.root)
+		fw.mu.Lock()
+		files := make([]string, 0, len(fw.changedFiles))
+		for f := range fw.changedFiles {
+			files = append(files, f)
+		}
+		// Clear properly inside lock
+		fw.changedFiles = make(map[string]struct{})
+		fw.mu.Unlock()
+
+		if len(files) == 0 {
+			return
+		}
+
+		log.Printf("♻️ File changes detected in %s (%d files) - Triggering reindex...", fw.root, len(files))
+
 		if fw.onChange == nil {
 			return
 		}
+
 		ctx := context.Background()
-		if err := fw.onChange(ctx, fw.root); err != nil {
+		if err := fw.onChange(ctx, fw.root, files); err != nil {
 			log.Printf("[ERROR] Auto-reindexing failed: %v", err)
 		} else {
 			log.Printf("✅ Auto-reindexing complete for %s", fw.root)

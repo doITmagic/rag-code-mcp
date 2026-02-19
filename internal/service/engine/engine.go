@@ -197,7 +197,7 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 		}
 
 		// Trigger background indexing
-		e.StartIndexingAsync(wctx.Root, wctx.ID)
+		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 		return nil, &ErrIndexingStarted{WorkspaceRoot: wctx.Root}
 	}
 
@@ -222,19 +222,27 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 }
 
 // StartIndexingAsync starts the indexing process in a background goroutine.
-func (e *Engine) StartIndexingAsync(root, id string) {
+// If changedFiles is nil or empty, a full re-index is performed.
+func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recreate bool) {
 	if _, loaded := e.indexingJobs.LoadOrStore(id, time.Now()); loaded {
 		return // Already running
 	}
 
 	go func() {
 		defer e.indexingJobs.Delete(id)
-		log.Printf("[INFO] 🚀 Starting background indexing for: %s", root)
 
-		// Create a detached context for the background job
 		ctx := context.Background()
+		var err error
 
-		if err := e.IndexWorkspace(ctx, root); err != nil {
+		if len(changedFiles) > 0 {
+			log.Printf("[INFO] ♻️ Starting incremental indexing for %d files in: %s", len(changedFiles), root)
+			err = e.IndexFiles(ctx, root, changedFiles)
+		} else {
+			log.Printf("[INFO] 🚀 Starting background indexing for: %s (recreate=%v)", root, recreate)
+			err = e.IndexWorkspace(ctx, root, recreate)
+		}
+
+		if err != nil {
 			log.Printf("[ERROR] Background indexing failed for %s: %v", root, err)
 		} else {
 			log.Printf("[INFO] ✅ Background indexing completed for: %s", root)
@@ -242,8 +250,66 @@ func (e *Engine) StartIndexingAsync(root, id string) {
 	}()
 }
 
+// IndexFiles indexes specific files in a workspace.
+func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) error {
+	wctx, err := e.DetectContext(ctx, root)
+	if err != nil {
+		return err
+	}
+
+	langSymbols := make(map[string][]parser.Symbol)
+
+	for _, p := range files {
+		// Only process if file still exists
+		if _, err := os.Stat(p); os.IsNotExist(err) {
+			continue
+		}
+
+		a := parser.GetByFile(p)
+		if a == nil {
+			continue
+		}
+
+		res, err := a.Analyze(ctx, p)
+		if err != nil {
+			log.Printf("[WARN] Failed to analyze %s: %v", p, err)
+			continue
+		}
+
+		if _, ok := langSymbols[a.Name()]; !ok {
+			langSymbols[a.Name()] = make([]parser.Symbol, 0)
+		}
+		langSymbols[a.Name()] = append(langSymbols[a.Name()], res.Symbols...)
+	}
+
+	if len(langSymbols) == 0 {
+		return nil
+	}
+
+	totalFiles := 0
+	for lang, syms := range langSymbols {
+		log.Printf("[INFO] Found %d files/symbols for %s in incremental update", len(syms), lang)
+		totalFiles += len(syms)
+	}
+
+	for lang, symbols := range langSymbols {
+		collection := fmt.Sprintf("ragcode-%s-%s", wctx.ID, lang)
+		for i := range symbols {
+			if symbols[i].Metadata == nil {
+				symbols[i].Metadata = make(map[string]any)
+			}
+			symbols[i].Metadata["branch"] = wctx.Branch
+		}
+		if err := e.indexer.IndexItems(ctx, collection, symbols); err != nil {
+			return fmt.Errorf("failed to index %s: %w", lang, err)
+		}
+	}
+
+	return nil
+}
+
 // IndexWorkspace indexes all files in a workspace.
-func (e *Engine) IndexWorkspace(ctx context.Context, path string) error {
+func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool) error {
 	wctx, err := e.DetectContext(ctx, path)
 	if err != nil {
 		return err
@@ -267,6 +333,7 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string) error {
 			name := d.Name()
 			if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" ||
 				name == "venv" || name == "__pycache__" || name == "dist" || name == "build" {
+				// Also define default exclusion logic here if needed or rely on config
 				return filepath.SkipDir
 			}
 			return nil
@@ -291,6 +358,15 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string) error {
 	})
 	if err != nil {
 		return err
+	}
+
+	totalFiles := 0
+	for lang, syms := range langSymbols {
+		log.Printf("[INFO] Found %d files/symbols for %s in %s", len(syms), lang, wctx.Root)
+		totalFiles += len(syms)
+	}
+	if totalFiles == 0 {
+		log.Printf("[WARN] No supported code files found in %s", wctx.Root)
 	}
 
 	for lang, symbols := range langSymbols {
@@ -323,7 +399,7 @@ func (e *Engine) StopWatchers() {
 	e.watchers.StopAll()
 }
 
-func (e *Engine) handleWatchChange(ctx context.Context, root string) error {
+func (e *Engine) handleWatchChange(ctx context.Context, root string, changedFiles []string) error {
 	wctx, err := e.DetectContext(ctx, root)
 	if err != nil {
 		return err
@@ -331,6 +407,6 @@ func (e *Engine) handleWatchChange(ctx context.Context, root string) error {
 	if _, ok := e.indexingJobs.Load(wctx.ID); ok {
 		return nil
 	}
-	e.StartIndexingAsync(wctx.Root, wctx.ID)
+	e.StartIndexingAsync(wctx.Root, wctx.ID, changedFiles, false)
 	return nil
 }

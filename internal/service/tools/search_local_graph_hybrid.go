@@ -12,99 +12,81 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// SearchLocalIndexTool implements the rag_search_code MCP tool.
-type SearchLocalIndexTool struct {
+// SearchLocalGraphHybridTool implements the rag_graph_search MCP tool.
+type SearchLocalGraphHybridTool struct {
 	engine      *engine.Engine
 	searchLimit int
 }
 
-// NewSearchLocalIndexTool creates a new search tool backed by the Engine.
-func NewSearchLocalIndexTool(eng *engine.Engine) *SearchLocalIndexTool {
-	return &SearchLocalIndexTool{
+// NewSearchLocalGraphHybridTool creates a new graph search tool backed by the Engine.
+func NewSearchLocalGraphHybridTool(eng *engine.Engine) *SearchLocalGraphHybridTool {
+	return &SearchLocalGraphHybridTool{
 		engine:      eng,
 		searchLimit: 10,
 	}
 }
 
-func (t *SearchLocalIndexTool) Name() string { return "rag_search_code" }
-func (t *SearchLocalIndexTool) Description() string {
-	return "Comprehensive code search for finding logic, symbols, or understanding flow. " +
-		"Use 'discovery' mode (default) for conceptual questions and broad exploration (finds by MEANING). " +
-		"Use 'exact' mode for precise matches of symbols, specific errors, and variable names (Hybrid search). " +
-		"Returns complete source code with file path and line numbers. Supports Go, PHP, Python, HTML. " +
+func (t *SearchLocalGraphHybridTool) Name() string { return "rag_graph_search" }
+func (t *SearchLocalGraphHybridTool) Description() string {
+	return "EXPERIMENTAL: Code search that also resolves deep graph dependencies. " +
+		"Use this for obtaining a symbol AND the definitions of the classes/structs it depends on in a single call. " +
 		"IMPORTANT: Always provide the 'file_path' of the file you are currently working on for better context detection."
 }
 
-type SearchLocalIndexInput struct {
-	Query       string `json:"query"`
-	FilePath    string `json:"file_path,omitempty"`
-	Limit       int    `json:"limit,omitempty"`
-	Mode        string `json:"mode,omitempty" enum:"discovery,exact"`
-	IncludeDocs bool   `json:"include_docs,omitempty"`
+type SearchLocalGraphHybridInput struct {
+	Query    string `json:"query"`
+	FilePath string `json:"file_path,omitempty"`
+	Limit    int    `json:"limit,omitempty"`
 }
 
-func (t *SearchLocalIndexTool) Register(server *mcp.Server) {
+func (t *SearchLocalGraphHybridTool) Register(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        t.Name(),
 		Description: t.Description(),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, input SearchLocalIndexInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input SearchLocalGraphHybridInput) (*mcp.CallToolResult, any, error) {
 		args := map[string]interface{}{
-			"query":        input.Query,
-			"file_path":    input.FilePath,
-			"limit":        input.Limit,
-			"mode":         input.Mode,
-			"include_docs": input.IncludeDocs,
+			"query":     input.Query,
+			"file_path": input.FilePath,
+			"limit":     input.Limit,
 		}
 
 		start := time.Now()
 		result, err := t.Execute(ctx, args)
 		if err != nil {
-			logger.Instance.Error("rag_search_code failed (%v): %v", time.Since(start), err)
+			logger.Instance.Error("rag_graph_search failed (%v): %v", time.Since(start), err)
 			res := &mcp.CallToolResult{}
 			res.SetError(err)
 			return res, nil, nil
 		}
 
-		logger.Instance.Info("rag_search_code completed in %v", time.Since(start))
+		logger.Instance.Info("rag_graph_search completed in %v", time.Since(start))
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: result}},
 		}, nil, nil
 	})
 }
 
-func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]interface{}) (string, error) {
+func (t *SearchLocalGraphHybridTool) Execute(ctx context.Context, params map[string]interface{}) (string, error) {
 	query, _ := params["query"].(string)
 	if strings.TrimSpace(query) == "" {
 		return "", fmt.Errorf("query parameter is required")
 	}
 
 	filePath, _ := params["file_path"].(string)
-	mode, _ := params["mode"].(string)
-	if mode == "" {
-		mode = "discovery"
-	}
 
-	logger.Instance.Highlight("rag_search_code (%s): '%s' (context: %s)", mode, query, filePath)
+	logger.Instance.Highlight("rag_graph_search: '%s' (context: %s)", query, filePath)
 
 	limit := t.searchLimit
 	if l, ok := params["limit"].(int); ok && l > 0 {
 		limit = l
 	}
 
-	includeDocs, _ := params["include_docs"].(bool)
-
 	response := ToolResponse{
 		Status: "success",
 	}
 
-	var result *engine.SearchCodeResult
-	var err error
-
-	if mode == "exact" {
-		result, err = t.engine.HybridSearchCode(ctx, filePath, query, limit)
-	} else {
-		result, err = t.engine.SearchCode(ctx, filePath, query, limit, includeDocs)
-	}
+	// 1. Primary Hybrid Search
+	result, err := t.engine.HybridSearchCode(ctx, filePath, query, limit)
 	if err != nil {
 		if strings.Contains(err.Error(), "No workspace detected") {
 			response.Status = "error"
@@ -120,7 +102,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			response.Status = "indexing_started"
 			response.Message = fmt.Sprintf("🚀 Workspace '%s' was not indexed. Background indexing has been STARTED automatically. Please wait a few moments and try your search again.", indexingStarted.WorkspaceRoot)
 			response.Context.WorkspaceRoot = indexingStarted.WorkspaceRoot
-			response.Context.DetectionSource = "registry_fallback" // Fallback assumed if SearchCode failed with indexing_started on empty path
+			response.Context.DetectionSource = "registry_fallback"
 			return response.JSON()
 		}
 
@@ -217,7 +199,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 							subDesc[k] = v
 						}
 						// Mark this as an expanded node context
-						subDesc["_graph_expansion"] = fmt.Sprintf("Dependency of %v", topResult.Point.Payload["Name"])
+						subDesc["_graph_expansion"] = fmt.Sprintf("Dependency of %s", topResult.Point.Payload["name"])
 						subDesc["score"] = sub.Score
 						subDesc["id"] = sub.Point.ID
 						descriptors = append(descriptors, subDesc)

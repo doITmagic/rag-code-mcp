@@ -2,10 +2,12 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/qdrant/go-client/qdrant"
 )
@@ -167,7 +169,30 @@ func (s *QdrantStore) SearchByChunkType(ctx context.Context, collection string, 
 func (s *QdrantStore) mapToPayload(m map[string]interface{}) map[string]*qdrant.Value {
 	res := make(map[string]*qdrant.Value, len(m))
 	for k, v := range m {
-		res[k] = qdrant.NewValueString(fmt.Sprintf("%v", v))
+		if v == nil {
+			continue
+		}
+		switch typed := v.(type) {
+		case string:
+			res[k] = qdrant.NewValueString(typed)
+		case int:
+			res[k] = qdrant.NewValueInt(int64(typed))
+		case int64:
+			res[k] = qdrant.NewValueInt(typed)
+		case float32:
+			res[k] = qdrant.NewValueDouble(float64(typed))
+		case float64:
+			res[k] = qdrant.NewValueDouble(typed)
+		case bool:
+			res[k] = qdrant.NewValueBool(typed)
+		default:
+			b, err := json.Marshal(v)
+			if err == nil {
+				res[k] = qdrant.NewValueString(string(b))
+			} else {
+				res[k] = qdrant.NewValueString(fmt.Sprintf("%v", v))
+			}
+		}
 	}
 	return res
 }
@@ -175,7 +200,29 @@ func (s *QdrantStore) mapToPayload(m map[string]interface{}) map[string]*qdrant.
 func (s *QdrantStore) payloadToMap(p map[string]*qdrant.Value) map[string]interface{} {
 	res := make(map[string]interface{}, len(p))
 	for k, v := range p {
-		res[k] = v.GetStringValue()
+		if v == nil || v.Kind == nil {
+			continue
+		}
+		switch v.Kind.(type) {
+		case *qdrant.Value_StringValue:
+			str := v.GetStringValue()
+			if (strings.HasPrefix(str, "[") && strings.HasSuffix(str, "]")) || (strings.HasPrefix(str, "{") && strings.HasSuffix(str, "}")) {
+				var parsed any
+				if err := json.Unmarshal([]byte(str), &parsed); err == nil {
+					res[k] = parsed
+					continue
+				}
+			}
+			res[k] = str
+		case *qdrant.Value_IntegerValue:
+			res[k] = v.GetIntegerValue()
+		case *qdrant.Value_DoubleValue:
+			res[k] = v.GetDoubleValue()
+		case *qdrant.Value_BoolValue:
+			res[k] = v.GetBoolValue()
+		default:
+			res[k] = v.GetStringValue()
+		}
 	}
 	return res
 }

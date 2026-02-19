@@ -1,20 +1,25 @@
 package golang
 
+import (
+	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
+)
+
 // CodeChunk represents a semantically meaningful piece of code
 type CodeChunk struct {
-	Type               string         `json:"type"`
-	Name               string         `json:"name"`
-	Package            string         `json:"package"`
-	Language           string         `json:"language"`
-	FilePath           string         `json:"file_path"`
-	StartLine          int            `json:"start_line"`
-	EndLine            int            `json:"end_line"`
-	SelectionStartLine int            `json:"selection_start_line,omitempty"`
-	SelectionEndLine   int            `json:"selection_end_line,omitempty"`
-	Signature          string         `json:"signature"`
-	Docstring          string         `json:"docstring"`
-	Code               string         `json:"code"`
-	Metadata           map[string]any `json:"metadata,omitempty"`
+	Type               string               `json:"type"`
+	Name               string               `json:"name"`
+	Package            string               `json:"package"`
+	Language           string               `json:"language"`
+	FilePath           string               `json:"file_path"`
+	StartLine          int                  `json:"start_line"`
+	EndLine            int                  `json:"end_line"`
+	SelectionStartLine int                  `json:"selection_start_line,omitempty"`
+	SelectionEndLine   int                  `json:"selection_end_line,omitempty"`
+	Signature          string               `json:"signature"`
+	Docstring          string               `json:"docstring"`
+	Code               string               `json:"code"`
+	Relations          []pkgParser.Relation `json:"relations,omitempty"`
+	Metadata           map[string]any       `json:"metadata,omitempty"`
 }
 
 // PackageInfo contains comprehensive information about a Go package

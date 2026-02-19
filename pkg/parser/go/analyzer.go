@@ -60,6 +60,7 @@ func (ca *CodeAnalyzer) Analyze(ctx context.Context, path string) (*pkgParser.Re
 			EndLine:   ch.EndLine,
 			FilePath:  ch.FilePath,
 			Language:  ch.Language,
+			Relations: ch.Relations,
 			Metadata:  ch.Metadata,
 		})
 	}
@@ -729,6 +730,18 @@ func convertPackageInfoToChunks(pi *PackageInfo) []CodeChunk {
 		if fn.IsMethod {
 			kind = "method"
 		}
+
+		var rels []pkgParser.Relation
+		for _, p := range fn.Parameters {
+			rels = append(rels, extractRelationsFromType(p.Type)...)
+		}
+		for _, r := range fn.Returns {
+			rels = append(rels, extractRelationsFromType(r.Type)...)
+		}
+		if fn.Receiver != "" {
+			rels = append(rels, extractRelationsFromType(fn.Receiver)...)
+		}
+
 		out = append(out, CodeChunk{
 			Type:      kind,
 			Name:      fn.Name,
@@ -740,6 +753,7 @@ func convertPackageInfoToChunks(pi *PackageInfo) []CodeChunk {
 			Signature: fn.Signature,
 			Docstring: fn.Description,
 			Code:      fn.Code,
+			Relations: rels,
 			Metadata: map[string]any{
 				"receiver":  fn.Receiver,
 				"is_method": fn.IsMethod,
@@ -756,6 +770,21 @@ func convertPackageInfoToChunks(pi *PackageInfo) []CodeChunk {
 		if sig == "" {
 			sig = "type"
 		}
+
+		var rels []pkgParser.Relation
+		for _, f := range tp.Fields {
+			rels = append(rels, extractRelationsFromType(f.Type)...)
+		}
+		// Interfaces methods might use types too
+		for _, m := range tp.Methods {
+			for _, p := range m.Parameters {
+				rels = append(rels, extractRelationsFromType(p.Type)...)
+			}
+			for _, r := range m.Returns {
+				rels = append(rels, extractRelationsFromType(r.Type)...)
+			}
+		}
+
 		out = append(out, CodeChunk{
 			Type:      "type",
 			Name:      tp.Name,
@@ -767,6 +796,7 @@ func convertPackageInfoToChunks(pi *PackageInfo) []CodeChunk {
 			Signature: fmt.Sprintf("%s %s", sig, tp.Name),
 			Docstring: tp.Description,
 			Code:      tp.Code,
+			Relations: rels,
 			Metadata: map[string]any{
 				"kind":      tp.Kind,
 				"fields":    tp.Fields,
@@ -814,6 +844,27 @@ func convertPackageInfoToChunks(pi *PackageInfo) []CodeChunk {
 		})
 	}
 	return out
+}
+
+func extractRelationsFromType(typStr string) []pkgParser.Relation {
+	// Clean typical modifiers
+	t := strings.TrimLeft(typStr, "[]*.")
+	t = strings.ReplaceAll(t, "map[string]", "") // naive map cleanup
+	t = strings.TrimLeft(t, "[]*.")
+	t = strings.TrimSpace(t)
+
+	if t == "" {
+		return nil
+	}
+	// Ignore builtin primitives
+	switch t {
+	case "string", "int", "int32", "int64", "float32", "float64", "bool", "error", "any", "interface{}", "byte", "rune":
+		return nil
+	}
+
+	return []pkgParser.Relation{
+		{TargetName: t, Type: pkgParser.RelUsesType},
+	}
 }
 
 // extractCodeFromFile reads source code from a file between specified line numbers (inclusive, 1-based)

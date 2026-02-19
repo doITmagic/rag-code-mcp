@@ -49,6 +49,21 @@ const (
 	Var       SymbolType = "var"
 )
 
+// RelationType identifies how a symbol interacts with another.
+type RelationType string
+
+const (
+	RelUsesType   RelationType = "uses_type"
+	RelImplements RelationType = "implements"
+	RelCalls      RelationType = "calls"
+)
+
+// Relation describes a connection pointing to another code entity.
+type Relation struct {
+	TargetName string       `json:"target_name"`
+	Type       RelationType `json:"type"`
+}
+
 // Symbol represents a generic code entity (function, class, etc.)
 type Symbol struct {
 	Name      string
@@ -61,6 +76,7 @@ type Symbol struct {
 	EndLine   int
 	FilePath  string
 	Language  string
+	Relations []Relation // Captured structural dependencies (AST graph)
 	Metadata  map[string]any
 }
 

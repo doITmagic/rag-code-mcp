@@ -160,9 +160,16 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 		return response.JSON()
 	}
 
-	// Prepare data
+	// Extract standard descriptors
 	descriptors := make([]map[string]any, 0, len(result.Results))
+	seenIDs := make(map[string]bool)
+
 	for _, r := range result.Results {
+		if seenIDs[r.Point.ID] {
+			continue
+		}
+		seenIDs[r.Point.ID] = true
+
 		desc := make(map[string]any)
 		for k, v := range r.Point.Payload {
 			desc[k] = v
@@ -170,6 +177,60 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 		desc["score"] = r.Score
 		desc["id"] = r.Point.ID
 		descriptors = append(descriptors, desc)
+	}
+
+	// 2. Graph Context Expansion
+	// We will look at the 'Relations' in the payload of the TOP result
+	topResult := result.Results[0]
+	relationsRaw, hasRel := topResult.Point.Payload["Relations"]
+	if !hasRel {
+		relationsRaw, hasRel = topResult.Point.Payload["relations"]
+	}
+
+	if hasRel {
+		// Depending on the storage, relations might be []interface{}
+		if relList, ok := relationsRaw.([]interface{}); ok {
+			var fetchedTargets []string
+
+			for _, relRaw := range relList {
+				relMap, ok := relRaw.(map[string]interface{})
+				if !ok {
+					continue
+				}
+
+				targetName, _ := relMap["target_name"].(string)
+				if targetName == "" {
+					continue
+				}
+
+				// perform a tiny sub-search for this target
+				subRes, err := t.engine.SearchCode(ctx, filePath, targetName, 2, false)
+				if err == nil && len(subRes.Results) > 0 {
+					for _, sub := range subRes.Results {
+						if seenIDs[sub.Point.ID] {
+							continue
+						}
+						seenIDs[sub.Point.ID] = true
+
+						subDesc := make(map[string]any)
+						for k, v := range sub.Point.Payload {
+							subDesc[k] = v
+						}
+						// Mark this as an expanded node context
+						subDesc["_graph_expansion"] = fmt.Sprintf("Dependency of %v", topResult.Point.Payload["Name"])
+						subDesc["score"] = sub.Score
+						subDesc["id"] = sub.Point.ID
+						descriptors = append(descriptors, subDesc)
+						fetchedTargets = append(fetchedTargets, targetName)
+						break // only include top match for the dependency
+					}
+				}
+			}
+
+			if len(fetchedTargets) > 0 {
+				response.Message = fmt.Sprintf("Auto-fetched %d related dependencies: %s", len(fetchedTargets), strings.Join(fetchedTargets, ", "))
+			}
+		}
 	}
 
 	response.Data = descriptors

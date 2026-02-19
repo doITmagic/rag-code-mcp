@@ -236,6 +236,22 @@ func applyEnvOverrides(cfg *Config) {
 	}
 }
 
+// ApplyCLIOverrides applies command-line flag overrides to the configuration
+func ApplyCLIOverrides(cfg *Config, ollamaURL, ollamaModel, ollamaEmbed, qdrantURL string) {
+	if ollamaURL != "" {
+		cfg.LLM.OllamaBaseURL = ollamaURL
+	}
+	if ollamaModel != "" {
+		cfg.LLM.OllamaModel = ollamaModel
+	}
+	if ollamaEmbed != "" {
+		cfg.LLM.OllamaEmbed = ollamaEmbed
+	}
+	if qdrantURL != "" {
+		cfg.Storage.VectorDB.URL = qdrantURL
+	}
+}
+
 // migrateEmbeddingModel automatically migrates from old unstable embedding model
 func migrateEmbeddingModel(cfg *Config) bool {
 	migrated := false

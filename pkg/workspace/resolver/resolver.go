@@ -19,6 +19,7 @@ type Registry interface {
 	ResolveAlias(ctx context.Context, alias string) (*contract.WorkspaceCandidate, *contract.ResolveWorkspaceError)
 	RecordFeedback(ctx context.Context, feedback *contract.PathFeedback) error
 	PromoteCandidate(ctx context.Context, root, client string, executionSucceeded bool) error
+	GetActiveWorkspace() (string, error)
 }
 
 // RootValidator ensures resolved roots are within allowed boundaries.
@@ -70,6 +71,14 @@ func (r *Resolver) log(ctx context.Context, step string, fields map[string]any) 
 	}
 	fields["step"] = step
 	r.deps.Logger.Debug(ctx, step, fields)
+}
+
+// GetActiveWorkspace returns the last confirmed workspace root.
+func (r *Resolver) GetActiveWorkspace() (string, error) {
+	if r.deps.Registry == nil {
+		return "", nil
+	}
+	return r.deps.Registry.GetActiveWorkspace()
 }
 
 // Resolve evaluates the incoming request using the deterministic cascade.

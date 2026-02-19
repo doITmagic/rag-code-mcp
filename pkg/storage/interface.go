@@ -63,4 +63,7 @@ type VectorStore interface {
 
 	// GetCollectionPointCount returns total points within a collection.
 	GetCollectionPointCount(ctx context.Context, name string) (uint64, error)
+
+	// DeleteByFilter removes points matching a specific metadata filter.
+	DeleteByFilter(ctx context.Context, collection string, key string, value interface{}) error
 }

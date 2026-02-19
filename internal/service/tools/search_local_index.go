@@ -28,16 +28,18 @@ func NewSearchLocalIndexTool(eng *engine.Engine) *SearchLocalIndexTool {
 
 func (t *SearchLocalIndexTool) Name() string { return "rag_search_code" }
 func (t *SearchLocalIndexTool) Description() string {
-	return "Semantic code search - finds functions, classes, and methods by MEANING, not just keywords. " +
-		"USE THIS FIRST when exploring unfamiliar code. Returns complete source code with file path and line numbers. " +
-		"Better than rag_hybrid_search for general exploration; use rag_hybrid_search only when you need EXACT identifier matches. " +
-		"Supports Go, PHP, Python, HTML. IMPORTANT: Always provide the 'file_path' of the file you are currently working on for better context detection."
+	return "Comprehensive code search for finding logic, symbols, or understanding flow. " +
+		"Use 'discovery' mode (default) for conceptual questions and broad exploration (finds by MEANING). " +
+		"Use 'exact' mode for precise matches of symbols, specific errors, and variable names (Hybrid search). " +
+		"Returns complete source code with file path and line numbers. Supports Go, PHP, Python, HTML. " +
+		"IMPORTANT: Always provide the 'file_path' of the file you are currently working on for better context detection."
 }
 
 type SearchLocalIndexInput struct {
 	Query       string `json:"query"`
 	FilePath    string `json:"file_path,omitempty"`
 	Limit       int    `json:"limit,omitempty"`
+	Mode        string `json:"mode,omitempty" enum:"discovery,exact"`
 	IncludeDocs bool   `json:"include_docs,omitempty"`
 }
 
@@ -50,6 +52,7 @@ func (t *SearchLocalIndexTool) Register(server *mcp.Server) {
 			"query":        input.Query,
 			"file_path":    input.FilePath,
 			"limit":        input.Limit,
+			"mode":         input.Mode,
 			"include_docs": input.IncludeDocs,
 		}
 
@@ -76,6 +79,13 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 	}
 
 	filePath, _ := params["file_path"].(string)
+	mode, _ := params["mode"].(string)
+	if mode == "" {
+		mode = "discovery"
+	}
+
+	logger.Instance.Highlight("rag_search_code (%s): '%s' (context: %s)", mode, query, filePath)
+
 	limit := t.searchLimit
 	if l, ok := params["limit"].(int); ok && l > 0 {
 		limit = l
@@ -87,7 +97,14 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 		Status: "success",
 	}
 
-	result, err := t.engine.SearchCode(ctx, filePath, query, limit, includeDocs)
+	var result *engine.SearchCodeResult
+	var err error
+
+	if mode == "exact" {
+		result, err = t.engine.HybridSearchCode(ctx, filePath, query, limit)
+	} else {
+		result, err = t.engine.SearchCode(ctx, filePath, query, limit, includeDocs)
+	}
 	if err != nil {
 		if strings.Contains(err.Error(), "No workspace detected") {
 			response.Status = "error"

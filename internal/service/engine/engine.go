@@ -4,16 +4,15 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
-	"github.com/doITmagic/rag-code-mcp/internal/service/indexer"
 	"github.com/doITmagic/rag-code-mcp/internal/service/search"
 	"github.com/doITmagic/rag-code-mcp/internal/skills"
+	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 	"github.com/doITmagic/rag-code-mcp/pkg/workspace/branchstate"
@@ -86,6 +85,8 @@ type WorkspaceContext struct {
 	WorktreeID      string
 	MismatchRisk    string
 	DetectionSource string // e.g., "explicit_file_path", "registry_fallback"
+	ReindexRequired bool
+	HeadSHA         string
 }
 
 // DetectContext resolves the workspace context for a given path using the full resolver cascade.
@@ -121,6 +122,8 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 		WorktreeID:      resp.WorktreeID,
 		MismatchRisk:    resp.MismatchRisk,
 		DetectionSource: source,
+		ReindexRequired: resp.ReindexRequired,
+		HeadSHA:         resp.HeadSHA,
 	}, nil
 }
 
@@ -201,6 +204,12 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 		return nil, &ErrIndexingStarted{WorkspaceRoot: wctx.Root}
 	}
 
+	// Trigger background indexing if resolver says re-index is required (e.g. branch change)
+	if wctx.ReindexRequired {
+		log.Printf("[INFO] Git state change detected (Head: %s), triggering background re-indexing for %s", wctx.HeadSHA, wctx.Root)
+		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+	}
+
 	var results []storage.SearchResult
 	if includeDocs {
 		results, err = e.search.Search(ctx, collection, queryText, limit)
@@ -209,6 +218,54 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 	}
 	if err != nil {
 		return nil, fmt.Errorf("search failed: %w", err)
+	}
+
+	return &SearchCodeResult{
+		Results:         results,
+		WorkspaceRoot:   wctx.Root,
+		Collection:      collection,
+		Language:        lang,
+		MismatchRisk:    wctx.MismatchRisk,
+		DetectionSource: wctx.DetectionSource,
+	}, nil
+}
+
+// HybridSearchCode detects the workspace and performing a high-precision hybrid search.
+func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText string, limit int) (*SearchCodeResult, error) {
+	wctx, err := e.DetectContext(ctx, filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Detect language
+	lang := "go"
+	if a := parser.GetByFile(filePath); a != nil {
+		lang = a.Name()
+	}
+
+	collection := fmt.Sprintf("ragcode-%s-%s", wctx.ID, lang)
+
+	exists, err := e.search.CollectionExists(ctx, collection)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check collection: %w", err)
+	}
+
+	if !exists {
+		if _, ok := e.indexingJobs.Load(wctx.ID); ok {
+			return nil, &ErrIndexingInProgress{WorkspaceRoot: wctx.Root}
+		}
+		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+		return nil, &ErrIndexingStarted{WorkspaceRoot: wctx.Root}
+	}
+
+	if wctx.ReindexRequired {
+		log.Printf("[INFO] Git state change detected, triggering background re-indexing...")
+		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+	}
+
+	results, err := e.search.HybridSearch(ctx, collection, queryText, limit)
+	if err != nil {
+		return nil, fmt.Errorf("hybrid search failed: %w", err)
 	}
 
 	return &SearchCodeResult{
@@ -257,55 +314,29 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) er
 		return err
 	}
 
-	langSymbols := make(map[string][]parser.Symbol)
+	statePath := filepath.Join(wctx.Root, ".ragcode", "state.json")
+	state, err := indexer.LoadState(statePath)
+	if err != nil {
+		state = indexer.NewState()
+	}
+
+	// For language detection for the collection name, we assume the first file's language if not mixed.
+	// This is a bit of a simplification compared to the full scan.
+	lang := "go"
+	if len(files) > 0 {
+		if a := parser.GetByFile(files[0]); a != nil {
+			lang = a.Name()
+		}
+	}
+	collection := fmt.Sprintf("ragcode-%s-%s", wctx.ID, lang)
 
 	for _, p := range files {
-		// Only process if file still exists
-		if _, err := os.Stat(p); os.IsNotExist(err) {
-			continue
-		}
-
-		a := parser.GetByFile(p)
-		if a == nil {
-			continue
-		}
-
-		res, err := a.Analyze(ctx, p)
-		if err != nil {
-			log.Printf("[WARN] Failed to analyze %s: %v", p, err)
-			continue
-		}
-
-		if _, ok := langSymbols[a.Name()]; !ok {
-			langSymbols[a.Name()] = make([]parser.Symbol, 0)
-		}
-		langSymbols[a.Name()] = append(langSymbols[a.Name()], res.Symbols...)
-	}
-
-	if len(langSymbols) == 0 {
-		return nil
-	}
-
-	totalFiles := 0
-	for lang, syms := range langSymbols {
-		log.Printf("[INFO] Found %d files/symbols for %s in incremental update", len(syms), lang)
-		totalFiles += len(syms)
-	}
-
-	for lang, symbols := range langSymbols {
-		collection := fmt.Sprintf("ragcode-%s-%s", wctx.ID, lang)
-		for i := range symbols {
-			if symbols[i].Metadata == nil {
-				symbols[i].Metadata = make(map[string]any)
-			}
-			symbols[i].Metadata["branch"] = wctx.Branch
-		}
-		if err := e.indexer.IndexItems(ctx, collection, symbols); err != nil {
-			return fmt.Errorf("failed to index %s: %w", lang, err)
+		if err := e.indexer.IndexFile(ctx, collection, p, state); err != nil {
+			log.Printf("[ERROR] Failed to index %s: %v", p, err)
 		}
 	}
 
-	return nil
+	return state.Save(statePath)
 }
 
 // IndexWorkspace indexes all files in a workspace.
@@ -323,62 +354,21 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 		}
 	}
 
-	langSymbols := make(map[string][]parser.Symbol)
+	// We currently assume one collection per language.
+	// The new indexer handles all files but we need a collection name strategy.
+	// For now, let's stick to the convention: ragcode-{id}-{lang}
+	// We'll iterate all supported languages.
+	languages := []string{"go", "php", "python", "html"}
 
-	err = filepath.WalkDir(wctx.Root, func(p string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if d.IsDir() {
-			name := d.Name()
-			if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" ||
-				name == "venv" || name == "__pycache__" || name == "dist" || name == "build" {
-				// Also define default exclusion logic here if needed or rely on config
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		a := parser.GetByFile(p)
-		if a == nil {
-			return nil
-		}
-
-		res, err := a.Analyze(ctx, p)
-		if err != nil {
-			return nil
-		}
-
-		// Ensure map entry exists
-		if _, ok := langSymbols[a.Name()]; !ok {
-			langSymbols[a.Name()] = make([]parser.Symbol, 0)
-		}
-		langSymbols[a.Name()] = append(langSymbols[a.Name()], res.Symbols...)
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-
-	totalFiles := 0
-	for lang, syms := range langSymbols {
-		log.Printf("[INFO] Found %d files/symbols for %s in %s", len(syms), lang, wctx.Root)
-		totalFiles += len(syms)
-	}
-	if totalFiles == 0 {
-		log.Printf("[WARN] No supported code files found in %s", wctx.Root)
-	}
-
-	for lang, symbols := range langSymbols {
+	for _, lang := range languages {
 		collection := fmt.Sprintf("ragcode-%s-%s", wctx.ID, lang)
-		for i := range symbols {
-			if symbols[i].Metadata == nil {
-				symbols[i].Metadata = make(map[string]any)
-			}
-			symbols[i].Metadata["branch"] = wctx.Branch
-		}
-		if err := e.indexer.IndexItems(ctx, collection, symbols); err != nil {
-			return fmt.Errorf("failed to index %s: %w", lang, err)
+		err := e.indexer.IndexWorkspace(ctx, wctx.Root, collection, indexer.Options{
+			Language:        lang,
+			ExcludePatterns: e.config.Workspace.ExcludePatterns,
+			Recreate:        recreate,
+		})
+		if err != nil {
+			log.Printf("[ERROR] Indexing failed for %s: %v", lang, err)
 		}
 	}
 

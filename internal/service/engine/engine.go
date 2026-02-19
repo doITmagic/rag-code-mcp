@@ -68,47 +68,63 @@ func (e *Engine) Config() *config.Config {
 
 // WorkspaceContext provides information about a detected workspace.
 type WorkspaceContext struct {
-	Root         string
-	ID           string
-	Branch       string
-	WorktreeID   string
-	MismatchRisk string
+	Root            string
+	ID              string
+	Branch          string
+	WorktreeID      string
+	MismatchRisk    string
+	DetectionSource string // e.g., "explicit_file_path", "registry_fallback"
 }
 
 // DetectContext resolves the workspace context for a given path using the full resolver cascade.
+// If path is empty, it falls back to the last active workspace from the registry.
 func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceContext, error) {
+	req := contract.ResolveWorkspaceRequest{}
+	source := "explicit_file_path"
+
 	if strings.TrimSpace(path) == "" {
-		return nil, fmt.Errorf("path is empty")
+		active, err := e.GetActiveWorkspace()
+		if err != nil || active == "" {
+			return nil, fmt.Errorf("❌ No workspace detected. Please provide the 'file_path' of the file you are currently working on to help detect the project context.")
+		}
+		req.WorkspaceRoot = active
+		source = "registry_fallback"
+	} else {
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve path: %w", err)
+		}
+		req.FilePath = abs
 	}
 
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve path: %w", err)
-	}
-
-	resp, wsErr := e.resolver.Resolve(ctx, contract.ResolveWorkspaceRequest{
-		FilePath: abs,
-	})
+	resp, wsErr := e.resolver.Resolve(ctx, req)
 	if wsErr != nil {
 		return nil, fmt.Errorf("workspace detection failed: %s", wsErr.Message)
 	}
 
 	return &WorkspaceContext{
-		Root:         resp.ResolvedRoot,
-		ID:           resp.WorkspaceID,
-		Branch:       resp.Branch,
-		WorktreeID:   resp.WorktreeID,
-		MismatchRisk: resp.MismatchRisk,
+		Root:            resp.ResolvedRoot,
+		ID:              resp.WorkspaceID,
+		Branch:          resp.Branch,
+		WorktreeID:      resp.WorktreeID,
+		MismatchRisk:    resp.MismatchRisk,
+		DetectionSource: source,
 	}, nil
+}
+
+// GetActiveWorkspace returns the last confirmed workspace root from the resolver.
+func (e *Engine) GetActiveWorkspace() (string, error) {
+	return e.resolver.GetActiveWorkspace()
 }
 
 // SearchCodeResult wraps search results with workspace context.
 type SearchCodeResult struct {
-	Results       []storage.SearchResult
-	WorkspaceRoot string
-	Collection    string
-	Language      string
-	MismatchRisk  string
+	Results         []storage.SearchResult
+	WorkspaceRoot   string
+	Collection      string
+	Language        string
+	MismatchRisk    string
+	DetectionSource string
 }
 
 // ErrNotIndexed is returned when a workspace collection doesn't exist yet and indexing hasn't started.
@@ -184,11 +200,12 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 	}
 
 	return &SearchCodeResult{
-		Results:       results,
-		WorkspaceRoot: wctx.Root,
-		Collection:    collection,
-		Language:      lang,
-		MismatchRisk:  wctx.MismatchRisk,
+		Results:         results,
+		WorkspaceRoot:   wctx.Root,
+		Collection:      collection,
+		Language:        lang,
+		MismatchRisk:    wctx.MismatchRisk,
+		DetectionSource: wctx.DetectionSource,
 	}, nil
 }
 

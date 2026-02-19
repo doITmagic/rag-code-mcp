@@ -173,6 +173,13 @@ func (f *fakeRegistry) PromoteCandidate(ctx context.Context, root, client string
 	return nil
 }
 
+func (f *fakeRegistry) GetActiveWorkspace() (string, error) {
+	if f.candidate != nil {
+		return f.candidate.Root, nil
+	}
+	return "", nil
+}
+
 type branchstateAnnotator struct {
 	mgr *branchstate.Manager
 }

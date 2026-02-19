@@ -394,4 +394,20 @@ func hashRoot(root string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// hashRoot returns a content-based identifier for a root path.
+// GetActiveWorkspace returns the root path of the most recently used workspace.
+func (r *Registry) GetActiveWorkspace() (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var latest *Entry
+	for _, entry := range r.entries {
+		if latest == nil || entry.LastUsedAt.After(latest.LastUsedAt) {
+			latest = entry
+		}
+	}
+
+	if latest == nil {
+		return "", nil
+	}
+	return latest.Root, nil
+}

@@ -3,7 +3,9 @@ package storage
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"sort"
+	"strconv"
 
 	"github.com/qdrant/go-client/qdrant"
 )
@@ -300,4 +302,27 @@ func normalizeLimit(limit int) uint64 {
 		return 10
 	}
 	return uint64(limit)
+}
+
+// ParseQdrantURL parses host and gRPC port from a URL like http://localhost:6333.
+// The Qdrant go-client uses gRPC (default 6334), REST port (6333) is ignored.
+func ParseQdrantURL(rawURL string) (host string, port int) {
+	host = "localhost"
+	port = 6334
+	if rawURL == "" {
+		return
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return
+	}
+	if h := u.Hostname(); h != "" {
+		host = h
+	}
+	if p := u.Port(); p != "" {
+		if n, err := strconv.Atoi(p); err == nil {
+			port = n
+		}
+	}
+	return
 }

@@ -88,8 +88,17 @@ func TestQdrantStoreUpsertPayloadMapping(t *testing.T) {
 		t.Fatalf("expected single upsert request")
 	}
 	payload := fake.upsertRequests[0].Points[0].Payload
-	if payload["file"].GetStringValue() != "main.go" || payload["chunk_id"].GetStringValue() != "5" {
-		t.Fatalf("payload not stringified: %#v", payload)
+	if payload["file"].GetStringValue() != "main.go" {
+		t.Errorf("expected file=main.go, got %v", payload["file"].GetStringValue())
+	}
+	if payload["chunk_id"].GetIntegerValue() != 5 {
+		t.Errorf("expected chunk_id=5, got %v", payload["chunk_id"].GetIntegerValue())
+	}
+	if payload["active"].GetBoolValue() != true {
+		t.Errorf("expected active=true, got %v", payload["active"].GetBoolValue())
+	}
+	if t.Failed() {
+		t.Fatalf("payload mapping failed: %#v", payload)
 	}
 }
 

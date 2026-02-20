@@ -64,6 +64,23 @@ func (s *Service) SearchCodeOnly(ctx context.Context, collection string, queryTe
 	return res, nil
 }
 
+// ExactSearch performs a search directly on the store without generating a vector embedding, relying entirely on filters.
+func (s *Service) ExactSearch(ctx context.Context, collection string, filter map[string]interface{}, limit int) ([]storage.SearchResult, error) {
+	// Dummy vector required by some implementations.
+	vector := make([]float32, 1024)
+
+	res, err := s.store.Search(ctx, collection, storage.SearchQuery{
+		Vector: vector,
+		Limit:  limit,
+		Filter: filter,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("exact search failed: %w", err)
+	}
+
+	return res, nil
+}
+
 // CollectionExists checks whether a collection exists in the vector store.
 func (s *Service) CollectionExists(ctx context.Context, collection string) (bool, error) {
 	return s.store.CollectionExists(ctx, collection)

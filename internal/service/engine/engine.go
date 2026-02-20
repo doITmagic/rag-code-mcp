@@ -36,6 +36,20 @@ type Engine struct {
 	indexingJobs sync.Map
 }
 
+func (e *Engine) GetSearchService() *search.Service {
+	return e.search
+}
+
+// SetResolver replaces the workspace resolver (primarily for testing).
+func (e *Engine) SetResolver(res *resolver.Resolver) {
+	e.resolver = res
+}
+
+// SetSearchService replaces the search service (primarily for testing).
+func (e *Engine) SetSearchService(srv *search.Service) {
+	e.search = srv
+}
+
 // NewEngine creates a new Engine with all workspace dependencies wired up.
 // registryPath is the path to the persistent registry file (e.g. ~/.ragcode/registry.json).
 func NewEngine(idx *indexer.Service, srv *search.Service, registryPath string, cfg *config.Config) *Engine {
@@ -354,11 +368,8 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 		}
 	}
 
-	// We currently assume one collection per language.
-	// The new indexer handles all files but we need a collection name strategy.
-	// For now, let's stick to the convention: ragcode-{id}-{lang}
 	// We'll iterate all supported languages.
-	languages := []string{"go", "php", "python", "html"}
+	languages := parser.SupportedLanguages()
 
 	for _, lang := range languages {
 		collection := fmt.Sprintf("ragcode-%s-%s", wctx.ID, lang)

@@ -36,6 +36,17 @@ func GetByFile(filePath string) Analyzer {
 	return nil
 }
 
+// SupportedLanguages returns a list of all registered language names.
+func SupportedLanguages() []string {
+	mu.RLock()
+	defer mu.RUnlock()
+	langs := make([]string, 0, len(analyzers))
+	for name := range analyzers {
+		langs = append(langs, name)
+	}
+	return langs
+}
+
 // SymbolType identifies the kind of code symbol.
 type SymbolType string
 

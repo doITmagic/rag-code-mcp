@@ -33,7 +33,7 @@ func (t *SearchLocalIndexTool) Description() string {
 	return "Comprehensive code search for finding logic, symbols, or understanding flow. " +
 		"Use 'discovery' mode (default) for conceptual questions and broad exploration (finds by MEANING). " +
 		"Use 'exact' mode for precise matches of symbols, specific errors, and variable names (Hybrid search). " +
-		"Returns complete source code with file path and line numbers. Supports Go, PHP, Python, HTML. " +
+		"Returns complete source code with file path and line numbers. Supports all registered languages. " +
 		"NEW: Automatically performs 'Graph Context Expansion' - it reads AST structurally related dependencies (methods, structs, interfaces) from the code and auto-fetches their definitions in the same response! " +
 		"IMPORTANT: Always provide the 'file_path' of the file you are currently working on for better context detection."
 }

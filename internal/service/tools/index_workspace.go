@@ -26,7 +26,7 @@ func (t *IndexWorkspaceTool) Name() string { return "rag_index_workspace" }
 func (t *IndexWorkspaceTool) Description() string {
 	return "Indexes or reindexes a workspace for semantic code search. " +
 		"Use this tool to manually trigger indexing if search results are stale or 'workspace not indexed'. " +
-		"Analyzes Go, PHP, Python, HTML files and stores vectors for semantic search. " +
+		"Analyzes all supported source files and stores vectors for semantic search. " +
 		"The process runs in the background."
 }
 

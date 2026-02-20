@@ -50,6 +50,7 @@ type FunctionInfo struct {
 	StartLine   int          `json:"start_line,omitempty"`
 	EndLine     int          `json:"end_line,omitempty"`
 	Code        string       `json:"code,omitempty"`
+	Calls       []string     `json:"calls,omitempty"`
 }
 
 // TypeInfo describes a type declaration (struct, interface, alias, etc.)

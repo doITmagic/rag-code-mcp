@@ -209,12 +209,9 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 	}
 
 	// 2. Graph Context Expansion
-	// We will look at the 'Relations' in the payload of the TOP result
+	// We will look at the 'relations' in the payload of the TOP result
 	topResult := result.Results[0]
-	relationsRaw, hasRel := topResult.Point.Payload["Relations"]
-	if !hasRel {
-		relationsRaw, hasRel = topResult.Point.Payload["relations"]
-	}
+	relationsRaw, hasRel := topResult.Point.Payload["relations"]
 
 	if hasRel {
 		// Depending on the storage, relations might be []interface{}
@@ -246,7 +243,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 							subDesc[k] = v
 						}
 						// Mark this as an expanded node context
-						subDesc["_graph_expansion"] = fmt.Sprintf("Dependency of %v", topResult.Point.Payload["Name"])
+						subDesc["_graph_expansion"] = fmt.Sprintf("Dependency of %v", topResult.Point.Payload["name"])
 						subDesc["score"] = sub.Score
 						subDesc["id"] = sub.Point.ID
 						descriptors = append(descriptors, subDesc)

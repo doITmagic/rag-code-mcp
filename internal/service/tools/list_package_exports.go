@@ -148,21 +148,12 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 		}
 		seenNames[key] = true
 
-		// Use the nested `content` payload block as well, as some parsers nest it
 		var signature, docstring string
-		if contentMap, ok := result.Point.Payload["content"].(map[string]interface{}); ok {
-			if sig, ok := contentMap["Signature"].(string); ok {
-				signature = sig
-			}
-			if doc, ok := contentMap["Docstring"].(string); ok {
-				docstring = doc
-			}
-		} else {
-			signature, _ = result.Point.Payload["signature"].(string)
-		}
+		signature, _ = result.Point.Payload["signature"].(string)
+		docstring, _ = result.Point.Payload["docstring"].(string)
 
 		descLine := strings.Split(docstring, "\n")[0]
-		filePath, _ := result.Point.Payload["file"].(string)
+		filePath, _ := result.Point.Payload["file_path"].(string)
 		startLineVal, _ := result.Point.Payload["start_line"]
 		startLine := 0
 		switch v := startLineVal.(type) {

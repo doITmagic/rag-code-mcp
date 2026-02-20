@@ -121,7 +121,7 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 	rootRes := t.findSymbolInfo(ctx, searchSvc, wctx.ID, langs, symbolName)
 	if rootRes != nil {
 		rootNode.Type, _ = rootRes.Point.Payload["type"].(string)
-		rootNode.FilePath, _ = rootRes.Point.Payload["file"].(string)
+		rootNode.FilePath, _ = rootRes.Point.Payload["file_path"].(string)
 		rootNode.Package, _ = rootRes.Point.Payload["package"].(string)
 	}
 
@@ -176,10 +176,29 @@ func (t *CallHierarchyTool) resolveIncoming(ctx context.Context, srv *search.Ser
 			continue
 		}
 
-		// Find who has a Relation target_name == node.Name
-		res, err := srv.ExactSearch(ctx, col, map[string]interface{}{"Relations[].target_name": node.Name}, 20)
+		// Find who has a Relation target_name == node.Name AND type == "calls"
+		res, err := srv.ExactSearch(ctx, col, map[string]interface{}{
+			"relations[].target_name": node.Name,
+			"relations[].type":        "calls",
+		}, 20)
 		if err == nil {
 			for _, r := range res {
+				// Verify the relation matches in-memory (to handle lack of robust nested filtering in ExactSearch)
+				hasCall := false
+				if rels, ok := r.Point.Payload["relations"].([]interface{}); ok {
+					for _, relRaw := range rels {
+						if rel, ok := relRaw.(map[string]interface{}); ok {
+							if rel["target_name"] == node.Name && rel["type"] == "calls" {
+								hasCall = true
+								break
+							}
+						}
+					}
+				}
+				if !hasCall {
+					continue
+				}
+
 				name, _ := r.Point.Payload["name"].(string)
 				if name == "" || name == node.Name {
 					continue
@@ -188,7 +207,7 @@ func (t *CallHierarchyTool) resolveIncoming(ctx context.Context, srv *search.Ser
 				child := &CallNode{
 					Name:     name,
 					Type:     fmt.Sprintf("%v", r.Point.Payload["type"]),
-					FilePath: fmt.Sprintf("%v", r.Point.Payload["file"]),
+					FilePath: fmt.Sprintf("%v", r.Point.Payload["file_path"]),
 					Package:  fmt.Sprintf("%v", r.Point.Payload["package"]),
 				}
 				node.Children = append(node.Children, child)
@@ -213,7 +232,7 @@ func (t *CallHierarchyTool) resolveOutgoing(ctx context.Context, srv *search.Ser
 		return
 	}
 
-	if relationsRaw, ok := res.Point.Payload["Relations"].([]interface{}); ok {
+	if relationsRaw, ok := res.Point.Payload["relations"].([]interface{}); ok {
 		for _, relRaw := range relationsRaw {
 			relMap, ok := relRaw.(map[string]interface{})
 			if !ok {
@@ -221,7 +240,8 @@ func (t *CallHierarchyTool) resolveOutgoing(ctx context.Context, srv *search.Ser
 			}
 
 			target, _ := relMap["target_name"].(string)
-			if target == "" || target == node.Name {
+			relType, _ := relMap["type"].(string)
+			if target == "" || target == node.Name || relType != "calls" {
 				continue
 			}
 
@@ -231,7 +251,7 @@ func (t *CallHierarchyTool) resolveOutgoing(ctx context.Context, srv *search.Ser
 			childInfo := t.findSymbolInfo(ctx, srv, wsID, langs, target)
 			if childInfo != nil {
 				child.Type, _ = childInfo.Point.Payload["type"].(string)
-				child.FilePath, _ = childInfo.Point.Payload["file"].(string)
+				child.FilePath, _ = childInfo.Point.Payload["file_path"].(string)
 				child.Package, _ = childInfo.Point.Payload["package"].(string)
 			}
 

@@ -66,4 +66,7 @@ type VectorStore interface {
 
 	// DeleteByFilter removes points matching a specific metadata filter.
 	DeleteByFilter(ctx context.Context, collection string, key string, value interface{}) error
+
+	// DeleteCollection drops an entire collection and all its data.
+	DeleteCollection(ctx context.Context, name string) error
 }

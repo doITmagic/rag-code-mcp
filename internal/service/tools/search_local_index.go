@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
+	"github.com/doITmagic/rag-code-mcp/pkg/telemetry"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -57,6 +59,8 @@ func (t *SearchLocalIndexTool) Register(server *mcp.Server) {
 			"include_docs": input.IncludeDocs,
 		}
 
+		logger.Instance.Debug("rag_search_code invoked with params: %+v", args)
+
 		start := time.Now()
 		result, err := t.Execute(ctx, args)
 		if err != nil {
@@ -67,6 +71,7 @@ func (t *SearchLocalIndexTool) Register(server *mcp.Server) {
 		}
 
 		logger.Instance.Info("rag_search_code completed in %v", time.Since(start))
+		logger.Instance.Debug("rag_search_code result size string (bytes): %d", len(result))
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: result}},
 		}, nil, nil
@@ -86,6 +91,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 	}
 
 	logger.Instance.Highlight("rag_search_code (%s): '%s' (context: %s)", mode, query, filePath)
+	logger.Instance.Debug("Executing %s search. Query: %q, FilePath: %q", mode, query, filePath)
 
 	limit := t.searchLimit
 	if l, ok := params["limit"].(int); ok && l > 0 {
@@ -107,6 +113,8 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 		result, err = t.engine.SearchCode(ctx, filePath, query, limit, includeDocs)
 	}
 	if err != nil {
+		logger.Instance.Debug("Search engine returned error: %v", err)
+
 		if strings.Contains(err.Error(), "No workspace detected") {
 			response.Status = "error"
 			response.Error = err.Error()
@@ -118,6 +126,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 		var indexingInProgress *engine.ErrIndexingInProgress
 
 		if errors.As(err, &indexingStarted) {
+			logger.Instance.Debug("Background indexing started fallback trigger")
 			response.Status = "indexing_started"
 			response.Message = fmt.Sprintf("🚀 Workspace '%s' was not indexed. Background indexing has been STARTED automatically. Please wait a few moments and try your search again.", indexingStarted.WorkspaceRoot)
 			response.Context.WorkspaceRoot = indexingStarted.WorkspaceRoot
@@ -126,6 +135,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 		}
 
 		if errors.As(err, &indexingInProgress) {
+			logger.Instance.Debug("Indexing currently in progress for %s", indexingInProgress.WorkspaceRoot)
 			response.Status = "indexing_in_progress"
 			response.Message = fmt.Sprintf("⏳ Workspace '%s' is currently being indexed. Search results will be available once indexing completes.", indexingInProgress.WorkspaceRoot)
 			response.Context.WorkspaceRoot = indexingInProgress.WorkspaceRoot
@@ -143,6 +153,8 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 		response.Error = fmt.Sprintf("search failed: %v", err)
 		return response.JSON()
 	}
+
+	logger.Instance.Debug("Search successful. Found %d results. Risk mismatch: %s", len(result.Results), result.MismatchRisk)
 
 	response.Context = ContextMetadata{
 		WorkspaceRoot:   result.WorkspaceRoot,
@@ -164,12 +176,28 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 	// Extract standard descriptors
 	descriptors := make([]map[string]any, 0, len(result.Results))
 	seenIDs := make(map[string]bool)
+	seenFiles := make(map[string]bool)
+	baselineBytes := 0
+	actualBytes := 0
 
 	for _, r := range result.Results {
 		if seenIDs[r.Point.ID] {
 			continue
 		}
 		seenIDs[r.Point.ID] = true
+
+		if content, ok := r.Point.Payload["content"].(string); ok {
+			actualBytes += len(content)
+		}
+
+		if path, ok := r.Point.Payload["file_path"].(string); ok {
+			if !seenFiles[path] {
+				seenFiles[path] = true
+				if info, statErr := os.Stat(path); statErr == nil {
+					baselineBytes += int(info.Size())
+				}
+			}
+		}
 
 		desc := make(map[string]any)
 		for k, v := range r.Point.Payload {
@@ -234,6 +262,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 		}
 	}
 
+	response.Context.Telemetry = telemetry.CalculateSavings(baselineBytes, actualBytes)
 	response.Data = descriptors
 	return response.JSON()
 }

@@ -3,6 +3,8 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/doITmagic/rag-code-mcp/pkg/telemetry"
 )
 
 // ToolResponse defines the standard JSON structure for all RagCode MCP tools.
@@ -17,10 +19,11 @@ type ToolResponse struct {
 
 // ContextMetadata provides info about which workspace and sources were used.
 type ContextMetadata struct {
-	WorkspaceRoot   string `json:"workspace_root,omitempty"`
-	DetectionSource string `json:"detection_source,omitempty"` // "explicit_file_path", "registry_fallback", "cwd_detection"
-	Language        string `json:"language,omitempty"`
-	Collection      string `json:"collection,omitempty"`
+	WorkspaceRoot   string             `json:"workspace_root,omitempty"`
+	DetectionSource string             `json:"detection_source,omitempty"` // "explicit_file_path", "registry_fallback", "cwd_detection"
+	Language        string             `json:"language,omitempty"`
+	Collection      string             `json:"collection,omitempty"`
+	Telemetry       *telemetry.Savings `json:"telemetry,omitempty"`
 }
 
 // JSON returns the marshaled JSON string of the response.

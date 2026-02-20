@@ -143,14 +143,15 @@ func (t *ReadFileContextTool) Execute(ctx context.Context, args map[string]inter
 }
 
 type CodeContextResult struct {
-	FilePath    string `json:"file_path"`
-	Language    string `json:"language,omitempty"`
-	ContextType string `json:"context_type"` // "ast" or "naive"
-	StartLine   int    `json:"start_line"`
-	EndLine     int    `json:"end_line"`
-	SymbolName  string `json:"symbol_name,omitempty"`
-	SymbolType  string `json:"symbol_type,omitempty"`
-	CodeSnippet string `json:"code_snippet"`
+	FilePath    string            `json:"file_path"`
+	Language    string            `json:"language,omitempty"`
+	ContextType string            `json:"context_type"` // "ast" or "naive"
+	StartLine   int               `json:"start_line"`
+	EndLine     int               `json:"end_line"`
+	SymbolName  string            `json:"symbol_name,omitempty"`
+	SymbolType  string            `json:"symbol_type,omitempty"`
+	CodeSnippet string            `json:"code_snippet"`
+	Relations   []parser.Relation `json:"relations,omitempty"`
 }
 
 func parseLineArg(val interface{}) (int, bool) {
@@ -207,6 +208,22 @@ func (t *ReadFileContextTool) tryASTContext(ctx context.Context, path string, st
 			return result, false
 		}
 
+		// Prepend line numbers and mark exact targets
+		lines := strings.Split(best.Content, "\n")
+		var builder strings.Builder
+		currentLine := best.StartLine
+		for i, line := range lines {
+			if i == len(lines)-1 && line == "" {
+				break
+			}
+			marker := "   │ "
+			if currentLine >= start && currentLine <= end {
+				marker = "-> ┃ "
+			}
+			builder.WriteString(fmt.Sprintf("%4d %s%s\n", currentLine, marker, line))
+			currentLine++
+		}
+
 		result = CodeContextResult{
 			FilePath:    path,
 			Language:    best.Language,
@@ -215,7 +232,8 @@ func (t *ReadFileContextTool) tryASTContext(ctx context.Context, path string, st
 			EndLine:     best.EndLine,
 			SymbolName:  best.Name,
 			SymbolType:  string(best.Type),
-			CodeSnippet: best.Content,
+			CodeSnippet: builder.String(),
+			Relations:   best.Relations,
 		}
 		return result, true
 	}

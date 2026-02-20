@@ -77,18 +77,18 @@ type Relation struct {
 
 // Symbol represents a generic code entity (function, class, etc.)
 type Symbol struct {
-	Name      string
-	Type      SymbolType
-	Package   string
-	Content   string
-	Signature string
-	Docstring string
-	StartLine int
-	EndLine   int
-	FilePath  string
-	Language  string
-	Relations []Relation // Captured structural dependencies (AST graph)
-	Metadata  map[string]any
+	Name      string         `json:"name"`
+	Type      SymbolType     `json:"type"`
+	Package   string         `json:"package"`
+	Content   string         `json:"content"`
+	Signature string         `json:"signature"`
+	Docstring string         `json:"docstring"`
+	StartLine int            `json:"start_line"`
+	EndLine   int            `json:"end_line"`
+	FilePath  string         `json:"file_path"`
+	Language  string         `json:"language"`
+	Relations []Relation     `json:"relations"` // Captured structural dependencies (AST graph)
+	Metadata  map[string]any `json:"metadata"`
 }
 
 // Result is what a parser returns for a given file or directory.

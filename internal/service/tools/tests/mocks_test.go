@@ -73,6 +73,10 @@ func (m *mockVectorStore) DeleteByFilter(ctx context.Context, collection string,
 	return nil
 }
 
+func (m *mockVectorStore) DeleteCollection(ctx context.Context, name string) error {
+	return nil
+}
+
 type mockLLMProvider struct {
 	llm.Provider
 	EmbedFunc func(ctx context.Context, text string) ([]float64, error)

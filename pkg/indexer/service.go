@@ -103,6 +103,11 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 	}
 
 	// 3. Ensure collection exists ONLY if we have files to index
+	if opts.Recreate {
+		log.Printf("[INFO] Dropping collection %s for recreation", collection)
+		s.store.DeleteCollection(ctx, collection) // ignore error if not exists
+	}
+
 	exists, err := s.store.CollectionExists(ctx, collection)
 	if err != nil {
 		return fmt.Errorf("failed to check collection status: %w", err)

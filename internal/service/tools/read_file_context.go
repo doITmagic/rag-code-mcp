@@ -118,7 +118,7 @@ func (t *ReadFileContextTool) Execute(ctx context.Context, args map[string]inter
 		ctxLines = 5 // default fallback context
 	}
 
-	// Măsuri de protecție pentru dimensiune
+	// Size protection measures
 	if ctxLines > 50 {
 		ctxLines = 50
 	}

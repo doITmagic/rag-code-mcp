@@ -19,6 +19,7 @@ type qdrantClient interface {
 	Query(ctx context.Context, req *qdrant.QueryPoints) ([]*qdrant.ScoredPoint, error)
 	GetCollectionInfo(ctx context.Context, collectionName string) (*qdrant.CollectionInfo, error)
 	Delete(ctx context.Context, req *qdrant.DeletePoints) (*qdrant.UpdateResult, error)
+	DeleteCollection(ctx context.Context, collectionName string) error
 }
 
 type QdrantStore struct {
@@ -60,6 +61,10 @@ func (s *QdrantStore) CreateCollection(ctx context.Context, name string, dimensi
 			Distance: qdrant.Distance_Cosine,
 		}),
 	})
+}
+
+func (s *QdrantStore) DeleteCollection(ctx context.Context, name string) error {
+	return s.client.DeleteCollection(ctx, name)
 }
 
 func (s *QdrantStore) Upsert(ctx context.Context, collection string, points []Point) (*UpdateResult, error) {
@@ -172,59 +177,99 @@ func (s *QdrantStore) mapToPayload(m map[string]interface{}) map[string]*qdrant.
 		if v == nil {
 			continue
 		}
-		switch typed := v.(type) {
-		case string:
-			res[k] = qdrant.NewValueString(typed)
-		case int:
-			res[k] = qdrant.NewValueInt(int64(typed))
-		case int64:
-			res[k] = qdrant.NewValueInt(typed)
-		case float32:
-			res[k] = qdrant.NewValueDouble(float64(typed))
-		case float64:
-			res[k] = qdrant.NewValueDouble(typed)
-		case bool:
-			res[k] = qdrant.NewValueBool(typed)
-		default:
-			b, err := json.Marshal(v)
-			if err == nil {
-				res[k] = qdrant.NewValueString(string(b))
-			} else {
-				res[k] = qdrant.NewValueString(fmt.Sprintf("%v", v))
-			}
-		}
+		res[k] = s.interfaceToValue(v)
 	}
 	return res
+}
+
+func (s *QdrantStore) interfaceToValue(v interface{}) *qdrant.Value {
+	if v == nil {
+		return nil
+	}
+	switch typed := v.(type) {
+	case string:
+		return qdrant.NewValueString(typed)
+	case int:
+		return qdrant.NewValueInt(int64(typed))
+	case int64:
+		return qdrant.NewValueInt(typed)
+	case float32:
+		return qdrant.NewValueDouble(float64(typed))
+	case float64:
+		return qdrant.NewValueDouble(typed)
+	case bool:
+		return qdrant.NewValueBool(typed)
+	case map[string]interface{}:
+		fields := make(map[string]*qdrant.Value)
+		for k, val := range typed {
+			fields[k] = s.interfaceToValue(val)
+		}
+		return qdrant.NewValueStruct(&qdrant.Struct{Fields: fields})
+	case []interface{}:
+		values := make([]*qdrant.Value, len(typed))
+		for i, val := range typed {
+			values[i] = s.interfaceToValue(val)
+		}
+		return qdrant.NewValueList(&qdrant.ListValue{Values: values})
+	default:
+		// Fallback for slices of structs or other complex types
+		b, err := json.Marshal(v)
+		if err == nil {
+			var nested any
+			if err := json.Unmarshal(b, &nested); err == nil {
+				return s.interfaceToValue(nested)
+			}
+			return qdrant.NewValueString(string(b))
+		}
+		return qdrant.NewValueString(fmt.Sprintf("%v", v))
+	}
 }
 
 func (s *QdrantStore) payloadToMap(p map[string]*qdrant.Value) map[string]interface{} {
 	res := make(map[string]interface{}, len(p))
 	for k, v := range p {
-		if v == nil || v.Kind == nil {
-			continue
-		}
-		switch v.Kind.(type) {
-		case *qdrant.Value_StringValue:
-			str := v.GetStringValue()
-			if (strings.HasPrefix(str, "[") && strings.HasSuffix(str, "]")) || (strings.HasPrefix(str, "{") && strings.HasSuffix(str, "}")) {
-				var parsed any
-				if err := json.Unmarshal([]byte(str), &parsed); err == nil {
-					res[k] = parsed
-					continue
-				}
-			}
-			res[k] = str
-		case *qdrant.Value_IntegerValue:
-			res[k] = v.GetIntegerValue()
-		case *qdrant.Value_DoubleValue:
-			res[k] = v.GetDoubleValue()
-		case *qdrant.Value_BoolValue:
-			res[k] = v.GetBoolValue()
-		default:
-			res[k] = v.GetStringValue()
-		}
+		res[k] = s.valueToInterface(v)
 	}
 	return res
+}
+
+func (s *QdrantStore) valueToInterface(v *qdrant.Value) interface{} {
+	if v == nil || v.Kind == nil {
+		return nil
+	}
+	switch kind := v.Kind.(type) {
+	case *qdrant.Value_StringValue:
+		str := v.GetStringValue()
+		if (strings.HasPrefix(str, "[") && strings.HasSuffix(str, "]")) || (strings.HasPrefix(str, "{") && strings.HasSuffix(str, "}")) {
+			var parsed any
+			if err := json.Unmarshal([]byte(str), &parsed); err == nil {
+				return parsed
+			}
+		}
+		return str
+	case *qdrant.Value_IntegerValue:
+		return v.GetIntegerValue()
+	case *qdrant.Value_DoubleValue:
+		return v.GetDoubleValue()
+	case *qdrant.Value_BoolValue:
+		return v.GetBoolValue()
+	case *qdrant.Value_StructValue:
+		fields := kind.StructValue.Fields
+		res := make(map[string]interface{}, len(fields))
+		for k, val := range fields {
+			res[k] = s.valueToInterface(val)
+		}
+		return res
+	case *qdrant.Value_ListValue:
+		values := kind.ListValue.Values
+		res := make([]interface{}, len(values))
+		for i, val := range values {
+			res[i] = s.valueToInterface(val)
+		}
+		return res
+	default:
+		return v.GetStringValue()
+	}
 }
 
 func (s *QdrantStore) GetCollectionInfo(ctx context.Context, name string) (*CollectionInfo, error) {

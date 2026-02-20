@@ -107,7 +107,7 @@ func (ca *CodeAnalyzer) AnalyzePackage(dir string) (*PackageInfo, error) {
 	astFuncMap := ca.buildFunctionASTMap(astFiles)
 
 	// Build documentation view (this may modify AST nodes)
-	docPkg, err := doc.NewFromFiles(ca.fset, astFiles, "./", doc.Mode(0))
+	docPkg, err := doc.NewFromFiles(ca.fset, astFiles, "./", doc.AllDecls|doc.AllMethods)
 	if err != nil {
 		return nil, fmt.Errorf("doc.NewFromFiles: %w", err)
 	}
@@ -225,6 +225,7 @@ func (ca *CodeAnalyzer) analyzeFunctionDecl(fn *doc.Func, astBodyMap map[string]
 			info.Parameters = ca.extractParameters(fn.Decl.Type.Params)
 			info.Returns = ca.extractReturns(fn.Decl.Type.Results)
 		}
+		info.Calls = ca.extractCallsFromAST(astBody)
 	} else if fn.Decl != nil {
 		// Fallback to doc.Func Decl (won't have Body)
 		// Extract position information
@@ -741,6 +742,19 @@ func convertPackageInfoToChunks(pi *PackageInfo) []CodeChunk {
 		if fn.Receiver != "" {
 			rels = append(rels, extractRelationsFromType(fn.Receiver)...)
 		}
+		for _, call := range fn.Calls {
+			rels = append(rels, pkgParser.Relation{
+				TargetName: call,
+				Type:       pkgParser.RelCalls,
+			})
+			// Also add unqualified name for easier searching
+			if idx := strings.LastIndex(call, "."); idx != -1 {
+				rels = append(rels, pkgParser.Relation{
+					TargetName: call[idx+1:],
+					Type:       pkgParser.RelCalls,
+				})
+			}
+		}
 
 		out = append(out, CodeChunk{
 			Type:      kind,
@@ -862,9 +876,17 @@ func extractRelationsFromType(typStr string) []pkgParser.Relation {
 		return nil
 	}
 
-	return []pkgParser.Relation{
+	rels := []pkgParser.Relation{
 		{TargetName: t, Type: pkgParser.RelUsesType},
 	}
+	// Also add unqualified name for easier searching
+	if idx := strings.LastIndex(t, "."); idx != -1 {
+		rels = append(rels, pkgParser.Relation{
+			TargetName: t[idx+1:],
+			Type:       pkgParser.RelUsesType,
+		})
+	}
+	return rels
 }
 
 // extractCodeFromFile reads source code from a file between specified line numbers (inclusive, 1-based)
@@ -898,4 +920,31 @@ func (ca *CodeAnalyzer) extractCodeFromFile(filePath string, startLine, endLine 
 	}
 
 	return strings.Join(lines, "\n"), nil
+}
+
+func (ca *CodeAnalyzer) extractCallsFromAST(body *ast.BlockStmt) []string {
+	if body == nil {
+		return nil
+	}
+	var calls []string
+	seen := make(map[string]bool)
+
+	ast.Inspect(body, func(n ast.Node) bool {
+		if call, ok := n.(*ast.CallExpr); ok {
+			var name string
+			switch fun := call.Fun.(type) {
+			case *ast.Ident:
+				name = fun.Name
+			case *ast.SelectorExpr:
+				x := ca.typeToString(fun.X)
+				name = fmt.Sprintf("%s.%s", x, fun.Sel.Name)
+			}
+			if name != "" && !seen[name] {
+				calls = append(calls, name)
+				seen[name] = true
+			}
+		}
+		return true
+	})
+	return calls
 }

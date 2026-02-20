@@ -102,9 +102,9 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 			continue
 		}
 
-		// In Qdrant, to query a nested array of objects, we use the path `Relations[].target_name`
+		// In Qdrant, to query a nested array of objects, we use the path `relations[].target_name`
 		filter := map[string]interface{}{
-			"Relations[].target_name": symbolName,
+			"relations[].target_name": symbolName,
 		}
 
 		res, err := searchSvc.ExactSearch(ctx, colName, filter, 100) // limit to top 100 occurrences
@@ -138,20 +138,10 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 		symType, _ := result.Point.Payload["type"].(string)
 		pkg, _ := result.Point.Payload["package"].(string)
 
-		var signature, code string
-		if contentMap, ok := result.Point.Payload["content"].(map[string]interface{}); ok {
-			if sig, ok := contentMap["Signature"].(string); ok {
-				signature = sig
-			}
-			if c, ok := contentMap["Code"].(string); ok {
-				code = c
-			}
-		} else {
-			signature, _ = result.Point.Payload["signature"].(string)
-			code, _ = result.Point.Payload["code"].(string)
-		}
+		signature, _ := result.Point.Payload["signature"].(string)
+		code, _ := result.Point.Payload["content"].(string)
 
-		filePath, _ := result.Point.Payload["file"].(string)
+		filePath, _ := result.Point.Payload["file_path"].(string)
 		startLineVal, _ := result.Point.Payload["start_line"]
 		startLine := 0
 		switch v := startLineVal.(type) {
@@ -163,7 +153,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 
 		// Extract exactly which relation(s) matched to show reasoning
 		var matchedRelations []string
-		if relationsRaw, hasRel := result.Point.Payload["Relations"]; hasRel {
+		if relationsRaw, hasRel := result.Point.Payload["relations"]; hasRel {
 			if relList, ok := relationsRaw.([]interface{}); ok {
 				for _, relItem := range relList {
 					if rMap, ok := relItem.(map[string]interface{}); ok {

@@ -201,3 +201,7 @@ func (f *fakeQdrantClient) GetCollectionInfo(ctx context.Context, collectionName
 func (f *fakeQdrantClient) Delete(ctx context.Context, req *qdrant.DeletePoints) (*qdrant.UpdateResult, error) {
 	return &qdrant.UpdateResult{}, nil
 }
+
+func (f *fakeQdrantClient) DeleteCollection(ctx context.Context, collectionName string) error {
+	return nil
+}

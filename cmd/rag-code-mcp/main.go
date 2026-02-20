@@ -123,6 +123,7 @@ func main() {
 
 	// Register Tools
 	tools.NewSearchLocalIndexTool(eng).Register(server)
+	tools.NewReadFileContextTool(eng).Register(server)
 	tools.NewIndexWorkspaceTool(eng).Register(server)
 	tools.NewListSkillsTool(eng).Register(server)
 	tools.NewInstallSkillTool(eng).Register(server)

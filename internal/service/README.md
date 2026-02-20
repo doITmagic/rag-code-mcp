@@ -1,4 +1,4 @@
-# Service Package
+# Service 
 
 The `service` directory is the core of the `rag-code-mcp` application. It contains the high-level logic that fulfills the MCP tool requests by coordinating lower-level packages.
 

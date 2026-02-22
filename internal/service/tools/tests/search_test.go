@@ -100,59 +100,172 @@ var _ = Describe("RagSearchCodeTool", func() {
 			})
 		})
 
-		Context("Graph Context Expansion", func() {
-			It("should auto-fetch dependencies if relations exist", func() {
+		Context("Graph Context Expansion - ExactSearch First (Phase 3)", func() {
+			It("should use ExactSearch (no embedding) when dependency is found by name", func() {
+				// Track SearchCodeOnly calls with limit=2 (expansion fallback limit).
+				// If ExactSearch succeeds for the dependency, limit=2 calls should be 0.
+				expansionFallbackCalls := 0
+
 				mockStore.SearchCodeOnlyFunc = func(ctx context.Context, col string, q storage.SearchQuery) ([]storage.SearchResult, error) {
-					// First call: main result with relations
-					if q.Limit == 10 {
-						return []storage.SearchResult{
-							{
-								Score: 1.0,
-								Point: storage.Point{
-									ID: "root",
-									Payload: map[string]interface{}{
-										"Name": "Main",
-										"relations": []interface{}{
-											map[string]interface{}{"target_name": "Dependency"},
-										},
-									},
-								},
-							},
-						}, nil
+					if q.Limit == 2 {
+						expansionFallbackCalls++
 					}
-					// Second call: dependency expansion search
+					// Main query — returns root with relations
 					return []storage.SearchResult{
 						{
-							Score: 0.8,
+							Score: 1.0,
 							Point: storage.Point{
-								ID: "dep-id",
+								ID: "root-id",
 								Payload: map[string]interface{}{
-									"Name": "Dependency",
+									"name": "MainFunc",
+									"relations": []interface{}{
+										map[string]interface{}{"target_name": "HelperFunc"},
+									},
 								},
 							},
 						},
 					}, nil
 				}
 
+				// ExactSearch returns the dependency directly (SearchByName path)
+				mockStore.ExactSearchFunc = func(ctx context.Context, col string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error) {
+					if filters["name"] == "HelperFunc" {
+						return []storage.SearchResult{
+							{
+								Score: 1.0,
+								Point: storage.Point{
+									ID:      "helper-id",
+									Payload: map[string]interface{}{"name": "HelperFunc"},
+								},
+							},
+						}, nil
+					}
+					return []storage.SearchResult{}, nil
+				}
+
+				resJSON, err := tool.Execute(ctx, map[string]interface{}{"query": "test", "file_path": "main.go"})
+				Expect(err).NotTo(HaveOccurred())
+
+				var resp tools.ToolResponse
+				json.Unmarshal([]byte(resJSON), &resp)
+				Expect(resp.Status).To(Equal("success"), "Error: "+resp.Error)
+				Expect(resp.Message).To(ContainSubstring("Auto-fetched 1 related dependencies"))
+
+				data := resp.Data.([]interface{})
+				Expect(data).To(HaveLen(2)) // root + helper
+
+				// No fallback embedding for expansion when ExactSearch found the dependency
+				Expect(expansionFallbackCalls).To(Equal(0),
+					"SearchCodeOnly with expansion limit should not be called when ExactSearch succeeds")
+			})
+
+			It("should fall back to embedding when ExactSearch finds nothing for a dependency", func() {
+				expansionFallbackCalls := 0
+
+				mockStore.SearchCodeOnlyFunc = func(ctx context.Context, col string, q storage.SearchQuery) ([]storage.SearchResult, error) {
+					if q.Limit == 2 {
+						expansionFallbackCalls++
+						// Fallback expansion search — return the dependency
+						return []storage.SearchResult{
+							{
+								Score: 0.7,
+								Point: storage.Point{
+									ID:      "ext-helper-id",
+									Payload: map[string]interface{}{"name": "ExternalHelper"},
+								},
+							},
+						}, nil
+					}
+					// Main query
+					return []storage.SearchResult{
+						{
+							Score: 1.0,
+							Point: storage.Point{
+								ID: "root-id",
+								Payload: map[string]interface{}{
+									"name": "MainFunc",
+									"relations": []interface{}{
+										map[string]interface{}{"target_name": "ExternalHelper"},
+									},
+								},
+							},
+						},
+					}, nil
+				}
+
+				// ExactSearch finds nothing — triggers fallback
+				mockStore.ExactSearchFunc = func(ctx context.Context, col string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error) {
+					return []storage.SearchResult{}, nil
+				}
+
+				resJSON, err := tool.Execute(ctx, map[string]interface{}{"query": "test", "file_path": "main.go"})
+				Expect(err).NotTo(HaveOccurred())
+
+				var resp tools.ToolResponse
+				json.Unmarshal([]byte(resJSON), &resp)
+				Expect(resp.Status).To(Equal("success"), "Error: "+resp.Error)
+				Expect(resp.Message).To(ContainSubstring("Auto-fetched 1 related dependencies"))
+
+				data := resp.Data.([]interface{})
+				Expect(data).To(HaveLen(2))
+
+				// Fallback was triggered: SearchCodeOnly called with limit=2 at least once
+				Expect(expansionFallbackCalls).To(BeNumerically(">=", 1),
+					"Fallback embedding search should be called when ExactSearch returns no results")
+			})
+
+			It("should deduplicate expansion targets when same dependency appears multiple times in relations", func() {
+				mockStore.SearchCodeOnlyFunc = func(ctx context.Context, col string, q storage.SearchQuery) ([]storage.SearchResult, error) {
+					return []storage.SearchResult{
+						{
+							Score: 1.0,
+							Point: storage.Point{
+								ID: "root-id",
+								Payload: map[string]interface{}{
+									"name": "MainFunc",
+									"relations": []interface{}{
+										map[string]interface{}{"target_name": "Shared"},
+										map[string]interface{}{"target_name": "Shared"}, // duplicate
+										map[string]interface{}{"target_name": "Shared"}, // duplicate
+									},
+								},
+							},
+						},
+					}, nil
+				}
+
+				searchByNameCalls := 0
+				mockStore.ExactSearchFunc = func(ctx context.Context, col string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error) {
+					if filters["name"] == "Shared" {
+						searchByNameCalls++
+						return []storage.SearchResult{
+							{Score: 1.0, Point: storage.Point{ID: "shared-id", Payload: map[string]interface{}{"name": "Shared"}}},
+						}, nil
+					}
+					return []storage.SearchResult{}, nil
+				}
+
 				resJSON, err := tool.Execute(ctx, map[string]interface{}{"query": "test", "file_path": "main.go"})
 				Expect(err).NotTo(HaveOccurred())
 				var resp tools.ToolResponse
 				json.Unmarshal([]byte(resJSON), &resp)
-
 				Expect(resp.Status).To(Equal("success"), "Error: "+resp.Error)
-				Expect(resp.Message).To(ContainSubstring("Auto-fetched 1 related dependencies"))
-				data := resp.Data.([]interface{})
-				Expect(data).To(HaveLen(2)) // root + dep
 
-				foundExp := false
+				// Despite 3 identical relations, output should have exactly root + 1 Shared
+				data := resp.Data.([]interface{})
+				Expect(data).To(HaveLen(2), "Expected root + 1 Shared (deduped), not "+resp.Message)
+
+				// seenTargets prevents duplicate goroutines — ExactSearch called per-lang but only
+				// for a single goroutine (not 3 goroutines for same name)
+				// Verify expansion result is present with _graph_expansion marker
+				foundExpansion := false
 				for _, d := range data {
 					m := d.(map[string]interface{})
 					if m["_graph_expansion"] != nil {
-						foundExp = true
-						Expect(m["Name"]).To(Equal("Dependency"))
+						foundExpansion = true
 					}
 				}
-				Expect(foundExp).To(BeTrue(), "Should have found graph expanded node in data")
+				Expect(foundExpansion).To(BeTrue(), "Should have expansion result in data")
 			})
 		})
 	})

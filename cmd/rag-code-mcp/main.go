@@ -164,7 +164,7 @@ func main() {
 		}()
 	}
 
-	// Stdio Server
+	// Stdio Server (always runs, in parallel with SSE if http-port is set)
 	logger.Instance.Info("Starting Stdio server")
 	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil {
 		if ctx.Err() == nil {

@@ -53,6 +53,7 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 			EndLine:   ch.EndLine,
 			FilePath:  ch.FilePath,
 			Language:  ch.Language,
+			IsPublic:  len(ch.Name) > 0 && !strings.HasPrefix(ch.Name, "_"),
 			Metadata:  ch.Metadata,
 		})
 	}

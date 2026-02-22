@@ -41,7 +41,7 @@ var _ = Describe("ListPackageExportsTool", func() {
 		})
 
 		It("should return exported symbols for a package", func() {
-			mockStore.SearchFunc = func(ctx context.Context, col string, q storage.SearchQuery) ([]storage.SearchResult, error) {
+			mockStore.ExactSearchFunc = func(ctx context.Context, col string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error) {
 				// Only return for "go" collection to simplify
 				if !strings.Contains(col, "-go") {
 					return []storage.SearchResult{}, nil

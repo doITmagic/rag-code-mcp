@@ -8,7 +8,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/doITmagic/rag-code-mcp/pkg/llm"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
@@ -126,15 +128,50 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 
 	log.Printf("[INFO] Indexing %d changed files in %s (Language: %s)", len(changedFiles), root, opts.Language)
 
-	// 4. Process changed files
-	for _, path := range changedFiles {
-		if err := s.IndexFile(ctx, collection, path, state); err != nil {
-			log.Printf("[ERROR] Failed to index %s: %v", path, err)
-			continue
-		}
+	// 4. Process changed files in parallel (file-level worker pool).
+	// State.UpdateFile is mutex-protected; errors are collected safely.
+	numFileWorkers := runtime.NumCPU() / 2
+	if numFileWorkers < 2 {
+		numFileWorkers = 2
+	}
+	if numFileWorkers > 8 {
+		numFileWorkers = 8
 	}
 
-	// 3. Save state
+	filePaths := make(chan string, len(changedFiles))
+	for _, p := range changedFiles {
+		filePaths <- p
+	}
+	close(filePaths)
+
+	var (
+		fileWg   sync.WaitGroup
+		errMu    sync.Mutex
+		fileErrs []string
+	)
+
+	for i := 0; i < numFileWorkers; i++ {
+		fileWg.Add(1)
+		go func() {
+			defer fileWg.Done()
+			for path := range filePaths {
+				if err := s.IndexFile(ctx, collection, path, state); err != nil {
+					log.Printf("[ERROR] Failed to index %s: %v", path, err)
+					errMu.Lock()
+					fileErrs = append(fileErrs, fmt.Sprintf("%s: %v", path, err))
+					errMu.Unlock()
+				}
+			}
+		}()
+	}
+
+	fileWg.Wait()
+
+	if len(fileErrs) > 0 {
+		log.Printf("[WARN] %d file(s) failed to index in %s", len(fileErrs), root)
+	}
+
+	// 5. Save state
 	if err := state.Save(statePath); err != nil {
 		log.Printf("[WARN] Failed to save index state for %s: %v", root, err)
 	}
@@ -178,46 +215,85 @@ func (s *Service) IndexFile(ctx context.Context, collection, path string, state 
 	return nil
 }
 
-// IndexItems handles the standard embedding and storage logic for a list of symbols.
+// IndexItems handles the standard embedding and storage logic for a list of symbols using a worker pool.
 func (s *Service) IndexItems(ctx context.Context, collection string, symbols []parser.Symbol) error {
 	if len(symbols) == 0 {
 		return nil
 	}
 
-	var allPoints []storage.Point
-	for _, sym := range symbols {
-		// Embed text construction
-		embedText := fmt.Sprintf("%s\n%s\n%s\n%s", sym.Package, sym.Name, sym.Signature, sym.Content)
-		if sym.Docstring != "" {
-			embedText = sym.Docstring + "\n" + embedText
-		}
-
-		vector64, err := s.embedder.Embed(ctx, embedText)
-		if err != nil {
-			return fmt.Errorf("failed to embed %s: %w", sym.Name, err)
-		}
-
-		// Convert to float32 for storage
-		vector := make([]float32, len(vector64))
-		for i, v := range vector64 {
-			vector[i] = float32(v)
-		}
-
-		// Unique ID
-		idKey := fmt.Sprintf("%s:%s:%d:%d", sym.FilePath, sym.Name, sym.StartLine, sym.EndLine)
-		id := fmt.Sprintf("%x", sha256.Sum256([]byte(idKey)))[:32]
-
-		payload := s.symbolToMap(sym)
-		payload["text"] = embedText
-
-		allPoints = append(allPoints, storage.Point{
-			ID:      id,
-			Vector:  vector,
-			Payload: payload,
-		})
+	// Dynamic worker pool based on CPU
+	numWorkers := 4
+	if n := runtime.NumCPU() / 2; n > numWorkers {
+		numWorkers = n
+	}
+	if numWorkers > 16 {
+		numWorkers = 16 // Cap at 16 to avoid overwhelming downstream services
 	}
 
-	// Upsert in batches
+	type result struct {
+		point storage.Point
+		err   error
+	}
+
+	jobs := make(chan parser.Symbol, len(symbols))
+	results := make(chan result, len(symbols))
+
+	var wg sync.WaitGroup
+	for w := 0; w < numWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for sym := range jobs {
+				// Embed text construction
+				embedText := fmt.Sprintf("%s\n%s\n%s\n%s", sym.Package, sym.Name, sym.Signature, sym.Content)
+				if sym.Docstring != "" {
+					embedText = sym.Docstring + "\n" + embedText
+				}
+
+				vector64, err := s.embedder.Embed(ctx, embedText)
+				if err != nil {
+					results <- result{err: fmt.Errorf("failed to embed %s: %w", sym.Name, err)}
+					continue
+				}
+
+				vector := make([]float32, len(vector64))
+				for i, v := range vector64 {
+					vector[i] = float32(v)
+				}
+
+				idKey := fmt.Sprintf("%s:%s:%d:%d", sym.FilePath, sym.Name, sym.StartLine, sym.EndLine)
+				id := fmt.Sprintf("%x", sha256.Sum256([]byte(idKey)))[:32]
+
+				payload := s.symbolToMap(sym)
+				payload["text"] = embedText
+
+				results <- result{
+					point: storage.Point{
+						ID:      id,
+						Vector:  vector,
+						Payload: payload,
+					},
+				}
+			}
+		}()
+	}
+
+	for _, sym := range symbols {
+		jobs <- sym
+	}
+	close(jobs)
+
+	wg.Wait()
+	close(results)
+
+	var allPoints []storage.Point
+	for res := range results {
+		if res.err != nil {
+			return res.err
+		}
+		allPoints = append(allPoints, res.point)
+	}
+
 	batchSize := 50
 	for i := 0; i < len(allPoints); i += batchSize {
 		end := i + batchSize

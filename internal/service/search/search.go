@@ -47,12 +47,26 @@ func (s *Service) Search(ctx context.Context, collection string, queryText strin
 
 // SearchCodeOnly performs a semantic search restricted to code chunks only.
 func (s *Service) SearchCodeOnly(ctx context.Context, collection string, queryText string, limit int) ([]storage.SearchResult, error) {
+	vector, err := s.EmbedQuery(ctx, queryText)
+	if err != nil {
+		return nil, err
+	}
+	return s.SearchCodeWithVector(ctx, collection, vector, limit)
+}
+
+// EmbedQuery converts a text query into a float32 vector using the configured embedder.
+// Use this to embed once and reuse the vector across multiple searches.
+func (s *Service) EmbedQuery(ctx context.Context, queryText string) ([]float32, error) {
 	vector64, err := s.embedder.Embed(ctx, queryText)
 	if err != nil {
-		return nil, fmt.Errorf("search embedding failed: %w", err)
+		return nil, fmt.Errorf("query embedding failed: %w", err)
 	}
-	vector := internalutil.Float64To32(vector64)
+	return internalutil.Float64To32(vector64), nil
+}
 
+// SearchCodeWithVector performs a vector search using a pre-computed embedding.
+// Useful when you want to embed once and fan-out to multiple collections.
+func (s *Service) SearchCodeWithVector(ctx context.Context, collection string, vector []float32, limit int) ([]storage.SearchResult, error) {
 	res, err := s.store.SearchCodeOnly(ctx, collection, storage.SearchQuery{
 		Vector: vector,
 		Limit:  limit,
@@ -60,24 +74,16 @@ func (s *Service) SearchCodeOnly(ctx context.Context, collection string, queryTe
 	if err != nil {
 		return nil, fmt.Errorf("storage search failed: %w", err)
 	}
-
 	return res, nil
 }
 
-// ExactSearch performs a search directly on the store without generating a vector embedding, relying entirely on filters.
+// ExactSearch performs a metadata-only filter scan without generating a vector embedding.
+// Delegates directly to the store's ExactSearch (Qdrant Scroll), bypassing HNSW entirely.
 func (s *Service) ExactSearch(ctx context.Context, collection string, filter map[string]interface{}, limit int) ([]storage.SearchResult, error) {
-	// Dummy vector required by some implementations.
-	vector := make([]float32, 1024)
-
-	res, err := s.store.Search(ctx, collection, storage.SearchQuery{
-		Vector: vector,
-		Limit:  limit,
-		Filter: filter,
-	})
+	res, err := s.store.ExactSearch(ctx, collection, filter, limit)
 	if err != nil {
 		return nil, fmt.Errorf("exact search failed: %w", err)
 	}
-
 	return res, nil
 }
 

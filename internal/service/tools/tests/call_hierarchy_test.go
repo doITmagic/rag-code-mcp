@@ -41,7 +41,7 @@ var _ = Describe("CallHierarchyTool", func() {
 		})
 
 		It("should return outgoing calls (callees)", func() {
-			mockStore.SearchFunc = func(ctx context.Context, col string, q storage.SearchQuery) ([]storage.SearchResult, error) {
+			mockStore.ExactSearchFunc = func(ctx context.Context, col string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error) {
 				if !strings.Contains(col, "-go") {
 					return []storage.SearchResult{}, nil
 				}
@@ -55,7 +55,7 @@ var _ = Describe("CallHierarchyTool", func() {
 							Payload: map[string]interface{}{
 								"name": "MyFunction",
 								"type": "function",
-								"Relations": []interface{}{
+								"relations": []interface{}{
 									map[string]interface{}{"target_name": "CalledFunc", "type": "calls"},
 								},
 							},

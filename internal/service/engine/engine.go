@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
@@ -156,6 +157,16 @@ type SearchCodeResult struct {
 	DetectionSource string
 }
 
+// ErrNoCollectionsFound is returned by ExactSearchPolyglot when no collections
+// exist for the given workspace, meaning the workspace has not been indexed yet.
+type ErrNoCollectionsFound struct {
+	WorkspaceID string
+}
+
+func (e *ErrNoCollectionsFound) Error() string {
+	return fmt.Sprintf("no indexed collections found for workspace %q — run indexing first", e.WorkspaceID)
+}
+
 // ErrNotIndexed is returned when a workspace collection doesn't exist yet and indexing hasn't started.
 type ErrNotIndexed struct {
 	WorkspaceRoot string
@@ -290,6 +301,72 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 		MismatchRisk:    wctx.MismatchRisk,
 		DetectionSource: wctx.DetectionSource,
 	}, nil
+}
+
+// ExactSearchPolyglot performs a metadata-only filter scan (Qdrant Scroll) across
+// ALL language collections for a workspace in parallel.
+// No embedding is generated — results are fully deterministic and fast.
+// Use this for find_usages, call_hierarchy, package exports, and graph expansion.
+//
+// Returns ErrNoCollectionsFound when the workspace has no indexed collections yet.
+func (e *Engine) ExactSearchPolyglot(ctx context.Context, wsID string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error) {
+	langs := parser.SupportedLanguages()
+	if len(langs) == 0 {
+		langs = []string{"go", "python", "php", "html"}
+	}
+
+	type trial struct {
+		results []storage.SearchResult
+	}
+
+	resultsChan := make(chan trial, len(langs))
+	var wg sync.WaitGroup
+	var existingCollections int32
+
+	for _, lang := range langs {
+		collection := fmt.Sprintf("ragcode-%s-%s", wsID, lang)
+		wg.Add(1)
+		go func(coll string) {
+			defer wg.Done()
+
+			exists, err := e.search.CollectionExists(ctx, coll)
+			if err != nil {
+				log.Printf("[WARN] ExactSearchPolyglot: cannot check collection %s: %v", coll, err)
+				return
+			}
+			if !exists {
+				return
+			}
+			atomic.AddInt32(&existingCollections, 1)
+
+			res, sErr := e.search.ExactSearch(ctx, coll, filters, limit)
+			if sErr != nil {
+				log.Printf("[WARN] ExactSearchPolyglot: search failed for %s: %v", coll, sErr)
+				return
+			}
+			resultsChan <- trial{results: res}
+		}(collection)
+	}
+
+	wg.Wait()
+	close(resultsChan)
+
+	if atomic.LoadInt32(&existingCollections) == 0 {
+		return nil, &ErrNoCollectionsFound{WorkspaceID: wsID}
+	}
+
+	var all []storage.SearchResult
+	for t := range resultsChan {
+		all = append(all, t.results...)
+	}
+	return all, nil
+}
+
+// SearchByName performs a high-precision metadata-only lookup for a symbol by name.
+// It bypasses the LLM embedder completely — ideal for graph expansion and call hierarchy.
+// Equivalent to ExactSearchPolyglot with filter {"name": name}.
+func (e *Engine) SearchByName(ctx context.Context, wsID, name string, limit int) ([]storage.SearchResult, error) {
+	return e.ExactSearchPolyglot(ctx, wsID, map[string]interface{}{"name": name}, limit)
 }
 
 // StartIndexingAsync starts the indexing process in a background goroutine.

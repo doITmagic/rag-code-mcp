@@ -122,7 +122,7 @@ func (c *sseClient) callTool(baseURL, name string, args map[string]interface{}) 
 	}
 
 	// Wait for response in SSE stream
-	timeout := time.After(30 * time.Second)
+	timeout := time.After(90 * time.Second)
 	for {
 		select {
 		case <-timeout:

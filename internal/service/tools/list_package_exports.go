@@ -107,7 +107,8 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 		}
 
 		filter := map[string]interface{}{
-			"package": packageName,
+			"package":   packageName,
+			"is_public": true,
 		}
 
 		res, err := searchSvc.ExactSearch(ctx, colName, filter, 1000)
@@ -133,10 +134,6 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 
 	for _, result := range allResults {
 		name, _ := result.Point.Payload["name"].(string)
-		if !isExported(name) {
-			continue
-		}
-
 		symType, _ := result.Point.Payload["type"].(string)
 		if filterType != "" && symType != filterType {
 			continue
@@ -243,10 +240,4 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 	return resp.JSON()
 }
 
-func isExported(name string) bool {
-	if len(name) == 0 {
-		return false
-	}
-	first := rune(name[0])
-	return first >= 'A' && first <= 'Z'
-}
+

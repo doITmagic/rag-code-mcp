@@ -54,7 +54,7 @@ var _ = Describe("FindUsagesTool", func() {
 		})
 
 		It("should return found usages with markdown formatting", func() {
-			mockStore.SearchFunc = func(ctx context.Context, col string, q storage.SearchQuery) ([]storage.SearchResult, error) {
+			mockStore.ExactSearchFunc = func(ctx context.Context, col string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error) {
 				// Only return for "go" collection to simplify
 				if !strings.Contains(col, "-go") {
 					return []storage.SearchResult{}, nil
@@ -71,7 +71,7 @@ var _ = Describe("FindUsagesTool", func() {
 								"file":       "caller.go",
 								"start_line": 10,
 								"code":       "func CallerFunc() { MySymbol() }",
-								"Relations": []interface{}{
+								"relations": []interface{}{
 									map[string]interface{}{"target_name": "MySymbol", "type": "calls"},
 								},
 							},

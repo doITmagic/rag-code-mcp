@@ -245,18 +245,28 @@ func (t *CallHierarchyTool) resolveOutgoing(ctx context.Context, srv *search.Ser
 				continue
 			}
 
+			// Skip qualified names (e.g. "t.engine.DetectContext", "json.MarshalIndent")
+			// The parser always emits both qualified and short form; the short form
+			// is either already in the list (local) or will be handled as external.
+			if strings.Contains(target, ".") {
+				continue
+			}
+
 			child := &CallNode{Name: target}
 
-			// Try to fill child info
+			// Try to fill child info from local index
 			childInfo := t.findSymbolInfo(ctx, srv, wsID, langs, target)
 			if childInfo != nil {
 				child.Type, _ = childInfo.Point.Payload["type"].(string)
 				child.FilePath, _ = childInfo.Point.Payload["file_path"].(string)
 				child.Package, _ = childInfo.Point.Payload["package"].(string)
+				node.Children = append(node.Children, child)
+				t.resolveOutgoing(ctx, srv, wsID, langs, child, depth-1, visited)
+			} else {
+				// External / stdlib symbol — show once, no recursion
+				child.Type = "external"
+				node.Children = append(node.Children, child)
 			}
-
-			node.Children = append(node.Children, child)
-			t.resolveOutgoing(ctx, srv, wsID, langs, child, depth-1, visited)
 		}
 	}
 }
@@ -268,7 +278,12 @@ func (t *CallHierarchyTool) formatTree(sb *strings.Builder, node *CallNode, inde
 		marker = ""
 	}
 
-	line := fmt.Sprintf("%s%s **%s** (%s) `%s:%s` ", prefix, marker, node.Name, node.Type, node.Package, node.FilePath)
+	var line string
+	if node.Type == "external" {
+		line = fmt.Sprintf("%s%s **%s** _(external)_", prefix, marker, node.Name)
+	} else {
+		line = fmt.Sprintf("%s%s **%s** (%s) `%s:%s`", prefix, marker, node.Name, node.Type, node.Package, node.FilePath)
+	}
 	if node.Recursive {
 		line += " 🔄 [circular]"
 	}

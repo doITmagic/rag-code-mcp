@@ -19,6 +19,7 @@ type qdrantClient interface {
 	Query(ctx context.Context, req *qdrant.QueryPoints) ([]*qdrant.ScoredPoint, error)
 	GetCollectionInfo(ctx context.Context, collectionName string) (*qdrant.CollectionInfo, error)
 	Delete(ctx context.Context, req *qdrant.DeletePoints) (*qdrant.UpdateResult, error)
+	Scroll(ctx context.Context, req *qdrant.ScrollPoints) ([]*qdrant.RetrievedPoint, error)
 	DeleteCollection(ctx context.Context, collectionName string) error
 }
 
@@ -60,6 +61,17 @@ func (s *QdrantStore) CreateCollection(ctx context.Context, name string, dimensi
 			Size:     uint64(dimension),
 			Distance: qdrant.Distance_Cosine,
 		}),
+		// HNSW tuning for balanced accuracy/speed on local machines.
+		HnswConfig: &qdrant.HnswConfigDiff{
+			M:                 ptr(uint64(16)),
+			EfConstruct:       ptr(uint64(100)),
+			FullScanThreshold: ptr(uint64(1000)),
+		},
+		// Fewer segments for lower background CPU usage on developer machines.
+		OptimizersConfig: &qdrant.OptimizersConfigDiff{
+			DefaultSegmentNumber: ptr(uint64(2)),
+			MemmapThreshold:      ptr(uint64(10000)),
+		},
 	})
 }
 
@@ -169,6 +181,66 @@ func (s *QdrantStore) SearchCodeOnly(ctx context.Context, collection string, que
 
 func (s *QdrantStore) SearchByChunkType(ctx context.Context, collection string, query SearchQuery, chunkType string) ([]SearchResult, error) {
 	return s.searchByChunkType(ctx, collection, query, chunkType)
+}
+
+// ExactSearch performs a metadata-only filter scan via Qdrant Scroll.
+// Unlike Search/SearchCodeOnly, this never calls the HNSW index and requires no embeddings.
+// Results are assigned score=1.0 (all matches are equally exact).
+// Supports nested array filter paths using "array[].field" notation.
+func (s *QdrantStore) ExactSearch(ctx context.Context, collection string, filters map[string]interface{}, limit int) ([]SearchResult, error) {
+	qFilters := make([]*qdrant.Condition, 0, len(filters))
+	for k, v := range filters {
+		if b, ok := v.(bool); ok {
+			qFilters = append(qFilters, matchBool(k, b))
+		} else {
+			qFilters = append(qFilters, toCondition(k, fmt.Sprintf("%v", v)))
+		}
+	}
+
+	lim := uint32(10)
+	if limit > 0 {
+		lim = uint32(limit)
+	}
+
+	withPayload := true
+	res, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
+		CollectionName: collection,
+		Filter:         &qdrant.Filter{Must: qFilters},
+		Limit:          ptr(lim),
+		WithPayload:    &qdrant.WithPayloadSelector{SelectorOptions: &qdrant.WithPayloadSelector_Enable{Enable: withPayload}},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]SearchResult, 0, len(res))
+	for _, p := range res {
+		results = append(results, SearchResult{
+			Point: Point{
+				ID:      pointIDToString(p.Id),
+				Payload: s.payloadToMap(p.Payload),
+			},
+			Score: 1.0,
+		})
+	}
+	return results, nil
+}
+
+// toCondition converts a filter key-value pair into a Qdrant condition.
+// Supports nested array paths using the "array[].field" notation,
+// e.g. "relations[].target_name" → NestedCondition on "relations" filtering by "target_name".
+func toCondition(key, value string) *qdrant.Condition {
+	const nestedSep = "[]."
+	if idx := strings.Index(key, nestedSep); idx >= 0 {
+		arrayField := key[:idx]
+		nestedField := key[idx+len(nestedSep):]
+		return qdrant.NewNestedFilter(arrayField, &qdrant.Filter{
+			Must: []*qdrant.Condition{
+				matchKeyword(nestedField, value),
+			},
+		})
+	}
+	return matchKeyword(key, value)
 }
 
 func (s *QdrantStore) mapToPayload(m map[string]interface{}) map[string]*qdrant.Value {
@@ -362,6 +434,19 @@ func (s *QdrantStore) toSearchResults(points []*qdrant.ScoredPoint) []SearchResu
 	return results
 }
 
+func matchBool(key string, value bool) *qdrant.Condition {
+	return &qdrant.Condition{
+		ConditionOneOf: &qdrant.Condition_Field{
+			Field: &qdrant.FieldCondition{
+				Key: key,
+				Match: &qdrant.Match{
+					MatchValue: &qdrant.Match_Boolean{Boolean: value},
+				},
+			},
+		},
+	}
+}
+
 func matchKeyword(key, value string) *qdrant.Condition {
 	return &qdrant.Condition{
 		ConditionOneOf: &qdrant.Condition_Field{
@@ -412,6 +497,11 @@ func normalizeLimit(limit int) uint64 {
 		return 10
 	}
 	return uint64(limit)
+}
+
+// ptr returns a pointer to v. Generic helper used for optional proto fields.
+func ptr[T any](v T) *T {
+	return &v
 }
 
 // ParseQdrantURL parses host and gRPC port from a URL like http://localhost:6333.

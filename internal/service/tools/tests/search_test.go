@@ -112,7 +112,7 @@ var _ = Describe("RagSearchCodeTool", func() {
 									ID: "root",
 									Payload: map[string]interface{}{
 										"Name": "Main",
-										"Relations": []interface{}{
+										"relations": []interface{}{
 											map[string]interface{}{"target_name": "Dependency"},
 										},
 									},

@@ -17,6 +17,7 @@ type mockVectorStore struct {
 	storage.VectorStore
 	SearchFunc           func(ctx context.Context, collection string, query storage.SearchQuery) ([]storage.SearchResult, error)
 	SearchCodeOnlyFunc   func(ctx context.Context, collection string, query storage.SearchQuery) ([]storage.SearchResult, error)
+	ExactSearchFunc      func(ctx context.Context, collection string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error)
 	CollectionExistsFunc func(ctx context.Context, name string) (bool, error)
 	UpsertFunc           func(ctx context.Context, collection string, points []storage.Point) (*storage.UpdateResult, error)
 }
@@ -36,6 +37,9 @@ func (m *mockVectorStore) SearchCodeOnly(ctx context.Context, collection string,
 }
 
 func (m *mockVectorStore) ExactSearch(ctx context.Context, collection string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error) {
+	if m.ExactSearchFunc != nil {
+		return m.ExactSearchFunc(ctx, collection, filters, limit)
+	}
 	return nil, nil
 }
 

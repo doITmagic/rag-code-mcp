@@ -9,8 +9,6 @@ import (
 
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
 	"github.com/doITmagic/rag-code-mcp/internal/service/internalutil"
-	"github.com/doITmagic/rag-code-mcp/pkg/parser"
-	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 	"github.com/doITmagic/rag-code-mcp/pkg/telemetry"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -85,32 +83,15 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 		return resp.JSON()
 	}
 
-	searchSvc := t.engine.GetSearchService()
-	if searchSvc == nil {
-		resp := ToolResponse{Status: "error", Error: "search service unavailable"}
-		return resp.JSON()
+	// Fan-out to all language collections in parallel — zero embedding
+	filter := map[string]interface{}{
+		"relations[].target_name": symbolName,
 	}
 
-	// We'll iterate the known languages in the index to find all usages across polyglot codebases
-	langs := parser.SupportedLanguages()
-	var allResults []storage.SearchResult
-
-	for _, lang := range langs {
-		colName := fmt.Sprintf("ragcode-%s-%s", wctx.ID, lang)
-		exists, _ := searchSvc.CollectionExists(ctx, colName)
-		if !exists {
-			continue
-		}
-
-		// In Qdrant, to query a nested array of objects, we use the path `relations[].target_name`
-		filter := map[string]interface{}{
-			"relations[].target_name": symbolName,
-		}
-
-		res, err := searchSvc.ExactSearch(ctx, colName, filter, 100) // limit to top 100 occurrences
-		if err == nil {
-			allResults = append(allResults, res...)
-		}
+	allResults, err := t.engine.ExactSearchPolyglot(ctx, wctx.ID, filter, 100)
+	if err != nil {
+		resp := ToolResponse{Status: "error", Error: fmt.Sprintf("usage search failed: %v", err)}
+		return resp.JSON()
 	}
 
 	if len(allResults) == 0 {

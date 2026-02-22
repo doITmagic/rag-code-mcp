@@ -101,5 +101,58 @@ var _ = Describe("FindUsagesTool", func() {
 			usage := data[0].(map[string]interface{})
 			Expect(usage["name"]).To(Equal("CallerFunc"))
 		})
+
+		It("should send relations[].target_name as filter key to ExactSearch", func() {
+			var capturedFilter map[string]interface{}
+			mockStore.ExactSearchFunc = func(ctx context.Context, col string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error) {
+				capturedFilter = filters
+				return []storage.SearchResult{}, nil
+			}
+
+			tool.Execute(ctx, map[string]interface{}{"symbol_name": "TargetSym", "file_path": "main.go"})
+
+			Expect(capturedFilter).NotTo(BeNil(), "ExactSearch should have been called")
+			Expect(capturedFilter["relations[].target_name"]).To(Equal("TargetSym"))
+		})
+
+		It("should merge usages from multiple language collections (polyglot)", func() {
+			mockStore.ExactSearchFunc = func(ctx context.Context, col string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error) {
+				if strings.HasSuffix(col, "-go") {
+					return []storage.SearchResult{
+						{Score: 1.0, Point: storage.Point{ID: "go-caller", Payload: map[string]interface{}{
+							"name": "GoCallerFunc", "type": "function", "file_path": "a.go",
+							"relations": []interface{}{map[string]interface{}{"target_name": "SharedSym", "type": "calls"}},
+						}}},
+					}, nil
+				}
+				if strings.HasSuffix(col, "-python") {
+					return []storage.SearchResult{
+						{Score: 1.0, Point: storage.Point{ID: "py-caller", Payload: map[string]interface{}{
+							"name": "py_caller_func", "type": "function", "file_path": "b.py",
+							"relations": []interface{}{map[string]interface{}{"target_name": "SharedSym", "type": "calls"}},
+						}}},
+					}, nil
+				}
+				return []storage.SearchResult{}, nil
+			}
+
+			resJSON, err := tool.Execute(ctx, map[string]interface{}{"symbol_name": "SharedSym", "file_path": "main.go"})
+			Expect(err).NotTo(HaveOccurred())
+
+			var resp tools.ToolResponse
+			json.Unmarshal([]byte(resJSON), &resp)
+			Expect(resp.Status).To(Equal("success"))
+
+			data := resp.Data.([]interface{})
+			Expect(data).To(HaveLen(2), "Expected usages from both go and python collections")
+
+			names := map[string]bool{}
+			for _, d := range data {
+				m := d.(map[string]interface{})
+				names[m["name"].(string)] = true
+			}
+			Expect(names["GoCallerFunc"]).To(BeTrue())
+			Expect(names["py_caller_func"]).To(BeTrue())
+		})
 	})
 })

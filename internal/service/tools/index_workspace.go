@@ -31,7 +31,7 @@ func (t *IndexWorkspaceTool) Description() string {
 }
 
 type IndexWorkspaceInput struct {
-	FilePath string `json:"file_path"`
+	FilePath string `json:"file_path,omitempty"`
 	Recreate bool   `json:"recreate,omitempty"`
 }
 

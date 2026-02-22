@@ -24,14 +24,14 @@ func NewCallHierarchyTool(eng *engine.Engine) *CallHierarchyTool {
 
 func (t *CallHierarchyTool) Name() string { return "rag_call_hierarchy" }
 func (t *CallHierarchyTool) Description() string {
-	return "Explore recursive call relationships (caller/callee) for a symbol to understand the execution flow. Supports discovering who calls a function ('incoming') or what a function calls ('outgoing'), up to a specified depth. MANDATORY: provide 'file_path' for context resolution."
+	return "Explore recursive call relationships (caller/callee) for a symbol to understand the execution flow. Supports discovering who calls a function ('incoming') or what a function calls ('outgoing'), up to a specified depth. Provide 'file_path' for better context resolution; if omitted, falls back to the last active workspace."
 }
 
 type CallHierarchyInput struct {
 	SymbolName string `json:"symbol_name"`
 	Direction  string `json:"direction"` // "incoming" or "outgoing"
 	Depth      int    `json:"depth,omitempty"`
-	FilePath   string `json:"file_path"`
+	FilePath   string `json:"file_path,omitempty"`
 }
 
 type CallNode struct {

@@ -35,7 +35,19 @@ type Engine struct {
 	// indexingJobs tracks active background indexing jobs.
 	// Key: workspace ID, Value: start time
 	indexingJobs sync.Map
+
+	// detectionCache stores resolved WorkspaceContext with TTL to avoid
+	// repeated full resolver cascades for the same path.
+	detectionCache sync.Map // map[string]*detectionCacheEntry
 }
+
+// detectionCacheEntry wraps a cached WorkspaceContext with an expiry.
+type detectionCacheEntry struct {
+	wctx   *WorkspaceContext
+	expiry time.Time
+}
+
+const detectionCacheTTL = 5 * time.Second
 
 func (e *Engine) GetSearchService() *search.Service {
 	return e.search
@@ -104,9 +116,41 @@ type WorkspaceContext struct {
 	HeadSHA         string
 }
 
+// CollectionNameFor returns the Qdrant collection name for a workspace ID and language.
+func CollectionNameFor(wsID, lang string) string {
+	return fmt.Sprintf("ragcode-%s-%s", wsID, lang)
+}
+
+// CollectionName returns the Qdrant collection name for the given language.
+func (w *WorkspaceContext) CollectionName(lang string) string {
+	return CollectionNameFor(w.ID, lang)
+}
+
+// DetectFromParams resolves workspace context from a tool args map.
+// Reads file_path, workspace_root, or workspace keys (in that priority order).
+func (e *Engine) DetectFromParams(ctx context.Context, params map[string]interface{}) (*WorkspaceContext, error) {
+	for _, key := range []string{"file_path", "workspace_root", "workspace"} {
+		if v, ok := params[key].(string); ok && strings.TrimSpace(v) != "" {
+			return e.DetectContext(ctx, v)
+		}
+	}
+	return e.DetectContext(ctx, "")
+}
+
 // DetectContext resolves the workspace context for a given path using the full resolver cascade.
 // If path is empty, it falls back to the last active workspace from the registry.
+// Results are cached with a 5s TTL to avoid redundant resolver invocations.
 func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceContext, error) {
+	// Normalize cache key
+	cacheKey := strings.TrimSpace(path)
+	if entry, ok := e.detectionCache.Load(cacheKey); ok {
+		ce := entry.(*detectionCacheEntry)
+		if time.Now().Before(ce.expiry) {
+			return ce.wctx, nil
+		}
+		e.detectionCache.Delete(cacheKey)
+	}
+
 	req := contract.ResolveWorkspaceRequest{}
 	source := "explicit_file_path"
 
@@ -130,7 +174,7 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 		return nil, fmt.Errorf("workspace detection failed: %s", wsErr.Message)
 	}
 
-	return &WorkspaceContext{
+	wctx := &WorkspaceContext{
 		Root:            resp.ResolvedRoot,
 		ID:              resp.WorkspaceID,
 		Branch:          resp.Branch,
@@ -139,7 +183,17 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 		DetectionSource: source,
 		ReindexRequired: resp.ReindexRequired,
 		HeadSHA:         resp.HeadSHA,
-	}, nil
+	}
+
+	// Don't cache entries that require reindex or are high-risk — let next call re-evaluate
+	if !wctx.ReindexRequired && wctx.MismatchRisk != "high" {
+		e.detectionCache.Store(cacheKey, &detectionCacheEntry{
+			wctx:   wctx,
+			expiry: time.Now().Add(detectionCacheTTL),
+		})
+	}
+
+	return wctx, nil
 }
 
 // GetActiveWorkspace returns the last confirmed workspace root from the resolver.
@@ -211,7 +265,7 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 		lang = a.Name()
 	}
 
-	collection := fmt.Sprintf("ragcode-%s-%s", wctx.ID, lang)
+	collection := wctx.CollectionName(lang)
 
 	exists, err := e.search.CollectionExists(ctx, collection)
 	if err != nil {
@@ -268,7 +322,7 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 		lang = a.Name()
 	}
 
-	collection := fmt.Sprintf("ragcode-%s-%s", wctx.ID, lang)
+	collection := wctx.CollectionName(lang)
 
 	exists, err := e.search.CollectionExists(ctx, collection)
 	if err != nil {
@@ -324,7 +378,7 @@ func (e *Engine) ExactSearchPolyglot(ctx context.Context, wsID string, filters m
 	var existingCollections int32
 
 	for _, lang := range langs {
-		collection := fmt.Sprintf("ragcode-%s-%s", wsID, lang)
+		collection := CollectionNameFor(wsID, lang)
 		wg.Add(1)
 		go func(coll string) {
 			defer wg.Done()
@@ -419,7 +473,7 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) er
 			lang = a.Name()
 		}
 	}
-	collection := fmt.Sprintf("ragcode-%s-%s", wctx.ID, lang)
+	collection := wctx.CollectionName(lang)
 
 	for _, p := range files {
 		if err := e.indexer.IndexFile(ctx, collection, p, state); err != nil {
@@ -449,7 +503,7 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 	languages := parser.SupportedLanguages()
 
 	for _, lang := range languages {
-		collection := fmt.Sprintf("ragcode-%s-%s", wctx.ID, lang)
+		collection := wctx.CollectionName(lang)
 		err := e.indexer.IndexWorkspace(ctx, wctx.Root, collection, indexer.Options{
 			Language:        lang,
 			ExcludePatterns: e.config.Workspace.ExcludePatterns,

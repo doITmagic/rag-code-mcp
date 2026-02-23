@@ -257,10 +257,13 @@ func (e *ErrIndexingStarted) Error() string {
 // embeds the query ONCE, then fans out in parallel to all language collections.
 // includeDocs=false searches code only. Triggers background indexing if needed.
 func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, limit int, includeDocs bool) (*SearchCodeResult, error) {
+	t0 := time.Now()
+
 	wctx, err := e.DetectContext(ctx, filePath)
 	if err != nil {
 		return nil, err
 	}
+	log.Printf("[TIMER] SearchCode detect_context=%v", time.Since(t0))
 
 	// Primary language from file extension
 	primaryLang := "go"
@@ -270,7 +273,9 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 
 	// Ensure at least the primary collection exists before embedding (fast fail + indexing trigger)
 	primaryColl := wctx.CollectionName(primaryLang)
+	t1 := time.Now()
 	exists, err := e.search.CollectionExists(ctx, primaryColl)
+	log.Printf("[TIMER] SearchCode collection_exists_primary=%v (cached=%v)", time.Since(t1), time.Since(t1) < time.Millisecond)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check collection: %w", err)
 	}
@@ -293,7 +298,9 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 		langs = []string{"go", "python", "php", "html"}
 	}
 
+	t2 := time.Now()
 	vector, err := e.search.EmbedQuery(ctx, queryText)
+	log.Printf("[TIMER] SearchCode embed=%v", time.Since(t2))
 	if err != nil {
 		return nil, fmt.Errorf("embedding failed: %w", err)
 	}
@@ -303,16 +310,19 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 		coll    string
 		results []storage.SearchResult
 		err     error
+		elapsed time.Duration
 	}
 
 	resultsChan := make(chan langResult, len(langs))
 	var wg sync.WaitGroup
+	t3 := time.Now()
 
 	for _, lang := range langs {
 		coll := wctx.CollectionName(lang)
 		wg.Add(1)
 		go func(l, c string) {
 			defer wg.Done()
+			gt := time.Now()
 			ok, chkErr := e.search.CollectionExists(ctx, c)
 			if chkErr != nil || !ok {
 				return
@@ -324,19 +334,21 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 			} else {
 				res, sErr = e.search.SearchCodeWithVector(ctx, c, vector, limit)
 			}
+			elapsed := time.Since(gt)
 			if sErr != nil {
 				log.Printf("[WARN] SearchCode: fan-out failed for %s: %v", c, sErr)
-				resultsChan <- langResult{lang: l, coll: c, err: sErr}
+				resultsChan <- langResult{lang: l, coll: c, err: sErr, elapsed: elapsed}
 				return
 			}
 			if len(res) > 0 {
-				resultsChan <- langResult{lang: l, coll: c, results: res}
+				resultsChan <- langResult{lang: l, coll: c, results: res, elapsed: elapsed}
 			}
 		}(lang, coll)
 	}
 
 	wg.Wait()
 	close(resultsChan)
+	log.Printf("[TIMER] SearchCode fanout_total=%v (langs=%d)", time.Since(t3), len(langs))
 
 	// Merge: primary lang results first, others appended; surface first error if no results
 	var primaryResults []storage.SearchResult
@@ -347,11 +359,13 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 
 	for lr := range resultsChan {
 		if lr.err != nil {
+			log.Printf("[TIMER] SearchCode lang=%s err elapsed=%v", lr.lang, lr.elapsed)
 			if firstErr == nil {
 				firstErr = lr.err
 			}
 			continue
 		}
+		log.Printf("[TIMER] SearchCode lang=%s hits=%d elapsed=%v", lr.lang, len(lr.results), lr.elapsed)
 		if lr.coll == primaryColl {
 			primaryResults = lr.results
 		} else {
@@ -372,6 +386,9 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 	if len(all) == 0 && firstErr != nil {
 		return nil, fmt.Errorf("search failed: %w", firstErr)
 	}
+
+	log.Printf("[TIMER] SearchCode TOTAL=%v (detect=%v embed=%v fanout=%v)",
+		time.Since(t0), t1.Sub(t0), t2.Sub(t1), time.Since(t3))
 
 	return &SearchCodeResult{
 		Results:         all,

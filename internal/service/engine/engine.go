@@ -144,12 +144,13 @@ func (e *Engine) DetectFromParams(ctx context.Context, params map[string]interfa
 func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceContext, error) {
 	// Normalize cache key
 	cacheKey := strings.TrimSpace(path)
-	if entry, ok := e.detectionCache.Load(cacheKey); ok {
+	if entry, ok := e.detectionCache.LoadAndDelete(cacheKey); ok {
 		ce := entry.(*detectionCacheEntry)
 		if time.Now().Before(ce.expiry) {
+			// Re-store valid entry atomically before returning
+			e.detectionCache.Store(cacheKey, ce)
 			return ce.wctx, nil
 		}
-		e.detectionCache.Delete(cacheKey)
 	}
 
 	req := contract.ResolveWorkspaceRequest{}

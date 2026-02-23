@@ -213,7 +213,11 @@ func setupEnvironment() {
 		log("Setting up Ollama in Docker...")
 		args := []string{"run", "-d", "--name", "ragcode-ollama", "--restart", "always", "-p", "11434:11434", "-v", "ollama-data:/root/.ollama"}
 		if *gpu {
-			args = append(args[:2], append([]string{"--gpus", "all"}, args[2:]...)...)
+			argsWithGPU := make([]string, 0, len(args)+2)
+			argsWithGPU = append(argsWithGPU, args[:2]...)
+			argsWithGPU = append(argsWithGPU, "--gpus", "all")
+			argsWithGPU = append(argsWithGPU, args[2:]...)
+			args = argsWithGPU
 		}
 		args = append(args, "ollama/ollama")
 		cmd := exec.Command("docker", args...)

@@ -35,7 +35,7 @@ var _ = Describe("ListPackageExportsTool", func() {
 			resJSON, err := tool.Execute(ctx, map[string]interface{}{"file_path": "main.go"})
 			Expect(err).NotTo(HaveOccurred())
 			var resp tools.ToolResponse
-			json.Unmarshal([]byte(resJSON), &resp)
+			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
 			Expect(resp.Status).To(Equal("error"))
 			Expect(resp.Error).To(ContainSubstring("package parameter is required"))
 		})
@@ -71,7 +71,7 @@ var _ = Describe("ListPackageExportsTool", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			var resp tools.ToolResponse
-			json.Unmarshal([]byte(resJSON), &resp)
+			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
 			if resp.Status != "success" {
 				GinkgoWriter.Printf("ListPackageExports Error: %s\n", resp.Error)
 			}
@@ -95,7 +95,7 @@ var _ = Describe("ListPackageExportsTool", func() {
 				return []storage.SearchResult{}, nil
 			}
 
-			tool.Execute(ctx, map[string]interface{}{"package": "mypkg", "file_path": "main.go"})
+			_, _ = tool.Execute(ctx, map[string]interface{}{"package": "mypkg", "file_path": "main.go"})
 
 			Expect(capturedFilter).NotTo(BeNil())
 			Expect(capturedFilter["package"]).To(Equal("mypkg"))
@@ -119,7 +119,7 @@ var _ = Describe("ListPackageExportsTool", func() {
 			resJSON, err := tool.Execute(ctx, map[string]interface{}{"package": "mypkg", "file_path": "main.go"})
 			Expect(err).NotTo(HaveOccurred())
 			var resp tools.ToolResponse
-			json.Unmarshal([]byte(resJSON), &resp)
+			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
 			Expect(resp.Status).To(Equal("success"))
 			data := resp.Data.(map[string]interface{})
 			funcs := data["function"].([]interface{})
@@ -142,7 +142,7 @@ var _ = Describe("ListPackageExportsTool", func() {
 			resJSON, err := tool.Execute(ctx, map[string]interface{}{"package": "mypkg", "file_path": "main.go"})
 			Expect(err).NotTo(HaveOccurred())
 			var resp tools.ToolResponse
-			json.Unmarshal([]byte(resJSON), &resp)
+			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
 			Expect(resp.Status).To(Equal("success"))
 			Expect(resp.Data).To(BeNil(), "internalHelper should be excluded by isExported check")
 		})
@@ -168,7 +168,7 @@ var _ = Describe("ListPackageExportsTool", func() {
 			resJSON, err := tool.Execute(ctx, map[string]interface{}{"package": "mypkg", "file_path": "main.go"})
 			Expect(err).NotTo(HaveOccurred())
 			var resp tools.ToolResponse
-			json.Unmarshal([]byte(resJSON), &resp)
+			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
 			Expect(resp.Status).To(Equal("success"))
 			Expect(resp.Message).To(ContainSubstring("**Relations:** 3"), "Output should display RelationsCount when > 0")
 		})

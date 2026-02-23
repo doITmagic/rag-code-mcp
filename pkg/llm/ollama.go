@@ -16,8 +16,8 @@ import (
 type OllamaLLMProvider struct {
 	embedModel llms.Model
 	embedName  string
-	cachedDim  uint64
-	dimOnce    sync.Once
+	cachedDim uint64
+	dimOnce   sync.Once
 }
 
 // NewOllamaLLMProvider creates a new Ollama provider configured for embedding only.

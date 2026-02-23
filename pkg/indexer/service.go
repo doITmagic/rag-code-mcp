@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/doITmagic/rag-code-mcp/pkg/llm"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
@@ -129,7 +130,8 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 		}
 	}
 
-	log.Printf("[INFO] Indexing %d changed files in %s (Language: %s)", len(changedFiles), root, opts.Language)
+	totalFiles := len(changedFiles)
+	log.Printf("[INFO] Indexing %d changed files in %s (Language: %s)", totalFiles, root, opts.Language)
 
 	// 4. Process changed files in parallel (file-level worker pool).
 	// State.UpdateFile is mutex-protected; errors are collected safely.
@@ -141,16 +143,17 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 		numFileWorkers = 8
 	}
 
-	filePaths := make(chan string, len(changedFiles))
+	filePaths := make(chan string, totalFiles)
 	for _, p := range changedFiles {
 		filePaths <- p
 	}
 	close(filePaths)
 
 	var (
-		fileWg   sync.WaitGroup
-		errMu    sync.Mutex
-		fileErrs []string
+		fileWg    sync.WaitGroup
+		errMu     sync.Mutex
+		fileErrs  []string
+		doneFiles atomic.Int64
 	)
 
 	for i := 0; i < numFileWorkers; i++ {
@@ -158,6 +161,10 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 		go func() {
 			defer fileWg.Done()
 			for path := range filePaths {
+				n := int(doneFiles.Add(1))
+				remaining := totalFiles - n
+				pct := remaining * 100 / totalFiles
+				fmt.Fprintf(os.Stderr, "\r[INDEX] %s: %d%% (%d/%d files left)   ", opts.Language, pct, remaining, totalFiles)
 				if err := s.IndexFile(ctx, collection, path, state); err != nil {
 					log.Printf("[ERROR] Failed to index %s: %v", path, err)
 					errMu.Lock()
@@ -169,6 +176,7 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 	}
 
 	fileWg.Wait()
+	fmt.Fprintf(os.Stderr, "\r[INDEX] %s: done (%d files indexed)            \n", opts.Language, totalFiles)
 
 	if len(fileErrs) > 0 {
 		log.Printf("[WARN] %d file(s) failed to index in %s", len(fileErrs), root)
@@ -224,14 +232,9 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 		return nil
 	}
 
-	// Dynamic worker pool based on CPU
-	numWorkers := 4
-	if n := runtime.NumCPU() / 2; n > numWorkers {
-		numWorkers = n
-	}
-	if numWorkers > 16 {
-		numWorkers = 16 // Cap at 16 to avoid overwhelming downstream services
-	}
+	// Ollama processes embeds serially — multiple workers only queue up requests
+	// and increase latency for concurrent search queries. Keep 1 worker.
+	numWorkers := 1
 
 	type result struct {
 		point storage.Point
@@ -308,6 +311,7 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 		}
 	}
 
+	log.Printf("[INFO] Indexed %d symbols into %s", len(allPoints), collection)
 	return nil
 }
 

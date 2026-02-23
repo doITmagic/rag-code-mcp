@@ -231,7 +231,6 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			var wg sync.WaitGroup
 			seenTargets := make(map[string]bool)
 			expanded := 0
-			sem := make(chan struct{}, 3) // limit concurrent DB lookups
 
 			for _, relRaw := range relList {
 				if expanded >= maxExpansions {
@@ -251,8 +250,6 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 				wg.Add(1)
 				go func(name string) {
 					defer wg.Done()
-					sem <- struct{}{}
-					defer func() { <-sem }()
 					// ExactSearch only — zero embedding, deterministic.
 					// No fallback to embedding search: relation names are often stdlib/external
 					// symbols not in the local index, and each embedding call costs ~N seconds.

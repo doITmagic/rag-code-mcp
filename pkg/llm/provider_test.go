@@ -51,7 +51,7 @@ func TestNewProvider_OllamaMissingModel(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error when ollama model is missing, got nil")
 	}
-	if !strings.Contains(err.Error(), "ollama chat model is required") {
+	if !strings.Contains(err.Error(), "ollama model is required") { //nolint: keep generic check
 		t.Errorf("unexpected error: %v", err)
 	}
 	if p != nil {
@@ -62,7 +62,7 @@ func TestNewProvider_OllamaMissingModel(t *testing.T) {
 func TestNewProvider_DefaultOllama(t *testing.T) {
 	cfg := &config.LLMConfig{
 		Provider:      "", // implicit ollama
-		OllamaModel:   "dummy-model",
+		OllamaEmbed:   "dummy-model",
 		OllamaBaseURL: "http://localhost:11434",
 	}
 

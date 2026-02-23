@@ -3,6 +3,7 @@ package engine
 import (
 "context"
 "errors"
+"sync"
 "testing"
 
 "github.com/doITmagic/rag-code-mcp/internal/config"
@@ -22,6 +23,7 @@ type testStore struct {
 storage.VectorStore
 existing         map[string]bool
 exactSearchFunc  func(coll string, filters map[string]interface{}) ([]storage.SearchResult, error)
+mu               sync.Mutex
 recordedFilters  []capturedCall
 exactSearchErr   error
 }
@@ -36,7 +38,9 @@ return s.existing[name], nil
 }
 
 func (s *testStore) ExactSearch(_ context.Context, coll string, filters map[string]interface{}, _ int) ([]storage.SearchResult, error) {
+s.mu.Lock()
 s.recordedFilters = append(s.recordedFilters, capturedCall{collection: coll, filters: filters})
+s.mu.Unlock()
 if s.exactSearchErr != nil {
 return nil, s.exactSearchErr
 }

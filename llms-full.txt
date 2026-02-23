@@ -31,7 +31,7 @@ Built with the official [Model Context Protocol Go SDK](https://github.com/model
 
 **Your code never leaves your machine.** RagCode runs entirely on your local infrastructure:
 
-- ✅ **Local AI Models** - Uses Ollama for LLM and embeddings (runs on your hardware)
+- ✅ **Local AI Models** - Uses Ollama for embeddings (runs on your hardware)
 - ✅ **Local Vector Database** - Qdrant runs in Docker on your machine
 - ✅ **Zero Cloud Dependencies** - No external API calls, no data transmission
 - ✅ **No API Costs** - Free forever, no usage limits or subscriptions
@@ -55,7 +55,7 @@ Built with the official [Model Context Protocol Go SDK](https://github.com/model
 
 ### 🛠️ Technology Stack
 
-**100% Local Stack:** Ollama (local LLM + embeddings) + Qdrant (local vector database) + Docker + MCP Protocol
+**100% Local Stack:** Ollama (local embeddings) + Qdrant (local vector database) + Docker + MCP Protocol
 
 ### 💻 Compatible IDEs & AI Assistants
 
@@ -143,7 +143,7 @@ Without RagCode, AI assistants must:
 - **Multi-Workspace Detection** - Automatically detects project boundaries (git, go.mod, composer.json, package.json, pyproject.toml, requirements.txt)
 - **Per-Language Collections** - Separate vector databases for each language (`ragcode-{workspace}-go`, `ragcode-{workspace}-php`, `ragcode-{workspace}-python`)
 - **Automatic Indexing** - Background indexing on first use, no manual intervention needed
-- **Vector Embeddings** - Uses Ollama's `mxbai-embed-large` for high-quality semantic embeddings
+- **Vector Embeddings** - Uses Ollama's `qwen3-embedding:0.6b` for high-quality semantic embeddings
 - **Hybrid Search Engine** - Combines vector similarity with BM25 lexical matching
 - **Direct File Access** - Read code without indexing for quick lookups
 - **Smart Caching** - Efficient re-indexing only for changed files
@@ -156,25 +156,24 @@ Without RagCode, AI assistants must:
 
 | Component | Requirement | Notes |
 |-----------|-------------|-------|
-| **CPU**   | 4 cores     | For running Ollama models |
-| **RAM**   | 16 GB       | 8 GB for `phi3:medium`, 4 GB for `mxbai-embed-large`, 4 GB system |
-| **Disk**  | 10 GB free  | ~8 GB for models + 2 GB for data |
+| **CPU**   | 2 cores     | For running Ollama models |
+| **RAM**   | 2 GB        | < 1 GB for `qwen3-embedding:0.6b`, 1 GB system |
+| **Disk**  | 0.64 GB free   | ~639 MB for model + app |
 | **OS**    | Linux, macOS, Windows | Docker required for Qdrant |
 
 ### Recommended Requirements
 
 | Component | Requirement | Notes |
 |-----------|-------------|-------|
-| **CPU**   | 8+ cores    | Better performance for concurrent operations |
-| **RAM**   | 32 GB       | Allows comfortable multi‑workspace indexing |
+| **CPU**   | 4+ cores    | Better performance for concurrent operations |
+| **RAM**   | 4 GB        | Allows comfortable multi‑workspace indexing |
 | **GPU**   | NVIDIA GPU with 8 GB+ VRAM | Significantly speeds up Ollama inference (optional) |
 | **Disk**  | 20 GB free SSD | Faster indexing and search |
 
 ### Model Sizes
 
-- `mxbai-embed-large`: ~274 MB (embeddings model)
-- `phi3:medium`: ~7.9 GB (LLM for code analysis)
-- **Total**: ~8.2 GB for models
+- `qwen3-embedding:0.6b`: 639 MB (embeddings model)
+- **Total**: ~640 MB for models
 
 ---
 
@@ -182,24 +181,24 @@ Without RagCode, AI assistants must:
 
 **Linux (amd64):**
 ```bash
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./rag-code-install -ollama=docker -qdrant=docker
 ```
 
 **macOS (Apple Silicon):**
 ```bash
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_arm64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_arm64.tar.gz | tar xz && ./rag-code-install -ollama=docker -qdrant=docker
 ```
 
 **macOS (Intel):**
 ```bash
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_amd64.tar.gz | tar xz && ./rag-code-install -ollama=docker -qdrant=docker
 ```
 
 **Windows (PowerShell):**
 ```powershell
 Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_windows_amd64.zip" -OutFile "ragcode.zip"
 Expand-Archive ragcode.zip -DestinationPath . -Force
-.\ragcode-installer.exe -ollama=docker -qdrant=docker
+.\rag-code-install.exe -ollama=docker -qdrant=docker
 ```
 > ⚠️ Windows requires [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running.
 
@@ -209,7 +208,7 @@ If you run Docker via WSL and have IDEs on Windows, install the Linux version in
 
 ```bash
 # Inside WSL terminal
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./rag-code-install -ollama=docker -qdrant=docker
 ```
 
 Then manually configure your Windows IDE (e.g., Windsurf at `%USERPROFILE%\.codeium\windsurf\mcp_config.json`):
@@ -222,8 +221,7 @@ Then manually configure your Windows IDE (e.g., Windsurf at `%USERPROFILE%\.code
       "args": ["-e", "/home/YOUR_USERNAME/.local/share/ragcode/bin/rag-code-mcp"],
       "env": {
         "OLLAMA_BASE_URL": "http://localhost:11434",
-        "OLLAMA_MODEL": "phi3:medium",
-        "OLLAMA_EMBED": "mxbai-embed-large",
+        "OLLAMA_EMBED": "qwen3-embedding:0.6b",
         "QDRANT_URL": "http://localhost:6333"
       },
       "disabled": false
@@ -235,26 +233,26 @@ Then manually configure your Windows IDE (e.g., Windsurf at `%USERPROFILE%\.code
 > 💡 Replace `YOUR_USERNAME` with your WSL username. The `localhost` URLs work because WSL2 shares network ports with Windows.
 
 The installer is end-to-end:
-1. ✅ Installs the `rag-code-mcp` and `index-all` binaries into `~/.local/share/ragcode/bin`
+1. ✅ Installs the `rag-code-mcp` binary into `~/.local/share/ragcode/bin`
 2. ✅ Configures Windsurf, Cursor, Claude, VS Code, etc.
 3. ✅ Starts Docker and launches the Ollama + Qdrant containers
-4. ✅ Downloads the required models (`phi3:medium`, `mxbai-embed-large`)
+4. ✅ Downloads the required model (`qwen3-embedding:0.6b`)
 5. ✅ Runs health-check and starts the MCP server
 
 ### Customization Options
 
 ```bash
 # Everything in Docker (default)
-./ragcode-installer -ollama=docker -qdrant=docker
+./rag-code-install -ollama=docker -qdrant=docker
 
 # Keep Ollama local, run only Qdrant in Docker
-./ragcode-installer -ollama=local -qdrant=docker
+./rag-code-install -ollama=local -qdrant=docker
 
 # Use existing remote services
-./ragcode-installer -ollama=local -qdrant=remote --skip-build
+./rag-code-install -ollama=local -qdrant=remote --skip-build
 
 # Enable GPU + mount models directory
-./ragcode-installer -ollama=docker -qdrant=docker -gpu -models-dir=$HOME/.ollama
+./rag-code-install -ollama=docker -qdrant=docker -gpu -models-dir=$HOME/.ollama
 ```
 
 Key flags:
@@ -294,7 +292,7 @@ brew install docker
 
 **Option A: Everything in Docker (recommended, no extra installs needed)**
 ```bash
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./rag-code-install -ollama=docker -qdrant=docker
 ```
 
 **Option B: Use local Ollama (if you already have Ollama installed)**
@@ -303,7 +301,7 @@ curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/ra
 curl -fsSL https://ollama.com/install.sh | sh
 
 # Then run installer with local Ollama
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=local -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./rag-code-install -ollama=local -qdrant=docker
 ```
 
 Installation takes roughly 5‑10 minutes (downloading the Ollama models is the longest step).
@@ -344,7 +342,7 @@ After installation, RagCode is automatically available in supported IDEs. No add
 RagCode integrates with **GitHub Copilot's Agent Mode** through MCP, enabling semantic code search as part of Copilot's autonomous workflow.
 
 **Quick Setup:**
-1. Install RagCode using the release `ragcode-installer` (it automatically configures VS Code)
+1. Install RagCode using the release `rag-code-install` (it automatically configures VS Code)
 2. Open VS Code in your project
 3. Open Copilot Chat (Ctrl+Shift+I / Cmd+Shift+I)
 4. Enable **Agent Mode** (click "Agent" button or type `/agent`)
@@ -422,12 +420,10 @@ Edit `~/.local/share/ragcode/config.yaml`:
 llm:
   provider: "ollama"
   base_url: "http://localhost:11434"
-  model: "phi3:medium"        # change to another model if desired
-  embed_model: "mxbai-embed-large"
+  ollama_embed: "qwen3-embedding:0.6b"
 ```
 Recommended models:
-- **LLM:** `phi3:medium`, `llama3.1:8b`, `qwen2.5:7b`
-- **Embeddings:** `mxbai-embed-large`, `all-minilm`
+- **Embeddings:** `qwen3-embedding:0.6b`, `all-minilm`
 
 ### Qdrant Configuration
 ```yaml
@@ -471,8 +467,7 @@ sudo systemctl start docker   # Linux
 **Cause:** Required models have not been downloaded.
 **Fix:**
 ```bash
-ollama pull mxbai-embed-large
-ollama pull phi3:medium
+ollama pull qwen3-embedding:0.6b
 ```
 
 ### Indexing is too slow
@@ -585,51 +580,51 @@ RagCode is an MCP (Model Context Protocol) server that allows you to navigate an
 
 **Linux (amd64):**
 ```bash
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./rag-code-install -ollama=docker -qdrant=docker
 ```
 
 **macOS (Apple Silicon):**
 ```bash
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_arm64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_arm64.tar.gz | tar xz && ./rag-code-install -ollama=docker -qdrant=docker
 ```
 
 **macOS (Intel):**
 ```bash
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_amd64.tar.gz | tar xz && ./rag-code-install -ollama=docker -qdrant=docker
 ```
 
 **Windows (PowerShell):**
 ```powershell
 Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_windows_amd64.zip" -OutFile "ragcode.zip"
 Expand-Archive ragcode.zip -DestinationPath . -Force
-.\ragcode-installer.exe -ollama=docker -qdrant=docker
+.\rag-code-install.exe -ollama=docker -qdrant=docker
 ```
 > ⚠️ Windows requires [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running.
 
 **Windows with WSL:** Install Linux version in WSL, then configure Windows IDEs to use `wsl.exe` as command with args `["-e", "/home/USER/.local/share/ragcode/bin/rag-code-mcp"]`. See README for full config example.
 
 The installer will:
-1. ✅ Download and install the `rag-code-mcp` and `index-all` binaries into `~/.local/share/ragcode/bin`
+1. ✅ Download and install the `rag-code-mcp` binary into `~/.local/share/ragcode/bin`
 2. ✅ Add the binaries to your PATH
 3. ✅ Configure Windsurf, Cursor, Antigravity, VS Code, etc. (MCP config)
 4. ✅ Start Docker (if needed) and launch the Ollama + Qdrant containers
-5. ✅ Download required AI models (`mxbai-embed-large`, `phi3:medium`)
+5. ✅ Download required embedding model (`qwen3-embedding:0.6b`)
 6. ✅ Run health checks and start the MCP server in the background
 
 **Installer Flags (examples):**
 
 ```bash
 # Everything inside Docker (default)
-./ragcode-installer -ollama=docker -qdrant=docker
+./rag-code-install -ollama=docker -qdrant=docker
 
 # Use existing local Ollama but keep Qdrant in Docker
-./ragcode-installer -ollama=local -qdrant=docker
+./rag-code-install -ollama=local -qdrant=docker
 
 # Point to remote services / re-use local binaries
-./ragcode-installer -ollama=local -qdrant=remote --skip-build
+./rag-code-install -ollama=local -qdrant=remote --skip-build
 
 # Mount a custom models directory and enable GPU
-./ragcode-installer -ollama=docker -models-dir=$HOME/.ollama -gpu
+./rag-code-install -ollama=docker -models-dir=$HOME/.ollama -gpu
 ```
 
 **Key flags:** `-ollama`, `-qdrant`, `-models-dir`, `-gpu`, `-skip-build`, `-ides`.
@@ -676,7 +671,7 @@ brew install docker
 
 **Option A: Everything in Docker (recommended, no extra installs needed)**
 ```bash
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./rag-code-install -ollama=docker -qdrant=docker
 ```
 
 **Option B: Use local Ollama (if you already have Ollama installed)**
@@ -685,7 +680,7 @@ curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/ra
 curl -fsSL https://ollama.com/install.sh | sh
 
 # Then run installer with local Ollama
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=local -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./rag-code-install -ollama=local -qdrant=docker
 ```
 
 **Installation time:** ~5-10 minutes (model downloads dominate)
@@ -994,8 +989,7 @@ llm:
 ```
 
 Recommended models:
-- **LLM:** `phi3:medium`, `llama3.1:8b`, `qwen2.5:7b`
-- **Embeddings:** `mxbai-embed-large`, `all-minilm`
+- **Embeddings:** `qwen3-embedding:0.6b`,`mxbai-embed-large`, `all-minilm`
 
 ### Configure Qdrant
 

@@ -35,7 +35,7 @@ var _ = Describe("CallHierarchyTool", func() {
 			resJSON, err := tool.Execute(ctx, map[string]interface{}{"file_path": "main.go"})
 			Expect(err).NotTo(HaveOccurred())
 			var resp tools.ToolResponse
-			json.Unmarshal([]byte(resJSON), &resp)
+			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
 			Expect(resp.Status).To(Equal("error"))
 			Expect(resp.Error).To(ContainSubstring("symbol_name parameter is required"))
 		})
@@ -72,7 +72,7 @@ var _ = Describe("CallHierarchyTool", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			var resp tools.ToolResponse
-			json.Unmarshal([]byte(resJSON), &resp)
+			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
 			Expect(resp.Status).To(Equal("success"))
 
 			// Data is the root node

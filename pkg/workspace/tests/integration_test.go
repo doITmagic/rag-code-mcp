@@ -57,7 +57,7 @@ func TestBranchIsolationAndFeedbackPromotionIntegration(t *testing.T) {
 	})
 
 	projectRoot := filepath.Clean(filepath.Join(tmpDir, "project"))
-	os.MkdirAll(projectRoot, 0755)
+	_ = os.MkdirAll(projectRoot, 0755)
 
 	// --- STEP 1: Initial resolution on main ---
 	req1 := contract.ResolveWorkspaceRequest{WorkspaceRoot: projectRoot}
@@ -76,6 +76,9 @@ func TestBranchIsolationAndFeedbackPromotionIntegration(t *testing.T) {
 
 	req2 := contract.ResolveWorkspaceRequest{WorkspaceRoot: projectRoot}
 	resp2, errRes := r.Resolve(ctx, req2)
+	if errRes != nil {
+		t.Fatalf("Step 2 resolve failed: %v", errRes)
+	}
 	if id1 == resp2.WorkspaceID {
 		t.Errorf("Workspace IDs should be different for different branches")
 	}
@@ -122,7 +125,9 @@ func TestBranchIsolationAndFeedbackPromotionIntegration(t *testing.T) {
 	}
 
 	// --- STEP 5: Promotion (Upsert) ---
-	reg.Upsert(projectRoot, "MyProject", "windsurf")
+	if _, err := reg.Upsert(projectRoot, "MyProject", "windsurf"); err != nil {
+		t.Fatalf("Upsert failed: %v", err)
+	}
 
 	// --- STEP 6: Final check ---
 	// Now searching by Name "MyProject" should work perfectly.
@@ -151,7 +156,7 @@ func TestFeedbackCandidatePromotionRequiresExecutionSignal(t *testing.T) {
 
 	r := resolver.New(resolver.Dependencies{Registry: reg})
 	projectRoot := filepath.Clean(filepath.Join(tmpDir, "project"))
-	os.MkdirAll(projectRoot, 0o755)
+	_ = os.MkdirAll(projectRoot, 0o755)
 
 	_, errRes := r.Resolve(ctx, contract.ResolveWorkspaceRequest{
 		WorkspaceRoot: projectRoot,

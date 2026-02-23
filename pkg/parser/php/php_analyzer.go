@@ -60,6 +60,7 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 			FilePath:  chunk.FilePath,
 			Language:  "php",
 			IsPublic:  isPublic,
+			Relations: chunk.Relations,
 			Metadata:  chunk.Metadata,
 		}
 	}
@@ -69,3 +70,4 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 		Language: "php",
 	}, nil
 }
+

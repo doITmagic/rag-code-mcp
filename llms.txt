@@ -35,22 +35,22 @@ Unlike generic RAG that splits code into arbitrary text chunks, RagCode:
 
 **Linux:**
 ```bash
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./rag-code-install -ollama=docker -qdrant=docker
 ```
 
 **macOS (Apple Silicon):**
 ```bash
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_arm64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_arm64.tar.gz | tar xz && ./rag-code-install -ollama=docker -qdrant=docker
 ```
 
 **macOS (Intel):**
 ```bash
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_amd64.tar.gz | tar xz && ./rag-code-install -ollama=docker -qdrant=docker
 ```
 
 **Windows (PowerShell):**
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_windows_amd64.zip" -OutFile "ragcode.zip"; Expand-Archive ragcode.zip -DestinationPath . -Force; .\ragcode-installer.exe -ollama=docker -qdrant=docker
+Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_windows_amd64.zip" -OutFile "ragcode.zip"; Expand-Archive ragcode.zip -DestinationPath . -Force; .\rag-code-install.exe -ollama=docker -qdrant=docker
 ```
 
 **Windows with WSL:** Install Linux version in WSL, then configure Windows IDEs to use `wsl.exe` as command with args `["-e", "/home/USER/.local/share/ragcode/bin/rag-code-mcp"]`.
@@ -81,6 +81,7 @@ User: "Find authentication middleware in this codebase"
 11. `rag_evaluate` - Request AI self-evaluation on performance and quality. **Use to share feedback.**
 12. `rag_check_update` - Check for new versions of the RagCode MCP server.
 13. `rag_apply_update` - Download and apply the latest update and restart the server.
+14. `rag-code-install` - Local installation and environment setup tool.
 
 ## Configuration
 
@@ -89,8 +90,7 @@ Config file: `~/.local/share/ragcode/config.yaml`
 ```yaml
 llm:
   provider: "ollama"
-  model: "phi3:medium"
-  embed_model: "mxbai-embed-large"
+  ollama_embed: "qwen3-embedding:0.6b"
 
 storage:
   vector_db:

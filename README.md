@@ -29,27 +29,27 @@ Built with the official [Model Context Protocol Go SDK](https://github.com/model
 
 ### Linux (amd64)
 ```bash
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./rag-code-install -ollama=docker -qdrant=docker
 ```
 
 ### macOS (Apple Silicon / Intel)
 ```bash
 # Apple Silicon (M1/M2/M3)
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_arm64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_arm64.tar.gz | tar xz && ./rag-code-install -ollama=docker -qdrant=docker
 
 # Intel Macs
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_amd64.tar.gz | tar xz && ./rag-code-install -ollama=docker -qdrant=docker
 ```
 
 ### Windows (PowerShell)
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_windows_amd64.zip" -OutFile "ragcode.zip"; Expand-Archive ragcode.zip -DestinationPath . -Force; .\ragcode-installer.exe -ollama=docker -qdrant=docker
+Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_windows_amd64.zip" -OutFile "ragcode.zip"; Expand-Archive ragcode.zip -DestinationPath . -Force; .\rag-code-install.exe -ollama=docker -qdrant=docker
 ```
 
 **That's it!** The installer automatically:
 - ✅ Downloads and installs the `rag-code-mcp` binary
-- ✅ Sets up Ollama and Qdrant in Docker containers
-- ✅ Downloads required AI models (`phi3:medium`, `mxbai-embed-large`)
+- ✅ Sets up Qdrant in Docker containers
+- ✅ Downloads required embedding model (`qwen3-embedding:0.6b`)
 - ✅ Configures your IDE (VS Code, Cursor, Windsurf, Claude Desktop)
 - ✅ Adds binaries to your PATH
 
@@ -114,7 +114,7 @@ First query triggers background indexing. Subsequent queries are instant.
 
 **Your code never leaves your machine.** RagCode runs entirely on your local infrastructure:
 
-- ✅ **Local AI Models** - Uses Ollama for LLM and embeddings (runs on your hardware)
+- ✅ **Local AI Models** - Uses Ollama for embeddings (runs on your hardware)
 - ✅ **Local Vector Database** - Qdrant runs in Docker on your machine
 - ✅ **Zero Cloud Dependencies** - No external API calls, no data transmission
 - ✅ **No API Costs** - Free forever, no usage limits or subscriptions
@@ -224,8 +224,8 @@ RagCode works with all major AI-powered IDEs:
 | Component | Requirement | Notes |
 |-----------|-------------|-------|
 | **CPU** | 4 cores | For running Ollama models |
-| **RAM** | 16 GB | 8 GB for `phi3:medium`, 4 GB for `mxbai-embed-large`, 4 GB system |
-| **Disk** | 10 GB free | ~8 GB for models + 2 GB for data |
+| **RAM** | 2 GB | < 1 GB for `qwen3-embedding:0.6b`, 1 GB system |
+| **Disk** | 1 GB free | ~639 MB for model + data |
 | **OS** | Linux, macOS, Windows | Docker required for Qdrant |
 
 ### Recommended (for better performance)
@@ -233,7 +233,7 @@ RagCode works with all major AI-powered IDEs:
 | Component | Requirement | Notes |
 |-----------|-------------|-------|
 | **CPU** | 8+ cores | Better concurrent operations |
-| **RAM** | 32 GB | Comfortable multi-workspace indexing |
+| **RAM** | 8 GB | Comfortable multi-workspace indexing |
 | **GPU** | NVIDIA 8GB+ VRAM | Significantly speeds up Ollama (optional) |
 | **Disk** | 20 GB SSD | Faster indexing and search |
 

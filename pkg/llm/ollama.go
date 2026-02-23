@@ -39,17 +39,23 @@ func NewOllamaLLMProvider(cfg config.LLMConfig) (*OllamaLLMProvider, error) {
 	if chatModelName == "" {
 		chatModelName = cfg.Model
 	}
-	if chatModelName == "" {
-		return nil, fmt.Errorf("ollama chat model is required (set ollama_model)")
-	}
 
 	// Embedding model
 	embedModelName := cfg.OllamaEmbed
 	if embedModelName == "" {
 		embedModelName = cfg.EmbedModel
 	}
-	if embedModelName == "" {
-		embedModelName = chatModelName // Use chat model if not specified
+
+	// Fallback logic
+	if chatModelName == "" && embedModelName != "" {
+		chatModelName = embedModelName
+	}
+	if embedModelName == "" && chatModelName != "" {
+		embedModelName = chatModelName
+	}
+
+	if chatModelName == "" {
+		return nil, fmt.Errorf("ollama model is required (set ollama_model or ollama_embed)")
 	}
 
 	// Create chat client

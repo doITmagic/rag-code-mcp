@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -249,18 +250,14 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 				wg.Add(1)
 				go func(name string) {
 					defer wg.Done()
-					// ExactSearch first — zero embedding, deterministic
+					// ExactSearch only — zero embedding, deterministic.
+					// No fallback to embedding search: relation names are often stdlib/external
+					// symbols not in the local index, and each embedding call costs ~N seconds.
 					res, err := t.engine.SearchByName(ctx, wsID, name, 2)
 					if err != nil || len(res) == 0 {
-						// Fallback: embedding search (e.g. external/stdlib symbols not in index)
-						subRes, sErr := t.engine.SearchCode(ctx, filePath, name, 2, false)
-						if sErr == nil && subRes != nil {
-							res = subRes.Results
-						}
+						return
 					}
-					if len(res) > 0 {
-						subChan <- subResult{targetName: name, results: res}
-					}
+					subChan <- subResult{targetName: name, results: res}
 				}(targetName)
 			}
 
@@ -293,6 +290,14 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			}
 		}
 	}
+
+	// Sort all descriptors (primary + graph expansions) by score descending
+	// so the highest-relevance results are always surfaced first in the response.
+	sort.Slice(descriptors, func(i, j int) bool {
+		si, _ := descriptors[i]["score"].(float32)
+		sj, _ := descriptors[j]["score"].(float32)
+		return si > sj
+	})
 
 	response.Context.Telemetry = telemetry.CalculateSavings(baselineBytes, actualBytes)
 	response.Data = descriptors

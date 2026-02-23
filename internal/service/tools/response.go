@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
 	"github.com/doITmagic/rag-code-mcp/pkg/telemetry"
 )
 
@@ -39,5 +40,16 @@ func (r ToolResponse) JSON() (string, error) {
 func (r *ToolResponse) SetFallbackWarning(inferred bool) {
 	if inferred {
 		r.Warning = fmt.Sprintf("Workspace root was inferred from history (%s). Results may be inaccurate if you've changed projects.", r.Context.WorkspaceRoot)
+	}
+}
+
+// ContextFromWorkspace builds a ContextMetadata from a resolved WorkspaceContext.
+func ContextFromWorkspace(wctx *engine.WorkspaceContext) ContextMetadata {
+	if wctx == nil {
+		return ContextMetadata{}
+	}
+	return ContextMetadata{
+		WorkspaceRoot:   wctx.Root,
+		DetectionSource: wctx.DetectionSource,
 	}
 }

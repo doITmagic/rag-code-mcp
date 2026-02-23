@@ -77,6 +77,19 @@ func (s *Service) SearchCodeWithVector(ctx context.Context, collection string, v
 	return res, nil
 }
 
+// SearchWithVector performs a full vector search (including docs) using a pre-computed embedding.
+// Mirrors Search() but avoids a second embedding call when vector is already available.
+func (s *Service) SearchWithVector(ctx context.Context, collection string, vector []float32, limit int) ([]storage.SearchResult, error) {
+	res, err := s.store.Search(ctx, collection, storage.SearchQuery{
+		Vector: vector,
+		Limit:  limit,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("storage search failed: %w", err)
+	}
+	return res, nil
+}
+
 // ExactSearch performs a metadata-only filter scan without generating a vector embedding.
 // Delegates directly to the store's ExactSearch (Qdrant Scroll), bypassing HNSW entirely.
 func (s *Service) ExactSearch(ctx context.Context, collection string, filter map[string]interface{}, limit int) ([]storage.SearchResult, error) {

@@ -87,7 +87,7 @@ func TestHTMLAnalyzer_Comprehensive(t *testing.T) {
 	t.Run("Fallback to body", func(t *testing.T) {
 		simpleCode := `<html><body>Just some plain text without headers.</body></html>`
 		simplePath := filepath.Join(tmpDir, "simple.html")
-		os.WriteFile(simplePath, []byte(simpleCode), 0644)
+		require.NoError(t, os.WriteFile(simplePath, []byte(simpleCode), 0644))
 
 		res, err := analyzer.Analyze(context.Background(), simplePath)
 		require.NoError(t, err)
@@ -97,7 +97,7 @@ func TestHTMLAnalyzer_Comprehensive(t *testing.T) {
 
 	t.Run("Empty file", func(t *testing.T) {
 		emptyPath := filepath.Join(tmpDir, "empty.html")
-		os.WriteFile(emptyPath, []byte(""), 0644)
+		require.NoError(t, os.WriteFile(emptyPath, []byte(""), 0644))
 
 		res, err := analyzer.Analyze(context.Background(), emptyPath)
 		require.NoError(t, err)
@@ -106,8 +106,8 @@ func TestHTMLAnalyzer_Comprehensive(t *testing.T) {
 
 	t.Run("Directory walk", func(t *testing.T) {
 		subDir := filepath.Join(tmpDir, "subdir")
-		os.Mkdir(subDir, 0755)
-		os.WriteFile(filepath.Join(subDir, "file.html"), []byte("<h1>Sub</h1>"), 0644)
+		require.NoError(t, os.Mkdir(subDir, 0755))
+		require.NoError(t, os.WriteFile(filepath.Join(subDir, "file.html"), []byte("<h1>Sub</h1>"), 0644))
 
 		res, err := analyzer.Analyze(context.Background(), tmpDir)
 		require.NoError(t, err)
@@ -117,8 +117,8 @@ func TestHTMLAnalyzer_Comprehensive(t *testing.T) {
 
 	t.Run("Skip dirs", func(t *testing.T) {
 		skipDir := filepath.Join(tmpDir, "node_modules")
-		os.Mkdir(skipDir, 0755)
-		os.WriteFile(filepath.Join(skipDir, "skip.html"), []byte("<h1>Skip</h1>"), 0644)
+		require.NoError(t, os.Mkdir(skipDir, 0755))
+		require.NoError(t, os.WriteFile(filepath.Join(skipDir, "skip.html"), []byte("<h1>Skip</h1>"), 0644))
 
 		// Re-analyze should not find "Skip"
 		res, err := analyzer.Analyze(context.Background(), tmpDir)

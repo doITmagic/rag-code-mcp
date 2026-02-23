@@ -76,6 +76,9 @@ func TestBranchIsolationAndFeedbackPromotionIntegration(t *testing.T) {
 
 	req2 := contract.ResolveWorkspaceRequest{WorkspaceRoot: projectRoot}
 	resp2, errRes := r.Resolve(ctx, req2)
+	if errRes != nil {
+		t.Fatalf("Step 2 resolve failed: %v", errRes)
+	}
 	if id1 == resp2.WorkspaceID {
 		t.Errorf("Workspace IDs should be different for different branches")
 	}

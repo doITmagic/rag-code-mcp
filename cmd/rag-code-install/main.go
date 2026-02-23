@@ -145,20 +145,33 @@ func setupEnvironment() {
 			fmt.Printf("   Would you like to try starting the local Ollama service? [Y/n]: ")
 			if askConfirm(true) {
 				log("Starting Ollama service in background...")
-				// Start ollama serve in a way that doesn't block the installer
+				// Start ollama serve; capture early exit errors via channel
+				errCh := make(chan error, 1)
 				go func() {
-					if err := exec.Command("ollama", "serve").Run(); err != nil {
-						fmt.Printf("⚠️  Warning: Failed to serve ollama: %v\n", err)
-					}
+					errCh <- exec.Command("ollama", "serve").Run()
 				}()
 				// Give it a few seconds to bind to the port
 				log("Waiting for Ollama to bind to port 11434...")
+				started := false
 				for i := 0; i < 10; i++ {
+					select {
+					case err := <-errCh:
+						if err != nil {
+							fmt.Printf("⚠️  Warning: ollama serve exited early: %v\n", err)
+						}
+						goto ollamaDone
+					default:
+					}
 					if isPortOpen(11434) {
 						success("Ollama service started successfully")
-						break
+						started = true
+						goto ollamaDone
 					}
 					time.Sleep(1 * time.Second)
+				}
+			ollamaDone:
+				if !started && !isPortOpen(11434) {
+					fmt.Printf("⚠️  Ollama did not bind to port 11434 in time\n")
 				}
 			}
 		}

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -430,6 +431,13 @@ func fetchRemoteStableModel(ctx context.Context) (string, error) {
 
 	if cfg.LLM.OllamaEmbed == "" {
 		return "", fmt.Errorf("ollama_embed key not found or empty in remote config.yaml")
+	}
+
+	// Validate model name: allow alphanum, hyphens, dots, slashes, colons (tag separator).
+	// Rejects anything that looks like shell injection or corrupted data.
+	var validModel = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9./_-]*(:[a-zA-Z0-9][a-zA-Z0-9._-]*)?$`)
+	if !validModel.MatchString(cfg.LLM.OllamaEmbed) {
+		return "", fmt.Errorf("remote ollama_embed value %q is not a valid model name", cfg.LLM.OllamaEmbed)
 	}
 
 	return cfg.LLM.OllamaEmbed, nil

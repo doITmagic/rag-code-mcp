@@ -45,7 +45,7 @@ var _ = Describe("RagSearchCodeTool", func() {
 				resJSON, err := tool.Execute(ctx, map[string]interface{}{"query": "test", "file_path": "main.go"})
 				Expect(err).NotTo(HaveOccurred())
 				var resp tools.ToolResponse
-				json.Unmarshal([]byte(resJSON), &resp)
+				Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
 				Expect(resp.Status).To(Equal("no_results"))
 			})
 		})
@@ -58,7 +58,7 @@ var _ = Describe("RagSearchCodeTool", func() {
 				resJSON, err := tool.Execute(ctx, map[string]interface{}{"query": "test", "file_path": "main.go"})
 				Expect(err).NotTo(HaveOccurred())
 				var resp tools.ToolResponse
-				json.Unmarshal([]byte(resJSON), &resp)
+				Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
 				Expect(resp.Status).To(Equal("error"))
 				Expect(resp.Error).To(ContainSubstring("search failed"))
 			})
@@ -87,7 +87,7 @@ var _ = Describe("RagSearchCodeTool", func() {
 				resJSON, err := tool.Execute(ctx, map[string]interface{}{"query": "find func", "file_path": "main.go"})
 				Expect(err).NotTo(HaveOccurred())
 				var resp tools.ToolResponse
-				json.Unmarshal([]byte(resJSON), &resp)
+				Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
 				Expect(resp.Status).To(Equal("success"), "Error: "+resp.Error)
 
 				// Verify Data list
@@ -147,7 +147,7 @@ var _ = Describe("RagSearchCodeTool", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				var resp tools.ToolResponse
-				json.Unmarshal([]byte(resJSON), &resp)
+				Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
 				Expect(resp.Status).To(Equal("success"), "Error: "+resp.Error)
 				Expect(resp.Message).To(ContainSubstring("Auto-fetched 1 related dependencies"))
 
@@ -196,7 +196,7 @@ var _ = Describe("RagSearchCodeTool", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				var resp tools.ToolResponse
-				json.Unmarshal([]byte(resJSON), &resp)
+				Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
 				Expect(resp.Status).To(Equal("success"), "Error: "+resp.Error)
 
 				// Only root result — dependency was skipped (not in index, no fallback)
@@ -242,7 +242,7 @@ var _ = Describe("RagSearchCodeTool", func() {
 				resJSON, err := tool.Execute(ctx, map[string]interface{}{"query": "test", "file_path": "main.go"})
 				Expect(err).NotTo(HaveOccurred())
 				var resp tools.ToolResponse
-				json.Unmarshal([]byte(resJSON), &resp)
+				Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
 				Expect(resp.Status).To(Equal("success"), "Error: "+resp.Error)
 
 				// Despite 3 identical relations, output should have exactly root + 1 Shared

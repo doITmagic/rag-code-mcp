@@ -162,10 +162,7 @@ func parseTag(line string, doc *PHPDocInfo) {
 func convertPHPDocToReturnInfo(docReturns []ReturnDoc) []ReturnInfo {
 	returns := make([]ReturnInfo, len(docReturns))
 	for i, r := range docReturns {
-		returns[i] = ReturnInfo{
-			Type:        r.Type,
-			Description: r.Description,
-		}
+		returns[i] = ReturnInfo(r)
 	}
 	return returns
 }

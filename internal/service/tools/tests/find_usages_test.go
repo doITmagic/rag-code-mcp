@@ -35,7 +35,7 @@ var _ = Describe("FindUsagesTool", func() {
 			resJSON, err := tool.Execute(ctx, map[string]interface{}{"file_path": "main.go"})
 			Expect(err).NotTo(HaveOccurred())
 			var resp tools.ToolResponse
-			json.Unmarshal([]byte(resJSON), &resp)
+			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
 			Expect(resp.Status).To(Equal("error"))
 			Expect(resp.Error).To(ContainSubstring("symbol_name parameter is required"))
 		})
@@ -47,7 +47,7 @@ var _ = Describe("FindUsagesTool", func() {
 			resJSON, err := tool.Execute(ctx, map[string]interface{}{"symbol_name": "GhostFunc", "file_path": "main.go"})
 			Expect(err).NotTo(HaveOccurred())
 			var resp tools.ToolResponse
-			json.Unmarshal([]byte(resJSON), &resp)
+			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
 
 			Expect(resp.Status).To(Equal("success"))
 			Expect(resp.Message).To(ContainSubstring("No usages found for symbol 'GhostFunc'"))
@@ -87,7 +87,7 @@ var _ = Describe("FindUsagesTool", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			var resp tools.ToolResponse
-			json.Unmarshal([]byte(resJSON), &resp)
+			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
 
 			if resp.Status != "success" {
 				GinkgoWriter.Printf("FindUsages Error status: %s, Error: %s\n", resp.Status, resp.Error)
@@ -109,7 +109,7 @@ var _ = Describe("FindUsagesTool", func() {
 				return []storage.SearchResult{}, nil
 			}
 
-			tool.Execute(ctx, map[string]interface{}{"symbol_name": "TargetSym", "file_path": "main.go"})
+			_, _ = tool.Execute(ctx, map[string]interface{}{"symbol_name": "TargetSym", "file_path": "main.go"})
 
 			Expect(capturedFilter).NotTo(BeNil(), "ExactSearch should have been called")
 			Expect(capturedFilter["relations[].target_name"]).To(Equal("TargetSym"))
@@ -140,7 +140,7 @@ var _ = Describe("FindUsagesTool", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			var resp tools.ToolResponse
-			json.Unmarshal([]byte(resJSON), &resp)
+			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
 			Expect(resp.Status).To(Equal("success"))
 
 			data := resp.Data.([]interface{})

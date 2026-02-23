@@ -29,7 +29,7 @@ var _ = Describe("GetFileContextTool", func() {
 			resJSON, err := tool.Execute(ctx, map[string]interface{}{})
 			Expect(err).NotTo(HaveOccurred())
 			var resp tools.ToolResponse
-			json.Unmarshal([]byte(resJSON), &resp)
+			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
 			Expect(resp.Status).To(Equal("error"))
 			Expect(resp.Error).To(ContainSubstring("file_path parameter is required"))
 		})
@@ -38,7 +38,7 @@ var _ = Describe("GetFileContextTool", func() {
 			resJSON, err := tool.Execute(ctx, map[string]interface{}{"file_path": "/non/existent/file.go"})
 			Expect(err).NotTo(HaveOccurred())
 			var resp tools.ToolResponse
-			json.Unmarshal([]byte(resJSON), &resp)
+			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
 			Expect(resp.Status).To(Equal("error"))
 			Expect(resp.Error).To(ContainSubstring("file not found"))
 		})

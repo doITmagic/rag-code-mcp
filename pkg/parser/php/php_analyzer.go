@@ -60,6 +60,7 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 			FilePath:  chunk.FilePath,
 			Language:  "php",
 			IsPublic:  isPublic,
+			Relations: a.mapRelations(chunk.Relations),
 			Metadata:  chunk.Metadata,
 		}
 	}
@@ -68,4 +69,18 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 		Symbols:  symbols,
 		Language: "php",
 	}, nil
+}
+
+func (a *Analyzer) mapRelations(phpRels []Relation) []pkgParser.Relation {
+	if len(phpRels) == 0 {
+		return nil
+	}
+	res := make([]pkgParser.Relation, len(phpRels))
+	for i, r := range phpRels {
+		res[i] = pkgParser.Relation{
+			TargetName: r.TargetName,
+			Type:       pkgParser.RelationType(r.Type),
+		}
+	}
+	return res
 }

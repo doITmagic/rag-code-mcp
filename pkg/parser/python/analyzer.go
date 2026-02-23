@@ -54,6 +54,7 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 			FilePath:  ch.FilePath,
 			Language:  ch.Language,
 			IsPublic:  len(ch.Name) > 0 && !strings.HasPrefix(ch.Name, "_"),
+			Relations: a.mapRelations(ch.Relations),
 			Metadata:  ch.Metadata,
 		})
 	}
@@ -62,4 +63,18 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 		Symbols:  symbols,
 		Language: "python",
 	}, nil
+}
+
+func (a *Analyzer) mapRelations(pyRels []Relation) []pkgParser.Relation {
+	if len(pyRels) == 0 {
+		return nil
+	}
+	res := make([]pkgParser.Relation, len(pyRels))
+	for i, r := range pyRels {
+		res[i] = pkgParser.Relation{
+			TargetName: r.TargetName,
+			Type:       pkgParser.RelationType(r.Type),
+		}
+	}
+	return res
 }

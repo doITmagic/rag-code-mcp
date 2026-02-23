@@ -1,12 +1,12 @@
 package laravel
 
 import (
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"path/filepath"
 	"strings"
 
+	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser/php"
 )
 
@@ -93,10 +93,14 @@ func (a *Adapter) enrichChunks(chunks []php.CodeChunk, info *LaravelInfo) {
 				chunk.Metadata["table"] = model.Table
 				chunk.Metadata["fillable"] = model.Fillable
 
-				// Serialize relations to store in metadata
+				// Map Laravel relations to PHP relations
 				if len(model.Relations) > 0 {
-					rels, _ := json.Marshal(model.Relations)
-					chunk.Metadata["relations"] = string(rels)
+					for _, rel := range model.Relations {
+						chunk.Relations = append(chunk.Relations, pkgParser.Relation{
+							TargetName: rel.RelatedModel,
+							Type:       pkgParser.RelationType(rel.Type),
+						})
+					}
 				}
 			} else if ctrl, ok := controllers[fullName]; ok {
 				if chunk.Metadata == nil {

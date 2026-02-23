@@ -5,11 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
+	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 	"github.com/doITmagic/rag-code-mcp/pkg/telemetry"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -216,40 +219,69 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 	if hasRel {
 		// Depending on the storage, relations might be []interface{}
 		if relList, ok := relationsRaw.([]interface{}); ok {
-			var fetchedTargets []string
+			const maxExpansions = 10
+			wsID := result.WorkspaceID
+
+			type subResult struct {
+				targetName string
+				results    []storage.SearchResult
+			}
+
+			subChan := make(chan subResult, maxExpansions)
+			var wg sync.WaitGroup
+			seenTargets := make(map[string]bool)
+			expanded := 0
 
 			for _, relRaw := range relList {
+				if expanded >= maxExpansions {
+					break
+				}
 				relMap, ok := relRaw.(map[string]interface{})
 				if !ok {
 					continue
 				}
-
 				targetName, _ := relMap["target_name"].(string)
-				if targetName == "" {
+				if targetName == "" || seenTargets[targetName] {
 					continue
 				}
+				seenTargets[targetName] = true
+				expanded++
 
-				// perform a tiny sub-search for this target
-				subRes, err := t.engine.SearchCode(ctx, filePath, targetName, 2, false)
-				if err == nil && len(subRes.Results) > 0 {
-					for _, sub := range subRes.Results {
-						if seenIDs[sub.Point.ID] {
-							continue
-						}
-						seenIDs[sub.Point.ID] = true
-
-						subDesc := make(map[string]any)
-						for k, v := range sub.Point.Payload {
-							subDesc[k] = v
-						}
-						// Mark this as an expanded node context
-						subDesc["_graph_expansion"] = fmt.Sprintf("Dependency of %v", topResult.Point.Payload["name"])
-						subDesc["score"] = sub.Score
-						subDesc["id"] = sub.Point.ID
-						descriptors = append(descriptors, subDesc)
-						fetchedTargets = append(fetchedTargets, targetName)
-						break // only include top match for the dependency
+				wg.Add(1)
+				go func(name string) {
+					defer wg.Done()
+					// ExactSearch only — zero embedding, deterministic.
+					// No fallback to embedding search: relation names are often stdlib/external
+					// symbols not in the local index, and each embedding call costs ~N seconds.
+					res, err := t.engine.SearchByName(ctx, wsID, name, 2)
+					if err != nil || len(res) == 0 {
+						return
 					}
+					subChan <- subResult{targetName: name, results: res}
+				}(targetName)
+			}
+
+			go func() { wg.Wait(); close(subChan) }()
+
+			topName, _ := topResult.Point.Payload["name"].(string)
+			var fetchedTargets []string
+			for sr := range subChan {
+				for _, sub := range sr.results {
+					if seenIDs[sub.Point.ID] {
+						continue
+					}
+					seenIDs[sub.Point.ID] = true
+
+					subDesc := make(map[string]any)
+					for k, v := range sub.Point.Payload {
+						subDesc[k] = v
+					}
+					subDesc["_graph_expansion"] = fmt.Sprintf("Dependency of %v", topName)
+					subDesc["score"] = sub.Score
+					subDesc["id"] = sub.Point.ID
+					descriptors = append(descriptors, subDesc)
+					fetchedTargets = append(fetchedTargets, sr.targetName)
+					break // top match per dependency
 				}
 			}
 
@@ -258,6 +290,14 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			}
 		}
 	}
+
+	// Sort all descriptors (primary + graph expansions) by score descending
+	// so the highest-relevance results are always surfaced first in the response.
+	sort.Slice(descriptors, func(i, j int) bool {
+		si, _ := descriptors[i]["score"].(float32)
+		sj, _ := descriptors[j]["score"].(float32)
+		return si > sj
+	})
 
 	response.Context.Telemetry = telemetry.CalculateSavings(baselineBytes, actualBytes)
 	response.Data = descriptors

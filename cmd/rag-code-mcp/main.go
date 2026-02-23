@@ -75,12 +75,13 @@ func main() {
 		}
 	}
 
-	// Health checks
-	models := []string{cfg.LLM.OllamaModel, cfg.LLM.OllamaEmbed}
+	// Health checks (only embedding model is strictly required for core RAG)
+	models := []string{cfg.LLM.OllamaEmbed}
+
 	health := healthcheck.CheckAllWithModels(cfg.LLM.OllamaBaseURL, cfg.Storage.VectorDB.URL, models)
 	for _, h := range health {
 		if h.Status != "ok" {
-			log.Fatalf("Health check failed for %s: %s\n%s", h.Service, h.Message, healthcheck.GetRemediation(health))
+			log.Fatalf("Health check failed for %s: %s\n%s", h.Service, h.Message, healthcheck.GetRemediation(health, models))
 		}
 	}
 	logger.Instance.Info("Health checks passed")
@@ -131,7 +132,7 @@ func main() {
 	tools.NewListSkillsTool(eng).Register(server)
 	tools.NewInstallSkillTool(eng).Register(server)
 	tools.NewEvaluateRagCodeTool(eng, cfg).Register(server)
-	tools.NewCheckUpdateTool(Version).Register(server)
+	tools.NewCheckUpdateTool(Version, cfg).Register(server)
 	tools.NewApplyUpdateTool(Version).Register(server)
 
 	logger.Instance.Info("MCP RagCode Server initialized")

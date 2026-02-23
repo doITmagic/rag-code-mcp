@@ -234,7 +234,7 @@ func main() {
 		fmt.Printf("Wait init failed: %v\n", err)
 		os.Exit(1)
 	}
-	sendNotification(baseURL, sse.sessionID, "notifications/initialized", map[string]any{})
+	_ = sendNotification(baseURL, sse.sessionID, "notifications/initialized", map[string]any{})
 
 	// Use an absolute path for detection
 	cwd, _ := os.Getwd()

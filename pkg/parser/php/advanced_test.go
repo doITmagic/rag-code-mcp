@@ -78,11 +78,11 @@ func TestCodeAnalyzer_Directories(t *testing.T) {
 
 	// Test skipping dirs
 	skipDir := filepath.Join(tmpDir, "vendor")
-	os.Mkdir(skipDir, 0755)
-	os.WriteFile(filepath.Join(skipDir, "skip.php"), []byte("<?php class Skip {}"), 0644)
+	require.NoError(t, os.Mkdir(skipDir, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(skipDir, "skip.php"), []byte("<?php class Skip {}"), 0644))
 
 	validFile := filepath.Join(tmpDir, "valid.php")
-	os.WriteFile(validFile, []byte("<?php class Valid {}"), 0644)
+	require.NoError(t, os.WriteFile(validFile, []byte("<?php class Valid {}"), 0644))
 
 	analyzer := NewCodeAnalyzer()
 	chunks, err := analyzer.AnalyzePaths([]string{tmpDir})

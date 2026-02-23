@@ -49,6 +49,7 @@ If the system feels slow or tools fail consistently:
 
 ## ⚡ Quick Summary of Tools:
 - `rag_check_update`: Check GitHub for new releases.
-- `rag_apply_update`: Download and install the latest binary.
+- `rag_apply_update`: Download and apply the latest binary.
+- `rag-code-install`: Local installer and environment setup utility.
 - `rag_list_skills`: See available AI behaviors.
 - `rag_install_skill`: Toggle a specific behavior on/off.

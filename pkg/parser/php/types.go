@@ -2,6 +2,8 @@ package php
 
 import (
 	"github.com/VKCOM/php-parser/pkg/ast"
+
+	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
 )
 
 // ParamInfo describes a function or method parameter
@@ -30,6 +32,7 @@ type CodeChunk struct {
 	Signature          string         `json:"signature"`
 	Docstring          string         `json:"docstring"`
 	Code               string         `json:"code"`
+	Relations          []pkgParser.Relation `json:"relations,omitempty"`
 	Metadata           map[string]any `json:"metadata,omitempty"`
 }
 
@@ -117,6 +120,7 @@ type MethodInfo struct {
 	StartLine   int          `json:"start_line,omitempty"`
 	EndLine     int          `json:"end_line,omitempty"`
 	Code        string       `json:"code,omitempty"`
+	Calls       []MethodCall `json:"calls,omitempty"`
 }
 
 // FunctionInfo describes a global function or method
@@ -136,6 +140,14 @@ type FunctionInfo struct {
 	StartLine   int          `json:"start_line,omitempty"`
 	EndLine     int          `json:"end_line,omitempty"`
 	Code        string       `json:"code,omitempty"`
+	Calls       []MethodCall `json:"calls,omitempty"`
+}
+
+// MethodCall represents a method or function call found in code
+type MethodCall struct {
+	Object string   `json:"object,omitempty"` // Variable name ($this, $variable)
+	Method string   `json:"method"`           // Method or function name
+	Args   []string `json:"args,omitempty"`   // Arguments
 }
 
 // PropertyInfo describes a class/trait property

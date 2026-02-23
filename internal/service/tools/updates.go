@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/doITmagic/rag-code-mcp/internal/config"
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/doITmagic/rag-code-mcp/internal/updater"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -22,10 +23,11 @@ var (
 
 type CheckUpdateTool struct {
 	version string
+	cfg     *config.Config
 }
 
-func NewCheckUpdateTool(version string) *CheckUpdateTool {
-	return &CheckUpdateTool{version: version}
+func NewCheckUpdateTool(version string, cfg *config.Config) *CheckUpdateTool {
+	return &CheckUpdateTool{version: version, cfg: cfg}
 }
 
 func (t *CheckUpdateTool) Name() string { return "rag_check_update" }
@@ -77,11 +79,17 @@ func (t *CheckUpdateTool) Execute(ctx context.Context, args map[string]interface
 
 	if info == nil {
 		response.Message = fmt.Sprintf("✅ You are using the latest version (%s).", t.version)
-		return response.JSON()
+	} else {
+		response.Message = fmt.Sprintf("🌟 New version available: %s", info.LatestVersion)
+		response.Data = info
 	}
 
-	response.Message = fmt.Sprintf("🌟 New version available: %s", info.LatestVersion)
-	response.Data = info
+	// Add model info if available and different
+	if info != nil && info.RemoteStableModel != "" && info.RemoteStableModel != t.cfg.LLM.OllamaEmbed {
+		modelMsg := fmt.Sprintf("\n⚠️  New recommended embedding model available on Git: %s (Current: %s)", info.RemoteStableModel, t.cfg.LLM.OllamaEmbed)
+		response.Message += modelMsg
+	}
+
 	return response.JSON()
 }
 

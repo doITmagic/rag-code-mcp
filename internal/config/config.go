@@ -9,6 +9,10 @@ import (
 const (
 	DefaultOllamaBaseURL = "http://localhost:11434"
 	DefaultQdrantURL     = "http://localhost:6333"
+
+	// StableEmbeddingModel is the current officially recommended embedding model.
+	// Changing this impacts the installer and may require re-indexing.
+	StableEmbeddingModel = "qwen3-embedding:0.6b"
 )
 
 var DefaultWorkspaceDetectionMarkers = []string{

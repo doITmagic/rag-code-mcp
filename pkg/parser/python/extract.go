@@ -3,6 +3,7 @@ package python
 import (
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -81,6 +82,7 @@ func (ca *CodeAnalyzer) AnalyzePaths(paths []string) ([]CodeChunk, error) {
 
 				if err := ca.parseAndCollect(path, content); err != nil {
 					// Skip files that fail to parse
+					log.Printf("[DEBUG] Skipping file %s due to parse error: %v", path, err)
 				}
 				return nil
 			})

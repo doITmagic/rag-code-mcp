@@ -123,7 +123,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 		code, _ := result.Point.Payload["content"].(string)
 
 		filePath, _ := result.Point.Payload["file_path"].(string)
-		startLineVal, _ := result.Point.Payload["start_line"]
+		startLineVal := result.Point.Payload["start_line"]
 		startLine := 0
 		switch v := startLineVal.(type) {
 		case float64:

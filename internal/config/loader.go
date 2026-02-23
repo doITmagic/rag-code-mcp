@@ -37,8 +37,6 @@ func Load(path string) (*Config, error) {
 	// Apply environment variable overrides
 	applyEnvOverrides(&cfg)
 
-	// No auto-migration here anymore - handled by installer
-
 	// Validate configuration
 	if err := validate(&cfg); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
@@ -244,8 +242,8 @@ func ApplyCLIOverrides(cfg *Config, ollamaURL, ollamaModel, ollamaEmbed, qdrantU
 	}
 }
 
-// migrateEmbeddingModel automatically migrates from old unstable embedding model
-func migrateEmbeddingModel(cfg *Config) bool {
+// MigrateEmbeddingModel automatically migrates from old unstable embedding model
+func MigrateEmbeddingModel(cfg *Config) bool {
 	migrated := false
 
 	// List of deprecated/unstable models that should be migrated
@@ -263,12 +261,6 @@ func migrateEmbeddingModel(cfg *Config) bool {
 			cfg.LLM.OllamaEmbed = newStableModel
 			migrated = true
 			break
-		}
-
-		// Also check legacy field
-		if cfg.LLM.EmbedModel == deprecated {
-			cfg.LLM.EmbedModel = newStableModel
-			migrated = true
 		}
 	}
 

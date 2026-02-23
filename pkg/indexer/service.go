@@ -107,7 +107,10 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 	// 3. Ensure collection exists ONLY if we have files to index
 	if opts.Recreate {
 		log.Printf("[INFO] Dropping collection %s for recreation", collection)
-		s.store.DeleteCollection(ctx, collection) // ignore error if not exists
+		if err := s.store.DeleteCollection(ctx, collection); err != nil {
+			// ignore error if not exists or other issues (CreateCollection will fail later if needed)
+			log.Printf("[DEBUG] DeleteCollection %s error: %v", collection, err)
+		}
 	}
 
 	exists, err := s.store.CollectionExists(ctx, collection)
@@ -311,6 +314,13 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 func (s *Service) symbolToMap(sym parser.Symbol) map[string]interface{} {
 	data, _ := json.Marshal(sym)
 	var res map[string]interface{}
-	json.Unmarshal(data, &res)
+	if err := json.Unmarshal(data, &res); err != nil {
+		// Fallback for simple conversion if unmarshal fails (should not happen with Marshal output)
+		return map[string]interface{}{
+			"name":      sym.Name,
+			"type":      sym.Type,
+			"file_path": sym.FilePath,
+		}
+	}
 	return res
 }

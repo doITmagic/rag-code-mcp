@@ -147,7 +147,9 @@ func setupEnvironment() {
 				log("Starting Ollama service in background...")
 				// Start ollama serve in a way that doesn't block the installer
 				go func() {
-					exec.Command("ollama", "serve").Run()
+					if err := exec.Command("ollama", "serve").Run(); err != nil {
+						fmt.Printf("⚠️  Warning: Failed to serve ollama: %v\n", err)
+					}
 				}()
 				// Give it a few seconds to bind to the port
 				log("Waiting for Ollama to bind to port 11434...")
@@ -282,7 +284,7 @@ func checkConfigUpgrade(configPath string) {
 			fmt.Println("y (auto-confirmed)")
 			response = "y"
 		} else {
-			fmt.Scanln(&response)
+			_, _ = fmt.Scanln(&response)
 			response = strings.ToLower(strings.TrimSpace(response))
 		}
 
@@ -309,7 +311,7 @@ func askConfirm(defaultVal bool) bool {
 	}
 
 	var response string
-	fmt.Scanln(&response)
+	_, _ = fmt.Scanln(&response)
 	response = strings.ToLower(strings.TrimSpace(response))
 
 	if response == "" {

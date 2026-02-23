@@ -84,7 +84,7 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 	}
 
 	direction, _ := args["direction"].(string)
-	depthVal, _ := args["depth"]
+	depthVal := args["depth"]
 	var depth int
 	switch v := depthVal.(type) {
 	case float64:

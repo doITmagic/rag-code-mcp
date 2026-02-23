@@ -138,13 +138,12 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 		}
 		seenNames[key] = true
 
-		var signature, docstring string
-		signature, _ = result.Point.Payload["signature"].(string)
-		docstring, _ = result.Point.Payload["docstring"].(string)
+		signature, _ := result.Point.Payload["signature"].(string)
+		docstring, _ := result.Point.Payload["docstring"].(string)
 
 		descLine := strings.Split(docstring, "\n")[0]
 		filePath, _ := result.Point.Payload["file_path"].(string)
-		startLineVal, _ := result.Point.Payload["start_line"]
+		startLineVal := result.Point.Payload["start_line"]
 		startLine := 0
 		switch v := startLineVal.(type) {
 		case float64:

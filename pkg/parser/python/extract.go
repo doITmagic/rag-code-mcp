@@ -8,7 +8,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
 	"unicode"
+
+	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
 )
 
 // Pre-compiled regex patterns for better performance
@@ -846,11 +849,11 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 			}
 			// Add basic relations (inheritance)
 			for _, base := range class.Bases {
-				chunk.Relations = append(chunk.Relations, Relation{TargetName: base, Type: "inheritance"})
+				chunk.Relations = append(chunk.Relations, pkgParser.Relation{TargetName: base, Type: pkgParser.RelInheritance})
 			}
 			// Add dependency relations
 			for _, dep := range class.Dependencies {
-				chunk.Relations = append(chunk.Relations, Relation{TargetName: dep, Type: "dependency"})
+				chunk.Relations = append(chunk.Relations, pkgParser.Relation{TargetName: dep, Type: pkgParser.RelDependency})
 			}
 
 			chunks = append(chunks, chunk)
@@ -880,11 +883,11 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 				}
 				// Add method call relations
 				for _, call := range method.Calls {
-					methodChunk.Relations = append(methodChunk.Relations, Relation{TargetName: call.Name, Type: "calls"})
+					methodChunk.Relations = append(methodChunk.Relations, pkgParser.Relation{TargetName: call.Name, Type: pkgParser.RelCalls})
 				}
 				// Add type dependency relations
 				for _, dep := range method.TypeDeps {
-					methodChunk.Relations = append(methodChunk.Relations, Relation{TargetName: dep, Type: "uses_type"})
+					methodChunk.Relations = append(methodChunk.Relations, pkgParser.Relation{TargetName: dep, Type: pkgParser.RelUsesType})
 				}
 
 				chunks = append(chunks, methodChunk)
@@ -910,7 +913,7 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 			}
 			// Add function call relations
 			for _, call := range fn.Calls {
-				chunk.Relations = append(chunk.Relations, Relation{TargetName: call.Name, Type: "calls"})
+				chunk.Relations = append(chunk.Relations, pkgParser.Relation{TargetName: call.Name, Type: pkgParser.RelCalls})
 			}
 			chunks = append(chunks, chunk)
 		}

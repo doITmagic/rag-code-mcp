@@ -14,6 +14,8 @@ import (
 	"github.com/VKCOM/php-parser/pkg/version"
 	"github.com/VKCOM/php-parser/pkg/visitor"
 	"github.com/VKCOM/php-parser/pkg/visitor/traverser"
+
+	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
 )
 
 // CodeAnalyzer implements PathAnalyzer for PHP
@@ -885,19 +887,19 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 
 			// Add basic relations
 			if class.Extends != "" {
-				chunk.Relations = append(chunk.Relations, Relation{TargetName: class.Extends, Type: "inheritance"})
+				chunk.Relations = append(chunk.Relations, pkgParser.Relation{TargetName: class.Extends, Type: pkgParser.RelInheritance})
 			}
 			for _, impl := range class.Implements {
-				chunk.Relations = append(chunk.Relations, Relation{TargetName: impl, Type: "implements"})
+				chunk.Relations = append(chunk.Relations, pkgParser.Relation{TargetName: impl, Type: pkgParser.RelImplements})
 			}
 			for _, use := range class.Uses {
-				chunk.Relations = append(chunk.Relations, Relation{TargetName: use, Type: "uses_trait"})
+				chunk.Relations = append(chunk.Relations, pkgParser.Relation{TargetName: use, Type: pkgParser.RelUsesTrait})
 			}
 
 			// Add method and its relations
 			for _, method := range class.Methods {
 				for _, call := range method.Calls {
-					chunk.Relations = append(chunk.Relations, Relation{TargetName: call.Method, Type: "calls"})
+					chunk.Relations = append(chunk.Relations, pkgParser.Relation{TargetName: call.Method, Type: pkgParser.RelCalls})
 				}
 			}
 
@@ -927,7 +929,7 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 				}
 				// Add calls as relations
 				for _, call := range method.Calls {
-					methodChunk.Relations = append(methodChunk.Relations, Relation{TargetName: call.Method, Type: "calls"})
+					methodChunk.Relations = append(methodChunk.Relations, pkgParser.Relation{TargetName: call.Method, Type: pkgParser.RelCalls})
 				}
 				chunks = append(chunks, methodChunk)
 			}
@@ -1029,7 +1031,7 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 			}
 			// Add calls as relations
 			for _, call := range fn.Calls {
-				chunk.Relations = append(chunk.Relations, Relation{TargetName: call.Method, Type: "calls"})
+				chunk.Relations = append(chunk.Relations, pkgParser.Relation{TargetName: call.Method, Type: pkgParser.RelCalls})
 			}
 			chunks = append(chunks, chunk)
 		}

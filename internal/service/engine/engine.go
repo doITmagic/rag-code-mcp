@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -358,6 +359,13 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 	}
 
 	all := append(primaryResults, otherResults...)
+
+	// Global sort by score descending across all language results, then cap to limit.
+	// Without this, primary-language results always win regardless of score.
+	sort.Slice(all, func(i, j int) bool { return all[i].Score > all[j].Score })
+	if limit > 0 && len(all) > limit {
+		all = all[:limit]
+	}
 
 	// If nothing was found and there were errors, surface the error
 	if len(all) == 0 && firstErr != nil {

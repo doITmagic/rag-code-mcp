@@ -159,24 +159,18 @@ var _ = Describe("RagSearchCodeTool", func() {
 					"SearchCodeOnly with expansion limit should not be called when ExactSearch succeeds")
 			})
 
-			It("should fall back to embedding when ExactSearch finds nothing for a dependency", func() {
-				expansionFallbackCalls := 0
+			It("should NOT fall back to embedding when ExactSearch finds nothing for a dependency", func() {
+				// Regression test: graph expansion must NOT trigger embedding calls for
+				// relations not found in the local index (stdlib/external symbols).
+				// Each fallback embedding call costs ~N seconds serialized through Ollama.
+				embeddingCallsForExpansion := 0
 
 				mockStore.SearchCodeOnlyFunc = func(ctx context.Context, col string, q storage.SearchQuery) ([]storage.SearchResult, error) {
 					if q.Limit == 2 {
-						expansionFallbackCalls++
-						// Fallback expansion search — return the dependency
-						return []storage.SearchResult{
-							{
-								Score: 0.7,
-								Point: storage.Point{
-									ID:      "ext-helper-id",
-									Payload: map[string]interface{}{"name": "ExternalHelper"},
-								},
-							},
-						}, nil
+						// This would be a fallback expansion embedding — must NOT be called.
+						embeddingCallsForExpansion++
 					}
-					// Main query
+					// Main query result — has a relation to an external/stdlib symbol
 					return []storage.SearchResult{
 						{
 							Score: 1.0,
@@ -193,7 +187,7 @@ var _ = Describe("RagSearchCodeTool", func() {
 					}, nil
 				}
 
-				// ExactSearch finds nothing — triggers fallback
+				// ExactSearch finds nothing — external symbol not in index
 				mockStore.ExactSearchFunc = func(ctx context.Context, col string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error) {
 					return []storage.SearchResult{}, nil
 				}
@@ -204,14 +198,14 @@ var _ = Describe("RagSearchCodeTool", func() {
 				var resp tools.ToolResponse
 				json.Unmarshal([]byte(resJSON), &resp)
 				Expect(resp.Status).To(Equal("success"), "Error: "+resp.Error)
-				Expect(resp.Message).To(ContainSubstring("Auto-fetched 1 related dependencies"))
 
+				// Only root result — dependency was skipped (not in index, no fallback)
 				data := resp.Data.([]interface{})
-				Expect(data).To(HaveLen(2))
+				Expect(data).To(HaveLen(1))
 
-				// Fallback was triggered: SearchCodeOnly called with limit=2 at least once
-				Expect(expansionFallbackCalls).To(BeNumerically(">=", 1),
-					"Fallback embedding search should be called when ExactSearch returns no results")
+				// No embedding fallback — critical for performance
+				Expect(embeddingCallsForExpansion).To(Equal(0),
+					"Embedding fallback must NOT be called for graph expansion: external/stdlib symbols not in index would cause N×26s latency")
 			})
 
 			It("should deduplicate expansion targets when same dependency appears multiple times in relations", func() {

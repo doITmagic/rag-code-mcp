@@ -11,8 +11,6 @@ import (
 	"golang.org/x/text/language"
 
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
-	"github.com/doITmagic/rag-code-mcp/pkg/parser"
-	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 	"github.com/doITmagic/rag-code-mcp/pkg/telemetry"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -64,13 +62,14 @@ func (t *ListPackageExportsTool) Register(server *mcp.Server) {
 
 // ExportedSymbol represents a symbol exported directly from DB payload
 type ExportedSymbol struct {
-	Name        string
-	Type        string
-	Signature   string
-	Description string
-	FilePath    string
-	StartLine   int
-	Package     string
+	Name           string
+	Type           string
+	Signature      string
+	Description    string
+	FilePath       string
+	StartLine      int
+	Package        string
+	RelationsCount int // number of AST relations — indicates usage complexity/popularity
 }
 
 func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -89,32 +88,17 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 		return resp.JSON()
 	}
 
-	searchSvc := t.engine.GetSearchService()
-	if searchSvc == nil {
-		resp := ToolResponse{Status: "error", Error: "search service unavailable"}
-		return resp.JSON()
+	// Fan-out to all language collections in parallel — zero embedding
+	// Filter only by package; is_public check happens in the results loop
+	// (with graceful fallback for older index entries that predate the is_public field).
+	filter := map[string]interface{}{
+		"package": packageName,
 	}
 
-	// We'll iterate the known languages in the index
-	langs := parser.SupportedLanguages()
-	var allResults []storage.SearchResult
-
-	for _, lang := range langs {
-		colName := fmt.Sprintf("ragcode-%s-%s", wctx.ID, lang)
-		exists, _ := searchSvc.CollectionExists(ctx, colName)
-		if !exists {
-			continue
-		}
-
-		filter := map[string]interface{}{
-			"package":   packageName,
-			"is_public": true,
-		}
-
-		res, err := searchSvc.ExactSearch(ctx, colName, filter, 1000)
-		if err == nil {
-			allResults = append(allResults, res...)
-		}
+	allResults, err := t.engine.ExactSearchPolyglot(ctx, wctx.ID, filter, 1000)
+	if err != nil {
+		resp := ToolResponse{Status: "error", Error: fmt.Sprintf("package export search failed: %v", err)}
+		return resp.JSON()
 	}
 
 	if len(allResults) == 0 {
@@ -133,6 +117,15 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 	actualBytes := 0
 
 	for _, result := range allResults {
+		// is_public filter: use payload field when present, fallback to naming convention
+		isPublic, _ := result.Point.Payload["is_public"].(bool)
+		if !isPublic {
+			name, _ := result.Point.Payload["name"].(string)
+			if !isExported(name) {
+				continue
+			}
+		}
+
 		name, _ := result.Point.Payload["name"].(string)
 		symType, _ := result.Point.Payload["type"].(string)
 		if filterType != "" && symType != filterType {
@@ -160,6 +153,8 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 			startLine = v
 		}
 
+		relsRaw, _ := result.Point.Payload["relations"].([]interface{})
+
 		actualBytes += len(name) + len(signature) + len(descLine)
 		if filePath != "" && !seenFiles[filePath] {
 			seenFiles[filePath] = true
@@ -169,13 +164,14 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 		}
 
 		sym := ExportedSymbol{
-			Name:        name,
-			Type:        symType,
-			Signature:   signature,
-			Description: descLine,
-			FilePath:    filePath,
-			StartLine:   startLine,
-			Package:     packageName,
+			Name:           name,
+			Type:           symType,
+			Signature:      signature,
+			Description:    descLine,
+			FilePath:       filePath,
+			StartLine:      startLine,
+			Package:        packageName,
+			RelationsCount: len(relsRaw),
 		}
 
 		exports[symType] = append(exports[symType], sym)
@@ -222,6 +218,9 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 			if sym.Description != "" {
 				response.WriteString(fmt.Sprintf("%s\n\n", sym.Description))
 			}
+			if sym.RelationsCount > 0 {
+				response.WriteString(fmt.Sprintf("**Relations:** %d\n\n", sym.RelationsCount))
+			}
 			response.WriteString(fmt.Sprintf("📍 `%s:%d`\n\n", sym.FilePath, sym.StartLine))
 		}
 	}
@@ -240,4 +239,11 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 	return resp.JSON()
 }
 
-
+// isExported returns true if name is exported by Go naming convention (first rune is uppercase).
+// Used as a fallback for index entries that predate the is_public payload field.
+func isExported(name string) bool {
+	if name == "" {
+		return false
+	}
+	return strings.ToUpper(name[:1]) == name[:1] && name[:1] != strings.ToLower(name[:1])
+}

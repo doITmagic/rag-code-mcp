@@ -253,10 +253,19 @@ func MigrateEmbeddingModel(cfg *Config) bool {
 	// Check if current model is deprecated
 	for _, deprecated := range deprecatedModels {
 		if cfg.LLM.OllamaEmbed == deprecated {
-			log.Printf("⚠️  MIGRATION: Detected deprecated embedding model '%s'", deprecated)
-			log.Printf("   Automatically upgrading to stable model '%s'", newStableModel)
-			log.Printf("   Note: Existing indexed data will need to be re-indexed.")
-			log.Printf("   Use 'rag_index_workspace' tool with 'recreate: true' to rebuild indexes.")
+			log.Printf("╔══════════════════════════════════════════════════════════════╗")
+			log.Printf("║           ⚠️  EMBEDDING MODEL MIGRATION REQUIRED              ║")
+			log.Printf("╠══════════════════════════════════════════════════════════════╣")
+			log.Printf("║  Deprecated model : %-41s ║", deprecated)
+			log.Printf("║  New stable model : %-41s ║", newStableModel)
+			log.Printf("╠══════════════════════════════════════════════════════════════╣")
+			log.Printf("║  ⚡ ACTION REQUIRED: All existing indexes are INCOMPATIBLE.  ║")
+			log.Printf("║  Vector spaces differ between models — old results will be   ║")
+			log.Printf("║  garbage until you re-index.                                 ║")
+			log.Printf("║                                                              ║")
+			log.Printf("║  Run: rag_index_workspace with force_reindex: true           ║")
+			log.Printf("║  Or:  rag_index_workspace with recreate: true                ║")
+			log.Printf("╚══════════════════════════════════════════════════════════════╝")
 
 			cfg.LLM.OllamaEmbed = newStableModel
 			migrated = true

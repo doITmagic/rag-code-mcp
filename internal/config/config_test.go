@@ -151,8 +151,9 @@ func TestValidateDefaultsProviderAndRequiresModel(t *testing.T) {
 	cfgNoModel := DefaultConfig()
 	cfgNoModel.LLM.OllamaModel = ""
 	cfgNoModel.LLM.Model = ""
-	if err := validate(cfgNoModel); err == nil {
-		t.Fatalf("validate(cfg without model) = nil error, want non-nil")
+	// Validation no longer requires a generation model since it's embedding-only.
+	if err := validate(cfgNoModel); err != nil {
+		t.Fatalf("validate(cfg without model) returned error: %v, want nil", err)
 	}
 
 	cfgBadProvider := DefaultConfig()

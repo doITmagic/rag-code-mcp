@@ -75,8 +75,9 @@ func main() {
 		}
 	}
 
-	// Health checks
-	models := []string{cfg.LLM.OllamaModel, cfg.LLM.OllamaEmbed}
+	// Health checks (only embedding model is strictly required for core RAG)
+	models := []string{cfg.LLM.OllamaEmbed}
+
 	health := healthcheck.CheckAllWithModels(cfg.LLM.OllamaBaseURL, cfg.Storage.VectorDB.URL, models)
 	for _, h := range health {
 		if h.Status != "ok" {

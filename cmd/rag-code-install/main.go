@@ -342,13 +342,13 @@ func stopRunningProcess(binPath string) {
 	log("Stopping existing process running: " + binPath)
 
 	if runtime.GOOS == "windows" {
-		exec.Command("taskkill", "/F", "/IM", filepath.Base(binPath)).Run()
+		_ = exec.Command("taskkill", "/F", "/IM", filepath.Base(binPath)).Run()
 		time.Sleep(500 * time.Millisecond)
 		return
 	}
 
 	// 1. Precise kill using full path
-	exec.Command("pkill", "-f", binPath).Run()
+	_ = exec.Command("pkill", "-f", binPath).Run()
 
 	// 2. Fallback using lsof to find PIDs mapping this binary
 	if _, err := exec.LookPath("lsof"); err == nil {
@@ -356,7 +356,7 @@ func stopRunningProcess(binPath string) {
 		if output, err := cmd.Output(); err == nil {
 			pids := strings.Fields(string(output))
 			for _, pid := range pids {
-				exec.Command("kill", "-9", pid).Run()
+				_ = exec.Command("kill", "-9", pid).Run()
 			}
 		}
 	}

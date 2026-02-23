@@ -331,7 +331,7 @@ func FormatResults(results []CheckResult) string {
 }
 
 // GetRemediation provides remediation steps for failed checks
-func GetRemediation(results []CheckResult) string {
+func GetRemediation(results []CheckResult, models []string) string {
 	var remediation string
 
 	for _, result := range results {
@@ -340,17 +340,25 @@ func GetRemediation(results []CheckResult) string {
 
 			switch result.Service {
 			case "Ollama":
-				remediation += `
+				modelCommands := ""
+				for _, m := range models {
+					if m != "" {
+						modelCommands += fmt.Sprintf("    ollama pull %s\n", m)
+					}
+				}
+				if modelCommands == "" {
+					modelCommands = "    ollama pull qwen3-embedding:0.6b\n"
+				}
+
+				remediation += fmt.Sprintf(`
   Install Ollama:
     curl -fsSL https://ollama.ai/install.sh | sh
 
   Start Ollama (it usually starts automatically):
     ollama serve
 
-  Pull required models:
-    ollama pull mxbai-embed-large
-    ollama pull phi3:medium
-`
+  Pull required model(s):
+%s`, modelCommands)
 			case "Qdrant":
 				remediation += `
   Start Qdrant with Docker:

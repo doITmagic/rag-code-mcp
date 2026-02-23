@@ -146,10 +146,11 @@ const (
 )
 
 type UpdateInfo struct {
-	LatestVersion string
-	Tag           string
-	AssetURL      string
-	ChecksumURL   string
+	LatestVersion     string
+	Tag               string
+	AssetURL          string
+	ChecksumURL       string
+	RemoteStableModel string
 }
 
 // CheckForUpdates queries GitHub for the latest release and compares it with the current version.
@@ -254,6 +255,11 @@ func CheckForUpdates(ctx context.Context, currentVersion string, force bool) (*U
 		if info.AssetURL == "" {
 			return nil, fmt.Errorf("no asset found for platform %s/%s", runtime.GOOS, runtime.GOARCH)
 		}
+	}
+
+	// Always fetch remote stable model to show in tool results
+	if remoteModel, err := fetchRemoteStableModel(ctx); err == nil {
+		info.RemoteStableModel = remoteModel
 	}
 
 	// Always save cache after successful network call, including when no update is available.
@@ -395,6 +401,47 @@ func ApplyUpdate(archivePath string) error {
 	_ = os.Remove(oldBinPath)
 
 	return nil
+}
+
+func fetchRemoteStableModel(ctx context.Context) (string, error) {
+	// We read the raw Go file from the main branch to find the current StableEmbeddingModel constant
+	url := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/main/internal/config/config.go", GitHubOwner, GitHubRepo)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to fetch remote config: status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	// Simple search for the constant
+	content := string(body)
+	searchStr := `StableEmbeddingModel = "`
+	idx := strings.Index(content, searchStr)
+	if idx == -1 {
+		return "", fmt.Errorf("StableEmbeddingModel constant not found in remote config")
+	}
+
+	start := idx + len(searchStr)
+	end := strings.Index(content[start:], `"`)
+	if end == -1 {
+		return "", fmt.Errorf("invalid StableEmbeddingModel format in remote config")
+	}
+
+	return content[start : start+end], nil
 }
 
 func moveFile(src, dst string) error {

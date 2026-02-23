@@ -415,13 +415,16 @@ func fetchRemoteStableModel(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("failed to fetch remote config: status %d", resp.StatusCode)
 	}
 
+	// Limit response to 64KB to prevent decompression bombs or malicious large payloads.
+	limitedBody := io.LimitReader(resp.Body, 64*1024)
+
 	var cfg struct {
 		LLM struct {
 			OllamaEmbed string `yaml:"ollama_embed"`
 		} `yaml:"llm"`
 	}
 
-	if err := yaml.NewDecoder(resp.Body).Decode(&cfg); err != nil {
+	if err := yaml.NewDecoder(limitedBody).Decode(&cfg); err != nil {
 		return "", fmt.Errorf("failed to parse remote config.yaml: %w", err)
 	}
 

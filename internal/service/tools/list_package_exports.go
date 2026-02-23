@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"unicode"
 
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -244,5 +245,6 @@ func isExported(name string) bool {
 	if name == "" {
 		return false
 	}
-	return strings.ToUpper(name[:1]) == name[:1] && name[:1] != strings.ToLower(name[:1])
+	r := []rune(name)[0]
+	return unicode.IsUpper(r)
 }

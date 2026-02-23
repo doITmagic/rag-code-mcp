@@ -2,6 +2,8 @@ package php
 
 import (
 	"github.com/VKCOM/php-parser/pkg/ast"
+
+	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
 )
 
 // ParamInfo describes a function or method parameter
@@ -30,14 +32,8 @@ type CodeChunk struct {
 	Signature          string         `json:"signature"`
 	Docstring          string         `json:"docstring"`
 	Code               string         `json:"code"`
-	Relations          []Relation     `json:"relations,omitempty"`
+	Relations          []pkgParser.Relation `json:"relations,omitempty"`
 	Metadata           map[string]any `json:"metadata,omitempty"`
-}
-
-// Relation describes a connection pointing to another code entity
-type Relation struct {
-	TargetName string `json:"target_name"`
-	Type       string `json:"type"`
 }
 
 // PackageInfo contains comprehensive information about a PHP namespace/package

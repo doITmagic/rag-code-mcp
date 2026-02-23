@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser/php"
 )
 
@@ -95,9 +96,9 @@ func (a *Adapter) enrichChunks(chunks []php.CodeChunk, info *LaravelInfo) {
 				// Map Laravel relations to PHP relations
 				if len(model.Relations) > 0 {
 					for _, rel := range model.Relations {
-						chunk.Relations = append(chunk.Relations, php.Relation{
+						chunk.Relations = append(chunk.Relations, pkgParser.Relation{
 							TargetName: rel.RelatedModel,
-							Type:       rel.Type,
+							Type:       pkgParser.RelationType(rel.Type),
 						})
 					}
 				}

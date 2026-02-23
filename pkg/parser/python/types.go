@@ -1,5 +1,7 @@
 package python
 
+import pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
+
 // CodeChunk represents a semantically meaningful piece of code
 type CodeChunk struct {
 	Type               string         `json:"type"`
@@ -14,14 +16,8 @@ type CodeChunk struct {
 	Signature          string         `json:"signature"`
 	Docstring          string         `json:"docstring"`
 	Code               string         `json:"code"`
-	Relations          []Relation     `json:"relations,omitempty"`
+	Relations          []pkgParser.Relation `json:"relations,omitempty"`
 	Metadata           map[string]any `json:"metadata,omitempty"`
-}
-
-// Relation describes a connection pointing to another code entity
-type Relation struct {
-	TargetName string `json:"target_name"`
-	Type       string `json:"type"`
 }
 
 // ParamInfo describes a function or method parameter

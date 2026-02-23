@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -133,6 +134,57 @@ func setupEnvironment() {
 
 	needsDelay := false
 
+	// Auto-detect if services are missing and ask for corrective action
+	if *ollamaMode == "local" && !isPortOpen(11434) {
+		ollamaPath, err := exec.LookPath("ollama")
+		if err == nil {
+			fmt.Printf("\n\033[1;33m⚠️  Ollama binary found at %s but service is not running.\033[0m\n", ollamaPath)
+			fmt.Printf("   Would you like to try starting the local Ollama service? [Y/n]: ")
+			if askConfirm(true) {
+				log("Starting Ollama service in background...")
+				// Start ollama serve in a way that doesn't block the installer
+				go func() {
+					exec.Command("ollama", "serve").Run()
+				}()
+				// Give it a few seconds to bind to the port
+				log("Waiting for Ollama to bind to port 11434...")
+				for i := 0; i < 10; i++ {
+					if isPortOpen(11434) {
+						success("Ollama service started successfully")
+						break
+					}
+					time.Sleep(1 * time.Second)
+				}
+			}
+		}
+
+		// If still not open after attempt, or if binary wasn't found, or if user declined
+		if !isPortOpen(11434) {
+			fmt.Printf("\n\033[1;33m⚠️  Ollama not accessible on port 11434.\033[0m\n")
+			fmt.Printf("   Would you like to start Ollama in a Docker container instead? [Y/n]: ")
+			if askConfirm(true) {
+				*ollamaMode = "docker"
+			}
+		}
+	}
+
+	if *qdrantMode == "local" && !isPortOpen(6333) {
+		// Note: qdrantMode default is "docker", but if user forced "local"
+		fmt.Printf("\n\033[1;33m⚠️  Qdrant not detected on port 6333.\033[0m\n")
+		fmt.Printf("   Would you like to start Qdrant in a Docker container? [Y/n]: ")
+		if askConfirm(true) {
+			*qdrantMode = "docker"
+		}
+	}
+
+	// Re-check docker availability if modes switched to docker
+	if *qdrantMode == "docker" || *ollamaMode == "docker" {
+		if _, err := exec.LookPath("docker"); err != nil {
+			warn("Docker is required for the requested mode but was not found in PATH.")
+			return
+		}
+	}
+
 	// Qdrant Setup
 	if *qdrantMode == "docker" {
 		log("Setting up Qdrant in Docker...")
@@ -240,6 +292,27 @@ func checkConfigUpgrade(configPath string) {
 			log("Keeping current model: " + currentModel)
 		}
 	}
+}
+
+func askConfirm(defaultVal bool) bool {
+	var response string
+	fmt.Scanln(&response)
+	response = strings.ToLower(strings.TrimSpace(response))
+
+	if response == "" {
+		return defaultVal
+	}
+	return response == "y" || response == "yes"
+}
+
+func isPortOpen(port int) bool {
+	address := fmt.Sprintf("127.0.0.1:%d", port)
+	conn, err := net.DialTimeout("tcp", address, 1*time.Second)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 func stopRunningProcess(binPath string) {

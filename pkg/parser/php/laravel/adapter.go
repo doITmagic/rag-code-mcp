@@ -1,7 +1,6 @@
 package laravel
 
 import (
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"path/filepath"
@@ -93,10 +92,14 @@ func (a *Adapter) enrichChunks(chunks []php.CodeChunk, info *LaravelInfo) {
 				chunk.Metadata["table"] = model.Table
 				chunk.Metadata["fillable"] = model.Fillable
 
-				// Serialize relations to store in metadata
+				// Map Laravel relations to PHP relations
 				if len(model.Relations) > 0 {
-					rels, _ := json.Marshal(model.Relations)
-					chunk.Metadata["relations"] = string(rels)
+					for _, rel := range model.Relations {
+						chunk.Relations = append(chunk.Relations, php.Relation{
+							TargetName: rel.RelatedModel,
+							Type:       rel.Type,
+						})
+					}
 				}
 			} else if ctrl, ok := controllers[fullName]; ok {
 				if chunk.Metadata == nil {

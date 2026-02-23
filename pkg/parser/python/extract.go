@@ -596,6 +596,7 @@ func (ca *CodeAnalyzer) extractFunctions(lines []string, filePath string, conten
 					}
 				}
 				signature := ca.buildFunctionSignature(funcName, params, returnType, isAsync)
+				calls := ca.extractMethodCalls(lines, i+1, endLine-1)
 				functions = append(functions, FunctionInfo{
 					Name:        funcName,
 					Signature:   signature,
@@ -603,6 +604,7 @@ func (ca *CodeAnalyzer) extractFunctions(lines []string, filePath string, conten
 					Parameters:  params,
 					ReturnType:  returnType,
 					Decorators:  currentDecorators,
+					Calls:       calls,
 					IsAsync:     isAsync,
 					IsGenerator: isGenerator,
 					FilePath:    filePath,
@@ -842,6 +844,15 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 					"dependencies": class.Dependencies,
 				},
 			}
+			// Add basic relations (inheritance)
+			for _, base := range class.Bases {
+				chunk.Relations = append(chunk.Relations, Relation{TargetName: base, Type: "inheritance"})
+			}
+			// Add dependency relations
+			for _, dep := range class.Dependencies {
+				chunk.Relations = append(chunk.Relations, Relation{TargetName: dep, Type: "dependency"})
+			}
+
 			chunks = append(chunks, chunk)
 			for _, method := range class.Methods {
 				if method.IsProperty {
@@ -867,11 +878,20 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 						"type_deps":      method.TypeDeps,
 					},
 				}
+				// Add method call relations
+				for _, call := range method.Calls {
+					methodChunk.Relations = append(methodChunk.Relations, Relation{TargetName: call.Name, Type: "calls"})
+				}
+				// Add type dependency relations
+				for _, dep := range method.TypeDeps {
+					methodChunk.Relations = append(methodChunk.Relations, Relation{TargetName: dep, Type: "uses_type"})
+				}
+
 				chunks = append(chunks, methodChunk)
 			}
 		}
 		for _, fn := range module.Functions {
-			chunks = append(chunks, CodeChunk{
+			chunk := CodeChunk{
 				Name:      fn.Name,
 				Type:      "function",
 				Language:  "python",
@@ -887,7 +907,12 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 					"is_generator": fn.IsGenerator,
 					"decorators":   fn.Decorators,
 				},
-			})
+			}
+			// Add function call relations
+			for _, call := range fn.Calls {
+				chunk.Relations = append(chunk.Relations, Relation{TargetName: call.Name, Type: "calls"})
+			}
+			chunks = append(chunks, chunk)
 		}
 		for _, c := range module.Constants {
 			chunks = append(chunks, CodeChunk{

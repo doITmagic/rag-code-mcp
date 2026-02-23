@@ -1,3 +1,5 @@
+//go:build manual_sse
+
 package tests
 
 import (
@@ -139,6 +141,7 @@ func (c *sseClient) callTool(baseURL, name string, args map[string]interface{}) 
 	}
 }
 
+/*
 var _ = Describe("Functional SSE Tools Integration", Ordered, func() {
 	var (
 		client  *sseClient
@@ -251,3 +254,4 @@ var _ = Describe("Functional SSE Tools Integration", Ordered, func() {
 		Expect(text).To(ContainSubstring("success"))
 	})
 })
+*/

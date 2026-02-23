@@ -347,6 +347,11 @@ func (v *symbolCollector) StmtClassMethod(n *ast.StmtClassMethod) {
 		}
 	}
 
+	// Extract calls from method body
+	if n.Stmt != nil {
+		methodInfo.Calls = append(methodInfo.Calls, v.extractCalls(n.Stmt)...)
+	}
+
 	v.currentClass.Methods = append(v.currentClass.Methods, methodInfo)
 }
 
@@ -399,6 +404,13 @@ func (v *symbolCollector) StmtFunction(n *ast.StmtFunction) {
 			funcInfo.Returns = []ReturnInfo{
 				{Type: funcInfo.ReturnType, Description: ""},
 			}
+		}
+	}
+
+	// Extract calls from function body
+	if n.Stmts != nil {
+		for _, stmt := range n.Stmts {
+			funcInfo.Calls = append(funcInfo.Calls, v.extractCalls(stmt)...)
 		}
 	}
 
@@ -871,6 +883,24 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 				},
 			}
 
+			// Add basic relations
+			if class.Extends != "" {
+				chunk.Relations = append(chunk.Relations, Relation{TargetName: class.Extends, Type: "inheritance"})
+			}
+			for _, impl := range class.Implements {
+				chunk.Relations = append(chunk.Relations, Relation{TargetName: impl, Type: "implements"})
+			}
+			for _, use := range class.Uses {
+				chunk.Relations = append(chunk.Relations, Relation{TargetName: use, Type: "uses_trait"})
+			}
+
+			// Add method and its relations
+			for _, method := range class.Methods {
+				for _, call := range method.Calls {
+					chunk.Relations = append(chunk.Relations, Relation{TargetName: call.Method, Type: "calls"})
+				}
+			}
+
 			// Add a simple class signature similar to Go type summaries
 			chunk.Signature = buildClassSignature(class)
 
@@ -894,6 +924,10 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 					EndLine:   method.EndLine,
 					Docstring: method.Description,
 					Code:      method.Code,
+				}
+				// Add calls as relations
+				for _, call := range method.Calls {
+					methodChunk.Relations = append(methodChunk.Relations, Relation{TargetName: call.Method, Type: "calls"})
 				}
 				chunks = append(chunks, methodChunk)
 			}
@@ -993,6 +1027,10 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 				Language: "php",
 				Package:  fn.Namespace,
 			}
+			// Add calls as relations
+			for _, call := range fn.Calls {
+				chunk.Relations = append(chunk.Relations, Relation{TargetName: call.Method, Type: "calls"})
+			}
 			chunks = append(chunks, chunk)
 		}
 
@@ -1030,6 +1068,122 @@ func extractCodeFromContent(content []byte, startLine, endLine int) string {
 
 	// Extract lines (convert from 1-indexed to 0-indexed)
 	return strings.Join(lines[startLine-1:endLine], "\n")
+}
+
+func (v *symbolCollector) extractCalls(node ast.Vertex) []MethodCall {
+	var calls []MethodCall
+	v.walkStmts(node, &calls)
+	return calls
+}
+
+func (v *symbolCollector) walkStmts(stmt ast.Vertex, calls *[]MethodCall) {
+	if stmt == nil {
+		return
+	}
+
+	switch node := stmt.(type) {
+	case *ast.StmtStmtList:
+		for _, s := range node.Stmts {
+			v.walkStmts(s, calls)
+		}
+	case *ast.StmtReturn:
+		if node.Expr != nil {
+			v.walkExpr(node.Expr, calls)
+		}
+	case *ast.StmtExpression:
+		if node.Expr != nil {
+			v.walkExpr(node.Expr, calls)
+		}
+	case *ast.StmtIf:
+		v.walkExpr(node.Cond, calls)
+		v.walkStmts(node.Stmt, calls)
+		if node.Else != nil {
+			v.walkStmts(node.Else, calls)
+		}
+	case *ast.StmtForeach:
+		v.walkExpr(node.Expr, calls)
+		v.walkStmts(node.Stmt, calls)
+	case *ast.StmtWhile:
+		v.walkExpr(node.Cond, calls)
+		v.walkStmts(node.Stmt, calls)
+	case *ast.StmtFor:
+		for _, init := range node.Init {
+			v.walkExpr(init, calls)
+		}
+		for _, cond := range node.Cond {
+			v.walkExpr(cond, calls)
+		}
+		for _, loop := range node.Loop {
+			v.walkExpr(loop, calls)
+		}
+		v.walkStmts(node.Stmt, calls)
+	}
+}
+
+func (v *symbolCollector) walkExpr(expr ast.Vertex, calls *[]MethodCall) {
+	if expr == nil {
+		return
+	}
+
+	switch node := expr.(type) {
+	case *ast.ExprMethodCall:
+		call := MethodCall{}
+		if varNode, ok := node.Var.(*ast.ExprVariable); ok {
+			if nameNode, ok := varNode.Name.(*ast.Identifier); ok {
+				call.Object = strings.TrimPrefix(string(nameNode.Value), "$")
+			}
+		}
+		if methodNode, ok := node.Method.(*ast.Identifier); ok {
+			call.Method = string(methodNode.Value)
+		}
+		for _, arg := range node.Args {
+			if argNode, ok := arg.(*ast.Argument); ok {
+				v.walkExpr(argNode.Expr, calls)
+			}
+		}
+		if call.Method != "" {
+			*calls = append(*calls, call)
+		}
+		v.walkExpr(node.Var, calls)
+	case *ast.ExprFunctionCall:
+		call := MethodCall{}
+		call.Method = v.extractName(node.Function)
+		for _, arg := range node.Args {
+			if argNode, ok := arg.(*ast.Argument); ok {
+				v.walkExpr(argNode.Expr, calls)
+			}
+		}
+		if call.Method != "" {
+			*calls = append(*calls, call)
+		}
+	case *ast.ExprStaticCall:
+		call := MethodCall{}
+		call.Object = v.extractName(node.Class)
+		if methodNode, ok := node.Call.(*ast.Identifier); ok {
+			call.Method = string(methodNode.Value)
+		}
+		for _, arg := range node.Args {
+			if argNode, ok := arg.(*ast.Argument); ok {
+				v.walkExpr(argNode.Expr, calls)
+			}
+		}
+		if call.Method != "" {
+			*calls = append(*calls, call)
+		}
+	case *ast.ExprPropertyFetch:
+		v.walkExpr(node.Var, calls)
+	case *ast.ExprStaticPropertyFetch:
+		v.walkExpr(node.Class, calls)
+	case *ast.ExprArray:
+		for _, item := range node.Items {
+			if itemNode, ok := item.(*ast.ExprArrayItem); ok {
+				v.walkExpr(itemNode.Val, calls)
+				if itemNode.Key != nil {
+					v.walkExpr(itemNode.Key, calls)
+				}
+			}
+		}
+	}
 }
 
 // IsLaravelProject detects if the analyzed code is from a Laravel project

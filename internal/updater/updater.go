@@ -1,7 +1,6 @@
 package updater
 
 import (
-	"archive/zip"
 	"bufio"
 	"context"
 	"crypto/sha256"
@@ -11,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -19,6 +17,8 @@ import (
 	"time"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/codeclysm/extract/v3"
+	"gopkg.in/yaml.v3"
 )
 
 type UpdateCache struct {
@@ -355,15 +355,8 @@ func ApplyUpdate(archivePath string) error {
 	binaryName := filepath.Base(self)
 
 	// Extraction logic
-	if strings.HasSuffix(archivePath, ".tar.gz") {
-		cmd := exec.Command("tar", "-xzf", archivePath, "-C", tempDir)
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to extract tar.gz: %w", err)
-		}
-	} else if strings.HasSuffix(archivePath, ".zip") {
-		if err := unzip(archivePath, tempDir); err != nil {
-			return fmt.Errorf("failed to extract zip: %w", err)
-		}
+	if err := extractArchive(archivePath, tempDir); err != nil {
+		return fmt.Errorf("failed to extract archive: %w", err)
 	}
 
 	newBinPath := filepath.Join(tempDir, binaryName)
@@ -404,8 +397,8 @@ func ApplyUpdate(archivePath string) error {
 }
 
 func fetchRemoteStableModel(ctx context.Context) (string, error) {
-	// We read the raw Go file from the main branch to find the current StableEmbeddingModel constant
-	url := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/main/internal/config/config.go", GitHubOwner, GitHubRepo)
+	// We read the raw config.yaml from the main branch to find the current default/stable embedding model
+	url := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/main/config.yaml", GitHubOwner, GitHubRepo)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return "", err
@@ -422,26 +415,21 @@ func fetchRemoteStableModel(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("failed to fetch remote config: status %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
+	var cfg struct {
+		LLM struct {
+			OllamaEmbed string `yaml:"ollama_embed"`
+		} `yaml:"llm"`
 	}
 
-	// Simple search for the constant
-	content := string(body)
-	searchStr := `StableEmbeddingModel = "`
-	idx := strings.Index(content, searchStr)
-	if idx == -1 {
-		return "", fmt.Errorf("StableEmbeddingModel constant not found in remote config")
+	if err := yaml.NewDecoder(resp.Body).Decode(&cfg); err != nil {
+		return "", fmt.Errorf("failed to parse remote config.yaml: %w", err)
 	}
 
-	start := idx + len(searchStr)
-	end := strings.Index(content[start:], `"`)
-	if end == -1 {
-		return "", fmt.Errorf("invalid StableEmbeddingModel format in remote config")
+	if cfg.LLM.OllamaEmbed == "" {
+		return "", fmt.Errorf("ollama_embed key not found or empty in remote config.yaml")
 	}
 
-	return content[start : start+end], nil
+	return cfg.LLM.OllamaEmbed, nil
 }
 
 func moveFile(src, dst string) error {
@@ -510,102 +498,17 @@ func getAssetName(url string) string {
 	return parts[len(parts)-1]
 }
 
-const maxExtractedZipSize = 200 * 1024 * 1024 // 200 MiB safety limit
-
-func unzip(src, dest string) error {
-	r, err := zip.OpenReader(src)
+// extractArchive extracts a .tar.gz or .zip archive to dest using codeclysm/extract
+// which handles ZipSlip prevention and symlink safety across all platforms.
+func extractArchive(src, dest string) error {
+	f, err := os.Open(src)
 	if err != nil {
 		return err
 	}
-	defer r.Close()
-
-	totalExtracted := int64(0)
-
-	for _, f := range r.File {
-		// Normalize ZIP entry name to prevent ZipSlip, including backslash separators
-		cleanName := strings.ReplaceAll(f.Name, "\\", "/")
-		cleanName = filepath.Clean(cleanName)
-
-		cleanDest := filepath.Clean(dest)
-		fpath := filepath.Join(cleanDest, cleanName)
-
-		// Check for ZipSlip (Directory traversal) using filepath.Rel
-		rel, err := filepath.Rel(cleanDest, fpath)
-		if err != nil || strings.HasPrefix(rel, "..") {
-			return fmt.Errorf("illegal file path: %s", f.Name)
-		}
-
-		// Security: Reject non-regular files (symlinks, devices, etc.)
-		info := f.FileInfo()
-		if !info.Mode().IsRegular() && !info.IsDir() {
-			continue
-		}
-
-		if info.IsDir() {
-			if err := os.MkdirAll(fpath, 0755); err != nil {
-				return err
-			}
-			continue
-		}
-
-		if err := os.MkdirAll(filepath.Dir(fpath), 0755); err != nil {
-			return err
-		}
-
-		remainingBudget := maxExtractedZipSize - totalExtracted
-		if remainingBudget <= 0 {
-			return fmt.Errorf("archive exceeds maximum extraction size (%d bytes)", maxExtractedZipSize)
-		}
-		if f.UncompressedSize64 > 0 && f.UncompressedSize64 > uint64(remainingBudget) {
-			return fmt.Errorf("archive exceeds maximum extraction size (%d bytes)", maxExtractedZipSize)
-		}
-
-		// Use fixed mode 0644 for extracted files for better security consistency
-		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-		if err != nil {
-			return err
-		}
-
-		rc, err := f.Open()
-		if err != nil {
-			if cerr := outFile.Close(); cerr != nil {
-				return fmt.Errorf("failed to open zip entry: %w; additionally failed to close destination file: %v", err, cerr)
-			}
-			return err
-		}
-
-		limitedReader := io.LimitReader(rc, remainingBudget)
-		written, copyErr := io.Copy(outFile, limitedReader)
-
-		overLimitErr := error(nil)
-		if copyErr == nil && written == remainingBudget {
-			var probe [1]byte
-			n, probeErr := rc.Read(probe[:])
-			if probeErr != nil && probeErr != io.EOF {
-				overLimitErr = probeErr
-			} else if n > 0 {
-				overLimitErr = fmt.Errorf("archive exceeds maximum extraction size (%d bytes)", maxExtractedZipSize)
-			}
-		}
-
-		closeErr := outFile.Close()
-		rcErr := rc.Close()
-
-		if copyErr != nil {
-			return copyErr
-		}
-		if overLimitErr != nil {
-			return overLimitErr
-		}
-
-		totalExtracted += written
-
-		if closeErr != nil {
-			return closeErr
-		}
-		if rcErr != nil {
-			return rcErr
-		}
-	}
-	return nil
+	defer f.Close()
+	return extract.Archive(context.Background(), f, dest, nil)
 }
+
+
+
+

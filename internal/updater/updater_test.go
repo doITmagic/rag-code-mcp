@@ -1,6 +1,7 @@
 package updater
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -59,5 +60,56 @@ func TestSaveAndGetUpdateCache(t *testing.T) {
 
 	if time.Since(cached.LastCheck) > time.Minute {
 		t.Error("LastCheck is too old")
+	}
+}
+
+func TestFetchRemoteStableModel(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping network test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	model, err := fetchRemoteStableModel(ctx)
+	if err != nil {
+		t.Fatalf("fetchRemoteStableModel failed: %v", err)
+	}
+
+	if model == "" {
+		t.Error("Expected non-empty model string")
+	}
+	t.Logf("Fetched remote stable model from GitHub: %s", model)
+}
+
+func TestCheckForUpdates(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping network test in short mode")
+	}
+
+	tempDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tempDir)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	// Testing with a very old version to trigger the update logic
+	info, err := CheckForUpdates(ctx, "0.0.1", true)
+	if err != nil {
+		t.Fatalf("CheckForUpdates failed: %v", err)
+	}
+
+	if info == nil {
+		t.Log("CheckForUpdates returned nil (no releases yet or some other reason)")
+	} else {
+		t.Logf("Update found! LatestVersion: %s", info.LatestVersion)
+		t.Logf("Tag: %s", info.Tag)
+		t.Logf("AssetURL: %s", info.AssetURL)
+		t.Logf("ChecksumURL: %s", info.ChecksumURL)
+		t.Logf("RemoteStableModel: %s", info.RemoteStableModel)
+
+		if info.LatestVersion == "" {
+			t.Error("Expected LatestVersion to be populated")
+		}
 	}
 }

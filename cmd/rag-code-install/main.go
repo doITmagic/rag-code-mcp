@@ -19,9 +19,10 @@ import (
 var (
 	ollamaMode    = flag.String("ollama", "local", "Mode for Ollama: 'local' (use existing) or 'docker' (run container)")
 	qdrantMode    = flag.String("qdrant", "docker", "Mode for Qdrant: 'docker' (run container) or 'remote' (use existing URL)")
-	gpu           = flag.Bool("gpu", false, "Enable GPU support for Docker containers")
+	gpu           = flag.Bool("gpu", true, "Enable GPU support for Docker containers")
 	upgradeFlag   = flag.Bool("upgrade", false, "Upgrade existing installation")
 	uninstallFlag = flag.Bool("uninstall", false, "Uninstall the application")
+	assumeYes     = flag.Bool("y", true, "Automatic yes to prompts (non-interactive)")
 )
 
 const (
@@ -87,7 +88,9 @@ func main() {
 			warn(fmt.Sprintf("Skipping: %s not found in source directory", b))
 			continue
 		}
-		os.Chmod(dst, 0755)
+		if err := os.Chmod(dst, 0755); err != nil {
+			warn(fmt.Sprintf("Failed to set executable permissions for %s: %v", b, err))
+		}
 		success("Installed binary: " + b)
 	}
 
@@ -275,8 +278,13 @@ func checkConfigUpgrade(configPath string) {
 		fmt.Printf("   Do you want to upgrade to the new stable model? [Y/n]: ")
 
 		var response string
-		fmt.Scanln(&response)
-		response = strings.ToLower(strings.TrimSpace(response))
+		if *assumeYes {
+			fmt.Println("y (auto-confirmed)")
+			response = "y"
+		} else {
+			fmt.Scanln(&response)
+			response = strings.ToLower(strings.TrimSpace(response))
+		}
 
 		if response == "" || response == "y" || response == "yes" {
 			cfg.LLM.OllamaEmbed = stableModel
@@ -295,6 +303,11 @@ func checkConfigUpgrade(configPath string) {
 }
 
 func askConfirm(defaultVal bool) bool {
+	if *assumeYes {
+		fmt.Println("y (auto-confirmed)")
+		return true
+	}
+
 	var response string
 	fmt.Scanln(&response)
 	response = strings.ToLower(strings.TrimSpace(response))
@@ -321,6 +334,12 @@ func stopRunningProcess(binPath string) {
 	}
 
 	log("Stopping existing process running: " + binPath)
+
+	if runtime.GOOS == "windows" {
+		exec.Command("taskkill", "/F", "/IM", filepath.Base(binPath)).Run()
+		time.Sleep(500 * time.Millisecond)
+		return
+	}
 
 	// 1. Precise kill using full path
 	exec.Command("pkill", "-f", binPath).Run()
@@ -364,7 +383,12 @@ func addToPath(binDir string) {
 	}
 
 	home, _ := os.UserHomeDir()
-	shell := filepath.Base(os.Getenv("SHELL"))
+
+	shellEnv := os.Getenv("SHELL")
+	if shellEnv == "" {
+		shellEnv = "/bin/bash" // fallback
+	}
+	shell := filepath.Base(shellEnv)
 	config := filepath.Join(home, ".bashrc")
 	if shell == "zsh" {
 		config = filepath.Join(home, ".zshrc")
@@ -376,14 +400,17 @@ func addToPath(binDir string) {
 		return
 	}
 
-	f, err := os.OpenFile(config, os.O_APPEND|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(config, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
 		warn("Could not update shell config: " + err.Error())
 		return
 	}
 	defer f.Close()
 
-	f.WriteString(fmt.Sprintf("\n# RagCode MCP\nexport PATH=\"%s:$PATH\"\n", binDir))
+	if _, err := f.WriteString(fmt.Sprintf("\n# RagCode MCP\nexport PATH=\"%s:$PATH\"\n", binDir)); err != nil {
+		warn("Could not write to shell config: " + err.Error())
+		return
+	}
 	success("Added to PATH in " + config + " (restart shell to apply)")
 }
 
@@ -406,7 +433,9 @@ func runUninstall() {
 	home, _ := os.UserHomeDir()
 	installPath := filepath.Join(home, installDirName)
 	log("Uninstalling RagCode from: " + installPath)
-	os.RemoveAll(installPath)
+	if err := os.RemoveAll(installPath); err != nil {
+		fail(fmt.Sprintf("Failed to uninstall: %v", err))
+	}
 	success("Uninstallation complete.")
 }
 

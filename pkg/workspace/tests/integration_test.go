@@ -122,7 +122,7 @@ func TestBranchIsolationAndFeedbackPromotionIntegration(t *testing.T) {
 	}
 
 	// --- STEP 5: Promotion (Upsert) ---
-	if err := reg.Upsert(projectRoot, "MyProject", "windsurf"); err != nil {
+	if _, err := reg.Upsert(projectRoot, "MyProject", "windsurf"); err != nil {
 		t.Fatalf("Upsert failed: %v", err)
 	}
 

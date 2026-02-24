@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -96,8 +97,23 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 		"package": packageName,
 	}
 
+	idx := t.engine.GetIndexProgress(wctx.ID)
 	allResults, err := t.engine.ExactSearchPolyglot(ctx, wctx.ID, filter, 1000)
 	if err != nil {
+		var noCollections *engine.ErrNoCollectionsFound
+		if errors.As(err, &noCollections) {
+			resp := ToolResponse{
+				Status:  "indexing_required",
+				Message: fmt.Sprintf("⏳ Workspace '%s' is not indexed yet. Indexing is required for complete results.", wctx.Root),
+				Context: ContextMetadata{WorkspaceRoot: wctx.Root, DetectionSource: wctx.DetectionSource},
+			}
+			if idx != nil {
+				resp.Status = "indexing_in_progress"
+				resp.Data = map[string]any{"indexing": idx}
+			}
+			return resp.JSON()
+		}
+
 		resp := ToolResponse{Status: "error", Error: fmt.Sprintf("package export search failed: %v", err)}
 		return resp.JSON()
 	}
@@ -234,6 +250,9 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 			DetectionSource: wctx.DetectionSource,
 			Telemetry:       telemetry.CalculateSavings(baselineBytes, actualBytes),
 		},
+	}
+	if idx != nil && (idx.State == "starting" || idx.State == "running") {
+		resp.Data = map[string]any{"exports": exports, "indexing": idx}
 	}
 
 	return resp.JSON()

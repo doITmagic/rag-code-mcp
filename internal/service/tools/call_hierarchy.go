@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -104,6 +105,8 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 		return resp.JSON()
 	}
 
+	idx := t.engine.GetIndexProgress(wctx.ID)
+
 	visited := make(map[string]bool)
 
 	rootNode := &CallNode{Name: symbolName}
@@ -114,6 +117,23 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 		rootNode.Type, _ = rootRes.Point.Payload["type"].(string)
 		rootNode.FilePath, _ = rootRes.Point.Payload["file_path"].(string)
 		rootNode.Package, _ = rootRes.Point.Payload["package"].(string)
+	} else {
+		// If nothing is indexed yet, ExactSearchPolyglot will return ErrNoCollectionsFound.
+		// Signal indexing status instead of returning an empty hierarchy.
+		_, sErr := t.engine.ExactSearchPolyglot(ctx, wctx.ID, map[string]interface{}{"name": symbolName}, 1)
+		var noCollections *engine.ErrNoCollectionsFound
+		if errors.As(sErr, &noCollections) {
+			resp := ToolResponse{
+				Status:  "indexing_required",
+				Message: fmt.Sprintf("⏳ Workspace '%s' is not indexed yet. Indexing is required for complete call hierarchy results.", wctx.Root),
+				Context: ContextMetadata{WorkspaceRoot: wctx.Root, DetectionSource: wctx.DetectionSource},
+			}
+			if idx != nil {
+				resp.Status = "indexing_in_progress"
+				resp.Data = map[string]any{"indexing": idx}
+			}
+			return resp.JSON()
+		}
 	}
 
 	if direction == "incoming" {
@@ -131,6 +151,9 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 		Message: sb.String(),
 		Data:    rootNode,
 		Context: ContextMetadata{WorkspaceRoot: wctx.Root, DetectionSource: wctx.DetectionSource},
+	}
+	if idx != nil && (idx.State == "starting" || idx.State == "running") {
+		resp.Data = map[string]any{"hierarchy": rootNode, "indexing": idx}
 	}
 	return resp.JSON()
 }

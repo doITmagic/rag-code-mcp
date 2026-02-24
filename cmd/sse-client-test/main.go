@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -206,7 +207,25 @@ func waitForResponse(ch <-chan []byte, id string, timeout time.Duration) (map[st
 }
 
 func main() {
-	baseURL := "http://localhost:3000"
+	serverURL := flag.String("url", "http://localhost:3000", "Base URL of the MCP SSE server")
+	workspacePath := flag.String("path", "", "Absolute path to the workspace to index and search")
+	query := flag.String("query", "IndexWorkspace implementation", "Final rag_search_code query to run")
+	mode := flag.String("mode", "discovery", "rag_search_code mode: discovery or exact")
+	limit := flag.Int("limit", 3, "Final rag_search_code limit")
+	outPath := flag.String("out", "", "If set, write the final tool JSON response to this file")
+	initTimeout := flag.Duration("init-timeout", 30*time.Second, "Timeout waiting for initialize response")
+	indexAckTimeout := flag.Duration("index-ack-timeout", 2*time.Minute, "Timeout waiting for index request acknowledgement")
+	pollTimeout := flag.Duration("poll-timeout", 15*time.Minute, "Max time to wait for indexing to complete")
+	searchTimeout := flag.Duration("search-timeout", 2*time.Minute, "Timeout waiting for search response")
+	pollStepTimeout := flag.Duration("poll-step-timeout", 30*time.Second, "Timeout waiting for each poll search response")
+	flag.Parse()
+
+	if *workspacePath == "" {
+		cwd, _ := os.Getwd()
+		*workspacePath = cwd + "/internal/service/engine/engine.go"
+	}
+
+	baseURL := *serverURL
 	sse, err := newSSEClient(baseURL + "/sse")
 	if err != nil {
 		fmt.Printf("Error creating SSE client: %v\n", err)
@@ -229,7 +248,7 @@ func main() {
 		fmt.Printf("Init failed: %v\n", err)
 		os.Exit(1)
 	}
-	_, err = waitForResponse(sse.outCh, "init-1", 10*time.Second)
+	_, err = waitForResponse(sse.outCh, "init-1", *initTimeout)
 	if err != nil {
 		fmt.Printf("Wait init failed: %v\n", err)
 		os.Exit(1)
@@ -237,8 +256,7 @@ func main() {
 	_ = sendNotification(baseURL, sse.sessionID, "notifications/initialized", map[string]any{})
 
 	// Use an absolute path for detection
-	cwd, _ := os.Getwd()
-	filePath := cwd + "/internal/service/engine/engine.go"
+	filePath := *workspacePath
 
 	// Force Re-Index
 	fmt.Println("Triggering Workspace Re-Indexing...")
@@ -254,7 +272,7 @@ func main() {
 		os.Exit(1)
 	}
 	// Wait for response, ignore msgId
-	_, err = waitForResponse(sse.outCh, "index-1", 30*time.Second)
+	_, err = waitForResponse(sse.outCh, "index-1", *indexAckTimeout)
 	if err != nil {
 		fmt.Printf("Wait index failed: %v\n", err)
 		os.Exit(1)
@@ -266,7 +284,7 @@ func main() {
 	fmt.Println("Indexing started... Waiting/Polling for completion...")
 
 	// Ideally, poll search until results come back for "IndexWorkspace"
-	deadline := time.Now().Add(2 * time.Minute)
+	deadline := time.Now().Add(*pollTimeout)
 	for {
 		if time.Now().After(deadline) {
 			fmt.Println("Indexing timed out")
@@ -280,6 +298,7 @@ func main() {
 			"arguments": map[string]any{
 				"query":     "IndexingStatus",
 				"file_path": filePath,
+				"mode":      *mode,
 				"limit":     1,
 			},
 		})
@@ -289,7 +308,7 @@ func main() {
 			continue
 		}
 
-		pollMsg, err := waitForResponse(sse.outCh, "poll-search", 10*time.Second)
+		pollMsg, err := waitForResponse(sse.outCh, "poll-search", *pollStepTimeout)
 		if err != nil {
 			fmt.Println("Wait poll failed, retrying...")
 			time.Sleep(2 * time.Second)
@@ -318,18 +337,18 @@ func main() {
 	}
 
 	// Search Code Query
-	query := "IndexWorkspace implementation"
 	// Use an absolute path for detection to work correctly based on the current context strategy
 	// cwd, _ := os.Getwd() // filePath is already defined above
 	// filePath := cwd + "/internal/service/engine/engine.go" // Just as a reference point
 
-	fmt.Printf("Sending search query via SSE: '%s'...\n", query)
+	fmt.Printf("Sending search query via SSE: '%s'...\n", *query)
 	err = sendJSONRPC(baseURL, sse.sessionID, "search-1", "tools/call", map[string]any{
 		"name": "rag_search_code",
 		"arguments": map[string]any{
-			"query":     query,
+			"query":     *query,
 			"file_path": filePath,
-			"limit":     3,
+			"mode":      *mode,
+			"limit":     *limit,
 		},
 	})
 	if err != nil {
@@ -337,7 +356,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	msg, err := waitForResponse(sse.outCh, "search-1", 30*time.Second)
+	msg, err := waitForResponse(sse.outCh, "search-1", *searchTimeout)
 	if err != nil {
 		fmt.Printf("Wait search failed: %v\n", err)
 		os.Exit(1)
@@ -366,11 +385,23 @@ func main() {
 	}
 
 	// Try to pretty print the JSON response from the tool
-	var toolResp map[string]any
+	var toolResp any
 	if err := json.Unmarshal([]byte(text), &toolResp); err == nil {
 		pretty, _ := json.MarshalIndent(toolResp, "", "  ")
 		fmt.Printf("Tool Response:\n%s\n", string(pretty))
+		if *outPath != "" {
+			if writeErr := os.WriteFile(*outPath, pretty, 0o644); writeErr != nil {
+				fmt.Printf("Failed to write output file: %v\n", writeErr)
+				os.Exit(1)
+			}
+		}
 	} else {
 		fmt.Printf("Tool Response (raw):\n%s\n", text)
+		if *outPath != "" {
+			if writeErr := os.WriteFile(*outPath, []byte(text), 0o644); writeErr != nil {
+				fmt.Printf("Failed to write output file: %v\n", writeErr)
+				os.Exit(1)
+			}
+		}
 	}
 }

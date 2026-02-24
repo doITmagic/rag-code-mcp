@@ -30,9 +30,9 @@ import (
 )
 
 var (
-	Version = "2.0.0"
+	Version = "2.1.2"
 	Commit  = "none"
-	Date    = "22.02.2026"
+	Date    = "24.10.2025"
 )
 
 func main() {
@@ -76,15 +76,19 @@ func main() {
 	}
 
 	// Health checks (only embedding model is strictly required for core RAG)
-	models := []string{cfg.LLM.OllamaEmbed}
+	if cfg.HealthCheck.EnableOnStartup {
+		models := []string{cfg.LLM.OllamaEmbed}
 
-	health := healthcheck.CheckAllWithModels(cfg.LLM.OllamaBaseURL, cfg.Storage.VectorDB.URL, models)
-	for _, h := range health {
-		if h.Status != "ok" {
-			log.Fatalf("Health check failed for %s: %s\n%s", h.Service, h.Message, healthcheck.GetRemediation(health, models))
+		health := healthcheck.CheckAllWithModels(cfg.LLM.OllamaBaseURL, cfg.Storage.VectorDB.URL, models)
+		for _, h := range health {
+			if h.Status != "ok" {
+				log.Fatalf("Health check failed for %s: %s\n%s", h.Service, h.Message, healthcheck.GetRemediation(health, models))
+			}
 		}
+		logger.Instance.Info("Health checks passed")
+	} else {
+		logger.Instance.Warn("Health checks skipped (health_check.enable_on_startup=false)")
 	}
-	logger.Instance.Info("Health checks passed")
 
 	// LLM Provider
 	ollamaProvider, err := llm.NewOllamaLLMProvider(cfg.LLM)
@@ -113,6 +117,8 @@ func main() {
 
 	eng := engine.NewEngine(indexerSvc, searchSvc, registryPath, cfg)
 	logger.Instance.Info("Engine initialized, registry=%s", registryPath)
+
+	tools.SetServerBuildInfo(Version, Commit, Date)
 
 	// MCP Server
 	server := mcp.NewServer(&mcp.Implementation{

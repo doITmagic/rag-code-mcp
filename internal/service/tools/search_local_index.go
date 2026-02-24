@@ -134,6 +134,11 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			response.Message = fmt.Sprintf("🚀 Workspace '%s' was not indexed. Background indexing has been STARTED automatically. Please wait a few moments and try your search again.", indexingStarted.WorkspaceRoot)
 			response.Context.WorkspaceRoot = indexingStarted.WorkspaceRoot
 			response.Context.DetectionSource = "registry_fallback" // Fallback assumed if SearchCode failed with indexing_started on empty path
+			if indexingStarted.WorkspaceID != "" {
+				if p := t.engine.GetIndexProgress(indexingStarted.WorkspaceID); p != nil {
+					response.Data = map[string]any{"indexing": p}
+				}
+			}
 			return response.JSON()
 		}
 
@@ -142,6 +147,11 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			response.Status = "indexing_in_progress"
 			response.Message = fmt.Sprintf("⏳ Workspace '%s' is currently being indexed. Search results will be available once indexing completes.", indexingInProgress.WorkspaceRoot)
 			response.Context.WorkspaceRoot = indexingInProgress.WorkspaceRoot
+			if indexingInProgress.WorkspaceID != "" {
+				if p := t.engine.GetIndexProgress(indexingInProgress.WorkspaceID); p != nil {
+					response.Data = map[string]any{"indexing": p}
+				}
+			}
 			return response.JSON()
 		}
 

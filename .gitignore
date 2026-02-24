@@ -10,6 +10,7 @@ inspirations/
 /rag-code-mcp
 test-*
 bin/
+tests/e2e/bin/
 ragcode-installer
 index-all
 cmd/rag-code-mcp/rag-code-mcp

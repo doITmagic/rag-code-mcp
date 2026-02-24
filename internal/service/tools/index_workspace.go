@@ -3,6 +3,8 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
+	"runtime"
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
@@ -85,6 +87,30 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 		Context: ContextMetadata{
 			WorkspaceRoot:   wctx.Root,
 			DetectionSource: wctx.DetectionSource,
+		},
+	}
+
+	exePath, _ := os.Executable()
+	binModTime := "unknown"
+	if exePath != "" {
+		if stat, statErr := os.Stat(exePath); statErr == nil {
+			binModTime = stat.ModTime().Format(time.RFC3339)
+		}
+	}
+
+	response.Data = map[string]interface{}{
+		"runtime": map[string]interface{}{
+			"pid":                os.Getpid(),
+			"executable_path":    exePath,
+			"binary_modified_at": binModTime,
+			"started_at":         serverStart.Format(time.RFC3339),
+			"uptime":             time.Since(serverStart).String(),
+			"go_version":         runtime.Version(),
+			"build_info": map[string]string{
+				"version": serverVersion,
+				"commit":  serverCommit,
+				"date":    serverDate,
+			},
 		},
 	}
 

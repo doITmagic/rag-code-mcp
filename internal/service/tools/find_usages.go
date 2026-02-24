@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -88,8 +89,23 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 		"relations[].target_name": symbolName,
 	}
 
+	idx := t.engine.GetIndexProgress(wctx.ID)
 	allResults, err := t.engine.ExactSearchPolyglot(ctx, wctx.ID, filter, 100)
 	if err != nil {
+		var noCollections *engine.ErrNoCollectionsFound
+		if errors.As(err, &noCollections) {
+			resp := ToolResponse{
+				Status:  "indexing_required",
+				Message: fmt.Sprintf("⏳ Workspace '%s' is not indexed yet. Indexing is required for complete results.", wctx.Root),
+				Context: ContextMetadata{WorkspaceRoot: wctx.Root, DetectionSource: wctx.DetectionSource},
+			}
+			if idx != nil {
+				resp.Status = "indexing_in_progress"
+				resp.Data = map[string]any{"indexing": idx}
+			}
+			return resp.JSON()
+		}
+
 		resp := ToolResponse{Status: "error", Error: fmt.Sprintf("usage search failed: %v", err)}
 		return resp.JSON()
 	}
@@ -219,6 +235,13 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 			DetectionSource: wctx.DetectionSource,
 			Telemetry:       telemetry.CalculateSavings(baselineBytes, actualBytes),
 		},
+	}
+	if idx != nil && (idx.State == "starting" || idx.State == "running") {
+		// Signal that results might be incomplete while indexing is still running.
+		if resp.Data == nil {
+			resp.Data = map[string]any{}
+		}
+		resp.Data = map[string]any{"usages": usages, "indexing": idx}
 	}
 	return resp.JSON()
 }

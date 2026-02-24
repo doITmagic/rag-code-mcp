@@ -1,0 +1,19 @@
+{
+  "name": "golden_compare_rag_search_code",
+  "description": "Compare two rag_search_code tool JSON outputs using stable normalization.",
+  "vars": {
+    "left": "",
+    "right": "",
+    "max_items": 0
+  },
+  "steps": [
+    {
+      "type": "golden.compare",
+      "description": "Compare left vs right rag_search_code output after normalization.",
+      "left": "${left}",
+      "right": "${right}",
+      "normalize": "rag_search_code",
+      "max_items": "${max_items}"
+    }
+  ]
+}

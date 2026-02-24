@@ -12,10 +12,16 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/doITmagic/rag-code-mcp/pkg/llm"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
+)
+
+const (
+	deleteCollectionTimeout = 10 * time.Second
+	deleteCollectionMaxWait = 500 * time.Millisecond
 )
 
 // Options configures the indexer.
@@ -23,6 +29,7 @@ type Options struct {
 	Language        string
 	ExcludePatterns []string
 	Recreate        bool
+	Progress        func(doneFiles, totalFiles int)
 }
 
 // Service is the main indexing engine that handles file walking, change detection, and vector storage.
@@ -108,9 +115,8 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 	// 3. Ensure collection exists ONLY if we have files to index
 	if opts.Recreate {
 		log.Printf("[INFO] Dropping collection %s for recreation", collection)
-		if err := s.store.DeleteCollection(ctx, collection); err != nil {
-			// ignore error if not exists or other issues (CreateCollection will fail later if needed)
-			log.Printf("[DEBUG] DeleteCollection %s error: %v", collection, err)
+		if err := s.deleteCollectionForRecreate(ctx, collection); err != nil {
+			return err
 		}
 	}
 
@@ -162,9 +168,14 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 			defer fileWg.Done()
 			for path := range filePaths {
 				n := int(doneFiles.Add(1))
-				remaining := totalFiles - n
-				pct := remaining * 100 / totalFiles
-				fmt.Fprintf(os.Stderr, "\r[INDEX] %s: %d%% (%d/%d files left)   ", opts.Language, pct, remaining, totalFiles)
+				pct := 0
+				if totalFiles > 0 {
+					pct = n * 100 / totalFiles
+				}
+				fmt.Fprintf(os.Stderr, "\r[INDEX] %s: %d%% (%d/%d files)   ", opts.Language, pct, n, totalFiles)
+				if opts.Progress != nil {
+					opts.Progress(n, totalFiles)
+				}
 				if err := s.IndexFile(ctx, collection, path, state); err != nil {
 					log.Printf("[ERROR] Failed to index %s: %v", path, err)
 					errMu.Lock()
@@ -188,6 +199,39 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 	}
 
 	return nil
+}
+
+func (s *Service) deleteCollectionForRecreate(ctx context.Context, collection string) error {
+	deadline := time.Now().Add(deleteCollectionTimeout)
+	backoff := 50 * time.Millisecond
+
+	for {
+		if err := s.store.DeleteCollection(ctx, collection); err != nil {
+			log.Printf("[DEBUG] DeleteCollection %s error: %v", collection, err)
+		}
+
+		exists, err := s.store.CollectionExists(ctx, collection)
+		if err != nil {
+			return fmt.Errorf("failed to check collection status after delete: %w", err)
+		}
+		if !exists {
+			return nil
+		}
+
+		if time.Now().After(deadline) {
+			return fmt.Errorf("failed to delete collection %s within %s", collection, deleteCollectionTimeout)
+		}
+
+		if backoff > deleteCollectionMaxWait {
+			backoff = deleteCollectionMaxWait
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+		}
+		backoff *= 2
+	}
 }
 
 func (s *Service) IndexFile(ctx context.Context, collection, path string, state *State) error {

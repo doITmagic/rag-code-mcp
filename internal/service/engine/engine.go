@@ -37,6 +37,14 @@ type Engine struct {
 	// Key: workspace ID, Value: start time
 	indexingJobs sync.Map
 
+	// pendingIndex tracks file changes received while an indexing job is running.
+	// It ensures watcher-triggered incremental indexing is lossless under rapid edits.
+	pendingMu       sync.Mutex
+	pendingFiles    map[string]map[string]struct{} // workspaceID -> set(filePath)
+	pendingOverflow map[string]bool                // workspaceID -> too many pending changes, fallback to full scan
+
+	progress *progressStore
+
 	// detectionCache stores resolved WorkspaceContext with TTL to avoid
 	// repeated full resolver cascades for the same path.
 	detectionCache sync.Map // map[string]*detectionCacheEntry
@@ -92,12 +100,24 @@ func NewEngine(idx *indexer.Service, srv *search.Service, registryPath string, c
 	}
 
 	return &Engine{
-		indexer:  idx,
-		search:   srv,
-		resolver: res,
-		config:   cfg,
-		watchers: watcherMgr,
+		indexer:         idx,
+		search:          srv,
+		resolver:        res,
+		config:          cfg,
+		watchers:        watcherMgr,
+		progress:        newProgressStore(),
+		pendingFiles:    make(map[string]map[string]struct{}),
+		pendingOverflow: make(map[string]bool),
 	}
+}
+
+// GetIndexProgress returns the last known indexing progress for a workspace.
+// Returns nil when no indexing job has been started for this workspace.
+func (e *Engine) GetIndexProgress(workspaceID string) *IndexProgress {
+	if e.progress == nil {
+		return nil
+	}
+	return e.progress.get(workspaceID)
 }
 
 // Config returns the engine configuration.
@@ -238,6 +258,7 @@ func (e *ErrNotIndexed) Error() string {
 // ErrIndexingInProgress is returned when a workspace is currently being indexed.
 type ErrIndexingInProgress struct {
 	WorkspaceRoot string
+	WorkspaceID   string
 }
 
 func (e *ErrIndexingInProgress) Error() string {
@@ -247,6 +268,7 @@ func (e *ErrIndexingInProgress) Error() string {
 // ErrIndexingStarted is returned when indexing was automatically triggered.
 type ErrIndexingStarted struct {
 	WorkspaceRoot string
+	WorkspaceID   string
 }
 
 func (e *ErrIndexingStarted) Error() string {
@@ -281,10 +303,10 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 	}
 	if !exists {
 		if _, ok := e.indexingJobs.Load(wctx.ID); ok {
-			return nil, &ErrIndexingInProgress{WorkspaceRoot: wctx.Root}
+			return nil, &ErrIndexingInProgress{WorkspaceRoot: wctx.Root, WorkspaceID: wctx.ID}
 		}
 		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
-		return nil, &ErrIndexingStarted{WorkspaceRoot: wctx.Root}
+		return nil, &ErrIndexingStarted{WorkspaceRoot: wctx.Root, WorkspaceID: wctx.ID}
 	}
 
 	if wctx.ReindexRequired {
@@ -423,10 +445,10 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 
 	if !exists {
 		if _, ok := e.indexingJobs.Load(wctx.ID); ok {
-			return nil, &ErrIndexingInProgress{WorkspaceRoot: wctx.Root}
+			return nil, &ErrIndexingInProgress{WorkspaceRoot: wctx.Root, WorkspaceID: wctx.ID}
 		}
 		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
-		return nil, &ErrIndexingStarted{WorkspaceRoot: wctx.Root}
+		return nil, &ErrIndexingStarted{WorkspaceRoot: wctx.Root, WorkspaceID: wctx.ID}
 	}
 
 	if wctx.ReindexRequired {
@@ -516,6 +538,69 @@ func (e *Engine) SearchByName(ctx context.Context, wsID, name string, limit int)
 	return e.ExactSearchPolyglot(ctx, wsID, map[string]interface{}{"name": name}, limit)
 }
 
+const pendingIndexMaxFiles = 200
+
+func (e *Engine) addPendingIndexFiles(workspaceID string, files []string) {
+	e.pendingMu.Lock()
+	defer e.pendingMu.Unlock()
+
+	if e.pendingOverflow[workspaceID] {
+		return
+	}
+
+	set, ok := e.pendingFiles[workspaceID]
+	if !ok {
+		set = make(map[string]struct{})
+		e.pendingFiles[workspaceID] = set
+	}
+
+	for _, f := range files {
+		if strings.TrimSpace(f) == "" {
+			continue
+		}
+		set[f] = struct{}{}
+		if len(set) > pendingIndexMaxFiles {
+			e.pendingOverflow[workspaceID] = true
+			delete(e.pendingFiles, workspaceID)
+			return
+		}
+	}
+}
+
+func (e *Engine) popPendingIndex(workspaceID string) (files []string, overflow bool) {
+	e.pendingMu.Lock()
+	defer e.pendingMu.Unlock()
+
+	overflow = e.pendingOverflow[workspaceID]
+	delete(e.pendingOverflow, workspaceID)
+
+	set, ok := e.pendingFiles[workspaceID]
+	if !ok {
+		return nil, overflow
+	}
+	delete(e.pendingFiles, workspaceID)
+
+	files = make([]string, 0, len(set))
+	for f := range set {
+		files = append(files, f)
+	}
+	sort.Strings(files)
+	return files, overflow
+}
+
+func (e *Engine) tryStartPendingIndex(root, workspaceID string) {
+	files, overflow := e.popPendingIndex(workspaceID)
+	if overflow {
+		log.Printf("[INFO] ♻️ Pending changes exceeded limit for %s - triggering full scan incremental indexing", root)
+		e.StartIndexingAsync(root, workspaceID, nil, false)
+		return
+	}
+	if len(files) == 0 {
+		return
+	}
+	e.StartIndexingAsync(root, workspaceID, files, false)
+}
+
 // StartIndexingAsync starts the indexing process in a background goroutine.
 // If changedFiles is nil or empty, a full re-index is performed.
 func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recreate bool) {
@@ -523,8 +608,17 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 		return // Already running
 	}
 
+	jobID := fmt.Sprintf("%s-%d", id, time.Now().UnixNano())
+	if e.progress != nil {
+		e.progress.start(id, root, jobID, time.Now())
+	}
+
 	go func() {
-		defer e.indexingJobs.Delete(id)
+		defer func() {
+			e.indexingJobs.Delete(id)
+			// If watcher changes came in while we were indexing, run a follow-up incremental job.
+			e.tryStartPendingIndex(root, id)
+		}()
 
 		ctx := context.Background()
 		var err error
@@ -539,8 +633,14 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 
 		if err != nil {
 			log.Printf("[ERROR] Background indexing failed for %s: %v", root, err)
+			if e.progress != nil {
+				e.progress.fail(id, time.Now(), err.Error())
+			}
 		} else {
 			log.Printf("[INFO] ✅ Background indexing completed for: %s", root)
+			if e.progress != nil {
+				e.progress.complete(id, time.Now())
+			}
 		}
 	}()
 }
@@ -597,10 +697,16 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 
 	for _, lang := range languages {
 		collection := wctx.CollectionName(lang)
+		progressCb := func(doneFiles, totalFiles int) {
+			if e.progress != nil {
+				e.progress.update(wctx.ID, lang, doneFiles, totalFiles, time.Now())
+			}
+		}
 		err := e.indexer.IndexWorkspace(ctx, wctx.Root, collection, indexer.Options{
 			Language:        lang,
 			ExcludePatterns: e.config.Workspace.ExcludePatterns,
 			Recreate:        recreate,
+			Progress:        progressCb,
 		})
 		if err != nil {
 			log.Printf("[ERROR] Indexing failed for %s: %v", lang, err)
@@ -630,6 +736,7 @@ func (e *Engine) handleWatchChange(ctx context.Context, root string, changedFile
 		return err
 	}
 	if _, ok := e.indexingJobs.Load(wctx.ID); ok {
+		e.addPendingIndexFiles(wctx.ID, changedFiles)
 		return nil
 	}
 	e.StartIndexingAsync(wctx.Root, wctx.ID, changedFiles, false)

@@ -9,6 +9,7 @@ type Analyzer struct {
 	eloquentAnalyzer   *EloquentAnalyzer
 	controllerAnalyzer *ControllerAnalyzer
 	routeAnalyzer      *RouteAnalyzer
+	migrationAnalyzer  *MigrationAnalyzer
 }
 
 // NewAnalyzer creates a new Laravel framework analyzer
@@ -17,6 +18,7 @@ func NewAnalyzer(packageInfo *php.PackageInfo) *Analyzer {
 		eloquentAnalyzer:   NewEloquentAnalyzer(packageInfo),
 		controllerAnalyzer: NewControllerAnalyzer(packageInfo),
 		routeAnalyzer:      NewRouteAnalyzer(),
+		migrationAnalyzer:  NewMigrationAnalyzer(),
 	}
 }
 
@@ -38,6 +40,20 @@ func (a *Analyzer) AnalyzeWithRoutes(routePaths []string) *LaravelInfo {
 		routes, err := a.routeAnalyzer.Analyze(routePaths)
 		if err == nil {
 			info.Routes = routes
+		}
+	}
+
+	return info
+}
+
+// AnalyzeWithFiles performs analysis including route and migration files
+func (a *Analyzer) AnalyzeWithFiles(routePaths []string, migrationPaths []string) *LaravelInfo {
+	info := a.AnalyzeWithRoutes(routePaths)
+
+	if len(migrationPaths) > 0 {
+		migrations, err := a.migrationAnalyzer.Analyze(migrationPaths)
+		if err == nil {
+			info.Migrations = migrations
 		}
 	}
 

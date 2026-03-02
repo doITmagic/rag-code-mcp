@@ -50,11 +50,9 @@ laravel/
      - HTTP method inference
      - Parameter extraction
      - Return type detection
-   - Middleware detection (TODO: requires method body parsing)
+   - Middleware detection (extracted from constructors/method calls)
 
-### 🚧 In Progress
-
-4. **Route Analysis** (TODO)
+4. **Route Analysis**
    - Parse `routes/web.php` and `routes/api.php`
    - Extract route definitions:
      - HTTP method (GET, POST, PUT, DELETE, etc.)
@@ -62,12 +60,12 @@ laravel/
      - Controller@action binding
      - Route names
      - Middleware
-   - Map routes to controller actions
+   - Parses `Route::group` contexts (namespaces, prefixes, middlewares)
 
-5. **Migration Analysis** (TODO)
+5. **Migration Analysis**
    - Parse migration files
    - Extract table schemas
-   - Track database structure evolution
+   - Tracks database structural operations (create, drop, dropIfExists, table)
 
 ### ❌ Planned
 

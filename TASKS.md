@@ -59,19 +59,19 @@ Deliver a modular V2 detection core that is deterministic, testable, and safe fo
 ## Legacy Parity Tasks (V1 → V2)
 
 ### Workspace Module
-- [ ] **[P0]** Port workspace cache (TTL, helpers) from `internal/workspace/cache.go` → `pkg/workspace/cache`.
-- [ ] **[P0]** Reintroduce runtime marker/exclusion configuration APIs.
-- [ ] **[P0]** Restore helper APIs `DetectFromParams`, `CollectionName`, `Metadata` for search/indexing.
-- [ ] **[P1]** Rewire indexing metrics integration (file/chunk counts) or document new owner pipeline.
+- [x] **[P0]** Port workspace cache (TTL, helpers) from `internal/workspace/cache.go` → `pkg/workspace/cache`.
+- [x] **[P0]** Reintroduce runtime marker/exclusion configuration APIs.
+- [x] **[P0]** Restore helper APIs `DetectFromParams`, `CollectionName`, `Metadata` for search/indexing.
+- [x] **[P1]** Rewire indexing metrics integration (file/chunk counts) or document new owner pipeline.
 
 ### Storage Module (Qdrant)
-- [ ] **[P0]** Add `SearchDocsOnly`, `SearchCodeOnly`, `searchByChunkType` equivalents (or adapters).
-- [ ] **[P0]** Add utility endpoints `GetCollectionInfo`, `GetCollectionPointCount`, cleanup/merge helpers.
-- [ ] **[P0]** Ensure payload mapping/dedup (file, chunk_id) parity with legacy implementation.
-- [ ] **[P1]** Document adapter pattern for search service if functionality moves there.
+- [x] **[P0]** Add `SearchDocsOnly`, `SearchCodeOnly`, `searchByChunkType` equivalents (or adapters).
+- [x] **[P0]** Add utility endpoints `GetCollectionInfo`, `GetCollectionPointCount`, cleanup/merge helpers.
+- [x] **[P0]** Ensure payload mapping/dedup (file, chunk_id) parity with legacy implementation.
+- [x] **[P1]** Document adapter pattern for search service if functionality moves there.
 
 ### Workspace Manager Features
-- [ ] **[P0]** Implement filesystem watchers (legacy `manager.watchers`).
-- [ ] **[P0]** Port incremental reindex safeguards/indexing guards.
-- [ ] **[P0]** Reintroduce multi-language analyzer selection logic.
-- [ ] **[P1]** Decide whether these live under `pkg/workspace/watch` or other module and document ownership.
+- [x] **[P0]** Implement filesystem watchers (legacy `manager.watchers`).
+- [x] **[P0]** Port incremental reindex safeguards/indexing guards.
+- [x] **[P0]** Reintroduce multi-language analyzer selection logic.
+- [x] **[P1]** Decide whether these live under `pkg/workspace/watch` or other module and document ownership.

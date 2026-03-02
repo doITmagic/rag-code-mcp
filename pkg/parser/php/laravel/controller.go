@@ -3,6 +3,7 @@ package laravel
 import (
 	"strings"
 
+	"github.com/VKCOM/php-parser/pkg/ast"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser/php"
 )
 
@@ -189,7 +190,36 @@ func (a *ControllerAnalyzer) detectHttpMethods(actionName string) []string {
 
 // extractMiddleware extracts middleware from controller
 func (a *ControllerAnalyzer) extractMiddleware(class php.ClassInfo) []string {
-	// TODO: Parse constructor or middleware() method to extract middleware calls
-	// This requires AST parsing of method bodies
-	return nil
+	var middlewares []string
+
+	astClass, ok := a.packageInfo.ClassNodes[class.FullName]
+	if !ok {
+		// Fallback empty if AST is not available
+		return nil
+	}
+
+	extractor := NewASTPropertyExtractor()
+
+	// Look for methods like __construct or middleware
+	for _, stmt := range astClass.Stmts {
+		if methodNode, ok := stmt.(*ast.StmtClassMethod); ok {
+			methodName := ""
+			if ident, ok := methodNode.Name.(*ast.Identifier); ok {
+				methodName = string(ident.Value)
+			}
+
+			if methodName == "__construct" || methodName == "middleware" {
+				calls := extractor.ExtractMethodCalls(methodNode)
+				for _, call := range calls {
+					if call.Object == "this" && call.Method == "middleware" {
+						if len(call.Args) > 0 {
+							middlewares = append(middlewares, call.Args[0])
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return middlewares
 }

@@ -21,15 +21,49 @@ import (
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 )
 
+// getSystemMemoryGB attempts to read total system memory from /proc/meminfo (Linux).
+// Returns 0 if unable to read.
+func getSystemMemoryGB() int {
+	if runtime.GOOS != "linux" {
+		return 0
+	}
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0
+	}
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "MemTotal:") {
+			var kb int
+			if _, err := fmt.Sscanf(line, "MemTotal: %d kB", &kb); err == nil {
+				return kb / (1024 * 1024)
+			}
+		}
+	}
+	return 0
+}
+
 // globalIndexSemaphore limits the total number of concurrent file-indexing workers
 // across ALL active workspace indexing jobs.
 // This prevents PC freezes when 2+ large projects index simultaneously.
-// Cap at max(2, NumCPU/4) to leave CPU headroom for search queries and the OS.
 var globalIndexSemaphore = func() chan struct{} {
 	n := runtime.NumCPU() / 4
 	if n < 2 {
 		n = 2
 	}
+	if n > 4 {
+		n = 4
+	}
+
+	// Memory protection: if <= 8GB RAM, strictly limit to 1 concurrent worker
+	// This prevents Ollama from spawning multiple parallel 'ollama runner' processes,
+	// which each can consume ~1.4GB+ of residential RAM, easily exhausting system memory.
+	memGB := getSystemMemoryGB()
+	if memGB > 0 && memGB <= 8 {
+		log.Printf("[INFO] 🧠 Detected %dGB RAM. Restricting global concurrency to 1 to prevent Ollama OOM.", memGB)
+		n = 1
+	}
+
 	log.Printf("[INFO] Global indexing concurrency limit: %d workers", n)
 	ch := make(chan struct{}, n)
 	for i := 0; i < n; i++ {
@@ -169,13 +203,7 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 
 	// 4. Process changed files using the global semaphore to cap total concurrency
 	// across all active workspace indexing jobs (prevents CPU/RAM overload).
-	numFileWorkers := runtime.NumCPU() / 4
-	if numFileWorkers < 2 {
-		numFileWorkers = 2
-	}
-	if numFileWorkers > 4 {
-		numFileWorkers = 4
-	}
+	numFileWorkers := cap(globalIndexSemaphore)
 
 	filePaths := make(chan string, totalFiles)
 	for _, p := range changedFiles {

@@ -179,6 +179,23 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 		doneFiles atomic.Int64
 	)
 
+	// Dedicated periodic-save goroutine: only one writer, no file-level race.
+	saveStop := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := state.Save(statePath); err != nil {
+					log.Printf("[WARN] Periodic state save failed for %s: %v", root, err)
+				}
+			case <-saveStop:
+				return
+			}
+		}
+	}()
+
 	for i := 0; i < numFileWorkers; i++ {
 		fileWg.Add(1)
 		go func() {
@@ -198,6 +215,7 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 				indexErr := s.IndexFile(ctx, collection, path, state)
 				// Release slot immediately after processing
 				<-globalIndexSemaphore
+
 				if indexErr != nil {
 					log.Printf("[ERROR] Failed to index %s: %v", path, indexErr)
 					errMu.Lock()
@@ -209,6 +227,7 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 	}
 
 	fileWg.Wait()
+	close(saveStop) // Stop the periodic save goroutine
 	fmt.Fprintf(os.Stderr, "\r[INDEX] %s: done (%d files indexed)            \n", opts.Language, totalFiles)
 
 	if len(fileErrs) > 0 {

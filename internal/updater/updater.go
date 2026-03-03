@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -394,6 +395,14 @@ func ApplyUpdate(archivePath string) error {
 	// Clean up old binary (might fail if still in use on some OSs, but that's fine)
 	_ = os.Remove(oldBinPath)
 
+	// Oprirea fortata a proceselor existente pentru a permite restartul
+	// Adaugam un delay pentru a permite MCP-ului sa trimita raspunsul de succes inapoi catre client
+	go func() {
+		time.Sleep(1 * time.Second)
+		StopRunningProcess(self)
+		os.Exit(0)
+	}()
+
 	return nil
 }
 
@@ -520,6 +529,31 @@ func extractArchive(src, dest string) error {
 	return extract.Archive(context.Background(), f, dest, nil)
 }
 
+// StopRunningProcess attempts to forcefully close any existing processes using the provided binary path.
+func StopRunningProcess(binPath string) {
+	if _, err := os.Stat(binPath); os.IsNotExist(err) {
+		return
+	}
 
+	if runtime.GOOS == "windows" {
+		_ = exec.Command("taskkill", "/F", "/IM", filepath.Base(binPath)).Run()
+		time.Sleep(500 * time.Millisecond)
+		return
+	}
 
+	// 1. Precise kill using full path
+	_ = exec.Command("pkill", "-f", binPath).Run()
 
+	// 2. Fallback using lsof to find PIDs mapping this binary
+	if _, err := exec.LookPath("lsof"); err == nil {
+		cmd := exec.Command("lsof", "-t", binPath)
+		if output, err := cmd.Output(); err == nil {
+			pids := strings.Fields(string(output))
+			for _, pid := range pids {
+				_ = exec.Command("kill", "-9", pid).Run()
+			}
+		}
+	}
+
+	time.Sleep(500 * time.Millisecond)
+}

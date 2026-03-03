@@ -135,7 +135,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			response.Context.WorkspaceRoot = indexingStarted.WorkspaceRoot
 			response.Context.DetectionSource = "registry_fallback" // Fallback assumed if SearchCode failed with indexing_started on empty path
 			if indexingStarted.WorkspaceID != "" {
-				if p := t.engine.GetIndexProgress(indexingStarted.WorkspaceID); p != nil {
+				if p := t.engine.GetIndexProgress(indexingStarted.WorkspaceID, indexingStarted.WorkspaceRoot); p != nil {
 					response.Data = map[string]any{"indexing": p}
 				}
 			}
@@ -148,7 +148,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			response.Message = fmt.Sprintf("⏳ Workspace '%s' is currently being indexed. Search results will be available once indexing completes.", indexingInProgress.WorkspaceRoot)
 			response.Context.WorkspaceRoot = indexingInProgress.WorkspaceRoot
 			if indexingInProgress.WorkspaceID != "" {
-				if p := t.engine.GetIndexProgress(indexingInProgress.WorkspaceID); p != nil {
+				if p := t.engine.GetIndexProgress(indexingInProgress.WorkspaceID, indexingInProgress.WorkspaceRoot); p != nil {
 					response.Data = map[string]any{"indexing": p}
 				}
 			}
@@ -174,7 +174,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 		Collection:       result.Collection,
 		Language:         result.Language,
 		DetectionSource:  result.DetectionSource,
-		IndexingProgress: BuildIndexingProgress(t.engine, result.WorkspaceID),
+		IndexingProgress: BuildIndexingProgress(t.engine, result.WorkspaceID, result.WorkspaceRoot),
 	}
 
 	if result.MismatchRisk != "" && result.MismatchRisk != "low" {
@@ -193,6 +193,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 	seenFiles := make(map[string]bool)
 	baselineBytes := 0
 	actualBytes := 0
+	var staleFiles []string // files referenced in index but no longer on disk
 
 	for _, r := range result.Results {
 		if seenIDs[r.Point.ID] {
@@ -209,6 +210,8 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 				seenFiles[path] = true
 				if info, statErr := os.Stat(path); statErr == nil {
 					baselineBytes += int(info.Size())
+				} else if os.IsNotExist(statErr) {
+					staleFiles = append(staleFiles, path)
 				}
 			}
 		}
@@ -220,6 +223,19 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 		desc["score"] = r.Score
 		desc["id"] = r.Point.ID
 		descriptors = append(descriptors, desc)
+	}
+
+	// Proactive stale index warning: inform the AI that some indexed files no longer exist.
+	if len(staleFiles) > 0 {
+		staleWarning := fmt.Sprintf(
+			"⚠️ %d indexed file(s) no longer exist on disk (stale index). Consider re-indexing. Missing: %s",
+			len(staleFiles), strings.Join(staleFiles, ", "),
+		)
+		if response.Warning != "" {
+			response.Warning += " | " + staleWarning
+		} else {
+			response.Warning = staleWarning
+		}
 	}
 
 	// 2. Graph Context Expansion

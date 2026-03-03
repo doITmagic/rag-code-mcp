@@ -107,7 +107,7 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 		return resp.JSON()
 	}
 
-	idx := t.engine.GetIndexProgress(wctx.ID)
+	idx := t.engine.GetIndexProgress(wctx.ID, wctx.Root)
 
 	visited := make(map[string]bool)
 
@@ -168,7 +168,7 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 			WorkspaceRoot:    wctx.Root,
 			DetectionSource:  wctx.DetectionSource,
 			Telemetry:        telemetry.CalculateSavings(baselineBytes, actualBytes),
-			IndexingProgress: BuildIndexingProgress(t.engine, wctx.ID),
+			IndexingProgress: BuildIndexingProgress(t.engine, wctx.ID, wctx.Root),
 		},
 	}
 	return resp.JSON()

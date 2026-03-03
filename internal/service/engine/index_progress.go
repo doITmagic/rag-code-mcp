@@ -1,9 +1,15 @@
 package engine
 
 import (
+	"encoding/json"
+	"log"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
+
+const indexStatusFile = "index_status.json"
 
 type IndexLanguageProgress struct {
 	TotalFiles int       `json:"total_files"`
@@ -13,15 +19,15 @@ type IndexLanguageProgress struct {
 }
 
 type IndexProgress struct {
-	JobID        string                           `json:"job_id"`
-	WorkspaceID  string                           `json:"workspace_id"`
-	WorkspaceRoot string                          `json:"workspace_root"`
-	State        string                           `json:"state"` // starting|running|completed|failed
-	StartedAt    time.Time                        `json:"started_at"`
-	CompletedAt  *time.Time                       `json:"completed_at,omitempty"`
-	Languages    map[string]IndexLanguageProgress  `json:"languages,omitempty"`
-	UpdatedAt    time.Time                        `json:"updated_at"`
-	Error        string                           `json:"error,omitempty"`
+	JobID         string                           `json:"job_id"`
+	WorkspaceID   string                           `json:"workspace_id"`
+	WorkspaceRoot string                           `json:"workspace_root"`
+	State         string                           `json:"state"` // starting|running|completed|failed
+	StartedAt     time.Time                        `json:"started_at"`
+	CompletedAt   *time.Time                       `json:"completed_at,omitempty"`
+	Languages     map[string]IndexLanguageProgress `json:"languages,omitempty"`
+	UpdatedAt     time.Time                        `json:"updated_at"`
+	Error         string                           `json:"error,omitempty"`
 }
 
 type progressStore struct {
@@ -33,7 +39,7 @@ func newProgressStore() *progressStore {
 	return &progressStore{jobs: map[string]*IndexProgress{}}
 }
 
-func (s *progressStore) get(workspaceID string) *IndexProgress {
+func (s *progressStore) get(workspaceID string, workspaceRoot string) *IndexProgress {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if p, ok := s.jobs[workspaceID]; ok {
@@ -45,6 +51,14 @@ func (s *progressStore) get(workspaceID string) *IndexProgress {
 			}
 		}
 		return &cp
+	}
+	// Not in memory (e.g. after restart) — try loading from disc.
+	if workspaceRoot != "" {
+		if p := loadIndexStatus(workspaceRoot); p != nil && p.WorkspaceID == workspaceID {
+			s.jobs[workspaceID] = p // cache in memory for subsequent calls
+			cp := *p
+			return &cp
+		}
 	}
 	return nil
 }
@@ -99,7 +113,7 @@ func (s *progressStore) update(workspaceID, lang string, done, total int, now ti
 	p.UpdatedAt = now
 }
 
-func (s *progressStore) complete(workspaceID string, now time.Time) {
+func (s *progressStore) complete(workspaceID, workspaceRoot string, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, ok := s.jobs[workspaceID]
@@ -109,9 +123,11 @@ func (s *progressStore) complete(workspaceID string, now time.Time) {
 	p.State = "completed"
 	p.UpdatedAt = now
 	p.CompletedAt = &now
+	// Persist to disc so index_age survives process restarts.
+	saveIndexStatus(workspaceRoot, p)
 }
 
-func (s *progressStore) fail(workspaceID string, now time.Time, err string) {
+func (s *progressStore) fail(workspaceID, workspaceRoot string, now time.Time, errMsg string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, ok := s.jobs[workspaceID]
@@ -119,6 +135,45 @@ func (s *progressStore) fail(workspaceID string, now time.Time, err string) {
 		return
 	}
 	p.State = "failed"
-	p.Error = err
+	p.Error = errMsg
 	p.UpdatedAt = now
+	// Persist failed state too so we know something went wrong.
+	saveIndexStatus(workspaceRoot, p)
+}
+
+// saveIndexStatus writes the IndexProgress snapshot to {workspaceRoot}/.ragcode/index_status.json.
+func saveIndexStatus(workspaceRoot string, p *IndexProgress) {
+	if workspaceRoot == "" {
+		return
+	}
+	dir := filepath.Join(workspaceRoot, ".ragcode")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		log.Printf("[WARN] index_status: cannot create .ragcode dir: %v", err)
+		return
+	}
+	path := filepath.Join(dir, indexStatusFile)
+	b, err := json.MarshalIndent(p, "", "  ")
+	if err != nil {
+		log.Printf("[WARN] index_status: marshal failed: %v", err)
+		return
+	}
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		log.Printf("[WARN] index_status: write failed for %s: %v", path, err)
+	}
+}
+
+// loadIndexStatus reads the last IndexProgress from {workspaceRoot}/.ragcode/index_status.json.
+// Returns nil if the file doesn't exist or can't be parsed.
+func loadIndexStatus(workspaceRoot string) *IndexProgress {
+	path := filepath.Join(workspaceRoot, ".ragcode", indexStatusFile)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil // file doesn't exist yet — first run
+	}
+	var p IndexProgress
+	if err := json.Unmarshal(b, &p); err != nil {
+		log.Printf("[WARN] index_status: parse failed for %s: %v", path, err)
+		return nil
+	}
+	return &p
 }

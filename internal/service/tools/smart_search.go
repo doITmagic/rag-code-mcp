@@ -194,7 +194,7 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 			DetectionSource:  detectionSource,
 			Language:         language,
 			Collection:       collection,
-			IndexingProgress: BuildIndexingProgress(t.engine, workspaceID),
+			IndexingProgress: BuildIndexingProgress(t.engine, workspaceID, workspaceRoot),
 		},
 	}
 
@@ -206,6 +206,7 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 	baselineBytes := 0
 	actualBytes := 0
 	seenFiles := make(map[string]bool)
+	var staleFiles []string // files referenced in index but no longer on disk
 
 	if useCompact {
 		// COMPACT MODE: return only metadata, no source code
@@ -235,6 +236,8 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 				seenFiles[m.filePath] = true
 				if info, err := os.Stat(m.filePath); err == nil {
 					baselineBytes += int(info.Size())
+				} else if os.IsNotExist(err) {
+					staleFiles = append(staleFiles, m.filePath)
 				}
 			}
 		}
@@ -268,10 +271,25 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 				seenFiles[m.filePath] = true
 				if info, err := os.Stat(m.filePath); err == nil {
 					baselineBytes += int(info.Size())
+				} else if os.IsNotExist(err) {
+					staleFiles = append(staleFiles, m.filePath)
 				}
 			}
 		}
 		response.Data = fullData
+	}
+
+	// Proactive stale index warning
+	if len(staleFiles) > 0 {
+		staleWarning := fmt.Sprintf(
+			"⚠️ %d indexed file(s) no longer exist on disk (stale index). Consider re-indexing. Missing: %s",
+			len(staleFiles), strings.Join(staleFiles, ", "),
+		)
+		if response.Warning != "" {
+			response.Warning += " | " + staleWarning
+		} else {
+			response.Warning = staleWarning
+		}
 	}
 
 	response.Context.Telemetry = telemetry.CalculateSavings(baselineBytes, actualBytes)
@@ -404,7 +422,7 @@ func (t *SmartSearchTool) handleSearchError(err error, workspaceRoot, workspaceI
 		response.Message = fmt.Sprintf("🚀 Workspace '%s' was not indexed. Background indexing has been STARTED automatically. Please wait a few moments and try your search again.", indexingStarted.WorkspaceRoot)
 		response.Context.WorkspaceRoot = indexingStarted.WorkspaceRoot
 		if indexingStarted.WorkspaceID != "" {
-			response.Context.IndexingProgress = BuildIndexingProgress(t.engine, indexingStarted.WorkspaceID)
+			response.Context.IndexingProgress = BuildIndexingProgress(t.engine, indexingStarted.WorkspaceID, indexingStarted.WorkspaceRoot)
 		}
 		return response.JSON()
 	}
@@ -414,7 +432,7 @@ func (t *SmartSearchTool) handleSearchError(err error, workspaceRoot, workspaceI
 		response.Message = fmt.Sprintf("⏳ Workspace '%s' is currently being indexed.", indexingInProgress.WorkspaceRoot)
 		response.Context.WorkspaceRoot = indexingInProgress.WorkspaceRoot
 		if indexingInProgress.WorkspaceID != "" {
-			response.Context.IndexingProgress = BuildIndexingProgress(t.engine, indexingInProgress.WorkspaceID)
+			response.Context.IndexingProgress = BuildIndexingProgress(t.engine, indexingInProgress.WorkspaceID, indexingInProgress.WorkspaceRoot)
 		}
 		return response.JSON()
 	}

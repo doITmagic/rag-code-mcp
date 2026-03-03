@@ -112,12 +112,12 @@ func NewEngine(idx *indexer.Service, srv *search.Service, registryPath string, c
 }
 
 // GetIndexProgress returns the last known indexing progress for a workspace.
-// Returns nil when no indexing job has been started for this workspace.
-func (e *Engine) GetIndexProgress(workspaceID string) *IndexProgress {
+// workspaceRoot is used as a hint to load persisted status from disc if not in memory.
+func (e *Engine) GetIndexProgress(workspaceID, workspaceRoot string) *IndexProgress {
 	if e.progress == nil {
 		return nil
 	}
-	return e.progress.get(workspaceID)
+	return e.progress.get(workspaceID, workspaceRoot)
 }
 
 // Config returns the engine configuration.
@@ -634,12 +634,12 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 		if err != nil {
 			log.Printf("[ERROR] Background indexing failed for %s: %v", root, err)
 			if e.progress != nil {
-				e.progress.fail(id, time.Now(), err.Error())
+				e.progress.fail(id, root, time.Now(), err.Error())
 			}
 		} else {
 			log.Printf("[INFO] ✅ Background indexing completed for: %s", root)
 			if e.progress != nil {
-				e.progress.complete(id, time.Now())
+				e.progress.complete(id, root, time.Now())
 			}
 		}
 	}()

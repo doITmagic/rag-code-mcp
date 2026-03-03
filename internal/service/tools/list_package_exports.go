@@ -97,7 +97,7 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 		"package": packageName,
 	}
 
-	idx := t.engine.GetIndexProgress(wctx.ID)
+	idx := t.engine.GetIndexProgress(wctx.ID, wctx.Root)
 	allResults, err := t.engine.ExactSearchPolyglot(ctx, wctx.ID, filter, 1000)
 	if err != nil {
 		var noCollections *engine.ErrNoCollectionsFound
@@ -249,7 +249,7 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 			WorkspaceRoot:    wctx.Root,
 			DetectionSource:  wctx.DetectionSource,
 			Telemetry:        telemetry.CalculateSavings(baselineBytes, actualBytes),
-			IndexingProgress: BuildIndexingProgress(t.engine, wctx.ID),
+			IndexingProgress: BuildIndexingProgress(t.engine, wctx.ID, wctx.Root),
 		},
 	}
 	if idx != nil && (idx.State == "starting" || idx.State == "running") {

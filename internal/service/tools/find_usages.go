@@ -89,7 +89,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 		"relations[].target_name": symbolName,
 	}
 
-	idx := t.engine.GetIndexProgress(wctx.ID)
+	idx := t.engine.GetIndexProgress(wctx.ID, wctx.Root)
 	allResults, err := t.engine.ExactSearchPolyglot(ctx, wctx.ID, filter, 100)
 	if err != nil {
 		var noCollections *engine.ErrNoCollectionsFound
@@ -234,7 +234,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 			WorkspaceRoot:    wctx.Root,
 			DetectionSource:  wctx.DetectionSource,
 			Telemetry:        telemetry.CalculateSavings(baselineBytes, actualBytes),
-			IndexingProgress: BuildIndexingProgress(t.engine, wctx.ID),
+			IndexingProgress: BuildIndexingProgress(t.engine, wctx.ID, wctx.Root),
 		},
 	}
 	return resp.JSON()

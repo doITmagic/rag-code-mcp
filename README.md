@@ -21,7 +21,7 @@
 
 RagCode is a **Model Context Protocol (MCP) server** that instantly makes your project **AI-ready**. It enables AI assistants like **GitHub Copilot**, **Cursor**, **Windsurf**, and **Claude** to understand your entire codebase through **semantic vector search**, bridging the gap between your code and Large Language Models (LLMs).
 
-Built with the official [Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk), RagCode provides **10 powerful tools** to index, search, and analyze code, making it the ultimate solution for **AI-ready software development**.
+Built with the official [Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk), RagCode provides **11 powerful tools** to index, search, and analyze code — including **Markdown documentation search** — making it the ultimate solution for **AI-ready software development**.
 
 ## ⚡ One-Command Installation
 
@@ -101,7 +101,7 @@ First query triggers background indexing. Subsequent queries are instant.
 |---------|-------------|
 | [🔒 Privacy & Security](#-privacy-first-100-local-ai) | 100% local, zero cloud dependencies |
 | [🚀 Why RagCode?](#-why-ragcode-performance-benefits) | Performance benefits, comparisons |
-| [🛠️ MCP Tools](#️-10-powerful-mcp-tools) | All 10 tools explained |
+| [🛠️ MCP Tools](#️-11-powerful-mcp-tools) | All 11 tools explained |
 | [🌐 Supported Languages](#-multi-language-code-intelligence) | Go, PHP, Python support |
 | [💻 IDE Integration](#-ide-integration) | Windsurf, Cursor, VS Code, Claude |
 | [⚙️ Configuration](./docs/CONFIGURATION.md) | Advanced settings, models, env vars |
@@ -161,20 +161,36 @@ First query triggers background indexing. Subsequent queries are instant.
 
 ---
 
-## 🛠️ 10 Powerful MCP Tools
+## 🛠️ 11 Powerful MCP Tools
+
+### 🔍 Search & Navigation (Core)
 
 | Tool | Description | Use When |
 |------|-------------|----------|
-| `rag_search_code` | Semantic search by meaning | **First choice** for exploration |
-| `rag_hybrid_search` | Keyword + semantic for exact matches | Need exact identifiers |
-| `rag_get_function_details` | Complete function source code | Know exact function name |
-| `rag_find_type_definition` | Type/class with fields and methods | Understand data models |
-| `rag_find_implementations` | All usages and callers | Before refactoring |
-| `rag_list_package_exports` | All exported symbols | Explore unfamiliar packages |
-| `rag_search_docs` | Search Markdown documentation | Setup, architecture info |
-| `rag_get_code_context` | Code snippet with context | Have file:line reference |
-| `rag_index_workspace` | Reindex codebase | After major changes |
-| `rag_evaluate` | AI-to-Developer feedback tool | Request AI self-evaluation |
+| `rag_search` | **Intelligent unified search** — runs semantic + exact searches in parallel, auto-adapts response format. Supports `include_docs` to also search Markdown documentation, and `include_full_content` to force full source code output. | **First choice for any search** |
+| `rag_find_usages` | Find all usages of a class, function, or type across the codebase (AST-based) | Before refactoring |
+| `rag_call_hierarchy` | Explore caller/callee relationships for a symbol (incoming/outgoing, configurable depth) | Understanding execution flow |
+| `rag_list_package_exports` | List all public functions, classes, and types in a package/module | Explore unfamiliar packages |
+| `rag_read_file_context` | Read specific lines from a file with surrounding AST context | Have file:line reference |
+
+### 📦 Indexing & Management
+
+| Tool | Description | Use When |
+|------|-------------|----------|
+| `rag_index_workspace` | Index or reindex a workspace (code + Markdown documentation) | After major changes |
+| `rag_list_skills` | List available embedded skills and their installation status | Discover capabilities |
+| `rag_install_skill` | Install or uninstall a skill into the current workspace | Add automation/templates |
+
+### 🔧 System
+
+| Tool | Description | Use When |
+|------|-------------|----------|
+| `rag_evaluate` | AI-to-Developer feedback on RagCode performance | Provide feedback |
+| `rag_check_update` | Check for available RagCode updates | Staying current |
+| `rag_apply_update` | Download and install latest RagCode version | Upgrading |
+
+> [!TIP]
+> **`rag_search` is all you need for most queries.** It automatically combines semantic and exact search, adapts output format based on confidence, and with `include_docs: true` also searches project documentation (README, guides, Markdown files).
 
 📖 **[Full Tool Reference →](./docs/tool_schema_v2.md)**
 

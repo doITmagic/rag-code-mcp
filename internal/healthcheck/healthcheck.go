@@ -7,34 +7,31 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
+	"github.com/ollama/ollama/api"
 )
 
-// PingOllama performs a quick liveness check against Ollama.
+// PingOllama performs a quick liveness check against Ollama using the native API client.
 // Returns nil if Ollama responds within 3 seconds, error otherwise.
 func PingOllama(baseURL string) error {
 	baseURL = resolveOllamaBaseURL(baseURL)
 
+	parsedURL, err := url.Parse(baseURL)
+	if err != nil {
+		return fmt.Errorf("invalid ollama URL %q: %w", baseURL, err)
+	}
+
+	client := api.NewClient(parsedURL, &http.Client{Timeout: 3 * time.Second})
+
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/api/tags", nil)
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
+	if err := client.Heartbeat(ctx); err != nil {
 		return fmt.Errorf("ollama unreachable at %s: %w", baseURL, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("ollama returned status %d", resp.StatusCode)
 	}
 	return nil
 }

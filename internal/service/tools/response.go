@@ -24,6 +24,7 @@ type IndexingProgressSummary struct {
 	State     string                      `json:"state"`               // starting|running|completed|failed
 	Elapsed   string                      `json:"elapsed"`             // e.g. "1m23s"
 	IndexAge  string                      `json:"index_age,omitempty"` // e.g. "3 minutes ago" — populated when indexing is completed
+	Error     string                      `json:"error,omitempty"`     // user-facing error message when state="failed"
 	Languages map[string]LangProgressItem `json:"languages,omitempty"` // per-language stats
 }
 
@@ -69,12 +70,19 @@ func BuildIndexingProgress(eng *engine.Engine, workspaceID, workspaceRoot string
 			Percent:    lp.Percent,
 		}
 	}
-	return &IndexingProgressSummary{
+	summary := &IndexingProgressSummary{
 		State:     prog.State,
 		Elapsed:   elapsed,
 		IndexAge:  indexAge,
 		Languages: langs,
 	}
+
+	// Surface the error message so users know WHY indexing failed
+	if prog.State == "failed" && prog.Error != "" {
+		summary.Error = prog.Error
+	}
+
+	return summary
 }
 
 // formatAge returns a human-readable string like "just now", "5 minutes ago", "2 hours ago".

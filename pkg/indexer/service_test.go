@@ -323,10 +323,9 @@ func TestIndexItems_EmbedHang_DoesNotDeadlock(t *testing.T) {
 		}
 	}
 
-	// Use a 5s parent context — must be shorter than the 30s embed timeout
-	// to prove the mechanism works. The embed timeout OR parent cancellation
-	// must unblock the goroutines.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Use a 15s parent context — must allow enough time for the circuit breaker
+	// to attempt health checks (PingOllama with 3s timeout) before giving up.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	done := make(chan error, 1)
@@ -339,7 +338,7 @@ func TestIndexItems_EmbedHang_DoesNotDeadlock(t *testing.T) {
 		// We expect an error (context deadline exceeded), but NOT a hang
 		Expect(err).To(HaveOccurred())
 		t.Logf("IndexItems returned error (expected): %v", err)
-	case <-time.After(10 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("DEADLOCK: IndexItems hung forever — Embed() timeout is not working")
 	}
 

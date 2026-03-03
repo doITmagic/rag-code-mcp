@@ -158,6 +158,15 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 	totalFiles := len(changedFiles)
 	log.Printf("[INFO] Indexing %d changed files in %s (Language: %s)", totalFiles, root, opts.Language)
 
+	// Ensure the embedding model is loaded in Ollama's memory before starting.
+	// If another program evicted it, this will reload it (with up to 2min timeout).
+	if ollamaProvider, ok := unwrapOllamaProvider(s.embedder); ok {
+		if err := ollamaProvider.EnsureLoaded(ctx); err != nil {
+			log.Printf("[ERROR] Cannot ensure embedding model is loaded: %v", err)
+			return fmt.Errorf("embedding model not available: %w", err)
+		}
+	}
+
 	// 4. Process changed files using the global semaphore to cap total concurrency
 	// across all active workspace indexing jobs (prevents CPU/RAM overload).
 	numFileWorkers := runtime.NumCPU() / 4
@@ -384,7 +393,69 @@ func (s *Service) IndexFile(ctx context.Context, collection, path string, state 
 	return nil
 }
 
+// circuitBreakerThreshold is the number of consecutive embed failures that
+// triggers an Ollama health check and potential restart before continuing.
+const circuitBreakerThreshold = 2
+
+// unwrapOllamaProvider extracts the underlying *OllamaLLMProvider from the Provider
+// chain (which may be wrapped in RetryableProvider).
+func unwrapOllamaProvider(p llm.Provider) (*llm.OllamaLLMProvider, bool) {
+	// Direct
+	if op, ok := p.(*llm.OllamaLLMProvider); ok {
+		return op, true
+	}
+	// Wrapped in RetryableProvider — try to extract via type assertion on the
+	// EnsureLoaded interface that OllamaLLMProvider implements.
+	type modelLoader interface {
+		EnsureLoaded(ctx context.Context) error
+	}
+	type unwrapper interface {
+		Unwrap() llm.Provider
+	}
+	if uw, ok := p.(unwrapper); ok {
+		if op, ok := uw.Unwrap().(*llm.OllamaLLMProvider); ok {
+			return op, true
+		}
+	}
+	return nil, false
+}
+
+// ensureOllamaAlive checks if Ollama is responsive and the embedding model is loaded.
+// If not, it attempts a restart and model reload. Returns an error only if recovery fails.
+func (s *Service) ensureOllamaAlive() error {
+	if err := healthcheck.PingOllama(""); err != nil {
+		log.Printf("[WARN] 🔌 Circuit breaker: Ollama is unresponsive, attempting restart...")
+		attemptOllamaRestart()
+
+		// Wait for recovery with short polling
+		for i := 0; i < 10; i++ {
+			time.Sleep(3 * time.Second)
+			if err := healthcheck.PingOllama(""); err == nil {
+				log.Printf("[INFO] ✅ Circuit breaker: Ollama recovered after restart")
+				break
+			}
+			log.Printf("[WARN] Circuit breaker: waiting for Ollama... (%d/10)", i+1)
+			if i == 9 {
+				return fmt.Errorf("Ollama did not recover after restart (waited 30s)")
+			}
+		}
+	}
+
+	// Ollama is alive — now ensure the embedding model is loaded in memory
+	if ollamaProvider, ok := unwrapOllamaProvider(s.embedder); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if err := ollamaProvider.EnsureLoaded(ctx); err != nil {
+			return fmt.Errorf("embedding model failed to reload: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // IndexItems handles the standard embedding and storage logic for a list of symbols using a worker pool.
+// Includes a circuit breaker: after circuitBreakerThreshold consecutive embed failures,
+// pauses to check/restart Ollama before continuing — avoids wasting retries against a dead service.
 func (s *Service) IndexItems(ctx context.Context, collection string, symbols []parser.Symbol) error {
 	if len(symbols) == 0 {
 		return nil
@@ -407,7 +478,25 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			consecutiveFailures := 0
+
 			for sym := range jobs {
+				// Circuit breaker: if we've had consecutive failures, check Ollama before retrying
+				if consecutiveFailures >= circuitBreakerThreshold {
+					log.Printf("[WARN] 🔌 Circuit breaker tripped after %d consecutive embed failures — checking Ollama health", consecutiveFailures)
+					if err := s.ensureOllamaAlive(); err != nil {
+						log.Printf("[ERROR] 🔴 Circuit breaker: Ollama unrecoverable: %v — aborting remaining embeds", err)
+						results <- result{err: fmt.Errorf("ollama unrecoverable after %d consecutive failures: %w", consecutiveFailures, err)}
+						// Drain remaining jobs so we don't deadlock
+						for range jobs {
+						}
+						return
+					}
+					// Ollama is back — reset counter, add a small cooldown
+					consecutiveFailures = 0
+					time.Sleep(2 * time.Second)
+				}
+
 				// Embed text construction
 				embedText := fmt.Sprintf("%s\n%s\n%s\n%s", sym.Package, sym.Name, sym.Signature, sym.Content)
 				if sym.Docstring != "" {
@@ -419,9 +508,19 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 				embedCancel()
 
 				if err != nil {
+					consecutiveFailures++
+					log.Printf("[WARN] Embed failed for %s (consecutive failures: %d): %v", sym.Name, consecutiveFailures, err)
 					results <- result{err: fmt.Errorf("failed to embed %s: %w", sym.Name, err)}
 					continue
 				}
+
+				// Success — reset circuit breaker counter
+				consecutiveFailures = 0
+
+				// Throttle: small pause between embeds to avoid overwhelming Ollama.
+				// 150ms adds ~15s per 100 symbols — negligible vs total indexing time,
+				// but prevents Ollama from freezing under sustained concurrent load.
+				time.Sleep(150 * time.Millisecond)
 
 				vector := make([]float32, len(vector64))
 				for i, v := range vector64 {

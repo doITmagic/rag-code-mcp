@@ -19,6 +19,23 @@ import (
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 )
 
+// globalIndexSemaphore limits the total number of concurrent file-indexing workers
+// across ALL active workspace indexing jobs.
+// This prevents PC freezes when 2+ large projects index simultaneously.
+// Cap at max(2, NumCPU/4) to leave CPU headroom for search queries and the OS.
+var globalIndexSemaphore = func() chan struct{} {
+	n := runtime.NumCPU() / 4
+	if n < 2 {
+		n = 2
+	}
+	log.Printf("[INFO] Global indexing concurrency limit: %d workers", n)
+	ch := make(chan struct{}, n)
+	for i := 0; i < n; i++ {
+		ch <- struct{}{}
+	}
+	return ch
+}()
+
 const (
 	deleteCollectionTimeout = 10 * time.Second
 	deleteCollectionMaxWait = 500 * time.Millisecond
@@ -139,14 +156,14 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 	totalFiles := len(changedFiles)
 	log.Printf("[INFO] Indexing %d changed files in %s (Language: %s)", totalFiles, root, opts.Language)
 
-	// 4. Process changed files in parallel (file-level worker pool).
-	// State.UpdateFile is mutex-protected; errors are collected safely.
-	numFileWorkers := runtime.NumCPU() / 2
+	// 4. Process changed files using the global semaphore to cap total concurrency
+	// across all active workspace indexing jobs (prevents CPU/RAM overload).
+	numFileWorkers := runtime.NumCPU() / 4
 	if numFileWorkers < 2 {
 		numFileWorkers = 2
 	}
-	if numFileWorkers > 8 {
-		numFileWorkers = 8
+	if numFileWorkers > 4 {
+		numFileWorkers = 4
 	}
 
 	filePaths := make(chan string, totalFiles)
@@ -167,6 +184,8 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 		go func() {
 			defer fileWg.Done()
 			for path := range filePaths {
+				// Acquire global slot — blocks if too many concurrent indexers active
+				globalIndexSemaphore <- struct{}{}
 				n := int(doneFiles.Add(1))
 				pct := 0
 				if totalFiles > 0 {
@@ -176,10 +195,13 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 				if opts.Progress != nil {
 					opts.Progress(n, totalFiles)
 				}
-				if err := s.IndexFile(ctx, collection, path, state); err != nil {
-					log.Printf("[ERROR] Failed to index %s: %v", path, err)
+				indexErr := s.IndexFile(ctx, collection, path, state)
+				// Release slot immediately after processing
+				<-globalIndexSemaphore
+				if indexErr != nil {
+					log.Printf("[ERROR] Failed to index %s: %v", path, indexErr)
 					errMu.Lock()
-					fileErrs = append(fileErrs, fmt.Sprintf("%s: %v", path, err))
+					fileErrs = append(fileErrs, fmt.Sprintf("%s: %v", path, indexErr))
 					errMu.Unlock()
 				}
 			}

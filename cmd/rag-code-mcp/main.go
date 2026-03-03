@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -30,7 +31,7 @@ import (
 )
 
 var (
-	Version = "2.1.6"
+	Version = "2.1.7"
 	Commit  = "none"
 	Date    = "24.10.2025"
 )
@@ -47,6 +48,15 @@ func main() {
 	flag.Parse()
 
 	logger.InitLoggerFromEnv()
+
+	// Limit Go scheduler threads to 75% of CPUs — leaves headroom for the OS,
+	// IDE, and other processes. Prevents freezes when indexing multiple workspaces.
+	maxProcs := runtime.NumCPU() * 3 / 4
+	if maxProcs < 2 {
+		maxProcs = 2
+	}
+	runtime.GOMAXPROCS(maxProcs)
+	logger.Instance.Info("GOMAXPROCS set to %d (NumCPU=%d)", maxProcs, runtime.NumCPU())
 
 	if *versionFlag {
 		fmt.Printf("RagCode MCP  version=%s  commit=%s  date=%s\n", Version, Commit, Date)

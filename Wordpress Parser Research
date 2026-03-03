@@ -1,0 +1,244 @@
+# Cercetare: Parsere WordPress/WooCommerce ca Inspirație
+
+## Situația Curentă în Proiect
+
+Proiectul `rag-code-mcp` are deja o **arhitectură excelentă** pentru framework-specific parsers. Modelul Laravel e dovedit și funcționează bine:
+
+```
+pkg/parser/php/
+  laravel/
+    analyzer.go          ← coordoneaza sub-analyzeri
+    eloquent.go          ← detectie modele Eloquent
+    controller.go        ← detectie controllere
+    routes.go            ← parsare rute
+    migrations.go        ← parsare migrări
+    types.go             ← tipuri specifice Laravel
+```
+
+Parserul PHP de bază folosește deja **`VKCOM/php-parser`** (AST complet PHP 5/7/8), deci fundamentul pentru WordPress e deja acolo.
+
+> [!IMPORTANT]
+> În [DISCUSSIONS.md](file:///home/razvan/go/src/github.com/doITmagic/rag-code-mcp/DISCUSSIONS.md#L218-L258) există deja un plan arhitectural detaliat pentru WordPress sub-package! Tree-sitter **NU e necesar** — pattern-urile WordPress sunt simple și regex/AST visitor sunt suficiente.
+
+---
+
+## Proiecte Inspiraționale (Go)
+
+### 1. 🏆 `VKCOM/php-parser` (deja folosit!)
+- **URL:** https://github.com/VKCOM/php-parser
+- **Limbaj:** Go
+- **Ce face:** Parser PHP complet → AST, suportă PHP 5/7/8.0-8.2
+- **Relevanță:** **Deja integrat** — e baza parserul-ului PHP din proiect
+- **Util pentru WP:** Traversează AST-ul și identifici apeluri la `add_action()`, `add_filter()`, `register_post_type()`, etc.
+
+### 2. 🥈 `VKCOM/noverify` (NoVerify) 
+- **URL:** https://github.com/VKCOM/noverify
+- **Limbaj:** Go
+- **Ce face:** Linter PHP rapid scris în Go, ~100K LOC/s pe Core i7
+- **Relevanță MARE:** Folosește un fork de `VKCOM/php-parser` intern. Codul lor de **traversare AST, inferență tipuri, namespace resolution** e cea mai bună sursă de inspirație
+- **Ce poți lua:**
+  - Pattern de detectare apeluri funcție specifice (ca hooks WP)
+  - Resolver de namespace pentru `use` statements
+  - Modul de cache metadata per fișier (indexarea incrementală)
+
+### 3. `Halleck45/go-php-parser`
+- **URL:** https://github.com/Halleck45/go-php-parser
+- **Limbaj:** Go
+- **Ce face:** Parser PHP plug-and-play, AST ca JSON
+- **Relevanță:** Mai simplu dar performant, procesează mii de fișiere/s
+
+### 4. `mibk.dev/php/ast`
+- **URL:** https://pkg.go.dev/mibk.dev/php/ast
+- **Limbaj:** Go
+- **Ce face:** Package Go pentru parsing PHP într-un AST simplificat
+- **Relevanță:** Mai lightweight, bun pentru referință API design
+
+---
+
+## Proiecte Inspiraționale (Python)
+
+### 5. `malikad778/wp-hook-check` ⭐
+- **URL:** https://github.com/malikad778/wp-hook-check
+- **Limbaj:** PHP (cu `nikic/php-parser`)
+- **Ce face:** **Exact ce vrei!** Static analysis pe WordPress hooks:
+  - Detectează `add_action()` / `add_filter()` orfane (fără `do_action()` corespondent)
+  - Detectează hooks neascultate (`do_action()` fără listeners)
+  - Detectează typos în hook names
+- **Relevanță MAXIMĂ:** Logica de traversare AST și pattern matching e direct portabilă la Go cu `VKCOM/php-parser`
+
+### 6. `WordPress/phpdoc-parser` (WP-Parser oficial)
+- **URL:** https://github.com/WordPress/phpdoc-parser
+- **Limbaj:** PHP (folosește `nikic/php-parser` intern)
+- **Ce face:** Parserul oficial folosit pentru `developer.wordpress.org` — extrage docblocks, hooks, funcții din codul WordPress
+- **Ce poți lua:** Lista completă de patterns care definesc hooks, funcții WP API, etc.
+
+> [!NOTE]
+> **Nu trebuie portat în Go!** `phpdoc-parser` e scris în PHP și folosește `nikic/php-parser` (echivalentul PHP al `VKCOM/php-parser` pe care deja îl ai). Rolul lui e doar de **referință** — studiezi CE detectează (hooks, PHPDoc patterns, hook name generation) și implementezi aceeași logică cu `VKCOM/php-parser` în Go. Practic ai deja "motorul" (VKCOM), trebuie doar "regulile" (ce pattern-uri să cauți), iar `phpdoc-parser` e cel mai complet catalog de reguli WP.
+
+### 7. `JameelNabbo/PHP-Parsers`
+- **URL:** https://github.com/JameelNabbo/PHP-Parsers
+- **Limbaj:** Python (PLY-based)
+- **Ce face:** Construiește AST din cod PHP, include traversers și visitors
+- **Relevanță:** Bun ca referință pentru structura visitor pattern
+
+### 8. `wphooks` (Python)
+- **URL:** https://pypi.org/project/wphooks/
+- **Limbaj:** Python
+- **Ce face:** Implementare hooks WordPress (actions/filters) în Python
+- **Relevanță mică dar interesantă:** Înțelegere pattern-ul WP hooks din perspectiva unui alt limbaj
+
+### 9. `wp_hunter`
+- **URL:** https://github.com/developer3000S/wp_hunter
+- **Limbaj:** Python
+- **Ce face:** Static analysis vulnerabilități în pluginuri WordPress
+- **Relevanță:** Patterns de detectare funcții periculoase în cod WP
+
+---
+
+## Proiecte Tree-sitter (pentru viitor)
+
+### 10. `tree-sitter-php`
+- **URL:** https://github.com/tree-sitter/tree-sitter-php
+- **Go bindings:** `github.com/smacker/go-tree-sitter/php`
+- **Ce face:** Grammar PHP pentru tree-sitter, cel mai precis parser posibil
+- **Relevanță:** Viitor v2 — CGO necesar, nu ideal acum
+
+### 11. `code_ast` (Python)
+- **URL:** https://github.com/c2siorg/code_ast
+- **Limbaj:** Python
+- **Ce face:** AST parsing multi-limbaj bazat pe tree-sitter, include PHP
+- **Relevanță:** Referință bună pentru API design visitor/transformer
+
+---
+
+## Recomandare: Pattern-uri WordPress de Detectat
+
+Bazat pe cercetare, iată ce trebuie detectat într-un parser WordPress:
+
+### A. Hooks (Actions & Filters) — prioritate înaltă
+```php
+add_action('init', 'my_callback');                    → Hook{Type: action, Name: "init"}
+add_action('init', [$this, 'method'], 10, 2);        → Hook{Type: action, Priority: 10, ArgCount: 2}
+add_filter('the_content', 'my_filter');               → Hook{Type: filter, Name: "the_content"}
+do_action('my_custom_hook', $arg1, $arg2);            → Hook{Type: action_trigger, Name: "my_custom_hook"}
+apply_filters('my_filter', $value, $extra);           → Hook{Type: filter_trigger, Name: "my_filter"}
+remove_action('wp_head', 'wp_generator');             → Hook{Type: action_removal}
+has_filter('the_content');                            → Hook{Type: filter_check}
+```
+
+### B. Custom Post Types & Taxonomii — prioritate înaltă
+```php
+register_post_type('book', $args);                    → PostType{Name: "book"}
+register_taxonomy('genre', 'book', $args);            → Taxonomy{Name: "genre", PostType: "book"}
+register_meta('post', 'my_meta', $args);              → Meta{Type: "post", Key: "my_meta"}
+```
+
+### C. Shortcodes & Blocks — prioritate medie
+```php
+add_shortcode('gallery', 'render_gallery');            → Shortcode{Tag: "gallery"}
+register_block_type('my-plugin/block', $args);        → Block{Name: "my-plugin/block"}
+register_block_pattern('my-pattern', $args);          → BlockPattern{Name: "my-pattern"}
+```
+
+### D. Widget & Admin — prioritate medie
+```php
+class MyWidget extends WP_Widget { }                  → Widget{Name: "MyWidget"}
+add_menu_page('Title', 'Menu', 'cap', 'slug', 'fn'); → AdminPage{Slug: "slug"}
+add_submenu_page('parent', 'Title', ...);             → AdminSubpage{Parent: "parent"}
+register_setting('group', 'option');                  → Setting{Group: "group", Option: "option"}
+```
+
+### E. Plugin Header — prioritate medie
+```php
+/**
+ * Plugin Name: My Plugin
+ * Version: 1.0.0
+ * Author: Razvan
+ */
+```
+→ `PluginHeader{Name: "My Plugin", Version: "1.0.0", Author: "Razvan"}`
+
+### F. Oxygen Builder Specific — extensie dedicată
+```php
+// Custom Element detection
+class MyElement extends OxyEl { }                     → OxygenElement{Name: "MyElement"}
+
+// Oxygen stochează layout în JSON, nu shortcodes
+// Meta key: ct_builder_json → JSON tree cu sections, columns, divs
+// Custom post types Oxygen:
+//   ct_template    → Templates Oxygen
+//   oxy_user_library → Componente reutilizabile
+
+// Code Blocks — PHP inline în builder
+// Detectabil din ct_builder_json: element cu tip "code-block"
+// Conține PHP executat la the_post action
+
+// Metode obligatorii OxyEl:
+//   init(), name(), slug(), icon(), controls(), render($options)
+```
+
+### G. WooCommerce Specific — extensie dedicată
+```php
+add_action('woocommerce_before_cart', 'my_fn');       → WC_Hook{Area: "cart"}
+wc_get_product($id);                                 → WC_API{Type: "product_query"}
+register_post_type('product');                        → WC PostType (deja acoperit de B)
+// WooCommerce hooks au prefix "woocommerce_" → detectabile automat
+```
+
+---
+
+## Arhitectură Recomandată
+
+Urmând exact pattern-ul Laravel existent:
+
+```
+pkg/parser/php/
+  wordpress/
+    analyzer.go          ← wrapper peste php.PackageInfo, coordonează sub-analyzeri
+    hooks.go             ← add_action / add_filter / do_action / apply_filters
+    post_types.go        ← register_post_type / register_taxonomy
+    shortcodes.go        ← add_shortcode
+    blocks.go            ← register_block_type / register_block_pattern (Gutenberg)
+    widgets.go           ← WP_Widget detection
+    admin.go             ← add_menu_page / register_setting
+    plugin_header.go     ← Plugin Name / Theme metadata
+    types.go             ← WPHook, PostType, Shortcode, Block, etc.
+    oxygen/
+      analyzer.go        ← OxyEl detection, ct_builder_json parsing
+      types.go           ← OxygenElement, OxygenTemplate, CodeBlock
+    woocommerce/
+      analyzer.go        ← WC-specific hooks detection
+      types.go           ← WC-specific types
+```
+
+### Detectare Automată WP vs Laravel
+Poți detecta automat dacă proiectul este WordPress sau Laravel:
+
+```go
+// WordPress indicators
+if fileExists("wp-config.php") || fileExists("wp-content/") || 
+   headerContains("Plugin Name:") || headerContains("Theme Name:") {
+    return "wordpress"
+}
+
+// Laravel indicators  
+if fileExists("artisan") || fileExists("composer.json" /* cu "laravel/framework" */) {
+    return "laravel"
+}
+```
+
+---
+
+## Concluzii
+
+| Sursă de Inspirație | Limbaj | Ce preiei | Prioritate |
+|---|---|---|---|
+| **`wp-hook-check`** | PHP | Logica completă hooks detection + orphan analysis | 🔴 Maximă |
+| **`VKCOM/noverify`** | Go | Pattern traversare AST, namespace resolver, caching | 🔴 Maximă |
+| **`WordPress/phpdoc-parser`** | PHP | Catalog complet patterns WP (doar referință, nu port!) | 🟡 Medie |
+| **Pattern Laravel din proiect** | Go | Arhitectura sub-package, types, adapter | 🔴 Maximă |
+| **Oxygen Builder** | PHP | Patterns OxyEl, ct_builder_json, Code Blocks | 🟡 Medie |
+| **`tree-sitter-php`** | Multi | Parser mai precis, pentru v2 | 🟢 Scăzută |
+
+> [!TIP]
+> **Cel mai rapid drum:** Copiază structura `pkg/parser/php/laravel/` → `pkg/parser/php/wordpress/`, rescrie sub-analyzerii pentru WordPress patterns. `VKCOM/php-parser` deja parsează corect tot codul PHP, trebuie doar AST visitors noi care caută funcțiile WordPress-specific.

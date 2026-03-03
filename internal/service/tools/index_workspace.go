@@ -115,7 +115,7 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 	}
 
 	// Include current indexing progress so the AI knows how many files are left
-	if prog := BuildIndexingProgress(t.engine, wctx.ID); prog != nil {
+	if prog := BuildIndexingProgress(t.engine, wctx.ID, wctx.Root); prog != nil {
 		data["indexing_progress"] = prog
 	}
 

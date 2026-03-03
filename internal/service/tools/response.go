@@ -23,6 +23,7 @@ type ToolResponse struct {
 type IndexingProgressSummary struct {
 	State     string                      `json:"state"`               // starting|running|completed|failed
 	Elapsed   string                      `json:"elapsed"`             // e.g. "1m23s"
+	IndexAge  string                      `json:"index_age,omitempty"` // e.g. "3 minutes ago" — populated when indexing is completed
 	Languages map[string]LangProgressItem `json:"languages,omitempty"` // per-language stats
 }
 
@@ -44,18 +45,21 @@ type ContextMetadata struct {
 }
 
 // BuildIndexingProgress reads the live progress for a workspace and returns a summary.
+// workspaceRoot is used to load persisted status from disc when not in memory (e.g. after restart).
 // Returns nil if no indexing job has been tracked for this workspace.
-func BuildIndexingProgress(eng *engine.Engine, workspaceID string) *IndexingProgressSummary {
+func BuildIndexingProgress(eng *engine.Engine, workspaceID, workspaceRoot string) *IndexingProgressSummary {
 	if eng == nil {
 		return nil
 	}
-	prog := eng.GetIndexProgress(workspaceID)
+	prog := eng.GetIndexProgress(workspaceID, workspaceRoot)
 	if prog == nil {
 		return nil
 	}
 	elapsed := time.Since(prog.StartedAt).Round(time.Second).String()
+	var indexAge string
 	if prog.CompletedAt != nil {
 		elapsed = prog.CompletedAt.Sub(prog.StartedAt).Round(time.Second).String()
+		indexAge = formatAge(time.Since(*prog.CompletedAt))
 	}
 	langs := make(map[string]LangProgressItem, len(prog.Languages))
 	for lang, lp := range prog.Languages {
@@ -68,7 +72,22 @@ func BuildIndexingProgress(eng *engine.Engine, workspaceID string) *IndexingProg
 	return &IndexingProgressSummary{
 		State:     prog.State,
 		Elapsed:   elapsed,
+		IndexAge:  indexAge,
 		Languages: langs,
+	}
+}
+
+// formatAge returns a human-readable string like "just now", "5 minutes ago", "2 hours ago".
+func formatAge(d time.Duration) string {
+	switch {
+	case d < 2*time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%d minutes ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%d hours ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%d days ago", int(d.Hours()/24))
 	}
 }
 
@@ -102,6 +121,6 @@ func ContextFromWorkspace(wctx *engine.WorkspaceContext) ContextMetadata {
 // ContextFromWorkspaceWithProgress builds ContextMetadata and attaches live indexing progress.
 func ContextFromWorkspaceWithProgress(wctx *engine.WorkspaceContext, eng *engine.Engine) ContextMetadata {
 	ctx := ContextFromWorkspace(wctx)
-	ctx.IndexingProgress = BuildIndexingProgress(eng, wctx.ID)
+	ctx.IndexingProgress = BuildIndexingProgress(eng, wctx.ID, wctx.Root)
 	return ctx
 }

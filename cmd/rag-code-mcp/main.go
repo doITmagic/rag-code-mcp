@@ -31,7 +31,7 @@ import (
 )
 
 var (
-	Version = "2.1.12"
+	Version = "2.1.19"
 	Commit  = "none"
 	Date    = "24.10.2025"
 )
@@ -100,12 +100,15 @@ func main() {
 		logger.Instance.Warn("Health checks skipped (health_check.enable_on_startup=false)")
 	}
 
-	// LLM Provider
+	// LLM Provider — wrap with retry+timeout for resilience against Ollama hangs
 	ollamaProvider, err := llm.NewOllamaLLMProvider(cfg.LLM)
 	if err != nil {
 		log.Fatalf("Failed to create Ollama provider: %v", err)
 	}
-	logger.Instance.Info("LLM provider ready: chat=%s embed=%s", cfg.LLM.OllamaModel, cfg.LLM.OllamaEmbed)
+	// RetryableProvider: 3 retries with 30s timeout per embed/generate call.
+	// Prevents permanent deadlocks when Ollama becomes temporarily unresponsive.
+	provider := llm.NewRetryableProvider(ollamaProvider, 3, 30*time.Second)
+	logger.Instance.Info("LLM provider ready: chat=%s embed=%s (retries=3, timeout=30s)", cfg.LLM.OllamaModel, cfg.LLM.OllamaEmbed)
 
 	// Vector Store
 	qdrantHost, qdrantPort := storage.ParseQdrantURL(cfg.Storage.VectorDB.URL)
@@ -116,8 +119,8 @@ func main() {
 	logger.Instance.Info("Qdrant store ready: %s:%d", qdrantHost, qdrantPort)
 
 	// Services
-	indexerSvc := indexer.NewService(ollamaProvider, vectorStore)
-	searchSvc := search.NewService(ollamaProvider, vectorStore)
+	indexerSvc := indexer.NewService(provider, vectorStore)
+	searchSvc := search.NewService(provider, vectorStore)
 
 	// Registry
 	registryPath := utils.GetRegistryPath()

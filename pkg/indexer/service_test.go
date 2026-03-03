@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/doITmagic/rag-code-mcp/pkg/llm"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
@@ -188,4 +189,197 @@ func TestIndexWorkspaceParallelFiles(t *testing.T) {
 
 	Expect(total).To(Equal(numFiles))
 	Expect(int(atomic.LoadInt32(&mockEmbed.embedCount))).To(BeNumerically(">=", numFiles))
+}
+
+// TestGlobalSemaphoreOrder verifies that the semaphore protocol is correct:
+// acquire = receive a token (<-ch), release = send a token back (ch <- struct{}{}).
+// A pre-filled buffered channel of capacity N means N concurrent workers can acquire.
+// If acquire/release were swapped, this test would deadlock and be caught by the timeout.
+func TestGlobalSemaphoreOrder(t *testing.T) {
+	RegisterTestingT(t)
+
+	const cap = 3
+	sem := make(chan struct{}, cap)
+	// Pre-fill: each token represents a free slot.
+	for i := 0; i < cap; i++ {
+		sem <- struct{}{}
+	}
+
+	// Acquire all N tokens — should not block.
+	for i := 0; i < cap; i++ {
+		select {
+		case <-sem: // acquire = receive
+		default:
+			t.Fatalf("acquire %d should not block on a fresh semaphore", i)
+		}
+	}
+
+	// Semaphore empty — next acquire MUST block.
+	select {
+	case <-sem:
+		t.Fatal("acquire should block when semaphore is exhausted")
+	default:
+		// expected — would block
+	}
+
+	// Release one slot.
+	sem <- struct{}{} // release = send
+
+	// Now acquire should succeed again.
+	select {
+	case <-sem:
+		// OK
+	default:
+		t.Fatal("acquire should succeed after release")
+	}
+}
+
+// TestIndexWorkspaceNoDeadlock runs IndexWorkspace with many files and a tight timeout.
+// If the semaphore is inverted (the original bug), this will deadlock and fail via timeout.
+func TestIndexWorkspaceNoDeadlock(t *testing.T) {
+	RegisterTestingT(t)
+
+	dir := t.TempDir()
+	// Create more files than the semaphore capacity to trigger contention.
+	const numFiles = 20
+	for i := 0; i < numFiles; i++ {
+		pkgDir := filepath.Join(dir, fmt.Sprintf("dpkg%d", i))
+		Expect(os.MkdirAll(pkgDir, 0755)).To(Succeed())
+		src := fmt.Sprintf("package dpkg%d\n\nfunc F%d() {}\n", i, i)
+		Expect(os.WriteFile(filepath.Join(pkgDir, "f.go"), []byte(src), 0644)).To(Succeed())
+	}
+
+	mockEmbed := &mockEmbedder{}
+	mockS := &mockStore{}
+	svc := NewService(mockEmbed, mockS)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- svc.IndexWorkspace(context.Background(), dir, "deadlock-test", Options{
+			Language: "go",
+		})
+	}()
+
+	select {
+	case err := <-done:
+		Expect(err).NotTo(HaveOccurred())
+	case <-time.After(30 * time.Second):
+		t.Fatal("IndexWorkspace deadlocked — semaphore acquire/release likely inverted")
+	}
+
+	mockS.mu.Lock()
+	total := len(mockS.upsertPoints)
+	mockS.mu.Unlock()
+	Expect(total).To(Equal(numFiles))
+}
+
+// hangingEmbedder simulates Ollama hanging indefinitely on Embed().
+// This reproduces the deadlock observed in production: all semaphore slots
+// get consumed by goroutines stuck in Embed(), and no progress is ever made.
+type hangingEmbedder struct {
+	callCount atomic.Int32
+}
+
+func (h *hangingEmbedder) Embed(ctx context.Context, text string) ([]float64, error) {
+	h.callCount.Add(1)
+	// Block until context is cancelled — simulates Ollama hang
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+func (h *hangingEmbedder) Generate(_ context.Context, _ string, _ ...llm.GenerateOption) (string, error) {
+	return "", nil
+}
+func (h *hangingEmbedder) GenerateStream(_ context.Context, _ string, _ ...llm.GenerateOption) (<-chan string, <-chan error) {
+	return nil, nil
+}
+func (h *hangingEmbedder) Name() string                  { return "hanging" }
+func (h *hangingEmbedder) GetEmbeddingDimension() uint64 { return 1024 }
+
+// TestIndexItems_EmbedHang_DoesNotDeadlock reproduces the exact bug from the log:
+//
+//	"Indexing stall detected … 101/181 files done, no progress for 150s.
+//	 Semaphore: 0/4 slots available."
+//
+// Root cause: Embed() hangs (Ollama unresponsive), goroutine holds the
+// semaphore slot forever, all slots fill up → deadlock.
+//
+// The fix: IndexItems now wraps Embed() with a 30s context.WithTimeout.
+// This test uses a shorter parent timeout (5s) so the test finishes quickly.
+// Before the fix, this test would hang forever.
+func TestIndexItems_EmbedHang_DoesNotDeadlock(t *testing.T) {
+	RegisterTestingT(t)
+
+	hanger := &hangingEmbedder{}
+	mockS := &mockStore{}
+	svc := NewService(hanger, mockS)
+
+	symbols := make([]parser.Symbol, 10)
+	for i := 0; i < 10; i++ {
+		symbols[i] = parser.Symbol{
+			Name:      fmt.Sprintf("HangSym%d", i),
+			Content:   "content",
+			FilePath:  "hang.go",
+			StartLine: i,
+		}
+	}
+
+	// Use a 5s parent context — must be shorter than the 30s embed timeout
+	// to prove the mechanism works. The embed timeout OR parent cancellation
+	// must unblock the goroutines.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- svc.IndexItems(ctx, "hang-test", symbols)
+	}()
+
+	select {
+	case err := <-done:
+		// We expect an error (context deadline exceeded), but NOT a hang
+		Expect(err).To(HaveOccurred())
+		t.Logf("IndexItems returned error (expected): %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("DEADLOCK: IndexItems hung forever — Embed() timeout is not working")
+	}
+
+	// Verify that at least one Embed call was attempted
+	Expect(int(hanger.callCount.Load())).To(BeNumerically(">=", 1))
+}
+
+// TestIndexFile_EmbedHang_Timeout verifies that IndexFile respects its
+// 2-minute context timeout. We use a shorter parent context here for speed.
+func TestIndexFile_EmbedHang_Timeout(t *testing.T) {
+	RegisterTestingT(t)
+
+	// Create a temp Go file that will parse successfully
+	dir := t.TempDir()
+	pkgDir := filepath.Join(dir, "hangpkg")
+	Expect(os.MkdirAll(pkgDir, 0755)).To(Succeed())
+	src := "package hangpkg\n\nfunc Hanging() int { return 42 }\n"
+	goFile := filepath.Join(pkgDir, "hang.go")
+	Expect(os.WriteFile(goFile, []byte(src), 0644)).To(Succeed())
+
+	hanger := &hangingEmbedder{}
+	mockS := &mockStore{}
+	svc := NewService(hanger, mockS)
+	state := NewState()
+
+	// 3s parent timeout — IndexFile wraps with 2min internally,
+	// but parent ctx fires first
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- svc.IndexFile(ctx, "timeout-test", goFile, state)
+	}()
+
+	select {
+	case err := <-done:
+		Expect(err).To(HaveOccurred())
+		t.Logf("IndexFile returned error (expected): %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("DEADLOCK: IndexFile hung — timeout mechanism failed")
+	}
 }

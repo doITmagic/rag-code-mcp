@@ -176,3 +176,226 @@ Economie: ~6x mai puțini tokeni
 - Testare completă cu modelele existente
 
 **Riscuri:** Migrare mare, necesită testare exhaustivă. Trebuie făcut ca un refactoring separat, nu alături de alte features.
+
+### 9. 🔄 Smart Search Consolidation — Un singur tool de căutare, fără „decision fatigue"
+
+> **Status:** Propus — vezi TASKS.md Task 7
+
+**Problema:** MCP-ul expune mai multe tool-uri de căutare cu capabilități suprapuse (`rag_search` + `rag_search_code`). Agenții LLM pierd tokeni de raționament decidând pe care să-l folosească. În plus, `rag_search_code` expune parametri manuali (`mode: "discovery" | "exact"`, `include_docs`) care forțează agentul să ia decizii pe care `rag_search` le ia deja automat.
+
+**Soluția propusă:**
+
+1. **Consolidare în `rag_search`** — devine singurul tool de căutare (text/semantic). Celelalte tool-uri (`rag_find_usages`, `rag_call_hierarchy`, `rag_list_package_exports`) rămân — sunt ortogonale (graph / structural, nu text).
+
+2. **Adăugare 2 parametri opționali:**
+   - `include_full_content: bool` (default `false`) — când `true`, forțează modul Full (cod sursă integral), ignorând logica adaptivă compact/highConfidence. Util când agentul știe exact că vrea codul, nu doar metadata.
+   - `include_docs: bool` (default `false`) — când `true`, caută și în chunk-urile de documentație markdown (necesită Suggestion #10).
+
+3. **Ștergere `rag_search_code`** (`search_local_index.go`) — tot ce făcea (discovery, exact, include_docs, Graph Context Expansion) e acoperit de `rag_search`.
+
+**Impactul în cod:**
+- `SmartSearchInput`: +2 câmpuri bool
+- `Execute()`: +3 linii (override `useCompact` când `include_full_content`)
+- `Execute()`: +1 goroutină (docs search când `include_docs`)
+- `search_local_index.go`: marcat deprecated → șters
+
+**Beneficii:**
+- Agentul vede **6 tool-uri** în loc de 7, fiecare cu scop distinct
+- Zero „parametric overload" — max 5 parametri, toți intuitivi
+- Input schema rămâne simplă: `query` (obligatoriu) + 4 opționale
+
+### 10. 🔄 Indexare Documentație Markdown cu `langchaingo/textsplitter`
+
+> **Status:** Propus — vezi TASKS.md Task 8
+
+**Problema:** RAGCode indexează doar cod sursă (Go, Python, PHP). Fișierele `.md` (README, guides, API docs, CHANGELOG) sunt complet ignorate. Când agentul caută „cum se face deployment" sau „ce face IndexWorkspace", nu găsește documentația care descrie exact asta.
+
+**Versiunea veche** (`inspirations/rag-code-mcp`) avea un tool `rag_search_docs` separat și un chunking naiv (split pe heading + maxChars=2000, fără overlap). Funcționa, dar:
+- Tăia tabele și code blocks la jumătate
+- Pierdea contextul heading-urilor părinte (un chunk cu "### OAuth" nu știa că era sub "## Auth > # API")
+- Zero overlap între chunk-uri = pierdere de context la granițe
+
+**Soluția propusă — `langchaingo/textsplitter`:**
+
+Pachetul `github.com/tmc/langchaingo` oferă un `MarkdownHeaderTextSplitter` matur care rezolvă toate problemele:
+
+| Feature | Chunking naiv (vechi) | `langchaingo/textsplitter` |
+|---------|----------------------|---------------------------|
+| Heading hierarchy | ❌ Pierde contextul părinte | ✅ Prepune heading-urile (ex: "# API > ## Auth > ### OAuth") |
+| Overlap între chunk-uri | ❌ Zero | ✅ Configurabil (ex: 200 chars) |
+| Tabele | ❌ Sparte pe linii | ✅ Păstrate ca un singur chunk |
+| Code blocks | ❌ Tăiate arbitrar | ✅ `WithCodeBlocks` — întregi |
+| Liste | ❌ Sparte la jumătate | ✅ Păstrate structura logică |
+| Token counting | ❌ Numără caractere | ✅ Poate număra tokeni reali |
+
+**Arhitectura de integrare:**
+- **Chunking:** `MarkdownHeaderTextSplitter` cu `chunkSize: 2000`, `chunkOverlap: 200`, `WithHeadingHierarchy(true)`, `WithCodeBlocks(true)`
+- **Embedding:** Același model Ollama (`qwen3-embedding`) ca pentru cod
+- **Storage:** Aceeași colecție Qdrant, diferențiat prin `chunk_type: "markdown"` în payload
+- **Potrivire cod ↔ doc:** 100% prin similaritate semantică (embedding cosine similarity) — zero regex, zero extragere explicită de simboluri, complet language-agnostic
+- **Căutare:** Când `include_docs: true` pe `rag_search`, se adaugă o a 3-a goroutină de căutare filtrată pe `chunk_type == "markdown"`, merge-uită cu rezultatele de cod
+
+**Nota importantă privind `langchaingo`:** Suggestion #8 propune eliminarea `langchaingo` în favoarea clientului nativ Ollama. Cele două nu sunt în conflict — putem folosi `langchaingo/textsplitter` (sub-pachetul de text splitting) fără a folosi `langchaingo` ca LLM client. Alternativ, putem extrage doar logica de chunking într-un pachet propriu (`pkg/indexer/markdown.go`) inspirat din `textsplitter`, eliminând complet dependința.
+
+**Extensii viitoare (P2):**
+- `.txt` → split pe paragrafe cu `RecursiveCharacterSplitter`
+- `.json` / `.yaml` → flatten keys ca text documentație
+- `.rst` / `.adoc` → convertor la markdown + chunking standard
+
+### 11. 🔄 WordPress / WooCommerce / Oxygen Builder Parser — Sub-package după modelul Laravel
+
+> **Status:** Propus — cercetare completă finalizată
+> **Cercetare:** vezi artifact `wordpress_parser_research.md`
+
+**Problema:** RagCode parsează excelent PHP generic și Laravel, dar **nu înțelege WordPress**. Un plugin WordPress are pattern-uri specifice (hooks, custom post types, shortcodes, Gutenberg blocks) care nu sunt extrase de parserul PHP de bază. La fel, Oxygen Builder și WooCommerce au convenții proprii pe care un AI trebuie să le cunoască pentru a naviga eficient.
+
+**Fundament existent (nu trebuie construit de la zero):**
+- `VKCOM/php-parser` — deja integrat, parsează PHP 5/7/8 complet în AST
+- `pkg/parser/php/laravel/` — sub-package funcțional cu 4 sub-analyzeri, dovedește pattern-ul
+- `DISCUSSIONS.md` (L218-258) — plan arhitectural deja documentat
+
+**Surse de inspirație cercetate:**
+
+| Proiect | Limbaj | Ce preluăm |
+|---------|--------|------------|
+| [`malikad778/wp-hook-check`](https://github.com/malikad778/wp-hook-check) | PHP | Logica completă hooks detection + orphan analysis (AST traversal pe `add_action`, `add_filter`, `do_action`, `apply_filters`) |
+| [`VKCOM/noverify`](https://github.com/VKCOM/noverify) | **Go** | Pattern traversare AST Go, namespace resolver, caching metadata per fișier |
+| [`WordPress/phpdoc-parser`](https://github.com/WordPress/phpdoc-parser) | PHP | Catalog complet de patterns WP API (nu se portează, doar se studiază CE detectează) |
+| Pattern Laravel din proiect | Go | Arhitectura sub-package, coordinator Analyzer, types separate |
+
+> **Notă despre `WordPress/phpdoc-parser`:** Nu trebuie portat în Go! Folosește `nikic/php-parser` (echivalentul PHP al `VKCOM/php-parser`). Rolul lui e doar de **referință** — studiezi CE detectează (hooks, PHPDoc patterns, hook name generation din AST nodes) și implementezi aceeași logică cu `VKCOM/php-parser` care e deja în proiect.
+
+**Arhitectura propusă:**
+
+```
+pkg/parser/php/
+  wordpress/
+    analyzer.go          ← wrapper peste php.PackageInfo, coordonează sub-analyzeri (ca laravel/analyzer.go)
+    hooks.go             ← add_action / add_filter / do_action / apply_filters / remove_action / has_filter
+    post_types.go        ← register_post_type / register_taxonomy / register_meta
+    shortcodes.go        ← add_shortcode
+    blocks.go            ← register_block_type / register_block_pattern (Gutenberg)
+    widgets.go           ← clasă extends WP_Widget
+    admin.go             ← add_menu_page / add_submenu_page / register_setting
+    plugin_header.go     ← Plugin Name / Theme Name / Version / Author din comment header
+    types.go             ← WPHook, PostType, Taxonomy, Shortcode, Block, Widget, PluginHeader, etc.
+    oxygen/
+      analyzer.go        ← OxyEl class detection, ct_builder_json parsing
+      types.go           ← OxygenElement, OxygenTemplate, CodeBlock
+    woocommerce/
+      analyzer.go        ← WC-specific hooks (prefix "woocommerce_"), product queries
+      types.go           ← WC_Hook, WC_API types
+```
+
+**Pattern-uri WordPress de detectat (prioritizate):**
+
+**A. Hooks — prioritate înaltă (cel mai important layer WP)**
+```php
+add_action('init', 'my_callback');                    → Hook{Type: action, Name: "init", Callback: "my_callback"}
+add_action('init', [$this, 'method'], 10, 2);        → Hook{Type: action, Priority: 10, ArgCount: 2}
+add_filter('the_content', 'my_filter');               → Hook{Type: filter, Name: "the_content"}
+do_action('my_custom_hook', $arg1, $arg2);            → Hook{Type: action_trigger, Name: "my_custom_hook"}
+apply_filters('my_filter', $value, $extra);           → Hook{Type: filter_trigger, Name: "my_filter"}
+remove_action('wp_head', 'wp_generator');             → Hook{Type: action_removal}
+has_filter('the_content');                            → Hook{Type: filter_check}
+```
+
+**B. Custom Post Types & Taxonomii — prioritate înaltă**
+```php
+register_post_type('book', $args);                    → PostType{Name: "book"}
+register_taxonomy('genre', 'book', $args);            → Taxonomy{Name: "genre", PostType: "book"}
+register_meta('post', 'my_meta', $args);              → Meta{Type: "post", Key: "my_meta"}
+```
+
+**C. Shortcodes & Gutenberg Blocks — prioritate medie**
+```php
+add_shortcode('gallery', 'render_gallery');            → Shortcode{Tag: "gallery", Callback: "render_gallery"}
+register_block_type('my-plugin/block', $args);        → Block{Name: "my-plugin/block"}
+register_block_pattern('my-pattern', $args);          → BlockPattern{Name: "my-pattern"}
+```
+
+**D. Widgets & Admin Pages — prioritate medie**
+```php
+class MyWidget extends WP_Widget { }                  → Widget{Name: "MyWidget"}
+add_menu_page('Title', 'Menu', 'cap', 'slug', 'fn'); → AdminPage{Slug: "slug"}
+add_submenu_page('parent', 'Title', ...);             → AdminSubpage{Parent: "parent"}
+register_setting('group', 'option');                  → Setting{Group: "group", Option: "option"}
+```
+
+**E. Plugin Header — prioritate medie**
+```php
+/**
+ * Plugin Name: My Plugin
+ * Version: 1.0.0
+ * Author: Razvan
+ * Text Domain: my-plugin
+ */
+```
+→ `PluginHeader{Name: "My Plugin", Version: "1.0.0", Author: "Razvan", TextDomain: "my-plugin"}`
+
+**F. Oxygen Builder — extensie dedicată**
+```php
+// Custom Element detection — clasă extends OxyEl
+class MyElement extends OxyEl {
+    function init() {}      // inițializare
+    function name() {}      // display name în builder
+    function slug() {}      // identificator unic
+    function icon() {}      // icon SVG
+    function controls() {}  // controale editor (left pane)
+    function render() {}    // output HTML
+}
+// → OxygenElement{Name: "MyElement", Slug: din slug(), Methods: [...]}
+
+// Oxygen stochează layout în JSON (nu shortcodes):
+//   Meta key: ct_builder_json → tree de sections/columns/divs/elements
+//   Custom post types: ct_template (templates), oxy_user_library (componente reusable)
+//   Code Blocks: element cu tip "code-block" — conține PHP inline, executat la the_post
+```
+
+**G. WooCommerce — extensie dedicată**
+```php
+add_action('woocommerce_before_cart', 'my_fn');       → WC_Hook{Area: "cart", Hook: "before_cart"}
+wc_get_product($id);                                 → WC_API{Function: "wc_get_product"}
+// Toate hooks cu prefix "woocommerce_" → detectabile automat
+// WooCommerce definește și propriile post types: product, shop_order, shop_coupon
+```
+
+**Detectare automată WordPress vs Laravel vs plain PHP:**
+```go
+func detectPHPFramework(rootPath string) string {
+    // WordPress indicators
+    if fileExists("wp-config.php") || dirExists("wp-content/") ||
+       headerContains("Plugin Name:") || headerContains("Theme Name:") {
+        return "wordpress"
+    }
+    // Laravel indicators
+    if fileExists("artisan") || composerHas("laravel/framework") {
+        return "laravel"
+    }
+    return "php" // generic
+}
+```
+
+**Implementare concretă — pași:**
+
+1. **Creare `pkg/parser/php/wordpress/types.go`** — definire tipuri: `WPHook`, `PostType`, `Taxonomy`, `Shortcode`, `Block`, `Widget`, `AdminPage`, `PluginHeader`, `WordPressInfo` (agregator)
+2. **Creare `pkg/parser/php/wordpress/hooks.go`** — AST visitor care caută `ExprFunctionCall` cu name `add_action`/`add_filter`/`do_action`/`apply_filters`/`remove_action`/`has_filter`, extrage argumentele (hook name, callback, priority, accepted args)
+3. **Creare `pkg/parser/php/wordpress/post_types.go`** — detectare `register_post_type`, `register_taxonomy`, `register_meta`
+4. **Creare `pkg/parser/php/wordpress/shortcodes.go`** — detectare `add_shortcode`
+5. **Creare `pkg/parser/php/wordpress/blocks.go`** — detectare `register_block_type`, `register_block_pattern`
+6. **Creare `pkg/parser/php/wordpress/widgets.go`** — detectare clasă extends `WP_Widget`
+7. **Creare `pkg/parser/php/wordpress/admin.go`** — detectare `add_menu_page`, `add_submenu_page`, `register_setting`
+8. **Creare `pkg/parser/php/wordpress/plugin_header.go`** — parsing comentariu header PHP (regex pe primele linii)
+9. **Creare `pkg/parser/php/wordpress/analyzer.go`** — coordinator (exact ca `laravel/analyzer.go`), orchestrează sub-analyzeri
+10. **Creare sub-extensii `oxygen/` și `woocommerce/`** — detectare patterns specifice (OxyEl, woocommerce_ hooks)
+11. **Integrare în `pkg/parser/php/analyzer.go`** — adapter care detectează framework (WP vs Laravel) și apelează sub-analyzerul potrivit
+12. **Teste** — unit tests per sub-analyzer + integration test pe cod WP real
+
+**Efort estimat:** ~2-3 zile (bazat pe experiența Laravel care a fost similar ca structură)
+
+**Beneficii:**
+- AI-ul va putea naviga pluginuri WordPress la nivel semantic: „arată-mi toate hooks-urile din plugin" sau „ce custom post types definește?"
+- Oxygen Builder: înțelegere componente custom, Code Blocks, template hierarchy
+- WooCommerce: navigare hooks specifice (cart, checkout, product, order)
+- Pattern-ul Laravel e dovedit → zero risc arhitectural
+

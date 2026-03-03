@@ -31,7 +31,7 @@ import (
 )
 
 var (
-	Version = "2.1.21"
+	Version = "2.1.26"
 	Commit  = "none"
 	Date    = "24.10.2025"
 )
@@ -150,7 +150,6 @@ func main() {
 	})
 
 	// Register Tools
-	tools.NewSearchLocalIndexTool(eng).Register(server)
 	tools.NewSmartSearchTool(eng).Register(server)
 	tools.NewFindUsagesTool(eng).Register(server)
 	tools.NewListPackageExportsTool(eng).Register(server)

@@ -40,13 +40,17 @@ func (t *SmartSearchTool) Description() string {
 		"Simply provide your query — the tool runs both semantic and exact searches in parallel, " +
 		"merges results by relevance score, and adapts the response format automatically: " +
 		"high-confidence matches return full source code, exploratory results return compact summaries. " +
-		"No need to choose a search mode. Provide 'file_path' for faster workspace detection, or omit it for Auto-Discovery."
+		"No need to choose a search mode. Provide 'file_path' for faster workspace detection, or omit it for Auto-Discovery. " +
+		"Set 'include_full_content' to true to force full source code in all results, overriding compact mode. " +
+		"Set 'include_docs' to true to also search project documentation (README, guides, Markdown files) alongside code."
 }
 
 type SmartSearchInput struct {
-	Query    string `json:"query"`
-	FilePath string `json:"file_path,omitempty"`
-	Limit    int    `json:"limit,omitempty"`
+	Query              string `json:"query"`
+	FilePath           string `json:"file_path,omitempty"`
+	Limit              int    `json:"limit,omitempty"`
+	IncludeFullContent bool   `json:"include_full_content,omitempty"`
+	IncludeDocs        bool   `json:"include_docs,omitempty"`
 }
 
 // highConfidenceThreshold: if top result score exceeds this, return full content.
@@ -105,7 +109,7 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 	go func() {
 		defer wg.Done()
 		t0 := time.Now()
-		res, err := t.engine.SearchCode(ctx, input.FilePath, query, limit, false)
+		res, err := t.engine.SearchCode(ctx, input.FilePath, query, limit, input.IncludeDocs)
 		results <- searchResult{label: "semantic", result: res, err: err, elapsed: time.Since(t0)}
 	}()
 
@@ -185,6 +189,11 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 	// Determine response mode based on result confidence
 	topScore := merged[0].score
 	useCompact := len(merged) > compactResultCap || topScore < highConfidenceThreshold
+
+	// Override: when the agent explicitly requests full content, skip compact mode
+	if input.IncludeFullContent {
+		useCompact = false
+	}
 
 	// Build response
 	response := ToolResponse{

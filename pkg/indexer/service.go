@@ -45,7 +45,11 @@ func getSystemMemoryGB() int {
 
 // globalIndexSemaphore limits the total number of concurrent file-indexing workers
 // across ALL active workspace indexing jobs.
-// This prevents PC freezes when 2+ large projects index simultaneously.
+// To prevent Ollama OOM while maximizing speed, we scale concurrency based on system RAM:
+// - <= 8GB  RAM: 1 worker  (Survival mode)
+// - <= 16GB RAM: 2 workers
+// - <= 32GB RAM: 3 workers
+// - > 32GB  RAM: 4 workers (Max Cap for high-end systems to leave RAM for OS/IDE)
 var globalIndexSemaphore = func() chan struct{} {
 	n := runtime.NumCPU() / 4
 	if n < 2 {
@@ -55,16 +59,32 @@ var globalIndexSemaphore = func() chan struct{} {
 		n = 4
 	}
 
-	// Memory protection: if <= 8GB RAM, strictly limit to 1 concurrent worker
-	// This prevents Ollama from spawning multiple parallel 'ollama runner' processes,
-	// which each can consume ~1.4GB+ of residential RAM, easily exhausting system memory.
 	memGB := getSystemMemoryGB()
-	if memGB > 0 && memGB <= 8 {
-		log.Printf("[INFO] 🧠 Detected %dGB RAM. Restricting global concurrency to 1 to prevent Ollama OOM.", memGB)
+	if memGB > 0 {
+		var ramWorkers int
+		switch {
+		case memGB <= 8:
+			ramWorkers = 1
+		case memGB <= 16:
+			ramWorkers = 2
+		case memGB <= 32:
+			ramWorkers = 3
+		default:
+			ramWorkers = 4
+		}
+
+		// Take the minimum between CPU-recommended workers and RAM-allowed workers
+		if ramWorkers < n {
+			n = ramWorkers
+		}
+
+		log.Printf("[INFO] 🧠 Detected %dGB RAM. Dynamic indexing concurrency set to %d workers.", memGB, n)
+	} else {
+		// Fallback for non-Linux or failures, strictly safe
+		log.Printf("[WARN] 🧠 Could not detect system RAM. Defaulting to safe concurrency limit of 1 worker.")
 		n = 1
 	}
 
-	log.Printf("[INFO] Global indexing concurrency limit: %d workers", n)
 	ch := make(chan struct{}, n)
 	for i := 0; i < n; i++ {
 		ch <- struct{}{}
@@ -87,16 +107,19 @@ type Options struct {
 
 // Service is the main indexing engine that handles file walking, change detection, and vector storage.
 type Service struct {
-	embedder llm.Provider
-	store    storage.VectorStore
+	embedder     llm.Provider
+	store        storage.VectorStore
+	lastActivity atomic.Int64 // Tracks Unix elapsed time of the last successful chunk embedding
 }
 
 // NewService creates a new indexer service.
 func NewService(embedder llm.Provider, store storage.VectorStore) *Service {
-	return &Service{
+	s := &Service{
 		embedder: embedder,
 		store:    store,
 	}
+	s.lastActivity.Store(time.Now().Unix())
+	return s
 }
 
 // IndexWorkspace performs a full or incremental index of a workspace.
@@ -149,18 +172,29 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 		return fmt.Errorf("failed to scan workspace: %w", err)
 	}
 
-	// 2. Filter by language if specified
+	// 2. Separate markdown docs from code files
+	var changedCodeFiles []string
+	var changedMarkdownFiles []string
+	for _, p := range changedFiles {
+		if IsMarkdownFile(p) {
+			changedMarkdownFiles = append(changedMarkdownFiles, p)
+		} else {
+			changedCodeFiles = append(changedCodeFiles, p)
+		}
+	}
+
+	// 3. Filter code files by language if specified
 	if opts.Language != "" {
 		var filtered []string
-		for _, p := range changedFiles {
+		for _, p := range changedCodeFiles {
 			if a := parser.GetByFile(p); a != nil && a.Name() == opts.Language {
 				filtered = append(filtered, p)
 			}
 		}
-		changedFiles = filtered
+		changedCodeFiles = filtered
 	}
 
-	if len(changedFiles) == 0 {
+	if len(changedCodeFiles) == 0 && len(changedMarkdownFiles) == 0 {
 		log.Printf("[INFO] No changes detected in %s (Language: %s)", root, opts.Language)
 		return nil
 	}
@@ -189,8 +223,9 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 		}
 	}
 
-	totalFiles := len(changedFiles)
-	log.Printf("[INFO] Indexing %d changed files in %s (Language: %s)", totalFiles, root, opts.Language)
+	totalFiles := len(changedCodeFiles)
+	totalMarkdown := len(changedMarkdownFiles)
+	log.Printf("[INFO] Indexing %d changed code files + %d markdown files in %s (Language: %s)", totalFiles, totalMarkdown, root, opts.Language)
 
 	// Ensure the embedding model is loaded in Ollama's memory before starting.
 	// If another program evicted it, this will reload it (with up to 2min timeout).
@@ -206,7 +241,7 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 	numFileWorkers := cap(globalIndexSemaphore)
 
 	filePaths := make(chan string, totalFiles)
-	for _, p := range changedFiles {
+	for _, p := range changedCodeFiles {
 		filePaths <- p
 	}
 	close(filePaths)
@@ -222,10 +257,9 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 	saveStop := make(chan struct{})
 	go func() {
 		saveTicker := time.NewTicker(10 * time.Second)
-		stallTicker := time.NewTicker(30 * time.Second)
+		stallTicker := time.NewTicker(60 * time.Second)
 		defer saveTicker.Stop()
 		defer stallTicker.Stop()
-		lastSeen := int64(0)
 		stallCount := 0
 		for {
 			select {
@@ -235,30 +269,35 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 				}
 			case <-stallTicker.C:
 				current := doneFiles.Load()
-				if current == lastSeen && current < int64(totalFiles) {
+				// We only trigger stall logic if we haven't finished all files AND
+				// we haven't successfully embedded ANY new symbol in the last 60 seconds.
+				lastActivitySec := s.lastActivity.Load()
+				elapsedSinceActivity := time.Now().Unix() - lastActivitySec
+
+				if current < int64(totalFiles) && elapsedSinceActivity >= 60 {
 					stallCount++
 					semLen := len(globalIndexSemaphore)
 					semCap := cap(globalIndexSemaphore)
-					log.Printf("[WARN] ⚠️ Indexing stall detected for %s/%s: %d/%d files done, no progress for %ds. Semaphore: %d/%d slots available. Stall count: %d",
-						opts.Language, root, current, totalFiles, stallCount*30, semLen, semCap, stallCount)
-					if stallCount >= 3 {
+					log.Printf("[WARN] ⚠️ Indexing stall detected for %s/%s: %d/%d files total. No successful embedding activity for %ds. Semaphore: %d/%d slots available. Stall count: %d",
+						opts.Language, root, current, totalFiles, elapsedSinceActivity, semLen, semCap, stallCount)
+					if stallCount >= 2 {
 						// Check if Ollama is still alive
 						if err := healthcheck.PingOllama(""); err != nil {
-							log.Printf("[ERROR] 🔴 Ollama is unresponsive: %v. Attempting restart...", err)
-							attemptOllamaRestart()
+							log.Printf("[ERROR] 🔴 Ollama HTTP is unresponsive (%v). Forcing restart...", err)
 						} else {
-							log.Printf("[WARN] Ollama is responsive but indexing is stalled — possible slow file or Qdrant issue")
+							log.Printf("[ERROR] 🔴 Ollama HTTP ping is OK, but embedding goroutines are DEADLOCKED. Forcing restart to break stall!")
 						}
+						// Always attempt strict restart to kill stuck runners
+						attemptOllamaRestart()
 					}
-					if stallCount >= 4 { // 2 minutes without progress
+					if stallCount >= 3 {
 						buf := make([]byte, 8192)
 						n := runtime.Stack(buf, true)
-						log.Printf("[ERROR] 🔴 Possible deadlock in indexing goroutines for %s. Goroutine dump:\n%s", root, string(buf[:n]))
+						log.Printf("[ERROR] 🔴 Deadlock confirmed in indexing goroutines for %s. Goroutine dump to follow:\n%s", root, string(buf[:n]))
 					}
 				} else {
 					stallCount = 0
 				}
-				lastSeen = current
 			case <-saveStop:
 				return
 			}
@@ -303,7 +342,24 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 		log.Printf("[WARN] %d file(s) failed to index in %s", len(fileErrs), root)
 	}
 
-	// 5. Save state
+	// 5. Index markdown documentation files
+	if len(changedMarkdownFiles) > 0 {
+		mdCfg := DefaultMarkdownConfig()
+		mdChunks, err := s.IndexMarkdownFiles(ctx, collection, changedMarkdownFiles, mdCfg)
+		if err != nil {
+			log.Printf("[WARN] Markdown indexing had errors: %v", err)
+		}
+		if mdChunks > 0 {
+			// Update state for markdown files
+			for _, p := range changedMarkdownFiles {
+				if info, err := os.Stat(p); err == nil {
+					state.UpdateFile(p, info)
+				}
+			}
+		}
+	}
+
+	// 6. Save state
 	if err := state.Save(statePath); err != nil {
 		log.Printf("[WARN] Failed to save index state for %s: %v", root, err)
 	}
@@ -315,38 +371,44 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 // Attempts: 1) systemctl restart ollama, 2) fallback to `ollama serve` in background.
 // After restart, waits up to 15s for Ollama to become responsive again.
 func attemptOllamaRestart() {
+	log.Printf("[INFO] ⚙️ Executing forced Ollama auto-recovery sequence...")
+
 	// Strategy 1: systemctl (works if Ollama is managed as a systemd service)
-	if out, err := exec.Command("systemctl", "restart", "ollama").CombinedOutput(); err != nil {
-		log.Printf("[WARN] systemctl restart ollama failed: %v (%s)", err, strings.TrimSpace(string(out)))
+	out, err := exec.Command("systemctl", "restart", "ollama").CombinedOutput()
+	if err != nil {
+		log.Printf("[WARN] ⚠️ 'systemctl restart ollama' failed: %v. Output: %s", err, strings.TrimSpace(string(out)))
 
 		// Strategy 2: kill any existing ollama processes and start fresh
-		_ = exec.Command("pkill", "-f", "ollama serve").Run()
-		time.Sleep(500 * time.Millisecond)
+		log.Printf("[INFO] 🔪 forcefully killing any existing 'ollama serve' processes via pkill...")
+		_ = exec.Command("pkill", "-9", "-f", "ollama serve").Run()
+		time.Sleep(1 * time.Second)
 
+		log.Printf("[INFO] 🚀 Starting standalone 'ollama serve' in background...")
 		cmd := exec.Command("ollama", "serve")
 		cmd.Stdout = nil
 		cmd.Stderr = nil
 		if err := cmd.Start(); err != nil {
-			log.Printf("[ERROR] Failed to start ollama serve: %v", err)
+			log.Printf("[ERROR] ❌ Failed to start ollama serve: %v", err)
 			return
 		}
-		log.Printf("[INFO] Started 'ollama serve' (PID %d)", cmd.Process.Pid)
+		log.Printf("[INFO] ✅ Started 'ollama serve' successfully (PID %d)", cmd.Process.Pid)
 		// Don't wait — it runs as a daemon
 		go func() { _ = cmd.Wait() }()
 	} else {
-		log.Printf("[INFO] ✅ systemctl restart ollama succeeded")
+		log.Printf("[INFO] ✅ 'systemctl restart ollama' executed successfully.")
 	}
 
 	// Wait for Ollama to come back up
+	log.Printf("[INFO] ⏳ Waiting for Ollama HTTP heartbeat to return (max 15s)...")
 	for i := 0; i < 5; i++ {
 		time.Sleep(3 * time.Second)
 		if err := healthcheck.PingOllama(""); err == nil {
-			log.Printf("[INFO] ✅ Ollama is back online after restart")
+			log.Printf("[INFO] 🎉 Ollama HTTP API is FULLY ONLINE after recovery! Resuming indexing.")
 			return
 		}
-		log.Printf("[WARN] Waiting for Ollama to start... (%d/5)", i+1)
+		log.Printf("[WARN] ⏱️ Ollama not yet ready... (%d/5 attempts)", i+1)
 	}
-	log.Printf("[ERROR] Ollama did not recover after restart attempt")
+	log.Printf("[ERROR] 💀 Ollama FATAL: Did not recover after restart limits.")
 }
 
 func (s *Service) deleteCollectionForRecreate(ctx context.Context, collection string) error {
@@ -383,16 +445,13 @@ func (s *Service) deleteCollectionForRecreate(ctx context.Context, collection st
 }
 
 func (s *Service) IndexFile(ctx context.Context, collection, path string, state *State) error {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel()
-
+	// We no longer apply a hard 2-minute timeout here.
+	// Files with hundreds of symbols processed on a low-RAM or saturated parallel system
+	// naturally take >2m. The individual embed requests have 30s timeouts which is sufficient protection.
 	a := parser.GetByFile(path)
 	if a == nil {
 		return nil // Unsupported file type
 	}
-
-	// Double check language if we have a state
-	// (Note: we could pass language here too if we want strict enforcement)
 
 	res, err := a.Analyze(ctx, path)
 	if err != nil {
@@ -542,8 +601,9 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 					continue
 				}
 
-				// Success — reset circuit breaker counter
+				// Success — reset circuit breaker counter and update activity watchdog
 				consecutiveFailures = 0
+				s.lastActivity.Store(time.Now().Unix())
 
 				// Throttle: small pause between embeds to avoid overwhelming Ollama.
 				// 150ms adds ~15s per 100 symbols — negligible vs total indexing time,

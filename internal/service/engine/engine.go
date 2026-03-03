@@ -695,6 +695,7 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 	// We'll iterate all supported languages.
 	languages := parser.SupportedLanguages()
 
+	var indexErrors []string
 	for _, lang := range languages {
 		collection := wctx.CollectionName(lang)
 		progressCb := func(doneFiles, totalFiles int) {
@@ -710,6 +711,7 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 		})
 		if err != nil {
 			log.Printf("[ERROR] Indexing failed for %s: %v", lang, err)
+			indexErrors = append(indexErrors, fmt.Sprintf("%s: %v", lang, err))
 		}
 	}
 
@@ -717,6 +719,11 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 		if err := e.watchers.Start(wctx.Root, e.handleWatchChange); err != nil {
 			log.Printf("[WARN] Failed to start watcher for %s: %v", wctx.Root, err)
 		}
+	}
+
+	if len(indexErrors) > 0 {
+		return fmt.Errorf("indexing failed for %d language(s): %s. Check if Ollama is running and the embedding model is available",
+			len(indexErrors), strings.Join(indexErrors, "; "))
 	}
 
 	return nil

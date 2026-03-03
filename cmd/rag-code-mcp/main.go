@@ -31,7 +31,7 @@ import (
 )
 
 var (
-	Version = "2.1.19"
+	Version = "2.1.20"
 	Commit  = "none"
 	Date    = "24.10.2025"
 )
@@ -108,7 +108,15 @@ func main() {
 	// RetryableProvider: 3 retries with 30s timeout per embed/generate call.
 	// Prevents permanent deadlocks when Ollama becomes temporarily unresponsive.
 	provider := llm.NewRetryableProvider(ollamaProvider, 3, 30*time.Second)
-	logger.Instance.Info("LLM provider ready: chat=%s embed=%s (retries=3, timeout=30s)", cfg.LLM.OllamaModel, cfg.LLM.OllamaEmbed)
+
+	// Warmup: pre-load the embedding model into Ollama's memory.
+	// This avoids cold-start timeouts during the first indexing batch.
+	// Non-fatal: if warmup fails, we log a warning and continue (embed retries will handle it).
+	if err := ollamaProvider.Warmup(context.Background()); err != nil {
+		logger.Instance.Warn("Ollama warmup failed (model may cold-start on first embed): %v", err)
+	}
+
+	logger.Instance.Info("LLM provider ready: embed=%s (retries=3, timeout=30s, keep_alive=30m)", cfg.LLM.OllamaEmbed)
 
 	// Vector Store
 	qdrantHost, qdrantPort := storage.ParseQdrantURL(cfg.Storage.VectorDB.URL)

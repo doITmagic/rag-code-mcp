@@ -188,4 +188,18 @@ Complete migration to the official **`github.com/ollama/ollama/api`** package:
 
 ---
 
+## 6. 🧠 Ollama Concurrent Runners — "The OOM Problem on 8GB Systems"
+
+**Status:** ✅ Solved (v2.2.0)
+
+### The Problem
+When the indexer triggers multiple concurrent embedding requests to Ollama, Ollama's default behavior is to spawn multiple `ollama runner` processes to handle the concurrency. Each runner uses around ~1.4GB of RAM. On systems with 8GB or less RAM, launching 4-5 runners results in catastrophic Out Of Memory (OOM) freezing the entire PC.
+
+### The Solution: Dynamic Memory-Aware Concurrency
+Instead of relying strictly on CPU counts for indexing worker semaphores, the Go indexer now natively checks `/proc/meminfo` on Linux to determine total system RAM at runtime.
+1. If system memory is <= 8GB, the global indexing semaphore is strictly capped at `cap(globalIndexSemaphore) = 1`.
+2. This strictly limits client-side requests, ensuring Ollama never receives concurrent requests for the same model, bypassing the need to configure `OLLAMA_NUM_PARALLEL=1` server-side.
+
+---
+
 *This document will be updated as we encounter and solve new technical challenges.*

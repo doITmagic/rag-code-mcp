@@ -98,7 +98,7 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 		}
 	}
 
-	response.Data = map[string]interface{}{
+	data := map[string]interface{}{
 		"runtime": map[string]interface{}{
 			"pid":                os.Getpid(),
 			"executable_path":    exePath,
@@ -113,6 +113,13 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 			},
 		},
 	}
+
+	// Include current indexing progress so the AI knows how many files are left
+	if prog := BuildIndexingProgress(t.engine, wctx.ID); prog != nil {
+		data["indexing_progress"] = prog
+	}
+
+	response.Data = data
 
 	// Warn if fallback was used
 	response.SetFallbackWarning(wctx.DetectionSource == "registry_fallback")

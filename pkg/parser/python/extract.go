@@ -1178,13 +1178,22 @@ func isBuiltinType(name string) bool {
 }
 
 func extractBaseTypeName(typeName string) string {
-	if idx := strings.Index(typeName, "["); idx != -1 {
-		inner := typeName[idx+1 : len(typeName)-1]
-		if strings.Contains(inner, ",") {
-			parts := strings.Split(inner, ",")
-			inner = strings.TrimSpace(parts[len(parts)-1])
-		}
-		return extractBaseTypeName(inner)
+	typeName = strings.TrimSpace(typeName)
+	idx := strings.Index(typeName, "[")
+	if idx == -1 {
+		return typeName
 	}
-	return typeName
+	endIdx := strings.LastIndex(typeName, "]")
+	if endIdx == -1 || endIdx <= idx {
+		endIdx = len(typeName)
+	}
+	if idx+1 >= endIdx {
+		return typeName[:idx]
+	}
+	inner := typeName[idx+1 : endIdx]
+	if strings.Contains(inner, ",") {
+		parts := strings.Split(inner, ",")
+		inner = strings.TrimSpace(parts[len(parts)-1])
+	}
+	return extractBaseTypeName(inner)
 }

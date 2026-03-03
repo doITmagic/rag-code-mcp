@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
+	"github.com/doITmagic/rag-code-mcp/pkg/telemetry"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -126,7 +128,7 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 			resp := ToolResponse{
 				Status:  "indexing_required",
 				Message: fmt.Sprintf("⏳ Workspace '%s' is not indexed yet. Indexing is required for complete call hierarchy results.", wctx.Root),
-				Context: ContextMetadata{WorkspaceRoot: wctx.Root, DetectionSource: wctx.DetectionSource},
+				Context: ContextFromWorkspaceWithProgress(wctx, t.engine),
 			}
 			if idx != nil {
 				resp.Status = "indexing_in_progress"
@@ -146,14 +148,28 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 	sb.WriteString(fmt.Sprintf("# Call Hierarchy: %s (%s)\n\n", symbolName, direction))
 	t.formatTree(&sb, rootNode, 0)
 
+	// Collect unique file paths from the hierarchy for telemetry
+	seenFiles := make(map[string]bool)
+	baselineBytes := 0
+	collectFiles(rootNode, seenFiles)
+	for fp := range seenFiles {
+		if info, err := os.Stat(fp); err == nil {
+			baselineBytes += int(info.Size())
+		}
+	}
+	// actualBytes = just the text of the hierarchy message (what we actually send)
+	actualBytes := sb.Len()
+
 	resp := ToolResponse{
 		Status:  "success",
 		Message: sb.String(),
 		Data:    rootNode,
-		Context: ContextMetadata{WorkspaceRoot: wctx.Root, DetectionSource: wctx.DetectionSource},
-	}
-	if idx != nil && (idx.State == "starting" || idx.State == "running") {
-		resp.Data = map[string]any{"hierarchy": rootNode, "indexing": idx}
+		Context: ContextMetadata{
+			WorkspaceRoot:    wctx.Root,
+			DetectionSource:  wctx.DetectionSource,
+			Telemetry:        telemetry.CalculateSavings(baselineBytes, actualBytes),
+			IndexingProgress: BuildIndexingProgress(t.engine, wctx.ID),
+		},
 	}
 	return resp.JSON()
 }
@@ -164,6 +180,19 @@ func (t *CallHierarchyTool) findSymbolInfo(ctx context.Context, wsID, name strin
 		return &res[0]
 	}
 	return nil
+}
+
+// collectFiles traverses the CallNode tree and adds unique non-empty FilePath values to seen.
+func collectFiles(node *CallNode, seen map[string]bool) {
+	if node == nil {
+		return
+	}
+	if node.FilePath != "" {
+		seen[node.FilePath] = true
+	}
+	for _, child := range node.Children {
+		collectFiles(child, seen)
+	}
 }
 
 func (t *CallHierarchyTool) resolveIncoming(ctx context.Context, wsID string, node *CallNode, depth int, visited map[string]bool) {

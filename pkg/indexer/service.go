@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/doITmagic/rag-code-mcp/internal/healthcheck"
 	"github.com/doITmagic/rag-code-mcp/pkg/llm"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
@@ -179,17 +181,47 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 		doneFiles atomic.Int64
 	)
 
-	// Dedicated periodic-save goroutine: only one writer, no file-level race.
+	// Dedicated periodic-save goroutine + stall watchdog: detects silent deadlocks.
 	saveStop := make(chan struct{})
 	go func() {
-		ticker := time.NewTicker(10 * time.Second)
-		defer ticker.Stop()
+		saveTicker := time.NewTicker(10 * time.Second)
+		stallTicker := time.NewTicker(30 * time.Second)
+		defer saveTicker.Stop()
+		defer stallTicker.Stop()
+		lastSeen := int64(0)
+		stallCount := 0
 		for {
 			select {
-			case <-ticker.C:
+			case <-saveTicker.C:
 				if err := state.Save(statePath); err != nil {
 					log.Printf("[WARN] Periodic state save failed for %s: %v", root, err)
 				}
+			case <-stallTicker.C:
+				current := doneFiles.Load()
+				if current == lastSeen && current < int64(totalFiles) {
+					stallCount++
+					semLen := len(globalIndexSemaphore)
+					semCap := cap(globalIndexSemaphore)
+					log.Printf("[WARN] ⚠️ Indexing stall detected for %s/%s: %d/%d files done, no progress for %ds. Semaphore: %d/%d slots available. Stall count: %d",
+						opts.Language, root, current, totalFiles, stallCount*30, semLen, semCap, stallCount)
+					if stallCount >= 3 {
+						// Check if Ollama is still alive
+						if err := healthcheck.PingOllama(""); err != nil {
+							log.Printf("[ERROR] 🔴 Ollama is unresponsive: %v. Attempting restart...", err)
+							attemptOllamaRestart()
+						} else {
+							log.Printf("[WARN] Ollama is responsive but indexing is stalled — possible slow file or Qdrant issue")
+						}
+					}
+					if stallCount >= 4 { // 2 minutes without progress
+						buf := make([]byte, 8192)
+						n := runtime.Stack(buf, true)
+						log.Printf("[ERROR] 🔴 Possible deadlock in indexing goroutines for %s. Goroutine dump:\n%s", root, string(buf[:n]))
+					}
+				} else {
+					stallCount = 0
+				}
+				lastSeen = current
 			case <-saveStop:
 				return
 			}
@@ -202,7 +234,7 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 			defer fileWg.Done()
 			for path := range filePaths {
 				// Acquire global slot — blocks if too many concurrent indexers active
-				globalIndexSemaphore <- struct{}{}
+				<-globalIndexSemaphore
 				n := int(doneFiles.Add(1))
 				pct := 0
 				if totalFiles > 0 {
@@ -214,7 +246,7 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 				}
 				indexErr := s.IndexFile(ctx, collection, path, state)
 				// Release slot immediately after processing
-				<-globalIndexSemaphore
+				globalIndexSemaphore <- struct{}{}
 
 				if indexErr != nil {
 					log.Printf("[ERROR] Failed to index %s: %v", path, indexErr)
@@ -240,6 +272,44 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 	}
 
 	return nil
+}
+
+// attemptOllamaRestart tries to restart Ollama when it becomes unresponsive.
+// Attempts: 1) systemctl restart ollama, 2) fallback to `ollama serve` in background.
+// After restart, waits up to 15s for Ollama to become responsive again.
+func attemptOllamaRestart() {
+	// Strategy 1: systemctl (works if Ollama is managed as a systemd service)
+	if out, err := exec.Command("systemctl", "restart", "ollama").CombinedOutput(); err != nil {
+		log.Printf("[WARN] systemctl restart ollama failed: %v (%s)", err, strings.TrimSpace(string(out)))
+
+		// Strategy 2: kill any existing ollama processes and start fresh
+		_ = exec.Command("pkill", "-f", "ollama serve").Run()
+		time.Sleep(500 * time.Millisecond)
+
+		cmd := exec.Command("ollama", "serve")
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		if err := cmd.Start(); err != nil {
+			log.Printf("[ERROR] Failed to start ollama serve: %v", err)
+			return
+		}
+		log.Printf("[INFO] Started 'ollama serve' (PID %d)", cmd.Process.Pid)
+		// Don't wait — it runs as a daemon
+		go func() { _ = cmd.Wait() }()
+	} else {
+		log.Printf("[INFO] ✅ systemctl restart ollama succeeded")
+	}
+
+	// Wait for Ollama to come back up
+	for i := 0; i < 5; i++ {
+		time.Sleep(3 * time.Second)
+		if err := healthcheck.PingOllama(""); err == nil {
+			log.Printf("[INFO] ✅ Ollama is back online after restart")
+			return
+		}
+		log.Printf("[WARN] Waiting for Ollama to start... (%d/5)", i+1)
+	}
+	log.Printf("[ERROR] Ollama did not recover after restart attempt")
 }
 
 func (s *Service) deleteCollectionForRecreate(ctx context.Context, collection string) error {
@@ -276,6 +346,9 @@ func (s *Service) deleteCollectionForRecreate(ctx context.Context, collection st
 }
 
 func (s *Service) IndexFile(ctx context.Context, collection, path string, state *State) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+
 	a := parser.GetByFile(path)
 	if a == nil {
 		return nil // Unsupported file type
@@ -341,7 +414,10 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 					embedText = sym.Docstring + "\n" + embedText
 				}
 
-				vector64, err := s.embedder.Embed(ctx, embedText)
+				embedCtx, embedCancel := context.WithTimeout(ctx, 30*time.Second)
+				vector64, err := s.embedder.Embed(embedCtx, embedText)
+				embedCancel()
+
 				if err != nil {
 					results <- result{err: fmt.Errorf("failed to embed %s: %w", sym.Name, err)}
 					continue
@@ -391,7 +467,12 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 		if end > len(allPoints) {
 			end = len(allPoints)
 		}
-		if _, err := s.store.Upsert(ctx, collection, allPoints[i:end]); err != nil {
+
+		upsertCtx, upsertCancel := context.WithTimeout(ctx, 30*time.Second)
+		_, err := s.store.Upsert(upsertCtx, collection, allPoints[i:end])
+		upsertCancel()
+
+		if err != nil {
 			return fmt.Errorf("upsert failed: %w", err)
 		}
 	}

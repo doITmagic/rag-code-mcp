@@ -13,6 +13,32 @@ import (
 	"github.com/doITmagic/rag-code-mcp/internal/config"
 )
 
+// PingOllama performs a quick liveness check against Ollama.
+// Returns nil if Ollama responds within 3 seconds, error otherwise.
+func PingOllama(baseURL string) error {
+	baseURL = resolveOllamaBaseURL(baseURL)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/api/tags", nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("ollama unreachable at %s: %w", baseURL, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("ollama returned status %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // CheckResult represents the result of a health check
 type CheckResult struct {
 	Service string

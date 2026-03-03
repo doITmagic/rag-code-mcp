@@ -100,24 +100,79 @@ Alternativa veche: ~17KB dintr-un singur apel rag_search_code
 Economie: ~6x mai puțini tokeni
 ```
 
-### 7. Indexing Status & Health Metrics in Results — ⚠️ PARȚIAL IMPLEMENTAT
+### 7. ✅ IMPLEMENTAT — Indexing Status & Health Metrics in Results
 
-**Problemă:** Agentul primește un rezultat greșit (index vechi, funcție ștearsă) și nu știe, luându-l ca adevăr absolut.
+> **Status:** Implementat complet în `internal/service/tools/`
 
-**Ce avem deja implementat:**
+**Problema:** Agentul primea un rezultat greșit (index vechi, funcție ștearsă) și nu știa, luându-l ca adevăr absolut.
+
+**Ce era deja implementat:** `IndexProgress`, `BuildIndexingProgress`, `MismatchRisk`, `ReindexRequired`, erori de indexare
+
+**Ce am adăugat:**
 
 | Componentă | Fișier | Status |
 |------------|--------|--------|
-| `IndexProgress` struct (state, elapsed, per-language) | `engine/index_progress.go` | ✅ |
-| `IndexingProgressSummary` (view compact pt răspunsuri) | `tools/response.go` | ✅ |
-| `BuildIndexingProgress()` (construiește summary) | `tools/response.go` | ✅ |
-| `GetIndexProgress()` (citește jobul curent) | `engine/engine.go` | ✅ |
-| `MismatchRisk` warning (branch mismatch) | `engine/engine.go` → `WorkspaceContext` | ✅ |
-| `ReindexRequired` flag (git HEAD schimbat) | `engine/engine.go` → `WorkspaceContext` | ✅ |
-| `CompareAndUpdate()` (detectează schimbări git) | `branchstate/state.go` | ✅ |
-| `ErrIndexingStarted` / `ErrIndexingInProgress` | `engine/engine.go` | ✅ |
+| `index_age` field în `IndexingProgressSummary` | `tools/response.go` | ✅ |
+| `formatAge()` helper (`"just now"`, `"3 minutes ago"`, etc.) | `tools/response.go` | ✅ |
+| **Stale chunk detection** în `rag_search_code` | `tools/search_local_index.go` | ✅ |
+| **Stale chunk detection** în `rag_search` (smart) | `tools/smart_search.go` | ✅ |
+| `IndexingProgress` expus uniform în `rag_read_file_context` | `tools/read_file_context.go` | ✅ |
+| `IndexingProgress` expus uniform în `rag_list_skills` | `tools/skills.go` | ✅ |
+| `IndexingProgress` expus uniform în `rag_install_skill` | `tools/skills.go` | ✅ |
+| `IndexingProgress` expus uniform în `rag_evaluate` | `tools/evaluate_ragcode.go` | ✅ |
+| Teste dedicate pentru toate 3 funcționalități | `tools/tests/health_metrics_test.go` | ✅ |
 
-**Ce lipsește (de completat):**
-1. **`_index_age`** — un field simplu în răspunsul de căutare care spune "indexul a fost actualizat acum X minute". Momentan avem `Elapsed` doar când indexarea e activă, nu și un timestamp al ultimei indexări completate.
-2. **Stale chunk detection** — dacă în timpul unui search, un fișier adus din vectori returnează `os.IsNotExist`, MCP-ul ar trebui să adauge un warning automat: `"Warning: Some indexed files no longer exist. Consider re-indexing."`. Asta ar face feedback-ul proactiv, nu reactiv.
-3. **Expunerea consistentă** — `rag_search` (noul tool) deja include `indexing_progress` în context, dar nu toate tool-urile o fac uniform.
+**Comportament stale detection:**
+```json
+{
+  "warning": "⚠️ 2 indexed file(s) no longer exist on disk (stale index). Consider re-indexing. Missing: /src/old_file.go, /src/deleted.go"
+}
+```
+
+**Comportament index_age (când indexul e completed):**
+```json
+{
+  "context": {
+    "indexing_progress": {
+      "state": "completed",
+      "elapsed": "1m23s",
+      "index_age": "3 minutes ago"
+    }
+  }
+}
+```
+
+### 8. 🔄 Migrare de la `langchaingo` la clientul nativ Ollama (`github.com/ollama/ollama/api`)
+
+> **Status:** Propus — refactoring dedicat
+
+**Problema:** Comunicarea actuală cu Ollama se face prin `github.com/tmc/langchaingo` (v0.1.14), un wrapper generic LLM care:
+- Nu expune funcții native Ollama (heartbeat, list running, model management)
+- Nu oferă control granular asupra timeout-urilor HTTP la nivel de transport
+- Adaugă un nivel de indirectare care face debugging-ul mai dificil
+- A contribuit la bug-ul de deadlock — `CreateEmbedding` nu propaga corect context cancellation
+
+**Soluția propusă:** Pachetul oficial **`github.com/ollama/ollama/api`** oferă exact ce ne trebuie:
+
+| Funcție | Ce oferă | Utilizare în RagCode |
+|---------|---------|---------------------|
+| `Client.Heartbeat(ctx)` | Liveness check nativ | Health check în watchdog-ul de indexare |
+| `Client.Embed(ctx, req)` | Embeddings direct, fără intermediar | Înlocuiește langchaingo `CreateEmbedding` |
+| `Client.List(ctx)` | Lista completă a modelelor instalate | Validare la startup + tool `rag_evaluate` |
+| `Client.ListRunning(ctx)` | Procesele/modelele active în memorie | Diagnosticare when Ollama e slow |
+| `ClientFromEnvironment()` | Auto-config din `OLLAMA_HOST` env | Configurare zero-effort |
+
+**Beneficii concrete:**
+1. **Reziliență nativă** — `Heartbeat()` e un ping oficial, nu un hack HTTP `/api/tags`
+2. **Context propagation corect** — clientul oficial respectă `context.WithTimeout` la nivel HTTP
+3. **Eliminare dependență langchaingo** — o dependență masivă (~50+ sub-dependencies) eliminată
+4. **Control transport HTTP** — putem configura `http.Client` cu timeouts custom, keep-alive, etc.
+5. **Embedding bulk** — `EmbedRequest` suportă `Input []string` (batch nativ), nu doar text singular
+
+**Scope of work:**
+- Înlocuire `pkg/llm/ollama.go` → implementare cu `ollama/api.Client`
+- Actualizare `internal/healthcheck/` → `PingOllama()` folosind `Client.Heartbeat()`
+- Eliminare `langchaingo` din `go.mod`
+- Testare completă cu modelele existente
+
+**Riscuri:** Migrare mare, necesită testare exhaustivă. Trebuie făcut ca un refactoring separat, nu alături de alte features.

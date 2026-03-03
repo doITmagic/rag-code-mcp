@@ -170,10 +170,11 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 	logger.Instance.Debug("Search successful. Found %d results. Risk mismatch: %s", len(result.Results), result.MismatchRisk)
 
 	response.Context = ContextMetadata{
-		WorkspaceRoot:   result.WorkspaceRoot,
-		Collection:      result.Collection,
-		Language:        result.Language,
-		DetectionSource: result.DetectionSource,
+		WorkspaceRoot:    result.WorkspaceRoot,
+		Collection:       result.Collection,
+		Language:         result.Language,
+		DetectionSource:  result.DetectionSource,
+		IndexingProgress: BuildIndexingProgress(t.engine, result.WorkspaceID),
 	}
 
 	if result.MismatchRisk != "" && result.MismatchRisk != "low" {

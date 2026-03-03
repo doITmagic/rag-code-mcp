@@ -68,9 +68,18 @@ func main() {
 	// 2. Determine current location
 	execPath, _ := os.Executable()
 	sourceDir := filepath.Dir(execPath)
+	resourceDir := sourceDir
+
+	// If we are running from bin/, resources might be in the parent dir
+	if _, err := os.Stat(filepath.Join(resourceDir, "README.md")); os.IsNotExist(err) {
+		parentDir := filepath.Dir(resourceDir)
+		if _, err := os.Stat(filepath.Join(parentDir, "README.md")); err == nil {
+			resourceDir = parentDir
+		}
+	}
 
 	// 3. Define files to install
-	binaries := []string{"rag-code-mcp", "rag-code-install"}
+	binaries := []string{"rag-code-mcp", "ragcode-installer"}
 	resources := []string{"README.md", "llms.txt", "LICENSE", "config.yaml"}
 
 	log("Copying files from: " + sourceDir)
@@ -94,10 +103,10 @@ func main() {
 		success("Installed binary: " + b)
 	}
 
-	// Copy Resources to root/
+	// Copy Resources to bin/
 	for _, r := range resources {
-		src := filepath.Join(sourceDir, r)
-		dst := filepath.Join(installPath, r)
+		src := filepath.Join(resourceDir, r)
+		dst := filepath.Join(binPath, r)
 
 		if r == "config.yaml" {
 			if _, err := os.Stat(dst); err == nil {
@@ -250,10 +259,10 @@ func setupEnvironment() {
 	// Pull Models from config
 	log("Ensuring required models are available...")
 
-	// Attempt to load config to see which models are required
-	execPath, _ := os.Executable()
-	sourceDir := filepath.Dir(execPath)
-	cfgPath := filepath.Join(sourceDir, "config.yaml")
+	// Attempt to load config from the installed destination to see which models are required
+	home, _ := os.UserHomeDir()
+	binPath := filepath.Join(home, installDirName, binDirName)
+	cfgPath := filepath.Join(binPath, "config.yaml")
 
 	// Use default config as base
 	cfg := config.DefaultConfig()

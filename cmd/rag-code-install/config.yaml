@@ -1,0 +1,58 @@
+# RagCode MCP Server Configuration
+# Auto-generated on first run
+
+llm:
+  provider: ollama
+  ollama_base_url: http://localhost:11434
+  # Recommended small embedding model (0.6B params)
+  ollama_embed: qwen3-embedding:0.6b
+  temperature: 0.7
+  max_tokens: 1024
+  timeout: 60s
+  max_retries: 3
+
+storage:
+  vector_db:
+    url: http://localhost:6333
+    api_key: ""
+    skip_compatibility_check: true
+
+logging:
+  level: debug
+  format: text
+  output: file
+  path: mcp.log
+
+# Multi-workspace configuration (auto-creates collections per workspace+language)
+workspace:
+  enabled: true
+  auto_index: true
+  max_workspaces: 10
+  detection_markers:
+    - .git
+    - go.mod
+    - package.json
+    - Cargo.toml
+    - pyproject.toml
+    - setup.py
+    - requirements.txt
+    - composer.json
+    - pom.xml
+    - build.gradle
+    - Gemfile
+    - Package.swift
+  exclude_patterns:
+    - node_modules
+    - .git
+    - vendor
+    - target
+    - build
+    - dist
+    - .venv
+    - inspirations
+  collection_prefix: ragcode
+  index_include: []
+  index_exclude: []
+  auto_install_sse_skill: true
+  watch_enabled: true
+  watch_debounce: 5s

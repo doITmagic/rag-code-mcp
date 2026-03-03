@@ -97,7 +97,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 			resp := ToolResponse{
 				Status:  "indexing_required",
 				Message: fmt.Sprintf("⏳ Workspace '%s' is not indexed yet. Indexing is required for complete results.", wctx.Root),
-				Context: ContextMetadata{WorkspaceRoot: wctx.Root, DetectionSource: wctx.DetectionSource},
+				Context: ContextFromWorkspaceWithProgress(wctx, t.engine),
 			}
 			if idx != nil {
 				resp.Status = "indexing_in_progress"
@@ -114,7 +114,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 		resp := ToolResponse{
 			Status:  "success",
 			Message: fmt.Sprintf("No usages found for symbol '%s' based on Code Graph relations.", symbolName),
-			Context: ContextMetadata{WorkspaceRoot: wctx.Root, DetectionSource: wctx.DetectionSource},
+			Context: ContextFromWorkspaceWithProgress(wctx, t.engine),
 		}
 		return resp.JSON()
 	}
@@ -188,7 +188,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 		resp := ToolResponse{
 			Status:  "success",
 			Message: fmt.Sprintf("No explicit usages found for symbol '%s'", symbolName),
-			Context: ContextMetadata{WorkspaceRoot: wctx.Root, DetectionSource: wctx.DetectionSource},
+			Context: ContextFromWorkspaceWithProgress(wctx, t.engine),
 		}
 		return resp.JSON()
 	}
@@ -231,17 +231,11 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 		Message: "Found symbol usages\n\n" + response.String(),
 		Data:    usages,
 		Context: ContextMetadata{
-			WorkspaceRoot:   wctx.Root,
-			DetectionSource: wctx.DetectionSource,
-			Telemetry:       telemetry.CalculateSavings(baselineBytes, actualBytes),
+			WorkspaceRoot:    wctx.Root,
+			DetectionSource:  wctx.DetectionSource,
+			Telemetry:        telemetry.CalculateSavings(baselineBytes, actualBytes),
+			IndexingProgress: BuildIndexingProgress(t.engine, wctx.ID),
 		},
-	}
-	if idx != nil && (idx.State == "starting" || idx.State == "running") {
-		// Signal that results might be incomplete while indexing is still running.
-		if resp.Data == nil {
-			resp.Data = map[string]any{}
-		}
-		resp.Data = map[string]any{"usages": usages, "indexing": idx}
 	}
 	return resp.JSON()
 }

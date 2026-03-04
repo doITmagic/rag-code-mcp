@@ -7,15 +7,25 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/service/internalutil"
 	"github.com/doITmagic/rag-code-mcp/pkg/llm"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 )
 
+const collectionExistsTTL = 60 * time.Second
+
+type collectionCacheEntry struct {
+	exists bool
+	expiry time.Time
+}
+
 type Service struct {
-	embedder llm.Provider
-	store    storage.VectorStore
+	embedder        llm.Provider
+	store           storage.VectorStore
+	collectionCache sync.Map // map[string]*collectionCacheEntry
 }
 
 // NewService creates a new search service.
@@ -47,12 +57,26 @@ func (s *Service) Search(ctx context.Context, collection string, queryText strin
 
 // SearchCodeOnly performs a semantic search restricted to code chunks only.
 func (s *Service) SearchCodeOnly(ctx context.Context, collection string, queryText string, limit int) ([]storage.SearchResult, error) {
+	vector, err := s.EmbedQuery(ctx, queryText)
+	if err != nil {
+		return nil, err
+	}
+	return s.SearchCodeWithVector(ctx, collection, vector, limit)
+}
+
+// EmbedQuery converts a text query into a float32 vector using the configured embedder.
+// Use this to embed once and reuse the vector across multiple searches.
+func (s *Service) EmbedQuery(ctx context.Context, queryText string) ([]float32, error) {
 	vector64, err := s.embedder.Embed(ctx, queryText)
 	if err != nil {
-		return nil, fmt.Errorf("search embedding failed: %w", err)
+		return nil, fmt.Errorf("query embedding failed: %w", err)
 	}
-	vector := internalutil.Float64To32(vector64)
+	return internalutil.Float64To32(vector64), nil
+}
 
+// SearchCodeWithVector performs a vector search using a pre-computed embedding.
+// Useful when you want to embed once and fan-out to multiple collections.
+func (s *Service) SearchCodeWithVector(ctx context.Context, collection string, vector []float32, limit int) ([]storage.SearchResult, error) {
 	res, err := s.store.SearchCodeOnly(ctx, collection, storage.SearchQuery{
 		Vector: vector,
 		Limit:  limit,
@@ -60,30 +84,60 @@ func (s *Service) SearchCodeOnly(ctx context.Context, collection string, queryTe
 	if err != nil {
 		return nil, fmt.Errorf("storage search failed: %w", err)
 	}
-
 	return res, nil
 }
 
-// ExactSearch performs a search directly on the store without generating a vector embedding, relying entirely on filters.
-func (s *Service) ExactSearch(ctx context.Context, collection string, filter map[string]interface{}, limit int) ([]storage.SearchResult, error) {
-	// Dummy vector required by some implementations.
-	vector := make([]float32, 1024)
-
+// SearchWithVector performs a full vector search (including docs) using a pre-computed embedding.
+// Mirrors Search() but avoids a second embedding call when vector is already available.
+func (s *Service) SearchWithVector(ctx context.Context, collection string, vector []float32, limit int) ([]storage.SearchResult, error) {
 	res, err := s.store.Search(ctx, collection, storage.SearchQuery{
 		Vector: vector,
 		Limit:  limit,
-		Filter: filter,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("storage search failed: %w", err)
+	}
+	return res, nil
+}
+
+// ExactSearch performs a metadata-only filter scan without generating a vector embedding.
+// Delegates directly to the store's ExactSearch (Qdrant Scroll), bypassing HNSW entirely.
+func (s *Service) ExactSearch(ctx context.Context, collection string, filter map[string]interface{}, limit int) ([]storage.SearchResult, error) {
+	res, err := s.store.ExactSearch(ctx, collection, filter, limit)
 	if err != nil {
 		return nil, fmt.Errorf("exact search failed: %w", err)
 	}
-
 	return res, nil
 }
 
 // CollectionExists checks whether a collection exists in the vector store.
+// Results are cached for 60 s to avoid hammering Qdrant on every fan-out query.
 func (s *Service) CollectionExists(ctx context.Context, collection string) (bool, error) {
-	return s.store.CollectionExists(ctx, collection)
+	now := time.Now()
+	if v, ok := s.collectionCache.Load(collection); ok {
+		entry := v.(*collectionCacheEntry)
+		if now.Before(entry.expiry) {
+			return entry.exists, nil
+		}
+	}
+	exists, err := s.store.CollectionExists(ctx, collection)
+	if err != nil {
+		return false, err
+	}
+	// Cache only positive results — "doesn't exist" can flip quickly after indexing.
+	if exists {
+		s.collectionCache.Store(collection, &collectionCacheEntry{
+			exists: true,
+			expiry: now.Add(collectionExistsTTL),
+		})
+	}
+	return exists, nil
+}
+
+// InvalidateCollectionCache removes the cached existence entry for a collection.
+// Call this after creating or dropping a collection.
+func (s *Service) InvalidateCollectionCache(collection string) {
+	s.collectionCache.Delete(collection)
 }
 
 // HybridSearch combines semantic search with basic lexical re-ranking.

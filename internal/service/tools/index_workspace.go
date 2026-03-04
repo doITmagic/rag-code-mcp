@@ -3,6 +3,8 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
+	"runtime"
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
@@ -31,7 +33,7 @@ func (t *IndexWorkspaceTool) Description() string {
 }
 
 type IndexWorkspaceInput struct {
-	FilePath string `json:"file_path"`
+	FilePath string `json:"file_path,omitempty"`
 	Recreate bool   `json:"recreate,omitempty"`
 }
 
@@ -87,6 +89,37 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 			DetectionSource: wctx.DetectionSource,
 		},
 	}
+
+	exePath, _ := os.Executable()
+	binModTime := "unknown"
+	if exePath != "" {
+		if stat, statErr := os.Stat(exePath); statErr == nil {
+			binModTime = stat.ModTime().Format(time.RFC3339)
+		}
+	}
+
+	data := map[string]interface{}{
+		"runtime": map[string]interface{}{
+			"pid":                os.Getpid(),
+			"executable_path":    exePath,
+			"binary_modified_at": binModTime,
+			"started_at":         serverStart.Format(time.RFC3339),
+			"uptime":             time.Since(serverStart).String(),
+			"go_version":         runtime.Version(),
+			"build_info": map[string]string{
+				"version": serverVersion,
+				"commit":  serverCommit,
+				"date":    serverDate,
+			},
+		},
+	}
+
+	// Include current indexing progress so the AI knows how many files are left
+	if prog := BuildIndexingProgress(t.engine, wctx.ID, wctx.Root); prog != nil {
+		data["indexing_progress"] = prog
+	}
+
+	response.Data = data
 
 	// Warn if fallback was used
 	response.SetFallbackWarning(wctx.DetectionSource == "registry_fallback")

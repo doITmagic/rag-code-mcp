@@ -5,11 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
+	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 	"github.com/doITmagic/rag-code-mcp/pkg/telemetry"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -35,7 +38,7 @@ func (t *SearchLocalIndexTool) Description() string {
 		"Use 'exact' mode for precise matches of symbols, specific errors, and variable names (Hybrid search). " +
 		"Returns complete source code with file path and line numbers. Supports all registered languages. " +
 		"NEW: Automatically performs 'Graph Context Expansion' - it reads AST structurally related dependencies (methods, structs, interfaces) from the code and auto-fetches their definitions in the same response! " +
-		"IMPORTANT: Always provide the 'file_path' of the file you are currently working on for better context detection."
+		"OPTIONAL: Provide 'file_path' of the file you are currently working on for faster workspace detection. If omitted, the server will Auto-Discover the workspace from the last active project."
 }
 
 type SearchLocalIndexInput struct {
@@ -131,6 +134,11 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			response.Message = fmt.Sprintf("🚀 Workspace '%s' was not indexed. Background indexing has been STARTED automatically. Please wait a few moments and try your search again.", indexingStarted.WorkspaceRoot)
 			response.Context.WorkspaceRoot = indexingStarted.WorkspaceRoot
 			response.Context.DetectionSource = "registry_fallback" // Fallback assumed if SearchCode failed with indexing_started on empty path
+			if indexingStarted.WorkspaceID != "" {
+				if p := t.engine.GetIndexProgress(indexingStarted.WorkspaceID, indexingStarted.WorkspaceRoot); p != nil {
+					response.Data = map[string]any{"indexing": p}
+				}
+			}
 			return response.JSON()
 		}
 
@@ -139,6 +147,11 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			response.Status = "indexing_in_progress"
 			response.Message = fmt.Sprintf("⏳ Workspace '%s' is currently being indexed. Search results will be available once indexing completes.", indexingInProgress.WorkspaceRoot)
 			response.Context.WorkspaceRoot = indexingInProgress.WorkspaceRoot
+			if indexingInProgress.WorkspaceID != "" {
+				if p := t.engine.GetIndexProgress(indexingInProgress.WorkspaceID, indexingInProgress.WorkspaceRoot); p != nil {
+					response.Data = map[string]any{"indexing": p}
+				}
+			}
 			return response.JSON()
 		}
 
@@ -157,10 +170,11 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 	logger.Instance.Debug("Search successful. Found %d results. Risk mismatch: %s", len(result.Results), result.MismatchRisk)
 
 	response.Context = ContextMetadata{
-		WorkspaceRoot:   result.WorkspaceRoot,
-		Collection:      result.Collection,
-		Language:        result.Language,
-		DetectionSource: result.DetectionSource,
+		WorkspaceRoot:    result.WorkspaceRoot,
+		Collection:       result.Collection,
+		Language:         result.Language,
+		DetectionSource:  result.DetectionSource,
+		IndexingProgress: BuildIndexingProgress(t.engine, result.WorkspaceID, result.WorkspaceRoot),
 	}
 
 	if result.MismatchRisk != "" && result.MismatchRisk != "low" {
@@ -179,6 +193,7 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 	seenFiles := make(map[string]bool)
 	baselineBytes := 0
 	actualBytes := 0
+	var staleFiles []string // files referenced in index but no longer on disk
 
 	for _, r := range result.Results {
 		if seenIDs[r.Point.ID] {
@@ -195,6 +210,8 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 				seenFiles[path] = true
 				if info, statErr := os.Stat(path); statErr == nil {
 					baselineBytes += int(info.Size())
+				} else if os.IsNotExist(statErr) {
+					staleFiles = append(staleFiles, path)
 				}
 			}
 		}
@@ -208,6 +225,19 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 		descriptors = append(descriptors, desc)
 	}
 
+	// Proactive stale index warning: inform the AI that some indexed files no longer exist.
+	if len(staleFiles) > 0 {
+		staleWarning := fmt.Sprintf(
+			"⚠️ %d indexed file(s) no longer exist on disk (stale index). Consider re-indexing. Missing: %s",
+			len(staleFiles), strings.Join(staleFiles, ", "),
+		)
+		if response.Warning != "" {
+			response.Warning += " | " + staleWarning
+		} else {
+			response.Warning = staleWarning
+		}
+	}
+
 	// 2. Graph Context Expansion
 	// We will look at the 'relations' in the payload of the TOP result
 	topResult := result.Results[0]
@@ -216,40 +246,69 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 	if hasRel {
 		// Depending on the storage, relations might be []interface{}
 		if relList, ok := relationsRaw.([]interface{}); ok {
-			var fetchedTargets []string
+			const maxExpansions = 10
+			wsID := result.WorkspaceID
+
+			type subResult struct {
+				targetName string
+				results    []storage.SearchResult
+			}
+
+			subChan := make(chan subResult, maxExpansions)
+			var wg sync.WaitGroup
+			seenTargets := make(map[string]bool)
+			expanded := 0
 
 			for _, relRaw := range relList {
+				if expanded >= maxExpansions {
+					break
+				}
 				relMap, ok := relRaw.(map[string]interface{})
 				if !ok {
 					continue
 				}
-
 				targetName, _ := relMap["target_name"].(string)
-				if targetName == "" {
+				if targetName == "" || seenTargets[targetName] {
 					continue
 				}
+				seenTargets[targetName] = true
+				expanded++
 
-				// perform a tiny sub-search for this target
-				subRes, err := t.engine.SearchCode(ctx, filePath, targetName, 2, false)
-				if err == nil && len(subRes.Results) > 0 {
-					for _, sub := range subRes.Results {
-						if seenIDs[sub.Point.ID] {
-							continue
-						}
-						seenIDs[sub.Point.ID] = true
-
-						subDesc := make(map[string]any)
-						for k, v := range sub.Point.Payload {
-							subDesc[k] = v
-						}
-						// Mark this as an expanded node context
-						subDesc["_graph_expansion"] = fmt.Sprintf("Dependency of %v", topResult.Point.Payload["name"])
-						subDesc["score"] = sub.Score
-						subDesc["id"] = sub.Point.ID
-						descriptors = append(descriptors, subDesc)
-						fetchedTargets = append(fetchedTargets, targetName)
-						break // only include top match for the dependency
+				wg.Add(1)
+				go func(name string) {
+					defer wg.Done()
+					// ExactSearch only — zero embedding, deterministic.
+					// No fallback to embedding search: relation names are often stdlib/external
+					// symbols not in the local index, and each embedding call costs ~N seconds.
+					res, err := t.engine.SearchByName(ctx, wsID, name, 2)
+					if err != nil || len(res) == 0 {
+						return
 					}
+					subChan <- subResult{targetName: name, results: res}
+				}(targetName)
+			}
+
+			go func() { wg.Wait(); close(subChan) }()
+
+			topName, _ := topResult.Point.Payload["name"].(string)
+			var fetchedTargets []string
+			for sr := range subChan {
+				for _, sub := range sr.results {
+					if seenIDs[sub.Point.ID] {
+						continue
+					}
+					seenIDs[sub.Point.ID] = true
+
+					subDesc := make(map[string]any)
+					for k, v := range sub.Point.Payload {
+						subDesc[k] = v
+					}
+					subDesc["_graph_expansion"] = fmt.Sprintf("Dependency of %v", topName)
+					subDesc["score"] = sub.Score
+					subDesc["id"] = sub.Point.ID
+					descriptors = append(descriptors, subDesc)
+					fetchedTargets = append(fetchedTargets, sr.targetName)
+					break // top match per dependency
 				}
 			}
 
@@ -258,6 +317,14 @@ func (t *SearchLocalIndexTool) Execute(ctx context.Context, params map[string]in
 			}
 		}
 	}
+
+	// Sort all descriptors (primary + graph expansions) by score descending
+	// so the highest-relevance results are always surfaced first in the response.
+	sort.Slice(descriptors, func(i, j int) bool {
+		si, _ := descriptors[i]["score"].(float32)
+		sj, _ := descriptors[j]["score"].(float32)
+		return si > sj
+	})
 
 	response.Context.Telemetry = telemetry.CalculateSavings(baselineBytes, actualBytes)
 	response.Data = descriptors

@@ -42,6 +42,12 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 
 	symbols := make([]pkgParser.Symbol, len(chunks))
 	for i, chunk := range chunks {
+		// PHP: methods can be private/protected — read visibility from metadata if available,
+		// fall back to "not starting with _" convention.
+		isPublic := true
+		if vis, ok := chunk.Metadata["visibility"].(string); ok {
+			isPublic = vis == "public" || vis == ""
+		}
 		symbols[i] = pkgParser.Symbol{
 			Name:      chunk.Name,
 			Type:      pkgParser.SymbolType(chunk.Type),
@@ -53,6 +59,8 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 			EndLine:   chunk.EndLine,
 			FilePath:  chunk.FilePath,
 			Language:  "php",
+			IsPublic:  isPublic,
+			Relations: chunk.Relations,
 			Metadata:  chunk.Metadata,
 		}
 	}
@@ -62,3 +70,4 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 		Language: "php",
 	}, nil
 }
+

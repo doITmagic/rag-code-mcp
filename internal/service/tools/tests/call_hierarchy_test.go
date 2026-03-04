@@ -35,13 +35,13 @@ var _ = Describe("CallHierarchyTool", func() {
 			resJSON, err := tool.Execute(ctx, map[string]interface{}{"file_path": "main.go"})
 			Expect(err).NotTo(HaveOccurred())
 			var resp tools.ToolResponse
-			json.Unmarshal([]byte(resJSON), &resp)
+			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
 			Expect(resp.Status).To(Equal("error"))
 			Expect(resp.Error).To(ContainSubstring("symbol_name parameter is required"))
 		})
 
 		It("should return outgoing calls (callees)", func() {
-			mockStore.SearchFunc = func(ctx context.Context, col string, q storage.SearchQuery) ([]storage.SearchResult, error) {
+			mockStore.ExactSearchFunc = func(ctx context.Context, col string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error) {
 				if !strings.Contains(col, "-go") {
 					return []storage.SearchResult{}, nil
 				}
@@ -55,7 +55,7 @@ var _ = Describe("CallHierarchyTool", func() {
 							Payload: map[string]interface{}{
 								"name": "MyFunction",
 								"type": "function",
-								"Relations": []interface{}{
+								"relations": []interface{}{
 									map[string]interface{}{"target_name": "CalledFunc", "type": "calls"},
 								},
 							},
@@ -72,7 +72,7 @@ var _ = Describe("CallHierarchyTool", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			var resp tools.ToolResponse
-			json.Unmarshal([]byte(resJSON), &resp)
+			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
 			Expect(resp.Status).To(Equal("success"))
 
 			// Data is the root node

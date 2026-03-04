@@ -1,29 +1,81 @@
 # Skills Package
 
-The `skills` package manages project-local extensions and configurations. It allows the MCP server to "install" specific files (like `.cursorrules`, custom scripts, or documentation blueprints) directly into the user's repository.
+The `skills` package manages AI agent skill packs for the workspace. It connects
+to the [doITmagic/ai-agent-skills](https://github.com/doITmagic/ai-agent-skills)
+registry on GitHub, downloads skill folders on demand, and installs them into the
+standard locations recognized by popular AI coding tools.
 
-## Concept
+---
 
-A "Skill" is a set of files that help the user or the AI perform better within a specific codebase.
-- **Project Structure**: Blueprints for new modules.
-- **Tooling**: Custom terminal scripts or configuration files.
-- **Rules**: LLM behavior modifiers (e.g., custom prompts for specific frameworks).
+## How it works
 
-## Embedded Skills
+1. **`ListAvailableSkills()`** — fetches `registry.json` from the GitHub registry and returns the list of available skills with their metadata.
+2. **`InstallSkill(skillID, workspaceRoot, target)`** — looks up the skill's path in the registry, downloads the repo tarball from GitHub, and extracts only the requested skill folder into the workspace.
+3. **`UninstallSkill(skillID, workspaceRoot)`** — removes the skill from all known locations.
+4. **`IsSkillInstalled(skillID, workspaceRoot)`** — checks all known tool directories for the skill.
 
-The package contains "embedded" skills that are compiled into the RagCode binary using `go:embed`.
-- **`ragcode-sse`**: Helps setting up SSE client connections.
-- **Framework Blueprints**: Patterns for Common architectures.
+No skills are compiled into the binary. Everything is fetched live from GitHub.
+
+---
+
+## Supported install targets
+
+Skills are installed into the directory convention of the target AI tool:
+
+| Target key | Directory | Used by |
+|------------|-----------|---------|
+| `agent` (default) | `.agent/skills/` | Antigravity, rag-code-mcp, OpenCode |
+| `agents` | `.agents/skills/` | GitHub Copilot, VS Code |
+| `claude` | `.claude/skills/` | Claude (Anthropic) |
+| `cursor` | `.cursor/skills/` | Cursor |
+| `windsurf` | `.windsurf/skills/` | Windsurf (Codeium) |
+
+Detection (`IsSkillInstalled`, `FindSkillPath`, `UninstallSkill`) checks **all 5 locations** automatically.
+
+---
 
 ## Usage
 
 ```go
 import "github.com/doITmagic/rag-code-mcp/internal/skills"
 
-// Install a specific skill to a repository
-err := skills.InstallSkill("ragcode-enterprise-patterns", "/path/to/repo")
+// List available skills from the remote registry
+available, err := skills.ListAvailableSkills()
+
+// Install into .agent/skills/ (default)
+err = skills.InstallSkill("oxygen-builder", "/path/to/repo", "agent")
+
+// Install into .cursor/skills/ for Cursor users
+err = skills.InstallSkill("oxygen-builder", "/path/to/repo", "cursor")
+
+// Check installation (scans all 5 tool directories)
+installed := skills.IsSkillInstalled("oxygen-builder", "/path/to/repo")
+
+// Find exact path where skill is installed
+path := skills.FindSkillPath("oxygen-builder", "/path/to/repo")
+
+// Remove from all locations
+err = skills.UninstallSkill("oxygen-builder", "/path/to/repo")
 ```
+
+---
+
+## Testing
+
+Unit tests (no network):
+```bash
+go test ./internal/skills/
+```
+
+Integration tests (real HTTP to GitHub):
+```bash
+go test -tags integration -v -timeout 120s ./internal/skills/ -run "TestIntegration"
+```
+
+---
 
 ## Security
 
-Skills can only write to the specific repository root detected by the MCP server. They cannot modify system files or files outside the target workspace.
+- Skill IDs are validated against `^[a-z0-9-]+$` to prevent path traversal.
+- Extracted tar entries are checked against the destination directory prefix.
+- Skills can only write inside the workspace root detected by the MCP server.

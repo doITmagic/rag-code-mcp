@@ -59,19 +59,91 @@ Deliver a modular V2 detection core that is deterministic, testable, and safe fo
 ## Legacy Parity Tasks (V1 → V2)
 
 ### Workspace Module
-- [ ] **[P0]** Port workspace cache (TTL, helpers) from `internal/workspace/cache.go` → `pkg/workspace/cache`.
-- [ ] **[P0]** Reintroduce runtime marker/exclusion configuration APIs.
-- [ ] **[P0]** Restore helper APIs `DetectFromParams`, `CollectionName`, `Metadata` for search/indexing.
-- [ ] **[P1]** Rewire indexing metrics integration (file/chunk counts) or document new owner pipeline.
+- [x] **[P0]** Port workspace cache (TTL, helpers) from `internal/workspace/cache.go` → `pkg/workspace/cache`.
+- [x] **[P0]** Reintroduce runtime marker/exclusion configuration APIs.
+- [x] **[P0]** Restore helper APIs `DetectFromParams`, `CollectionName`, `Metadata` for search/indexing.
+- [x] **[P1]** Rewire indexing metrics integration (file/chunk counts) or document new owner pipeline.
 
 ### Storage Module (Qdrant)
-- [ ] **[P0]** Add `SearchDocsOnly`, `SearchCodeOnly`, `searchByChunkType` equivalents (or adapters).
-- [ ] **[P0]** Add utility endpoints `GetCollectionInfo`, `GetCollectionPointCount`, cleanup/merge helpers.
-- [ ] **[P0]** Ensure payload mapping/dedup (file, chunk_id) parity with legacy implementation.
-- [ ] **[P1]** Document adapter pattern for search service if functionality moves there.
+- [x] **[P0]** Add `SearchDocsOnly`, `SearchCodeOnly`, `searchByChunkType` equivalents (or adapters).
+- [x] **[P0]** Add utility endpoints `GetCollectionInfo`, `GetCollectionPointCount`, cleanup/merge helpers.
+- [x] **[P0]** Ensure payload mapping/dedup (file, chunk_id) parity with legacy implementation.
+- [x] **[P1]** Document adapter pattern for search service if functionality moves there.
 
 ### Workspace Manager Features
-- [ ] **[P0]** Implement filesystem watchers (legacy `manager.watchers`).
-- [ ] **[P0]** Port incremental reindex safeguards/indexing guards.
-- [ ] **[P0]** Reintroduce multi-language analyzer selection logic.
-- [ ] **[P1]** Decide whether these live under `pkg/workspace/watch` or other module and document ownership.
+- [x] **[P0]** Implement filesystem watchers (legacy `manager.watchers`).
+- [x] **[P0]** Port incremental reindex safeguards/indexing guards.
+- [x] **[P0]** Reintroduce multi-language analyzer selection logic.
+- [x] **[P1]** Decide whether these live under `pkg/workspace/watch` or other module and document ownership.
+
+## Task 7: Smart Search Consolidation
+
+### Goal
+Reduce tool-urile de căutare la un singur `rag_search` inteligent, minimizând "decision fatigue" pentru agenții LLM.
+Elimină `rag_search_code` (search_local_index.go) și mută toate capabilitățile în `rag_search` (smart_search.go).
+
+### Subtasks
+- [x] **[P0]** Adaugă parametrul `include_full_content: bool` la `SmartSearchInput` — când `true`, ignoră logica adaptivă compact/full și returnează mereu codul sursă integral.
+- [x] **[P0]** Adaugă parametrul `include_docs: bool` la `SmartSearchInput` — când `true`, caută și în chunk-urile de documentație markdown (necesită Task 8).
+- [x] **[P1]** Actualizează description-ul tool-ului `rag_search` să menționeze noii parametri.
+- [ ] **[P1]** Deprecate/Șterge `search_local_index.go` (`rag_search_code`) — verifică că toate capabilitățile (Graph Context Expansion, mode discovery/exact) sunt acoperite de `smart_search.go`.
+- [ ] **[P2]** Actualizează `doc_search_local_index.md` → transformă în `doc_smart_search.md` cu documentație unificată.
+- [ ] **[P2]** Actualizează testele existente din `tests/` pentru a reflecta noua schemă de input.
+
+### Dependențe
+- Task 8 (pentru `include_docs`)
+
+### Tool-uri care rămân (fiecare ortogonal, fără suprapunere):
+| Tool | Rol |
+|---|---|
+| `rag_search` | Căutare universală (semantic + hybrid + docs) |
+| `rag_find_usages` | Navigare AST Graph (cine folosește simbolul X?) |
+| `rag_call_hierarchy` | Traversare caller/callee tree |
+| `rag_list_package_exports` | Listare exports per pachet |
+| `rag_read_file_context` | Citire fișier AST-aware |
+| `rag_index_workspace` | Indexare manuală |
+
+## Task 8: Indexare Documentație Markdown
+
+### Goal
+Indexează fișierele `.md` din workspace (README, guides, API docs) în aceeași colecție Qdrant cu tag `chunk_type: "markdown"`, permițând căutare semantică cross-domain (cod + documentație) fără tool-uri separate.
+
+### Arhitectură
+- **Chunking:** `langchaingo/textsplitter` (`MarkdownHeaderTextSplitter`) cu heading hierarchy, overlap, și păstrarea code blocks/tables.
+- **Embedding:** Același model Ollama ca pentru cod.
+- **Storage:** Aceeași colecție Qdrant, diferențiat prin `chunk_type: "markdown"` în payload.
+- **Potrivire cod ↔ doc:** 100% prin similaritate semantică (embedding cosine similarity) — fără regex, fără extragere explicită de simboluri, language-agnostic.
+
+### Subtasks
+
+#### Faza A — Dependință și chunking
+- [x] **[P0]** `go get github.com/tmc/langchaingo` — adaugă dependința.
+- [x] **[P0]** Creează `pkg/indexer/markdown.go` — wrapper peste `textsplitter.MarkdownHeaderTextSplitter` cu:
+  - `WithHeadingHierarchy(true)` — prepune heading-urile părinte la fiecare chunk.
+  - `WithCodeBlocks(true)` — păstrează code blocks întregi.
+  - `chunkSize: 2000`, `chunkOverlap: 200` — configurabil.
+- [x] **[P0]** Adaugă teste unitare pentru chunking markdown (`pkg/indexer/markdown_test.go`).
+
+#### Faza B — Indexare în pipeline-ul existent
+- [x] **[P0]** Extinde `pkg/indexer/service.go` — la scanarea workspace-ului, detectează fișiere `.md` / `.markdown` (excluzând `node_modules/`, `vendor/`, `.git/`).
+- [x] **[P0]** Indexează chunk-urile markdown cu payload:
+  ```json
+  {
+    "chunk_type": "markdown",
+    "file_path": "docs/architecture.md",
+    "section_heading": "## Indexer Service",
+    "content": "chunk text..."
+  }
+  ```
+- [x] **[P0]** Integrează indexarea docs în state tracking (`state.json` — `mod_time` / `size` diff) pentru re-indexare incrementală.
+- [ ] **[P1]** Adaugă progress tracking pentru docs în `IndexProgress` (ex: `docs: {done: 5, total: 8}`).
+
+#### Faza C — Căutare integrată în Smart Search
+- [x] **[P0]** Când `include_docs: true`, `smart_search.go` adaugă o a 3-a goroutină de căutare semantică filtrată pe `chunk_type == "markdown"`. *(realizat prin pasarea `includeDocs` la `engine.SearchCode` care folosește `SearchWithVector` în loc de `SearchCodeWithVector`)*
+- [x] **[P0]** Rezultatele din docs se merge-uiesc cu cele din cod, fiecare marcat cu `_source: "docs"`. *(merge-ul se face în `engine.SearchCode` — rezultatele conțin metadata `chunk_type` pentru diferențiere)*
+- [x] **[P1]** Adaugă filtru Qdrant pe storage layer: `SearchDocsOnly()` / `SearchCodeOnly()` echivalent. *(deja existent în `pkg/storage/qdrant.go`)*
+
+#### Faza D — Suport pentru alte formate (viitor)
+- [ ] **[P2]** `.txt` — split pe paragrafe cu `RecursiveCharacterSplitter`.
+- [ ] **[P2]** `.json` / `.yaml` — flatten keys ca text și indexare ca documentație structurată.
+- [ ] **[P2]** `.rst` / `.adoc` — convertor la markdown + chunking standard.

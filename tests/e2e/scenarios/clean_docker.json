@@ -1,0 +1,155 @@
+{
+  "name": "clean_docker",
+  "description": "Clean install in LXC, start services in Docker, start MCP server (Streamable HTTP), index repo and run a search.",
+  "vars": {
+    "image": "ubuntu:22.04",
+    "base": "ragcode-e2e-base",
+    "snapshot": "clean",
+    "mcp_http_port": 8080,
+    "repo_url": "https://github.com/doITmagic/rag-code-mcp.git",
+    "repo_ref": "",
+    "repo_dir": "/tmp/rag-code-mcp",
+    "file_path": "/tmp/rag-code-mcp/cmd/rag-code-mcp/main.go"
+  },
+  "steps": [
+    {
+      "type": "lxc.ensure_base_snapshot",
+      "description": "Create/ensure the base LXC container and snapshot, install dependencies (docker/git/curl), start Docker service.",
+      "image": "${image}",
+      "base": "${base}",
+      "snapshot": "${snapshot}",
+      "install": {
+        "apt": [
+          "docker.io",
+          "git",
+          "curl"
+        ]
+      },
+      "docker": {
+        "start": true
+      }
+    },
+    {
+      "type": "lxc.create_from_snapshot",
+      "description": "Create a new ephemeral test container from the base snapshot.",
+      "base": "${base}",
+      "snapshot": "${snapshot}",
+      "name": "${scenario_name}-${timestamp}"
+    },
+    {
+      "type": "lxc.push_binaries",
+      "description": "Copy prebuilt binaries into the container and mark them executable.",
+      "items": [
+        {
+          "src": "${bin_dir}/rag-code-install",
+          "dst": "/root/rag-code-install",
+          "mode": "0755"
+        },
+        {
+          "src": "${bin_dir}/rag-code-mcp",
+          "dst": "/root/rag-code-mcp",
+          "mode": "0755"
+        },
+        {
+          "src": "${bin_dir}/sse-client-test",
+          "dst": "/root/mcp-client-test",
+          "mode": "0755"
+        }
+      ]
+    },
+    {
+      "type": "lxc.exec",
+      "description": "Run the installer inside the container (Ollama+Qdrant in Docker mode).",
+      "cmd": [
+        "/root/rag-code-install",
+        "-y",
+        "-ollama",
+        "docker",
+        "-qdrant",
+        "docker"
+      ]
+    },
+    {
+      "type": "lxc.exec",
+      "description": "Place the MCP server binary in the installed bin directory (so later commands match expected paths).",
+      "cmd": [
+        "bash",
+        "-lc",
+        "mkdir -p /root/.local/share/ragcode/bin && cp /root/rag-code-mcp /root/.local/share/ragcode/bin/rag-code-mcp"
+      ]
+    },
+    {
+      "type": "lxc.exec",
+      "description": "Start the MCP server in the background (Streamable HTTP, POST /mcp) and write logs to /root/mcp.log.",
+      "cmd": [
+        "bash",
+        "-lc",
+        "HEALTH_CHECK_ON_STARTUP=false nohup /root/.local/share/ragcode/bin/rag-code-mcp -http-port ${mcp_http_port} >/root/mcp.log 2>&1 &"
+      ]
+    },
+    {
+      "type": "wait.http",
+      "description": "Wait until the MCP endpoint responds (server is ready).",
+      "url": "http://${container_ip}:${mcp_http_port}/mcp",
+      "timeout_sec": 120
+    },
+    {
+      "type": "lxc.exec",
+      "description": "Clone the target repository that will be indexed and searched.",
+      "cmd": [
+        "bash",
+        "-lc",
+        "rm -rf '${repo_dir}' && git clone --depth 1 '${repo_url}' '${repo_dir}'"
+      ]
+    },
+    {
+      "type": "lxc.exec",
+      "description": "Optionally checkout a fixed git ref (tag/commit) for deterministic runs.",
+      "when": "${repo_ref} != ''",
+      "cmd": [
+        "bash",
+        "-lc",
+        "cd '${repo_dir}' && git fetch --tags --force >/dev/null 2>&1 || true; git checkout -f '${repo_ref}'"
+      ]
+    },
+    {
+      "type": "mcp.connect",
+      "description": "Connect MCP client (Streamable HTTP stateless — no initialize handshake needed, server auto-initializes each request).",
+      "base_url": "http://${container_ip}:${mcp_http_port}"
+    },
+    {
+      "type": "mcp.tool_call",
+      "description": "Index (or reindex) the repo workspace so semantic search works.",
+      "name": "rag_index_workspace",
+      "arguments": {
+        "file_path": "${file_path}",
+        "recreate": true
+      },
+      "assert": {
+        "json_path": "$.status",
+        "in": [
+          "success",
+          "indexing_started"
+        ]
+      }
+    },
+    {
+      "type": "mcp.tool_call",
+      "description": "Run a deterministic exact search and assert the tool returns success.",
+      "name": "rag_search_code",
+      "arguments": {
+        "file_path": "${file_path}",
+        "mode": "exact",
+        "query": "SearchLocalIndexTool implements the rag_search_code MCP tool.",
+        "limit": 5
+      },
+      "assert": {
+        "json_path": "$.status",
+        "equals": "success"
+      },
+      "capture": {
+        "as": "search_result"
+      }
+    }
+  ]
+}

@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
@@ -34,7 +36,27 @@ type Engine struct {
 	// indexingJobs tracks active background indexing jobs.
 	// Key: workspace ID, Value: start time
 	indexingJobs sync.Map
+
+	// pendingIndex tracks file changes received while an indexing job is running.
+	// It ensures watcher-triggered incremental indexing is lossless under rapid edits.
+	pendingMu       sync.Mutex
+	pendingFiles    map[string]map[string]struct{} // workspaceID -> set(filePath)
+	pendingOverflow map[string]bool                // workspaceID -> too many pending changes, fallback to full scan
+
+	progress *progressStore
+
+	// detectionCache stores resolved WorkspaceContext with TTL to avoid
+	// repeated full resolver cascades for the same path.
+	detectionCache sync.Map // map[string]*detectionCacheEntry
 }
+
+// detectionCacheEntry wraps a cached WorkspaceContext with an expiry.
+type detectionCacheEntry struct {
+	wctx   *WorkspaceContext
+	expiry time.Time
+}
+
+const detectionCacheTTL = 5 * time.Second
 
 func (e *Engine) GetSearchService() *search.Service {
 	return e.search
@@ -78,12 +100,24 @@ func NewEngine(idx *indexer.Service, srv *search.Service, registryPath string, c
 	}
 
 	return &Engine{
-		indexer:  idx,
-		search:   srv,
-		resolver: res,
-		config:   cfg,
-		watchers: watcherMgr,
+		indexer:         idx,
+		search:          srv,
+		resolver:        res,
+		config:          cfg,
+		watchers:        watcherMgr,
+		progress:        newProgressStore(),
+		pendingFiles:    make(map[string]map[string]struct{}),
+		pendingOverflow: make(map[string]bool),
 	}
+}
+
+// GetIndexProgress returns the last known indexing progress for a workspace.
+// workspaceRoot is used as a hint to load persisted status from disc if not in memory.
+func (e *Engine) GetIndexProgress(workspaceID, workspaceRoot string) *IndexProgress {
+	if e.progress == nil {
+		return nil
+	}
+	return e.progress.get(workspaceID, workspaceRoot)
 }
 
 // Config returns the engine configuration.
@@ -103,9 +137,42 @@ type WorkspaceContext struct {
 	HeadSHA         string
 }
 
+// CollectionNameFor returns the Qdrant collection name for a workspace ID and language.
+func CollectionNameFor(wsID, lang string) string {
+	return fmt.Sprintf("ragcode-%s-%s", wsID, lang)
+}
+
+// CollectionName returns the Qdrant collection name for the given language.
+func (w *WorkspaceContext) CollectionName(lang string) string {
+	return CollectionNameFor(w.ID, lang)
+}
+
+// DetectFromParams resolves workspace context from a tool args map.
+// Reads file_path, workspace_root, or workspace keys (in that priority order).
+func (e *Engine) DetectFromParams(ctx context.Context, params map[string]interface{}) (*WorkspaceContext, error) {
+	for _, key := range []string{"file_path", "workspace_root", "workspace"} {
+		if v, ok := params[key].(string); ok && strings.TrimSpace(v) != "" {
+			return e.DetectContext(ctx, v)
+		}
+	}
+	return e.DetectContext(ctx, "")
+}
+
 // DetectContext resolves the workspace context for a given path using the full resolver cascade.
 // If path is empty, it falls back to the last active workspace from the registry.
+// Results are cached with a 5s TTL to avoid redundant resolver invocations.
 func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceContext, error) {
+	// Normalize cache key
+	cacheKey := strings.TrimSpace(path)
+	if entry, ok := e.detectionCache.LoadAndDelete(cacheKey); ok {
+		ce := entry.(*detectionCacheEntry)
+		if time.Now().Before(ce.expiry) {
+			// Re-store valid entry atomically before returning
+			e.detectionCache.Store(cacheKey, ce)
+			return ce.wctx, nil
+		}
+	}
+
 	req := contract.ResolveWorkspaceRequest{}
 	source := "explicit_file_path"
 
@@ -129,7 +196,7 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 		return nil, fmt.Errorf("workspace detection failed: %s", wsErr.Message)
 	}
 
-	return &WorkspaceContext{
+	wctx := &WorkspaceContext{
 		Root:            resp.ResolvedRoot,
 		ID:              resp.WorkspaceID,
 		Branch:          resp.Branch,
@@ -138,7 +205,17 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 		DetectionSource: source,
 		ReindexRequired: resp.ReindexRequired,
 		HeadSHA:         resp.HeadSHA,
-	}, nil
+	}
+
+	// Don't cache entries that require reindex or are high-risk — let next call re-evaluate
+	if !wctx.ReindexRequired && wctx.MismatchRisk != "high" {
+		e.detectionCache.Store(cacheKey, &detectionCacheEntry{
+			wctx:   wctx,
+			expiry: time.Now().Add(detectionCacheTTL),
+		})
+	}
+
+	return wctx, nil
 }
 
 // GetActiveWorkspace returns the last confirmed workspace root from the resolver.
@@ -150,10 +227,21 @@ func (e *Engine) GetActiveWorkspace() (string, error) {
 type SearchCodeResult struct {
 	Results         []storage.SearchResult
 	WorkspaceRoot   string
+	WorkspaceID     string
 	Collection      string
 	Language        string
 	MismatchRisk    string
 	DetectionSource string
+}
+
+// ErrNoCollectionsFound is returned by ExactSearchPolyglot when no collections
+// exist for the given workspace, meaning the workspace has not been indexed yet.
+type ErrNoCollectionsFound struct {
+	WorkspaceID string
+}
+
+func (e *ErrNoCollectionsFound) Error() string {
+	return fmt.Sprintf("no indexed collections found for workspace %q — run indexing first", e.WorkspaceID)
 }
 
 // ErrNotIndexed is returned when a workspace collection doesn't exist yet and indexing hasn't started.
@@ -170,6 +258,7 @@ func (e *ErrNotIndexed) Error() string {
 // ErrIndexingInProgress is returned when a workspace is currently being indexed.
 type ErrIndexingInProgress struct {
 	WorkspaceRoot string
+	WorkspaceID   string
 }
 
 func (e *ErrIndexingInProgress) Error() string {
@@ -179,6 +268,7 @@ func (e *ErrIndexingInProgress) Error() string {
 // ErrIndexingStarted is returned when indexing was automatically triggered.
 type ErrIndexingStarted struct {
 	WorkspaceRoot string
+	WorkspaceID   string
 }
 
 func (e *ErrIndexingStarted) Error() string {
@@ -186,59 +276,148 @@ func (e *ErrIndexingStarted) Error() string {
 }
 
 // SearchCode detects the workspace from filePath, resolves the correct collection,
-// and performs a semantic search. includeDocs=false searches code only.
-// If the collection does not exist, it triggers background indexing.
+// embeds the query ONCE, then fans out in parallel to all language collections.
+// includeDocs=false searches code only. Triggers background indexing if needed.
 func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, limit int, includeDocs bool) (*SearchCodeResult, error) {
+	t0 := time.Now()
+
 	wctx, err := e.DetectContext(ctx, filePath)
 	if err != nil {
 		return nil, err
 	}
+	log.Printf("[TIMER] SearchCode detect_context=%v", time.Since(t0))
 
-	// Detect language from file extension using the parser registry
-	lang := "go" // default fallback
+	// Primary language from file extension
+	primaryLang := "go"
 	if a := parser.GetByFile(filePath); a != nil {
-		lang = a.Name()
+		primaryLang = a.Name()
 	}
 
-	collection := fmt.Sprintf("ragcode-%s-%s", wctx.ID, lang)
-
-	exists, err := e.search.CollectionExists(ctx, collection)
+	// Ensure at least the primary collection exists before embedding (fast fail + indexing trigger)
+	primaryColl := wctx.CollectionName(primaryLang)
+	t1 := time.Now()
+	exists, err := e.search.CollectionExists(ctx, primaryColl)
+	log.Printf("[TIMER] SearchCode collection_exists_primary=%v (cached=%v)", time.Since(t1), time.Since(t1) < time.Millisecond)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check collection: %w", err)
 	}
-
 	if !exists {
-		// Check if already indexing
 		if _, ok := e.indexingJobs.Load(wctx.ID); ok {
-			return nil, &ErrIndexingInProgress{WorkspaceRoot: wctx.Root}
+			return nil, &ErrIndexingInProgress{WorkspaceRoot: wctx.Root, WorkspaceID: wctx.ID}
 		}
-
-		// Trigger background indexing
 		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
-		return nil, &ErrIndexingStarted{WorkspaceRoot: wctx.Root}
+		return nil, &ErrIndexingStarted{WorkspaceRoot: wctx.Root, WorkspaceID: wctx.ID}
 	}
 
-	// Trigger background indexing if resolver says re-index is required (e.g. branch change)
 	if wctx.ReindexRequired {
 		log.Printf("[INFO] Git state change detected (Head: %s), triggering background re-indexing for %s", wctx.HeadSHA, wctx.Root)
 		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 	}
 
-	var results []storage.SearchResult
-	if includeDocs {
-		results, err = e.search.Search(ctx, collection, queryText, limit)
-	} else {
-		results, err = e.search.SearchCodeOnly(ctx, collection, queryText, limit)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("search failed: %w", err)
+	// Embed ONCE, fan-out to all language collections in parallel
+	langs := parser.SupportedLanguages()
+	if len(langs) == 0 {
+		langs = []string{"go", "python", "php", "html"}
 	}
 
+	t2 := time.Now()
+	vector, err := e.search.EmbedQuery(ctx, queryText)
+	log.Printf("[TIMER] SearchCode embed=%v", time.Since(t2))
+	if err != nil {
+		return nil, fmt.Errorf("embedding failed: %w", err)
+	}
+
+	type langResult struct {
+		lang    string
+		coll    string
+		results []storage.SearchResult
+		err     error
+		elapsed time.Duration
+	}
+
+	resultsChan := make(chan langResult, len(langs))
+	var wg sync.WaitGroup
+	t3 := time.Now()
+
+	for _, lang := range langs {
+		coll := wctx.CollectionName(lang)
+		wg.Add(1)
+		go func(l, c string) {
+			defer wg.Done()
+			gt := time.Now()
+			ok, chkErr := e.search.CollectionExists(ctx, c)
+			if chkErr != nil || !ok {
+				return
+			}
+			var res []storage.SearchResult
+			var sErr error
+			if includeDocs {
+				res, sErr = e.search.SearchWithVector(ctx, c, vector, limit)
+			} else {
+				res, sErr = e.search.SearchCodeWithVector(ctx, c, vector, limit)
+			}
+			elapsed := time.Since(gt)
+			if sErr != nil {
+				log.Printf("[WARN] SearchCode: fan-out failed for %s: %v", c, sErr)
+				resultsChan <- langResult{lang: l, coll: c, err: sErr, elapsed: elapsed}
+				return
+			}
+			if len(res) > 0 {
+				resultsChan <- langResult{lang: l, coll: c, results: res, elapsed: elapsed}
+			}
+		}(lang, coll)
+	}
+
+	wg.Wait()
+	close(resultsChan)
+	log.Printf("[TIMER] SearchCode fanout_total=%v (langs=%d)", time.Since(t3), len(langs))
+
+	// Merge: primary lang results first, others appended; surface first error if no results
+	var primaryResults []storage.SearchResult
+	var otherResults []storage.SearchResult
+	var firstErr error
+	reportLang := primaryLang
+	reportColl := primaryColl
+
+	for lr := range resultsChan {
+		if lr.err != nil {
+			log.Printf("[TIMER] SearchCode lang=%s err elapsed=%v", lr.lang, lr.elapsed)
+			if firstErr == nil {
+				firstErr = lr.err
+			}
+			continue
+		}
+		log.Printf("[TIMER] SearchCode lang=%s hits=%d elapsed=%v", lr.lang, len(lr.results), lr.elapsed)
+		if lr.coll == primaryColl {
+			primaryResults = lr.results
+		} else {
+			otherResults = append(otherResults, lr.results...)
+		}
+	}
+
+	all := append(primaryResults, otherResults...)
+
+	// Global sort by score descending across all language results, then cap to limit.
+	// Without this, primary-language results always win regardless of score.
+	sort.Slice(all, func(i, j int) bool { return all[i].Score > all[j].Score })
+	if limit > 0 && len(all) > limit {
+		all = all[:limit]
+	}
+
+	// If nothing was found and there were errors, surface the error
+	if len(all) == 0 && firstErr != nil {
+		return nil, fmt.Errorf("search failed: %w", firstErr)
+	}
+
+	log.Printf("[TIMER] SearchCode TOTAL=%v (detect=%v embed=%v fanout=%v)",
+		time.Since(t0), t1.Sub(t0), t2.Sub(t1), time.Since(t3))
+
 	return &SearchCodeResult{
-		Results:         results,
+		Results:         all,
 		WorkspaceRoot:   wctx.Root,
-		Collection:      collection,
-		Language:        lang,
+		WorkspaceID:     wctx.ID,
+		Collection:      reportColl,
+		Language:        reportLang,
 		MismatchRisk:    wctx.MismatchRisk,
 		DetectionSource: wctx.DetectionSource,
 	}, nil
@@ -257,7 +436,7 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 		lang = a.Name()
 	}
 
-	collection := fmt.Sprintf("ragcode-%s-%s", wctx.ID, lang)
+	collection := wctx.CollectionName(lang)
 
 	exists, err := e.search.CollectionExists(ctx, collection)
 	if err != nil {
@@ -266,10 +445,10 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 
 	if !exists {
 		if _, ok := e.indexingJobs.Load(wctx.ID); ok {
-			return nil, &ErrIndexingInProgress{WorkspaceRoot: wctx.Root}
+			return nil, &ErrIndexingInProgress{WorkspaceRoot: wctx.Root, WorkspaceID: wctx.ID}
 		}
 		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
-		return nil, &ErrIndexingStarted{WorkspaceRoot: wctx.Root}
+		return nil, &ErrIndexingStarted{WorkspaceRoot: wctx.Root, WorkspaceID: wctx.ID}
 	}
 
 	if wctx.ReindexRequired {
@@ -285,11 +464,141 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 	return &SearchCodeResult{
 		Results:         results,
 		WorkspaceRoot:   wctx.Root,
+		WorkspaceID:     wctx.ID,
 		Collection:      collection,
 		Language:        lang,
 		MismatchRisk:    wctx.MismatchRisk,
 		DetectionSource: wctx.DetectionSource,
 	}, nil
+}
+
+// ExactSearchPolyglot performs a metadata-only filter scan (Qdrant Scroll) across
+// ALL language collections for a workspace in parallel.
+// No embedding is generated — results are fully deterministic and fast.
+// Use this for find_usages, call_hierarchy, package exports, and graph expansion.
+//
+// Returns ErrNoCollectionsFound when the workspace has no indexed collections yet.
+func (e *Engine) ExactSearchPolyglot(ctx context.Context, wsID string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error) {
+	langs := parser.SupportedLanguages()
+	if len(langs) == 0 {
+		langs = []string{"go", "python", "php", "html"}
+	}
+
+	type trial struct {
+		results []storage.SearchResult
+	}
+
+	resultsChan := make(chan trial, len(langs))
+	var wg sync.WaitGroup
+	var existingCollections int32
+
+	for _, lang := range langs {
+		collection := CollectionNameFor(wsID, lang)
+		wg.Add(1)
+		go func(coll string) {
+			defer wg.Done()
+
+			exists, err := e.search.CollectionExists(ctx, coll)
+			if err != nil {
+				log.Printf("[WARN] ExactSearchPolyglot: cannot check collection %s: %v", coll, err)
+				return
+			}
+			if !exists {
+				return
+			}
+			atomic.AddInt32(&existingCollections, 1)
+
+			res, sErr := e.search.ExactSearch(ctx, coll, filters, limit)
+			if sErr != nil {
+				log.Printf("[WARN] ExactSearchPolyglot: search failed for %s: %v", coll, sErr)
+				return
+			}
+			resultsChan <- trial{results: res}
+		}(collection)
+	}
+
+	wg.Wait()
+	close(resultsChan)
+
+	if atomic.LoadInt32(&existingCollections) == 0 {
+		return nil, &ErrNoCollectionsFound{WorkspaceID: wsID}
+	}
+
+	var all []storage.SearchResult
+	for t := range resultsChan {
+		all = append(all, t.results...)
+	}
+	return all, nil
+}
+
+// SearchByName performs a high-precision metadata-only lookup for a symbol by name.
+// It bypasses the LLM embedder completely — ideal for graph expansion and call hierarchy.
+// Equivalent to ExactSearchPolyglot with filter {"name": name}.
+func (e *Engine) SearchByName(ctx context.Context, wsID, name string, limit int) ([]storage.SearchResult, error) {
+	return e.ExactSearchPolyglot(ctx, wsID, map[string]interface{}{"name": name}, limit)
+}
+
+const pendingIndexMaxFiles = 200
+
+func (e *Engine) addPendingIndexFiles(workspaceID string, files []string) {
+	e.pendingMu.Lock()
+	defer e.pendingMu.Unlock()
+
+	if e.pendingOverflow[workspaceID] {
+		return
+	}
+
+	set, ok := e.pendingFiles[workspaceID]
+	if !ok {
+		set = make(map[string]struct{})
+		e.pendingFiles[workspaceID] = set
+	}
+
+	for _, f := range files {
+		if strings.TrimSpace(f) == "" {
+			continue
+		}
+		set[f] = struct{}{}
+		if len(set) > pendingIndexMaxFiles {
+			e.pendingOverflow[workspaceID] = true
+			delete(e.pendingFiles, workspaceID)
+			return
+		}
+	}
+}
+
+func (e *Engine) popPendingIndex(workspaceID string) (files []string, overflow bool) {
+	e.pendingMu.Lock()
+	defer e.pendingMu.Unlock()
+
+	overflow = e.pendingOverflow[workspaceID]
+	delete(e.pendingOverflow, workspaceID)
+
+	set, ok := e.pendingFiles[workspaceID]
+	if !ok {
+		return nil, overflow
+	}
+	delete(e.pendingFiles, workspaceID)
+
+	files = make([]string, 0, len(set))
+	for f := range set {
+		files = append(files, f)
+	}
+	sort.Strings(files)
+	return files, overflow
+}
+
+func (e *Engine) tryStartPendingIndex(root, workspaceID string) {
+	files, overflow := e.popPendingIndex(workspaceID)
+	if overflow {
+		log.Printf("[INFO] ♻️ Pending changes exceeded limit for %s - triggering full scan incremental indexing", root)
+		e.StartIndexingAsync(root, workspaceID, nil, false)
+		return
+	}
+	if len(files) == 0 {
+		return
+	}
+	e.StartIndexingAsync(root, workspaceID, files, false)
 }
 
 // StartIndexingAsync starts the indexing process in a background goroutine.
@@ -299,8 +608,17 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 		return // Already running
 	}
 
+	jobID := fmt.Sprintf("%s-%d", id, time.Now().UnixNano())
+	if e.progress != nil {
+		e.progress.start(id, root, jobID, time.Now())
+	}
+
 	go func() {
-		defer e.indexingJobs.Delete(id)
+		defer func() {
+			e.indexingJobs.Delete(id)
+			// If watcher changes came in while we were indexing, run a follow-up incremental job.
+			e.tryStartPendingIndex(root, id)
+		}()
 
 		ctx := context.Background()
 		var err error
@@ -315,8 +633,14 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 
 		if err != nil {
 			log.Printf("[ERROR] Background indexing failed for %s: %v", root, err)
+			if e.progress != nil {
+				e.progress.fail(id, root, time.Now(), err.Error())
+			}
 		} else {
 			log.Printf("[INFO] ✅ Background indexing completed for: %s", root)
+			if e.progress != nil {
+				e.progress.complete(id, root, time.Now())
+			}
 		}
 	}()
 }
@@ -342,7 +666,7 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) er
 			lang = a.Name()
 		}
 	}
-	collection := fmt.Sprintf("ragcode-%s-%s", wctx.ID, lang)
+	collection := wctx.CollectionName(lang)
 
 	for _, p := range files {
 		if err := e.indexer.IndexFile(ctx, collection, p, state); err != nil {
@@ -362,7 +686,7 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 
 	if e.config != nil && e.config.Workspace.AutoInstallSSESkill {
 		if !skills.IsSkillInstalled("ragcode-sse", wctx.Root) {
-			if err := skills.InstallSkill("ragcode-sse", wctx.Root); err != nil {
+			if err := skills.InstallSkill("ragcode-sse", wctx.Root, "agent"); err != nil {
 				log.Printf("[WARN] Failed to install ragcode-sse skill for %s: %v", wctx.Root, err)
 			}
 		}
@@ -371,15 +695,23 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 	// We'll iterate all supported languages.
 	languages := parser.SupportedLanguages()
 
+	var indexErrors []string
 	for _, lang := range languages {
-		collection := fmt.Sprintf("ragcode-%s-%s", wctx.ID, lang)
+		collection := wctx.CollectionName(lang)
+		progressCb := func(doneFiles, totalFiles int) {
+			if e.progress != nil {
+				e.progress.update(wctx.ID, lang, doneFiles, totalFiles, time.Now())
+			}
+		}
 		err := e.indexer.IndexWorkspace(ctx, wctx.Root, collection, indexer.Options{
 			Language:        lang,
 			ExcludePatterns: e.config.Workspace.ExcludePatterns,
 			Recreate:        recreate,
+			Progress:        progressCb,
 		})
 		if err != nil {
 			log.Printf("[ERROR] Indexing failed for %s: %v", lang, err)
+			indexErrors = append(indexErrors, fmt.Sprintf("%s: %v", lang, err))
 		}
 	}
 
@@ -387,6 +719,11 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 		if err := e.watchers.Start(wctx.Root, e.handleWatchChange); err != nil {
 			log.Printf("[WARN] Failed to start watcher for %s: %v", wctx.Root, err)
 		}
+	}
+
+	if len(indexErrors) > 0 {
+		return fmt.Errorf("indexing failed for %d language(s): %s. Check if Ollama is running and the embedding model is available",
+			len(indexErrors), strings.Join(indexErrors, "; "))
 	}
 
 	return nil
@@ -406,6 +743,7 @@ func (e *Engine) handleWatchChange(ctx context.Context, root string, changedFile
 		return err
 	}
 	if _, ok := e.indexingJobs.Load(wctx.ID); ok {
+		e.addPendingIndexFiles(wctx.ID, changedFiles)
 		return nil
 	}
 	e.StartIndexingAsync(wctx.Root, wctx.ID, changedFiles, false)

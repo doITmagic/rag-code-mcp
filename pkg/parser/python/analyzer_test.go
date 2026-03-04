@@ -99,7 +99,7 @@ class MyAdmin(User, BaseMixin):
 
 	t.Run("Skip tests", func(t *testing.T) {
 		testFile := filepath.Join(tmpDir, "test_app.py")
-		os.WriteFile(testFile, []byte("def test_one(): pass"), 0644)
+		require.NoError(t, os.WriteFile(testFile, []byte("def test_one(): pass"), 0644))
 
 		res, err := analyzer.Analyze(context.Background(), tmpDir)
 		require.NoError(t, err)
@@ -110,8 +110,8 @@ class MyAdmin(User, BaseMixin):
 
 	t.Run("Directory with hidden and venv", func(t *testing.T) {
 		venvDir := filepath.Join(tmpDir, "venv")
-		os.Mkdir(venvDir, 0755)
-		os.WriteFile(filepath.Join(venvDir, "lib.py"), []byte("x = 1"), 0644)
+		require.NoError(t, os.Mkdir(venvDir, 0755))
+		require.NoError(t, os.WriteFile(filepath.Join(venvDir, "lib.py"), []byte("x = 1"), 0644))
 
 		res, err := analyzer.Analyze(context.Background(), tmpDir)
 		require.NoError(t, err)
@@ -142,7 +142,7 @@ class Complex(metaclass=MyMeta):
         pass
 `
 		path := filepath.Join(tmpDir, "complex.py")
-		os.WriteFile(path, []byte(complexCode), 0644)
+		require.NoError(t, os.WriteFile(path, []byte(complexCode), 0644))
 
 		res, err := analyzer.Analyze(context.Background(), path)
 		require.NoError(t, err)

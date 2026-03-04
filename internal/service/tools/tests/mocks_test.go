@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"sync"
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
@@ -15,8 +16,10 @@ import (
 
 type mockVectorStore struct {
 	storage.VectorStore
+	mu                   sync.Mutex
 	SearchFunc           func(ctx context.Context, collection string, query storage.SearchQuery) ([]storage.SearchResult, error)
 	SearchCodeOnlyFunc   func(ctx context.Context, collection string, query storage.SearchQuery) ([]storage.SearchResult, error)
+	ExactSearchFunc      func(ctx context.Context, collection string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error)
 	CollectionExistsFunc func(ctx context.Context, name string) (bool, error)
 	UpsertFunc           func(ctx context.Context, collection string, points []storage.Point) (*storage.UpdateResult, error)
 }
@@ -36,6 +39,11 @@ func (m *mockVectorStore) SearchCodeOnly(ctx context.Context, collection string,
 }
 
 func (m *mockVectorStore) ExactSearch(ctx context.Context, collection string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ExactSearchFunc != nil {
+		return m.ExactSearchFunc(ctx, collection, filters, limit)
+	}
 	return nil, nil
 }
 

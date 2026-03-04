@@ -22,10 +22,7 @@ type Provider interface {
 ## Supported Providers
 
 ### Ollama (Local)
-The default provider for RagCode. It interacts with a local Ollama instance via its REST API. It is recommended to use models like `qwen2.5-coder` for chat and `qwen3-embedding` for high-quality representations.
-
-### OpenAI (Cloud)
-Can be configured for projects requiring high-end reasoning or larger embedding dimensions using models like `gpt-4o` and `text-embedding-3-small/large`.
+The default provider for RagCode. It interacts with a local Ollama instance via its REST API. It is recommended to use models like `qwen3-embedding:0.6b` for high-quality representations.
 
 ## Factory Pattern
 

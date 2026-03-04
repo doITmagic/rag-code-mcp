@@ -30,11 +30,11 @@ A deterministic replacement for the legacy `find_implementations` tool. Instead 
 ### Query Mechanism
 - **Exact DB Match**: It completely bypasses the LLM Embedder. It uses the `ExactSearch` capability to query Qdrant directly using a strict filter on the `Relations` array:
   ```json
-  { "Relations[].target_name": "SymbolName" }
+  { "relations[].target_name": "SymbolName" }
   ```
 
 ### How it Works & Important Points
-- **100% Determinist**: Because the indexer parses the AST and maps out exactly what function calls what, this tool queries those explicit edges.
+- **100% Deterministic**: Because the indexer parses the AST and maps out exactly what function calls what, this tool queries those explicit edges.
 - **Zero Hallucination**: You get exactly the files and line numbers where `SymbolName` is invoked, instantiated, or implemented.
 - **Telemetry**: Calculates the exact bytes of the snippet returned versus the full file sizes to demonstrate the RAG context savings.
 
@@ -77,7 +77,7 @@ Instead of dumping an entire 2000-line file into the AI's context window, this t
 Every new tool added to this package MUST adhere to the following lifecycle:
 
 1. **Implement Tool Interface**: Register its name, description, and input schema securely.
-2. **Require `file_path`**: Always request a `file_path` or `workspace_root` from the AI to ensure multi-root or polyglot workspaces resolve to the correct index collection (`ragcode-<ws_id>-<lang>`).
+2. **Prefer `file_path`**: Prefer requesting a `file_path` or `workspace_root` from the AI to ensure multi-root or polyglot workspaces resolve to the correct index collection (`ragcode-<ws_id>-<lang>`). If omitted, the server MAY fall back to the last active workspace when it can safely resolve it, but this can be less reliable and slower.
 3. **Resolve Engine Context**: Call `t.engine.DetectContext(ctx, filePath)` to guarantee the tool executes within the boundaries of the correct Git branch and repository.
 4. **Use `ExactSearch` vs `Search`**: If you are looking for specific metadata (like a package name or an AST relation), use `searchSvc.ExactSearch`. If you are looking for conceptual ideas ("how do I authenticate"), use `searchSvc.Search`.
 5. **Standardized Response**: All tools MUST return their data wrapped in a JSON `ToolResponse`. This includes the core message, structured `Data`, and `ContextMetadata` (including `Telemetry` and `DetectionSource`).

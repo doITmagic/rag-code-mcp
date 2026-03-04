@@ -263,8 +263,7 @@ func MigrateEmbeddingModel(cfg *Config) bool {
 			log.Printf("║  Vector spaces differ between models — old results will be   ║")
 			log.Printf("║  garbage until you re-index.                                 ║")
 			log.Printf("║                                                              ║")
-			log.Printf("║  Run: rag_index_workspace with force_reindex: true           ║")
-			log.Printf("║  Or:  rag_index_workspace with recreate: true                ║")
+			log.Printf("║  Run: rag_index_workspace with recreate: true                ║")
 			log.Printf("╚══════════════════════════════════════════════════════════════╝")
 
 			cfg.LLM.OllamaEmbed = newStableModel

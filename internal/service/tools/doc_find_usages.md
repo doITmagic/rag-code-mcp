@@ -15,7 +15,7 @@ It completely **bypasses the Semantic Embedder (LLM)** and issues an Exact Match
 
 ```json
 {
-  "Relations[].target_name": "<SymbolName>"
+  "relations[].target_name": "<SymbolName>"
 }
 ```
 

@@ -1,6 +1,6 @@
 # Search Service
 
-The `search` package implements the core discovery logic of RagCode. It abstraction the complexities of vector similarity and lexical matching into a simple interface.
+The `search` package implements the core discovery logic of RagCode. It abstracts the complexities of vector similarity and lexical matching into a simple interface.
 
 ## Search Strategies
 

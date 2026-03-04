@@ -261,7 +261,9 @@ func (t *ReadFileContextTool) streamLines(path string, start, end, ctxLines int)
 		}
 	}
 	// Seek back to start
-	f.Seek(0, 0)
+	if _, err := f.Seek(0, 0); err != nil {
+		return result, fmt.Errorf("failed to seek file: %w", err)
+	}
 
 	minLine := start - ctxLines
 	if minLine < 1 {
@@ -310,8 +312,9 @@ func (t *ReadFileContextTool) buildResponse(wctx *engine.WorkspaceContext, res C
 	}
 	if wctx != nil {
 		resp.Context = ContextMetadata{
-			WorkspaceRoot:   wctx.Root,
-			DetectionSource: wctx.DetectionSource,
+			WorkspaceRoot:    wctx.Root,
+			DetectionSource:  wctx.DetectionSource,
+			IndexingProgress: BuildIndexingProgress(t.engine, wctx.ID, wctx.Root),
 		}
 	}
 

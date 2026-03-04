@@ -3,11 +3,15 @@ package python
 import (
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+
 	"unicode"
+
+	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
 )
 
 // Pre-compiled regex patterns for better performance
@@ -81,6 +85,7 @@ func (ca *CodeAnalyzer) AnalyzePaths(paths []string) ([]CodeChunk, error) {
 
 				if err := ca.parseAndCollect(path, content); err != nil {
 					// Skip files that fail to parse
+					log.Printf("[DEBUG] Skipping file %s due to parse error: %v", path, err)
 				}
 				return nil
 			})
@@ -594,6 +599,7 @@ func (ca *CodeAnalyzer) extractFunctions(lines []string, filePath string, conten
 					}
 				}
 				signature := ca.buildFunctionSignature(funcName, params, returnType, isAsync)
+				calls := ca.extractMethodCalls(lines, i+1, endLine-1)
 				functions = append(functions, FunctionInfo{
 					Name:        funcName,
 					Signature:   signature,
@@ -601,6 +607,7 @@ func (ca *CodeAnalyzer) extractFunctions(lines []string, filePath string, conten
 					Parameters:  params,
 					ReturnType:  returnType,
 					Decorators:  currentDecorators,
+					Calls:       calls,
 					IsAsync:     isAsync,
 					IsGenerator: isGenerator,
 					FilePath:    filePath,
@@ -840,6 +847,15 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 					"dependencies": class.Dependencies,
 				},
 			}
+			// Add basic relations (inheritance)
+			for _, base := range class.Bases {
+				chunk.Relations = append(chunk.Relations, pkgParser.Relation{TargetName: base, Type: pkgParser.RelInheritance})
+			}
+			// Add dependency relations
+			for _, dep := range class.Dependencies {
+				chunk.Relations = append(chunk.Relations, pkgParser.Relation{TargetName: dep, Type: pkgParser.RelDependency})
+			}
+
 			chunks = append(chunks, chunk)
 			for _, method := range class.Methods {
 				if method.IsProperty {
@@ -865,11 +881,20 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 						"type_deps":      method.TypeDeps,
 					},
 				}
+				// Add method call relations
+				for _, call := range method.Calls {
+					methodChunk.Relations = append(methodChunk.Relations, pkgParser.Relation{TargetName: call.Name, Type: pkgParser.RelCalls})
+				}
+				// Add type dependency relations
+				for _, dep := range method.TypeDeps {
+					methodChunk.Relations = append(methodChunk.Relations, pkgParser.Relation{TargetName: dep, Type: pkgParser.RelUsesType})
+				}
+
 				chunks = append(chunks, methodChunk)
 			}
 		}
 		for _, fn := range module.Functions {
-			chunks = append(chunks, CodeChunk{
+			chunk := CodeChunk{
 				Name:      fn.Name,
 				Type:      "function",
 				Language:  "python",
@@ -885,7 +910,12 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 					"is_generator": fn.IsGenerator,
 					"decorators":   fn.Decorators,
 				},
-			})
+			}
+			// Add function call relations
+			for _, call := range fn.Calls {
+				chunk.Relations = append(chunk.Relations, pkgParser.Relation{TargetName: call.Name, Type: pkgParser.RelCalls})
+			}
+			chunks = append(chunks, chunk)
 		}
 		for _, c := range module.Constants {
 			chunks = append(chunks, CodeChunk{
@@ -1148,13 +1178,22 @@ func isBuiltinType(name string) bool {
 }
 
 func extractBaseTypeName(typeName string) string {
-	if idx := strings.Index(typeName, "["); idx != -1 {
-		inner := typeName[idx+1 : len(typeName)-1]
-		if strings.Contains(inner, ",") {
-			parts := strings.Split(inner, ",")
-			inner = strings.TrimSpace(parts[len(parts)-1])
-		}
-		return extractBaseTypeName(inner)
+	typeName = strings.TrimSpace(typeName)
+	idx := strings.Index(typeName, "[")
+	if idx == -1 {
+		return typeName
 	}
-	return typeName
+	endIdx := strings.LastIndex(typeName, "]")
+	if endIdx == -1 || endIdx <= idx {
+		endIdx = len(typeName)
+	}
+	if idx+1 >= endIdx {
+		return typeName[:idx]
+	}
+	inner := typeName[idx+1 : endIdx]
+	if strings.Contains(inner, ",") {
+		parts := strings.Split(inner, ",")
+		inner = strings.TrimSpace(parts[len(parts)-1])
+	}
+	return extractBaseTypeName(inner)
 }

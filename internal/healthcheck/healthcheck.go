@@ -7,11 +7,34 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
+	"github.com/ollama/ollama/api"
 )
+
+// PingOllama performs a quick liveness check against Ollama using the native API client.
+// Returns nil if Ollama responds within 3 seconds, error otherwise.
+func PingOllama(baseURL string) error {
+	baseURL = resolveOllamaBaseURL(baseURL)
+
+	parsedURL, err := url.Parse(baseURL)
+	if err != nil {
+		return fmt.Errorf("invalid ollama URL %q: %w", baseURL, err)
+	}
+
+	client := api.NewClient(parsedURL, &http.Client{Timeout: 3 * time.Second})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	if err := client.Heartbeat(ctx); err != nil {
+		return fmt.Errorf("ollama unreachable at %s: %w", baseURL, err)
+	}
+	return nil
+}
 
 // CheckResult represents the result of a health check
 type CheckResult struct {
@@ -331,7 +354,7 @@ func FormatResults(results []CheckResult) string {
 }
 
 // GetRemediation provides remediation steps for failed checks
-func GetRemediation(results []CheckResult) string {
+func GetRemediation(results []CheckResult, models []string) string {
 	var remediation string
 
 	for _, result := range results {
@@ -340,17 +363,25 @@ func GetRemediation(results []CheckResult) string {
 
 			switch result.Service {
 			case "Ollama":
-				remediation += `
+				modelCommands := ""
+				for _, m := range models {
+					if m != "" {
+						modelCommands += fmt.Sprintf("    ollama pull %s\n", m)
+					}
+				}
+				if modelCommands == "" {
+					modelCommands = "    ollama pull qwen3-embedding:0.6b\n"
+				}
+
+				remediation += fmt.Sprintf(`
   Install Ollama:
     curl -fsSL https://ollama.ai/install.sh | sh
 
   Start Ollama (it usually starts automatically):
     ollama serve
 
-  Pull required models:
-    ollama pull mxbai-embed-large
-    ollama pull phi3:medium
-`
+  Pull required model(s):
+%s`, modelCommands)
 			case "Qdrant":
 				remediation += `
   Start Qdrant with Docker:

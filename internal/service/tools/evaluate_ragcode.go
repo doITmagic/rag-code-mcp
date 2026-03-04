@@ -119,6 +119,17 @@ func (t *EvaluateRagCodeTool) Execute(ctx context.Context, args map[string]inter
 		Context: ContextMetadata{
 			WorkspaceRoot:   workspaceRoot,
 			DetectionSource: source,
+			IndexingProgress: BuildIndexingProgress(t.engine, func() string {
+				if wctx != nil {
+					return wctx.ID
+				}
+				return ""
+			}(), func() string {
+				if wctx != nil {
+					return wctx.Root
+				}
+				return ""
+			}()),
 		},
 		Data: b.String(),
 	}

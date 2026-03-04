@@ -22,12 +22,11 @@ func init() {
 }
 
 // CodeAnalyzer mirrors the tutorial's analyzer to extract rich package info.
-type CodeAnalyzer struct {
-	fset *token.FileSet
-}
+// It is safe for concurrent use — no mutable state is stored on the struct.
+type CodeAnalyzer struct{}
 
 func NewCodeAnalyzer() *CodeAnalyzer {
-	return &CodeAnalyzer{fset: token.NewFileSet()}
+	return &CodeAnalyzer{}
 }
 
 // Name returns the analyzer name.
@@ -60,6 +59,7 @@ func (ca *CodeAnalyzer) Analyze(ctx context.Context, path string) (*pkgParser.Re
 			EndLine:   ch.EndLine,
 			FilePath:  ch.FilePath,
 			Language:  ch.Language,
+			IsPublic:  ast.IsExported(ch.Name),
 			Relations: ch.Relations,
 			Metadata:  ch.Metadata,
 		})
@@ -100,14 +100,11 @@ func (ca *CodeAnalyzer) AnalyzePackage(dir string) (*PackageInfo, error) {
 		return nil, fmt.Errorf("no parseable Go files found in %s", dir)
 	}
 
-	// Store fset for this analysis session
-	ca.fset = fset
-
 	// Build a map from function name -> AST FuncDecl (with Body) BEFORE doc.New()
 	astFuncMap := ca.buildFunctionASTMap(astFiles)
 
 	// Build documentation view (this may modify AST nodes)
-	docPkg, err := doc.NewFromFiles(ca.fset, astFiles, "./", doc.AllDecls|doc.AllMethods)
+	docPkg, err := doc.NewFromFiles(fset, astFiles, "./", doc.AllDecls|doc.AllMethods)
 	if err != nil {
 		return nil, fmt.Errorf("doc.NewFromFiles: %w", err)
 	}
@@ -121,19 +118,19 @@ func (ca *CodeAnalyzer) AnalyzePackage(dir string) (*PackageInfo, error) {
 
 	// Functions
 	for _, fn := range docPkg.Funcs {
-		fnInfo := ca.analyzeFunctionDecl(fn, astFuncMap)
+		fnInfo := ca.analyzeFunctionDecl(fset, fn, astFuncMap)
 		info.Functions = append(info.Functions, fnInfo)
 	}
 
 	// Types + methods
 	for _, typ := range docPkg.Types {
-		typeInfo := ca.analyzeTypeDecl(typ, astFuncMap)
+		typeInfo := ca.analyzeTypeDecl(fset, typ, astFuncMap)
 		typeIdx := len(info.Types) // Save index before append
 		info.Types = append(info.Types, typeInfo)
 
 		// Process methods for this type
 		for _, method := range typ.Methods {
-			methodInfo := ca.analyzeFunctionDecl(method, astFuncMap, typ.Name) // pass receiver name
+			methodInfo := ca.analyzeFunctionDecl(fset, method, astFuncMap, typ.Name) // pass receiver name
 			methodInfo.IsMethod = true
 			methodInfo.Receiver = typ.Name
 			info.Functions = append(info.Functions, methodInfo)
@@ -144,11 +141,11 @@ func (ca *CodeAnalyzer) AnalyzePackage(dir string) (*PackageInfo, error) {
 		}
 	} // Consts and vars
 	for _, c := range docPkg.Consts {
-		constInfo := ca.analyzeConstantDecl(c)
+		constInfo := ca.analyzeConstantDecl(fset, c)
 		info.Constants = append(info.Constants, constInfo...)
 	}
 	for _, v := range docPkg.Vars {
-		varInfo := ca.analyzeVariableDecl(v)
+		varInfo := ca.analyzeVariableDecl(fset, v)
 		info.Variables = append(info.Variables, varInfo...)
 	}
 
@@ -191,7 +188,7 @@ func (ca *CodeAnalyzer) buildFunctionASTMap(files []*ast.File) map[string]*ast.B
 	return funcMap
 }
 
-func (ca *CodeAnalyzer) analyzeFunctionDecl(fn *doc.Func, astBodyMap map[string]*ast.BlockStmt, receiverName ...string) FunctionInfo {
+func (ca *CodeAnalyzer) analyzeFunctionDecl(fset *token.FileSet, fn *doc.Func, astBodyMap map[string]*ast.BlockStmt, receiverName ...string) FunctionInfo {
 	info := FunctionInfo{
 		Name:        fn.Name,
 		Description: cleanDoc(fn.Doc),
@@ -208,8 +205,8 @@ func (ca *CodeAnalyzer) analyzeFunctionDecl(fn *doc.Func, astBodyMap map[string]
 
 	if fn.Decl != nil && astBody != nil {
 		// Use doc.Func for position (Pos()) and astBody for end position
-		pos := ca.fset.Position(fn.Decl.Pos())
-		endPos := ca.fset.Position(astBody.Rbrace + 1) // +1 to include closing brace line
+		pos := fset.Position(fn.Decl.Pos())
+		endPos := fset.Position(astBody.Rbrace + 1) // +1 to include closing brace line
 
 		info.FilePath = pos.Filename
 		info.StartLine = pos.Line
@@ -229,13 +226,13 @@ func (ca *CodeAnalyzer) analyzeFunctionDecl(fn *doc.Func, astBodyMap map[string]
 	} else if fn.Decl != nil {
 		// Fallback to doc.Func Decl (won't have Body)
 		// Extract position information
-		pos := ca.fset.Position(fn.Decl.Pos())
+		pos := fset.Position(fn.Decl.Pos())
 		// Use Body.End() to get the end of the function body, not just the declaration
 		endPos := fn.Decl.End()
 		if fn.Decl.Body != nil {
 			endPos = fn.Decl.Body.End()
 		}
-		end := ca.fset.Position(endPos)
+		end := fset.Position(endPos)
 		info.FilePath = pos.Filename
 		info.StartLine = pos.Line
 		info.EndLine = end.Line
@@ -258,7 +255,7 @@ func (ca *CodeAnalyzer) analyzeFunctionDecl(fn *doc.Func, astBodyMap map[string]
 	return info
 }
 
-func (ca *CodeAnalyzer) analyzeTypeDecl(typ *doc.Type, astBodyMap map[string]*ast.BlockStmt) TypeInfo {
+func (ca *CodeAnalyzer) analyzeTypeDecl(fset *token.FileSet, typ *doc.Type, astBodyMap map[string]*ast.BlockStmt) TypeInfo {
 	info := TypeInfo{
 		Name:        typ.Name,
 		Description: cleanDoc(typ.Doc),
@@ -266,8 +263,8 @@ func (ca *CodeAnalyzer) analyzeTypeDecl(typ *doc.Type, astBodyMap map[string]*as
 	}
 	if typ.Decl != nil {
 		// Extract position information
-		pos := ca.fset.Position(typ.Decl.Pos())
-		end := ca.fset.Position(typ.Decl.End())
+		pos := fset.Position(typ.Decl.Pos())
+		end := fset.Position(typ.Decl.End())
 		info.FilePath = pos.Filename
 		info.StartLine = pos.Line
 		info.EndLine = end.Line
@@ -401,15 +398,15 @@ func (ca *CodeAnalyzer) formatInterfaceMethodSignature(name string, funcType *as
 	return buf.String()
 }
 
-func (ca *CodeAnalyzer) analyzeConstantDecl(c *doc.Value) []ConstantInfo {
+func (ca *CodeAnalyzer) analyzeConstantDecl(fset *token.FileSet, c *doc.Value) []ConstantInfo {
 	var constants []ConstantInfo
 
 	// Extract position information from declaration
 	var filePath string
 	var startLine, endLine int
 	if c.Decl != nil {
-		pos := ca.fset.Position(c.Decl.Pos())
-		end := ca.fset.Position(c.Decl.End())
+		pos := fset.Position(c.Decl.Pos())
+		end := fset.Position(c.Decl.End())
 		filePath = pos.Filename
 		startLine = pos.Line
 		endLine = end.Line
@@ -439,15 +436,15 @@ func (ca *CodeAnalyzer) analyzeConstantDecl(c *doc.Value) []ConstantInfo {
 	return constants
 }
 
-func (ca *CodeAnalyzer) analyzeVariableDecl(v *doc.Value) []VariableInfo {
+func (ca *CodeAnalyzer) analyzeVariableDecl(fset *token.FileSet, v *doc.Value) []VariableInfo {
 	var variables []VariableInfo
 
 	// Extract position information from declaration
 	var filePath string
 	var startLine, endLine int
 	if v.Decl != nil {
-		pos := ca.fset.Position(v.Decl.Pos())
-		end := ca.fset.Position(v.Decl.End())
+		pos := fset.Position(v.Decl.Pos())
+		end := fset.Position(v.Decl.End())
 		filePath = pos.Filename
 		startLine = pos.Line
 		endLine = end.Line
@@ -743,17 +740,17 @@ func convertPackageInfoToChunks(pi *PackageInfo) []CodeChunk {
 			rels = append(rels, extractRelationsFromType(fn.Receiver)...)
 		}
 		for _, call := range fn.Calls {
+			// Store only the unqualified (short) name — e.g. "DetectContext" not "t.engine.DetectContext".
+			// The qualified form is never stored as a symbol name in the index, so it
+			// only produces noise and duplicate entries.
+			name := call
+			if idx := strings.LastIndex(call, "."); idx != -1 {
+				name = call[idx+1:]
+			}
 			rels = append(rels, pkgParser.Relation{
-				TargetName: call,
+				TargetName: name,
 				Type:       pkgParser.RelCalls,
 			})
-			// Also add unqualified name for easier searching
-			if idx := strings.LastIndex(call, "."); idx != -1 {
-				rels = append(rels, pkgParser.Relation{
-					TargetName: call[idx+1:],
-					Type:       pkgParser.RelCalls,
-				})
-			}
 		}
 
 		out = append(out, CodeChunk{
@@ -876,17 +873,14 @@ func extractRelationsFromType(typStr string) []pkgParser.Relation {
 		return nil
 	}
 
-	rels := []pkgParser.Relation{
-		{TargetName: t, Type: pkgParser.RelUsesType},
-	}
-	// Also add unqualified name for easier searching
+	// Store only the unqualified (short) name — e.g. "Engine" not "engine.Engine".
+	short := t
 	if idx := strings.LastIndex(t, "."); idx != -1 {
-		rels = append(rels, pkgParser.Relation{
-			TargetName: t[idx+1:],
-			Type:       pkgParser.RelUsesType,
-		})
+		short = t[idx+1:]
 	}
-	return rels
+	return []pkgParser.Relation{
+		{TargetName: short, Type: pkgParser.RelUsesType},
+	}
 }
 
 // extractCodeFromFile reads source code from a file between specified line numbers (inclusive, 1-based)

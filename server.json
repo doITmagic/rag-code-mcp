@@ -1,14 +1,23 @@
 {
   "name": "ragcode",
-  "version": "1.1.21",
-  "description": "Semantic code navigation using RAG (Retrieval-Augmented Generation) with multi-language support (Go, PHP, Python, JavaScript). Compatible with Windsurf, Cursor, Antigravity, Claude Desktop, and VS Code + GitHub Copilot (agent mode).",
+  "version": "2.1.26",
+  "description": "Semantic code intelligence using RAG (Retrieval-Augmented Generation). Supports Go, PHP, Python, JavaScript/HTML. Provides semantic search, call hierarchies, usage finding, and automatic IDE configuration. Compatible with Windsurf, Cursor, Antigravity, Claude Desktop, Gemini CLI, Zed, and VS Code + GitHub Copilot.",
   "homepage": "https://github.com/doITmagic/rag-code-mcp",
   "license": "MIT",
   "runtime": "binary",
   "command": "rag-code-mcp",
+  "transports": {
+    "stdio": {
+      "description": "Standard input/output (default, used by IDEs with command: config)"
+    },
+    "http": {
+      "endpoint": "POST /mcp",
+      "description": "Streamable HTTP stateless transport. Start with --http-port 3000. Configure IDEs with url: http://localhost:3000/mcp"
+    }
+  },
   "capabilities": {
     "tools": true,
-    "resources": true,
+    "resources": false,
     "prompts": false,
     "sampling": false
   },
@@ -16,7 +25,7 @@
     "ollama": {
       "required": true,
       "url": "https://ollama.ai",
-      "description": "Local LLM for embeddings and chat"
+      "description": "Local LLM for embeddings. Required model: qwen3-embedding:0.6b (or any mxbai-embed-large compatible)"
     },
     "qdrant": {
       "required": true,
@@ -26,105 +35,93 @@
   },
   "tools": [
     {
+      "name": "rag_search",
+      "description": "Intelligent code search that automatically determines the best strategy (semantic + exact). Returns full source code for high-confidence matches, compact summaries for exploratory results."
+    },
+    {
       "name": "rag_search_code",
-      "description": "Semantic search across indexed codebase"
+      "description": "Comprehensive code search with explicit mode control: 'discovery' (semantic/conceptual) or 'exact' (hybrid BM25 + vector). Supports graph context expansion — auto-fetches related definitions."
     },
     {
-      "name": "rag_hybrid_search",
-      "description": "Combined semantic and lexical search"
+      "name": "rag_find_usages",
+      "description": "Find where a specific class, function, or type is used across the codebase using the Code Graph (AST relations). Returns exact code chunks, files, and line numbers."
     },
     {
-      "name": "rag_get_function_details",
-      "description": "Get detailed information about a function or method"
-    },
-    {
-      "name": "rag_find_type_definition",
-      "description": "Find the definition of a struct or interface"
-    },
-    {
-      "name": "rag_get_code_context",
-      "description": "Extract code context for specific line ranges"
+      "name": "rag_call_hierarchy",
+      "description": "Explore recursive call relationships for a symbol. Supports 'incoming' (who calls this) and 'outgoing' (what this calls) directions, up to a configurable depth."
     },
     {
       "name": "rag_list_package_exports",
-      "description": "List exported symbols from a package"
+      "description": "List all public functions, classes, and types in a package/module. Returns structured list with symbol names, types, and signatures. Works for Go packages, PHP namespaces, Python modules."
     },
     {
-      "name": "rag_find_implementations",
-      "description": "Find implementations and usages of a symbol"
-    },
-    {
-      "name": "rag_search_docs",
-      "description": "Search indexed documentation"
+      "name": "rag_read_file_context",
+      "description": "Read specific lines from a file with surrounding smart AST context. Requires an exact file path and line number."
     },
     {
       "name": "rag_index_workspace",
-      "description": "Manually trigger indexing of a workspace (auto-indexing is enabled by default)"
-    },
-    {
-      "name": "rag_evaluate",
-      "description": "Request a performance and quality evaluation of RagCode MCP"
+      "description": "Index or reindex a workspace for semantic code search. Analyzes all supported source files and stores vectors. Runs in the background."
     },
     {
       "name": "rag_list_skills",
-      "description": "Lists all available AI skills bundled within the ragcode binary"
+      "description": "Lists all available embedded AI skills and their installation status in the current workspace."
     },
     {
       "name": "rag_install_skill",
-      "description": "Installs or uninstalls an AI skill to/from the current workspace"
+      "description": "Installs or uninstalls a specific AI skill into the current workspace. Action must be 'install' or 'uninstall'."
+    },
+    {
+      "name": "rag_evaluate",
+      "description": "Request a performance and quality evaluation of RagCode MCP from the AI assistant's perspective."
     },
     {
       "name": "rag_check_update",
-      "description": "Checks for available ragcode-mcp updates on GitHub"
+      "description": "Checks for available ragcode-mcp updates on GitHub and reports if a newer version is available."
     },
     {
       "name": "rag_apply_update",
-      "description": "Downloads and installs the latest version of ragcode-mcp"
-    }
-  ],
-  "resources": [
-    {
-      "name": "project-readme",
-      "description": "Project README file"
-    },
-    {
-      "name": "ragcode-readme",
-      "description": "MCP RagCode guide"
-    },
-    {
-      "name": "config",
-      "description": "Server configuration file"
+      "description": "Downloads and installs the latest version of ragcode-mcp. The server will need to be restarted after completion."
     }
   ],
   "configuration": {
+    "flags": {
+      "--http-port": {
+        "description": "Port for Streamable HTTP server (POST /mcp). Set to -1 to disable.",
+        "default": "3000"
+      },
+      "--config": {
+        "description": "Path to configuration YAML file",
+        "default": "config.yaml"
+      },
+      "--ollama-base-url": {
+        "description": "Ollama base URL override"
+      },
+      "--ollama-model": {
+        "description": "Ollama chat model override"
+      },
+      "--ollama-embed": {
+        "description": "Ollama embedding model override"
+      },
+      "--qdrant-url": {
+        "description": "Qdrant URL override"
+      }
+    },
     "env": {
       "OLLAMA_BASE_URL": {
         "description": "Ollama server URL",
         "default": "http://localhost:11434"
       },
-      "OLLAMA_MODEL": {
-        "description": "Ollama chat model",
-        "default": "phi3:medium"
-      },
       "OLLAMA_EMBED": {
         "description": "Ollama embedding model",
-        "default": "mxbai-embed-large"
+        "default": "qwen3-embedding:0.6b"
       },
       "QDRANT_URL": {
         "description": "Qdrant server URL",
         "default": "http://localhost:6333"
       },
-      "QDRANT_COLLECTION": {
-        "description": "Qdrant collection name for code index",
-        "default": "do-ai-code"
-      },
       "MCP_LOG_LEVEL": {
         "description": "Logging level (debug, info, warn, error)",
         "default": "info"
-      },
-      "MCP_LOG_FILE": {
-        "description": "Path to log file for debugging (optional)",
-        "default": ""
       }
     }
   }

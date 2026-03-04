@@ -64,9 +64,12 @@ const (
 type RelationType string
 
 const (
-	RelUsesType   RelationType = "uses_type"
-	RelImplements RelationType = "implements"
-	RelCalls      RelationType = "calls"
+	RelCalls       RelationType = "calls"
+	RelImplements  RelationType = "implements"
+	RelInheritance RelationType = "inheritance"
+	RelDependency  RelationType = "dependency"
+	RelUsesTrait   RelationType = "uses_trait"
+	RelUsesType    RelationType = "uses_type"
 )
 
 // Relation describes a connection pointing to another code entity.
@@ -87,6 +90,7 @@ type Symbol struct {
 	EndLine   int            `json:"end_line"`
 	FilePath  string         `json:"file_path"`
 	Language  string         `json:"language"`
+	IsPublic  bool           `json:"is_public"` // Whether the symbol is public/exported
 	Relations []Relation     `json:"relations"` // Captured structural dependencies (AST graph)
 	Metadata  map[string]any `json:"metadata"`
 }

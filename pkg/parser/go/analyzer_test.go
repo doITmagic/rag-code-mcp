@@ -126,12 +126,12 @@ func TestCodeAnalyzer_EdgeCases(t *testing.T) {
 
 	t.Run("Skip vendor and hidden", func(t *testing.T) {
 		vendorDir := filepath.Join(tmpDir, "vendor")
-		os.Mkdir(vendorDir, 0755)
-		os.WriteFile(filepath.Join(vendorDir, "skip.go"), []byte("package vendor"), 0644)
+		require.NoError(t, os.Mkdir(vendorDir, 0755))
+		require.NoError(t, os.WriteFile(filepath.Join(vendorDir, "skip.go"), []byte("package vendor"), 0644))
 
 		hiddenDir := filepath.Join(tmpDir, ".hidden")
-		os.Mkdir(hiddenDir, 0755)
-		os.WriteFile(filepath.Join(hiddenDir, "skip.go"), []byte("package hidden"), 0644)
+		require.NoError(t, os.Mkdir(hiddenDir, 0755))
+		require.NoError(t, os.WriteFile(filepath.Join(hiddenDir, "skip.go"), []byte("package hidden"), 0644))
 
 		res, err := ca.AnalyzePaths([]string{tmpDir})
 		assert.NoError(t, err)
@@ -148,7 +148,7 @@ type Data struct {
     Handler func(int) error
 }
 `
-		os.WriteFile(filepath.Join(complexDir, "complex.go"), []byte(code), 0644)
+		require.NoError(t, os.WriteFile(filepath.Join(complexDir, "complex.go"), []byte(code), 0644))
 		res, err := ca.Analyze(context.Background(), complexDir)
 		assert.NoError(t, err)
 		assert.NotEmpty(t, res.Symbols)

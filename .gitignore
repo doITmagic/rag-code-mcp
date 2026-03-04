@@ -4,12 +4,14 @@ test_data/
 qdrant_data/
 barou/
 inspirations/
+relations/
 
 # Binaries
 /cmd/agent-runner/agent-runner
 /rag-code-mcp
 test-*
 bin/
+tests/e2e/bin/
 ragcode-installer
 index-all
 cmd/rag-code-mcp/rag-code-mcp

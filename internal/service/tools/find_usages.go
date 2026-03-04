@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -9,8 +10,6 @@ import (
 
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
 	"github.com/doITmagic/rag-code-mcp/internal/service/internalutil"
-	"github.com/doITmagic/rag-code-mcp/pkg/parser"
-	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 	"github.com/doITmagic/rag-code-mcp/pkg/telemetry"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -27,7 +26,9 @@ func NewFindUsagesTool(eng *engine.Engine) *FindUsagesTool {
 
 func (t *FindUsagesTool) Name() string { return "rag_find_usages" }
 func (t *FindUsagesTool) Description() string {
-	return "Fast and deterministic tool to find where a specific class, function, or type is used across the codebase based on the Code Graph (AST Relations). Returns the exact code chunks, files, and line numbers. MANDATORY: You must provide the 'file_path' of the current file to allow the tool to detect the correct workspace and context.\nExample: { \"symbol_name\": \"MyClass\", \"file_path\": \"/path/to/project/main.go\" }"
+	return "Fast and deterministic tool to find where a specific class, function, or type is used across the codebase based on the Code Graph (AST Relations). Returns the exact code chunks, files, and line numbers. " +
+		"OPTIONAL: Provide 'file_path' of the current file for faster workspace detection. If omitted, the server will Auto-Discover the workspace from the last active project. " +
+		"Example: { \"symbol_name\": \"MyClass\", \"file_path\": \"/path/to/project/main.go\" }"
 }
 
 type FindUsagesInput struct {
@@ -85,39 +86,37 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 		return resp.JSON()
 	}
 
-	searchSvc := t.engine.GetSearchService()
-	if searchSvc == nil {
-		resp := ToolResponse{Status: "error", Error: "search service unavailable"}
-		return resp.JSON()
+	// Fan-out to all language collections in parallel — zero embedding
+	filter := map[string]interface{}{
+		"relations[].target_name": symbolName,
 	}
 
-	// We'll iterate the known languages in the index to find all usages across polyglot codebases
-	langs := parser.SupportedLanguages()
-	var allResults []storage.SearchResult
-
-	for _, lang := range langs {
-		colName := fmt.Sprintf("ragcode-%s-%s", wctx.ID, lang)
-		exists, _ := searchSvc.CollectionExists(ctx, colName)
-		if !exists {
-			continue
+	idx := t.engine.GetIndexProgress(wctx.ID, wctx.Root)
+	allResults, err := t.engine.ExactSearchPolyglot(ctx, wctx.ID, filter, 100)
+	if err != nil {
+		var noCollections *engine.ErrNoCollectionsFound
+		if errors.As(err, &noCollections) {
+			resp := ToolResponse{
+				Status:  "indexing_required",
+				Message: fmt.Sprintf("⏳ Workspace '%s' is not indexed yet. Indexing is required for complete results.", wctx.Root),
+				Context: ContextFromWorkspaceWithProgress(wctx, t.engine),
+			}
+			if idx != nil {
+				resp.Status = "indexing_in_progress"
+				resp.Data = map[string]any{"indexing": idx}
+			}
+			return resp.JSON()
 		}
 
-		// In Qdrant, to query a nested array of objects, we use the path `relations[].target_name`
-		filter := map[string]interface{}{
-			"relations[].target_name": symbolName,
-		}
-
-		res, err := searchSvc.ExactSearch(ctx, colName, filter, 100) // limit to top 100 occurrences
-		if err == nil {
-			allResults = append(allResults, res...)
-		}
+		resp := ToolResponse{Status: "error", Error: fmt.Sprintf("usage search failed: %v", err)}
+		return resp.JSON()
 	}
 
 	if len(allResults) == 0 {
 		resp := ToolResponse{
 			Status:  "success",
 			Message: fmt.Sprintf("No usages found for symbol '%s' based on Code Graph relations.", symbolName),
-			Context: ContextMetadata{WorkspaceRoot: wctx.Root, DetectionSource: wctx.DetectionSource},
+			Context: ContextFromWorkspaceWithProgress(wctx, t.engine),
 		}
 		return resp.JSON()
 	}
@@ -142,7 +141,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 		code, _ := result.Point.Payload["content"].(string)
 
 		filePath, _ := result.Point.Payload["file_path"].(string)
-		startLineVal, _ := result.Point.Payload["start_line"]
+		startLineVal := result.Point.Payload["start_line"]
 		startLine := 0
 		switch v := startLineVal.(type) {
 		case float64:
@@ -191,7 +190,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 		resp := ToolResponse{
 			Status:  "success",
 			Message: fmt.Sprintf("No explicit usages found for symbol '%s'", symbolName),
-			Context: ContextMetadata{WorkspaceRoot: wctx.Root, DetectionSource: wctx.DetectionSource},
+			Context: ContextFromWorkspaceWithProgress(wctx, t.engine),
 		}
 		return resp.JSON()
 	}
@@ -234,9 +233,10 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 		Message: "Found symbol usages\n\n" + response.String(),
 		Data:    usages,
 		Context: ContextMetadata{
-			WorkspaceRoot:   wctx.Root,
-			DetectionSource: wctx.DetectionSource,
-			Telemetry:       telemetry.CalculateSavings(baselineBytes, actualBytes),
+			WorkspaceRoot:    wctx.Root,
+			DetectionSource:  wctx.DetectionSource,
+			Telemetry:        telemetry.CalculateSavings(baselineBytes, actualBytes),
+			IndexingProgress: BuildIndexingProgress(t.engine, wctx.ID, wctx.Root),
 		},
 	}
 	return resp.JSON()

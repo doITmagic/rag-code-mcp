@@ -40,9 +40,9 @@ builds:
       - -X main.Date={{.Date}}
       - -X main.BuiltBy=goreleaser
 
-  - id: ragcode-installer
-    main: ./cmd/install
-    binary: ragcode-installer
+  - id: rag-code-install
+    main: ./cmd/rag-code-install
+    binary: rag-code-install
     
     env:
       - CGO_ENABLED=0
@@ -110,6 +110,7 @@ archives:
     files:
       - LICENSE
       - README.md
+      - llms.txt
       - config.yaml
       - .env.example
 
@@ -162,13 +163,13 @@ release:
     **Linux (amd64):**
     ```bash
     curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz
-    ./ragcode-installer -ollama=docker -qdrant=docker
+    ./rag-code-install -ollama=docker -qdrant=docker
     ```
     
     **macOS (Apple Silicon):**
     ```bash
     curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_arm64.tar.gz | tar xz
-    ./ragcode-installer -ollama=docker -qdrant=docker
+    ./rag-code-install -ollama=docker -qdrant=docker
     ```
     
     **Or download the archive for your platform below.**
@@ -198,8 +199,7 @@ brews:
     # Custom install script to handle multiple binaries
     install: |
       bin.install "rag-code-mcp"
-      bin.install "ragcode-installer"
-      bin.install "index-all"
+      bin.install "rag-code-install"
     
     test: |
       system "#{bin}/rag-code-mcp --version"

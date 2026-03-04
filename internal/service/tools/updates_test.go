@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/doITmagic/rag-code-mcp/internal/config"
 	"github.com/doITmagic/rag-code-mcp/internal/updater"
 )
 
@@ -28,7 +29,7 @@ func TestCheckUpdateTool_NoUpdates(t *testing.T) {
 		return nil, nil
 	}
 
-	tool := NewCheckUpdateTool("1.0.0")
+	tool := NewCheckUpdateTool("1.0.0", config.DefaultConfig())
 	msg, err := tool.Execute(context.Background(), map[string]interface{}{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -47,7 +48,7 @@ func TestCheckUpdateTool_WithUpdate(t *testing.T) {
 		return &updater.UpdateInfo{LatestVersion: "2.0.0"}, nil
 	}
 
-	tool := NewCheckUpdateTool("1.0.0")
+	tool := NewCheckUpdateTool("1.0.0", config.DefaultConfig())
 	msg, err := tool.Execute(context.Background(), map[string]interface{}{"force": true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -63,7 +64,7 @@ func TestCheckUpdateTool_Error(t *testing.T) {
 		return nil, errors.New("boom")
 	}
 
-	tool := NewCheckUpdateTool("1.0.0")
+	tool := NewCheckUpdateTool("1.0.0", config.DefaultConfig())
 	msg, err := tool.Execute(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

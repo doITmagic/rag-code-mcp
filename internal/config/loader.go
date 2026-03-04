@@ -34,22 +34,8 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
-	// Auto-migrate file-based config BEFORE env overrides to see if we should save
-	if migrateEmbeddingModel(&cfg) {
-		log.Printf("🔄 Auto-migrating configuration file '%s' to stable embedding models...", path)
-		if err := Save(path, &cfg); err != nil {
-			log.Printf("⚠️  Failed to persist migrated configuration to '%s': %v", path, err)
-		} else {
-			log.Printf("✅ Configuration file successfully updated.")
-		}
-	}
-
 	// Apply environment variable overrides
 	applyEnvOverrides(&cfg)
-
-	// Auto-migrate again after env overrides (in memory) to ensure any deprecated models
-	// from environment variables are also updated
-	migrateEmbeddingModel(&cfg)
 
 	// Validate configuration
 	if err := validate(&cfg); err != nil {
@@ -84,8 +70,7 @@ func DefaultConfig() *Config {
 			LLM: LLMConfig{
 				Provider:      "ollama",
 				OllamaBaseURL: "http://localhost:11434",
-				OllamaModel:   "phi3:medium",
-				OllamaEmbed:   "mxbai-embed-large",
+				OllamaEmbed:   StableEmbeddingModel,
 				MaxTokens:     1024,
 				Timeout:       60 * time.Second,
 			},
@@ -257,31 +242,34 @@ func ApplyCLIOverrides(cfg *Config, ollamaURL, ollamaModel, ollamaEmbed, qdrantU
 	}
 }
 
-// migrateEmbeddingModel automatically migrates from old unstable embedding model
-func migrateEmbeddingModel(cfg *Config) bool {
+// MigrateEmbeddingModel automatically migrates from old unstable embedding model
+func MigrateEmbeddingModel(cfg *Config) bool {
 	migrated := false
 
 	// List of deprecated/unstable models that should be migrated
-	deprecatedModels := []string{"nomic-embed-text"}
-	newStableModel := "mxbai-embed-large"
+	deprecatedModels := []string{"nomic-embed-text", "mxbai-embed-large"}
+	newStableModel := StableEmbeddingModel
 
 	// Check if current model is deprecated
 	for _, deprecated := range deprecatedModels {
 		if cfg.LLM.OllamaEmbed == deprecated {
-			log.Printf("⚠️  MIGRATION: Detected deprecated embedding model '%s'", deprecated)
-			log.Printf("   Automatically upgrading to stable model '%s'", newStableModel)
-			log.Printf("   Note: Existing indexed data will need to be re-indexed.")
-			log.Printf("   Use 'rag_index_workspace' tool with 'recreate: true' to rebuild indexes.")
+			log.Printf("╔══════════════════════════════════════════════════════════════╗")
+			log.Printf("║           ⚠️  EMBEDDING MODEL MIGRATION REQUIRED              ║")
+			log.Printf("╠══════════════════════════════════════════════════════════════╣")
+			log.Printf("║  Deprecated model : %-41s ║", deprecated)
+			log.Printf("║  New stable model : %-41s ║", newStableModel)
+			log.Printf("╠══════════════════════════════════════════════════════════════╣")
+			log.Printf("║  ⚡ ACTION REQUIRED: All existing indexes are INCOMPATIBLE.  ║")
+			log.Printf("║  Vector spaces differ between models — old results will be   ║")
+			log.Printf("║  garbage until you re-index.                                 ║")
+			log.Printf("║                                                              ║")
+			log.Printf("║  Run: rag_index_workspace with force_reindex: true           ║")
+			log.Printf("║  Or:  rag_index_workspace with recreate: true                ║")
+			log.Printf("╚══════════════════════════════════════════════════════════════╝")
 
 			cfg.LLM.OllamaEmbed = newStableModel
 			migrated = true
 			break
-		}
-
-		// Also check legacy field
-		if cfg.LLM.EmbedModel == deprecated {
-			cfg.LLM.EmbedModel = newStableModel
-			migrated = true
 		}
 	}
 
@@ -300,9 +288,10 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("llm.provider must be 'ollama'")
 	}
 
-	// Validate ollama model configuration
-	if cfg.LLM.OllamaModel == "" && cfg.LLM.Model == "" {
-		return fmt.Errorf("llm.ollama_model (or legacy llm.model) is required for ollama provider")
+	// Note: ollama_model is now optional as only embeddings are required for core RAG functionality.
+	// We no longer enforce presence of a generation model.
+	if cfg.LLM.OllamaModel == "" && cfg.LLM.Model != "" {
+		cfg.LLM.OllamaModel = cfg.LLM.Model
 	}
 
 	// Ensure log max size

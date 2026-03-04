@@ -148,3 +148,9 @@ func (r *RetryableProvider) Close() error {
 	}
 	return nil
 }
+
+// Unwrap returns the underlying provider, allowing access to provider-specific
+// methods like OllamaLLMProvider.EnsureLoaded() or Warmup().
+func (r *RetryableProvider) Unwrap() Provider {
+	return r.provider
+}

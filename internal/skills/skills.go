@@ -1,86 +1,40 @@
 package skills
 
 import (
-	"embed"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 var skillIDRegex = regexp.MustCompile(`^[a-z0-9-]+$`)
 
-//go:embed embedded/*
-var embeddedSkills embed.FS
-
-// SkillInfo holds the metadata of an embedded skill
+// SkillInfo holds the metadata of a skill, compatible with the remote registry format.
 type SkillInfo struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
 }
 
-// ListAvailableSkills scans the embedded filesystem for skills and extracts metadata from SKILL.md
+// ListAvailableSkills fetches the list of skills from the remote GitHub registry.
 func ListAvailableSkills() ([]SkillInfo, error) {
-	var available []SkillInfo
-
-	entries, err := embeddedSkills.ReadDir("embedded")
+	registry, err := FetchRemoteRegistry()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read embedded skills: %w", err)
+		return nil, fmt.Errorf("failed to fetch remote skill registry: %w", err)
 	}
 
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-
-		skillID := entry.Name()
-		info, err := GetSkillMetadata(skillID)
-		if err != nil {
-			// Skip skills with invalid metadata but log or handle as needed
-			continue
-		}
-		available = append(available, info)
+	result := make([]SkillInfo, 0, len(registry.Skills))
+	for _, s := range registry.Skills {
+		result = append(result, SkillInfo{
+			ID:          s.ID,
+			Name:        s.Name,
+			Description: s.Description,
+		})
 	}
-
-	return available, nil
+	return result, nil
 }
 
-// GetSkillMetadata extracts metadata from the SKILL.md of a specific skill
-func GetSkillMetadata(skillID string) (SkillInfo, error) {
-	filePath := fmt.Sprintf("embedded/%s/SKILL.md", skillID)
-	content, err := embeddedSkills.ReadFile(filePath)
-	if err != nil {
-		return SkillInfo{}, fmt.Errorf("failed to read SKILL.md for %s: %w", skillID, err)
-	}
-
-	// Basic parsing of YAML frontmatter
-	parts := strings.Split(string(content), "---")
-	if len(parts) < 3 {
-		return SkillInfo{}, fmt.Errorf("invalid frontmatter in SKILL.md for %s", skillID)
-	}
-
-	var metadata struct {
-		Name        string `yaml:"name"`
-		Description string `yaml:"description"`
-	}
-
-	if err := yaml.Unmarshal([]byte(parts[1]), &metadata); err != nil {
-		return SkillInfo{}, fmt.Errorf("failed to parse metadata for %s: %w", skillID, err)
-	}
-
-	return SkillInfo{
-		ID:          skillID,
-		Name:        metadata.Name,
-		Description: metadata.Description,
-	}, nil
-}
-
-// validateSkillID ensures the skill ID is safe and matches a strict allowlist
+// validateSkillID ensures the skill ID is safe and matches a strict allowlist.
 func validateSkillID(skillID string) error {
 	if !skillIDRegex.MatchString(skillID) {
 		return fmt.Errorf("invalid skill ID: must be lowercase alphanumeric with hyphens (e.g. 'my-skill')")
@@ -88,70 +42,122 @@ func validateSkillID(skillID string) error {
 	return nil
 }
 
-// InstallSkill copies all files of an embedded skill to the destination directory
-func InstallSkill(skillID string, workspaceRoot string) error {
+// skillCandidateDirs returns all standard directories where skills may be placed,
+// in priority order. Covers the naming conventions used by rag-code-mcp, GitHub Copilot,
+// Claude (Anthropic), and Cursor.
+// resolveTargetBaseDir maps a target string to the corresponding skills base directory.
+// Valid values: "agent" (default), "agents", "claude", "cursor", "windsurf".
+func resolveTargetBaseDir(workspaceRoot, target string) string {
+	switch target {
+	case "agents":
+		return filepath.Join(workspaceRoot, ".agents", "skills")
+	case "claude":
+		return filepath.Join(workspaceRoot, ".claude", "skills")
+	case "cursor":
+		return filepath.Join(workspaceRoot, ".cursor", "skills")
+	case "windsurf":
+		return filepath.Join(workspaceRoot, ".windsurf", "skills")
+	default: // "agent" or empty
+		return filepath.Join(workspaceRoot, ".agent", "skills")
+	}
+}
+
+// skillCandidateDirs returns all standard directories where skills may be placed,
+// in priority order. Aligned with the workspace detector markers.
+func skillCandidateDirs(workspaceRoot string) []string {
+	return []string{
+		filepath.Join(workspaceRoot, ".agent", "skills"),    // rag-code-mcp / OpenCode / Antigravity
+		filepath.Join(workspaceRoot, ".agents", "skills"),   // GitHub Copilot / VS Code
+		filepath.Join(workspaceRoot, ".claude", "skills"),   // Claude (Anthropic)
+		filepath.Join(workspaceRoot, ".cursor", "skills"),   // Cursor
+		filepath.Join(workspaceRoot, ".windsurf", "skills"), // Windsurf (Codeium)
+	}
+}
+
+// FindSkillPath returns the first directory where the skill is already installed,
+// or an empty string if it is not found in any known location.
+func FindSkillPath(skillID, workspaceRoot string) string {
+	for _, base := range skillCandidateDirs(workspaceRoot) {
+		p := filepath.Join(base, skillID)
+		info, err := os.Stat(p)
+		if err == nil && info.IsDir() {
+			return p
+		}
+	}
+	return ""
+}
+
+// InstallSkill downloads a skill from the remote GitHub registry and installs it
+// into the target tool directory within the workspace.
+// target can be: "agent" (default), "agents", "claude", "cursor".
+func InstallSkill(skillID string, workspaceRoot string, target string) error {
 	if err := validateSkillID(skillID); err != nil {
 		return err
 	}
 
-	destDir := filepath.Join(workspaceRoot, ".agent", "skills", skillID)
-	if IsSkillInstalled(skillID, workspaceRoot) {
-		return fmt.Errorf("skill '%s' is already installed at %s", skillID, destDir)
-	}
-	// Additional safety check: ensure destDir is within workspaceRoot
-	// Note: This might be redundant with validateSkillID but good for defense in depth
-	// However, workspaceRoot might be relative or absolute, so we rely on skillID validation primarily.
-
-	srcDir := "embedded/" + skillID
-
-	// Verify the skill exists in embedded FS before trying to walk
-	if _, err := embeddedSkills.ReadDir(srcDir); err != nil {
-		return fmt.Errorf("skill '%s' not found in embedded library", skillID)
+	// Check all known locations before installing
+	if existing := FindSkillPath(skillID, workspaceRoot); existing != "" {
+		return fmt.Errorf("skill '%s' is already installed at %s", skillID, existing)
 	}
 
-	return fs.WalkDir(embeddedSkills, srcDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+	// Fetch registry to resolve the skill's path in the repo
+	registry, err := FetchRemoteRegistry()
+	if err != nil {
+		return fmt.Errorf("failed to fetch registry: %w", err)
+	}
+
+	var skillPath string
+	for _, s := range registry.Skills {
+		if s.ID == skillID {
+			skillPath = s.Path
+			break
 		}
+	}
+	if skillPath == "" {
+		return fmt.Errorf("skill '%s' not found in registry", skillID)
+	}
 
-		// Calculate relative path from skill root
-		relPath, err := filepath.Rel(srcDir, path)
-		if err != nil {
-			return err
-		}
+	// Resolve destination based on the target tool directory
+	destDir := filepath.Join(resolveTargetBaseDir(workspaceRoot, target), skillID)
 
-		// Join with destination directory
-		targetPath := filepath.Join(destDir, relPath)
+	if err := downloadSkillFromGitHub(skillPath, destDir); err != nil {
+		// Clean up partial installation on failure
+		_ = os.RemoveAll(destDir)
+		return fmt.Errorf("failed to download skill '%s': %w", skillID, err)
+	}
 
-		if d.IsDir() {
-			return os.MkdirAll(targetPath, 0755)
-		}
-
-		// Read from embed and write to disk
-		content, err := embeddedSkills.ReadFile(path)
-		if err != nil {
-			return err
-		}
-
-		return os.WriteFile(targetPath, content, 0644)
-	})
+	return nil
 }
 
-// UninstallSkill removes a skill from the workspace
+// UninstallSkill removes a skill from all known locations in the workspace
+// (.agent/, .agents/, .claude/, .cursor/).
 func UninstallSkill(skillID string, workspaceRoot string) error {
 	if err := validateSkillID(skillID); err != nil {
 		return err
 	}
-	destDir := filepath.Join(workspaceRoot, ".agent", "skills", skillID)
-	return os.RemoveAll(destDir)
+	var lastErr error
+	removed := 0
+	for _, base := range skillCandidateDirs(workspaceRoot) {
+		p := filepath.Join(base, skillID)
+		if info, err := os.Stat(p); err == nil && info.IsDir() {
+			if err := os.RemoveAll(p); err != nil {
+				lastErr = err
+			} else {
+				removed++
+			}
+		}
+	}
+	if removed == 0 && lastErr == nil {
+		return fmt.Errorf("skill '%s' not found in any known location", skillID)
+	}
+	return lastErr
 }
 
-// IsSkillInstalled checks whether a skill folder exists within the workspace
+// IsSkillInstalled checks whether a skill folder exists in any of the known
+// standard locations (.agent/, .agents/, .claude/, .cursor/).
 func IsSkillInstalled(skillID, workspaceRoot string) bool {
 	if err := validateSkillID(skillID); err != nil {
 		return false
 	}
-	path := filepath.Join(workspaceRoot, ".agent", "skills", skillID)
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
+	return FindSkillPath(skillID, workspaceRoot) != ""
 }

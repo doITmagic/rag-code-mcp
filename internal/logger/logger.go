@@ -11,9 +11,24 @@ import (
 	"time"
 )
 
+// SyncWriter wraps an *os.File and calls Sync() after every Write,
+// ensuring log entries are flushed to disk immediately (no buffering).
+type SyncWriter struct {
+	File *os.File
+}
+
+func (sw SyncWriter) Write(p []byte) (n int, err error) {
+	n, err = sw.File.Write(p)
+	if err == nil {
+		_ = sw.File.Sync()
+	}
+	return
+}
+
 // SimpleLogger provides basic logging with file rotation and levels.
 type SimpleLogger struct {
 	logFile *os.File
+	writer  io.Writer
 }
 
 // Global logger instance
@@ -24,6 +39,7 @@ func (l *SimpleLogger) Close() {
 	if l.logFile != nil {
 		_ = l.logFile.Close()
 		l.logFile = nil
+		l.writer = nil
 	}
 }
 
@@ -40,8 +56,8 @@ func (l *SimpleLogger) shouldLog(msgLevel string) bool {
 func (l *SimpleLogger) Debug(format string, args ...interface{}) {
 	if l.shouldLog("debug") {
 		fmt.Fprintf(os.Stderr, "[DEBUG] "+format+"\n", args...)
-		if l.logFile != nil {
-			fmt.Fprintf(l.logFile, "[DEBUG] "+format+"\n", args...)
+		if l.writer != nil {
+			fmt.Fprintf(l.writer, "[DEBUG] "+format+"\n", args...)
 		}
 	}
 }
@@ -50,8 +66,8 @@ func (l *SimpleLogger) Debug(format string, args ...interface{}) {
 func (l *SimpleLogger) Info(format string, args ...interface{}) {
 	if l.shouldLog("info") {
 		fmt.Fprintf(os.Stderr, "[INFO] "+format+"\n", args...)
-		if l.logFile != nil {
-			fmt.Fprintf(l.logFile, "[INFO] "+format+"\n", args...)
+		if l.writer != nil {
+			fmt.Fprintf(l.writer, "[INFO] "+format+"\n", args...)
 		}
 	}
 }
@@ -60,8 +76,8 @@ func (l *SimpleLogger) Info(format string, args ...interface{}) {
 func (l *SimpleLogger) Error(format string, args ...interface{}) {
 	if l.shouldLog("error") {
 		fmt.Fprintf(os.Stderr, "[ERROR] "+format+"\n", args...)
-		if l.logFile != nil {
-			fmt.Fprintf(l.logFile, "[ERROR] "+format+"\n", args...)
+		if l.writer != nil {
+			fmt.Fprintf(l.writer, "[ERROR] "+format+"\n", args...)
 		}
 	}
 }
@@ -78,8 +94,8 @@ func (l *SimpleLogger) Highlight(format string, args ...interface{}) {
 	if l.shouldLog("info") {
 		// Cyan: \033[36m, Reset: \033[0m
 		fmt.Fprintf(os.Stderr, "\033[36m[SEARCH] "+format+"\033[0m\n", args...)
-		if l.logFile != nil {
-			fmt.Fprintf(l.logFile, "[SEARCH] "+format+"\n", args...)
+		if l.writer != nil {
+			fmt.Fprintf(l.writer, "[SEARCH] "+format+"\n", args...)
 		}
 	}
 }
@@ -197,15 +213,15 @@ func InitLoggerFromEnv() {
 	}
 
 	Instance.logFile = f
+	Instance.writer = SyncWriter{File: f}
 
 	// FORCE DEBUG WRITE DIRECTLY TO FILE
 	timestamp := time.Now().Format(time.RFC3339)
-	if _, err := f.WriteString(fmt.Sprintf("--- STARTING SESSION %s ---\n", timestamp)); err != nil {
+	if _, err := Instance.writer.Write([]byte(fmt.Sprintf("--- STARTING SESSION %s ---\n", timestamp))); err != nil {
 		fmt.Fprintf(os.Stderr, "[WARN] Failed to write startup line to log file: %v\n", err)
 	}
-	_ = f.Sync()
 
-	log.SetOutput(io.MultiWriter(os.Stderr, Instance.logFile))
+	log.SetOutput(io.MultiWriter(os.Stderr, Instance.writer))
 
 	// Log startup info to verify location
 	fmt.Fprintf(os.Stderr, "[INFO] Logging to file: %s\n", path)

@@ -1,5 +1,5 @@
-//go:build manual_sse
-// +build manual_sse
+//go:build manual_mcp
+// +build manual_mcp
 
 //
 // These tests require a running server:
@@ -7,17 +7,15 @@
 //
 // They are automatically EXCLUDED from CI because the pipeline runs
 //   go test ./...
-// without -tags manual_sse.
+// without -tags manual_mcp.
 //
 // Run locally:
-//   go test -v -tags manual_sse ./tests/... -timeout 300s
+//   go test -v -tags manual_mcp ./tests/... -timeout 300s
 
 package tests
 
 import (
-	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -40,173 +38,76 @@ func workspaceRoot() string {
 	return filepath.Dir(cwd)
 }
 
-// sseClient is a minimal SSE + JSON-RPC client for MCP over HTTP.
-type sseClient struct {
-	resp      *http.Response
-	reader    *bufio.Reader
-	outCh     chan []byte
-	sessionID string
-	baseURL   string
+// mcpClient is a minimal Streamable HTTP stateless client for MCP over HTTP.
+// POST /mcp — no session, no handshake, response comes directly in body.
+type mcpClient struct {
+	baseURL    string
+	httpClient *http.Client
 }
 
-func newSSEClient(baseURL string) (*sseClient, error) {
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+"/sse", nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "text/event-stream")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("connect SSE: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("SSE bad status: %d", resp.StatusCode)
-	}
-
-	c := &sseClient{
-		resp:    resp,
-		reader:  bufio.NewReader(resp.Body),
-		outCh:   make(chan []byte, 256),
-		baseURL: baseURL,
-	}
-
-	// First event contains the session endpoint URL, e.g.
-	// data: /messages?sessionid=<ID>
-	firstEvent, err := c.readEvent()
-	if err != nil {
-		return nil, fmt.Errorf("read first SSE event: %w", err)
-	}
-	text := string(firstEvent)
-	if idx := strings.Index(text, "sessionid="); idx != -1 {
-		c.sessionID = strings.TrimSpace(text[idx+len("sessionid="):])
-	}
-	if c.sessionID == "" {
-		return nil, fmt.Errorf("no sessionid in first SSE event: %q", text)
-	}
-
-	go c.readLoop()
-	return c, nil
-}
-
-func (c *sseClient) readEvent() ([]byte, error) {
-	var buf bytes.Buffer
-	for {
-		line, err := c.reader.ReadString('\n')
-		if err != nil {
-			return nil, err
-		}
-		line = strings.TrimRight(line, "\r\n")
-		if line == "" {
-			if buf.Len() > 0 {
-				return buf.Bytes(), nil
-			}
-			continue
-		}
-		if strings.HasPrefix(line, "data:") {
-			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			buf.WriteString(data)
-		}
+func newMCPClient(baseURL string) *mcpClient {
+	return &mcpClient{
+		baseURL:    baseURL,
+		httpClient: &http.Client{},
 	}
 }
 
-func (c *sseClient) readLoop() {
-	defer close(c.outCh)
-	for {
-		event, err := c.readEvent()
-		if err != nil {
-			return
-		}
-		if len(event) > 0 {
-			c.outCh <- event
-		}
-	}
-}
-
-// postJSON sends a JSON-RPC message and returns the raw HTTP response body.
-func (c *sseClient) postJSON(payload interface{}) error {
-	body, _ := json.Marshal(payload)
-	url := fmt.Sprintf("%s/messages?sessionid=%s", c.baseURL, c.sessionID)
-	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(b))
-	}
-	return nil
-}
-
-// waitForID blocks until an SSE event with the given JSON-RPC id arrives.
-func (c *sseClient) waitForID(id string, timeout time.Duration) (map[string]interface{}, error) {
-	deadline := time.After(timeout)
-	for {
-		select {
-		case <-deadline:
-			return nil, fmt.Errorf("timeout (%v) waiting for id=%s", timeout, id)
-		case data, ok := <-c.outCh:
-			if !ok {
-				return nil, fmt.Errorf("SSE stream closed while waiting for id=%s", id)
-			}
-			var msg map[string]interface{}
-			if err := json.Unmarshal(data, &msg); err != nil {
-				continue
-			}
-			if msg["id"] == id {
-				return msg, nil
-			}
-		}
-	}
-}
-
-// initialize performs the full MCP handshake:
-//   initialize → wait for response → notifications/initialized
-func (c *sseClient) initialize() error {
-	if err := c.postJSON(map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      "init-1",
-		"method":  "initialize",
-		"params": map[string]interface{}{
-			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]interface{}{},
-			"clientInfo":      map[string]interface{}{"name": "functional-test", "version": "1.0.0"},
-		},
-	}); err != nil {
-		return fmt.Errorf("send initialize: %w", err)
-	}
-
-	if _, err := c.waitForID("init-1", 10*time.Second); err != nil {
-		return fmt.Errorf("initialize response: %w", err)
-	}
-
-	// notifications/initialized has no id and no response
-	return c.postJSON(map[string]interface{}{
-		"jsonrpc": "2.0",
-		"method":  "notifications/initialized",
-		"params":  map[string]interface{}{},
-	})
-}
-
-// callTool invokes a tool and returns the parsed response map.
-func (c *sseClient) callTool(name string, args map[string]interface{}, timeout time.Duration) (map[string]interface{}, error) {
-	id := fmt.Sprintf("tool-%d", time.Now().UnixNano())
-	if err := c.postJSON(map[string]interface{}{
+// callRPC sends a JSON-RPC request to /mcp and returns the parsed response.
+func (c *mcpClient) callRPC(id, method string, params any, timeout time.Duration) (map[string]interface{}, error) {
+	payload := map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      id,
-		"method":  "tools/call",
-		"params": map[string]interface{}{
-			"name":      name,
-			"arguments": args,
-		},
-	}); err != nil {
+		"method":  method,
+		"params":  params,
+	}
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/mcp", bytes.NewReader(body))
+	if err != nil {
 		return nil, err
 	}
-	return c.waitForID(id, timeout)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+
+	httpC := &http.Client{Timeout: timeout}
+	resp, err := httpC.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("POST /mcp: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+	// If SSE, extract data: line
+	if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+		for _, line := range strings.Split(string(respBody), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "data:") {
+				data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+				if data != "" && data != "[DONE]" {
+					respBody = []byte(data)
+					break
+				}
+			}
+		}
+	}
+	var msg map[string]interface{}
+	if err := json.Unmarshal(respBody, &msg); err != nil {
+		return nil, fmt.Errorf("decode: %w\nbody: %s", err, string(respBody))
+	}
+	return msg, nil
+}
+
+func (c *mcpClient) callTool(name string, args map[string]interface{}, timeout time.Duration) (map[string]interface{}, error) {
+	id := fmt.Sprintf("tool-%d", time.Now().UnixNano())
+	return c.callRPC(id, "tools/call", map[string]interface{}{
+		"name":      name,
+		"arguments": args,
+	}, timeout)
 }
 
 // toolText returns the first text content string from a tools/call response.
@@ -276,34 +177,34 @@ func isToolError(res map[string]interface{}) bool {
 
 // ── Test Suite ────────────────────────────────────────────────────────────────
 
-var _ = Describe("Functional SSE Tools Integration", Ordered, func() {
+var _ = Describe("Functional MCP Tools Integration", Ordered, func() {
 	const baseURL = "http://localhost:3000"
 	// toolTimeout: generous for first-call lazy embedding; subsequent calls are cached.
 	const toolTimeout = 120 * time.Second
 
 	var (
-		client *sseClient
+		client *mcpClient
 		root   string
 	)
 
 	BeforeAll(func() {
 		root = workspaceRoot()
 
-		resp, err := http.Get(baseURL + "/sse")
+		// Probe /mcp cu tools/list pentru a verifica că serverul rulează
+		probeBody := []byte(`{"jsonrpc":"2.0","id":"probe","method":"tools/list","params":{}}`)
+		req, _ := http.NewRequest(http.MethodPost, baseURL+"/mcp", bytes.NewReader(probeBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		resp, err := http.DefaultClient.Do(req)
 		Expect(err).NotTo(HaveOccurred(), "server must be running on %s (go run ./cmd/rag-code-mcp -http-port 3000)", baseURL)
 		resp.Body.Close()
 
-		client, err = newSSEClient(baseURL)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(client.sessionID).NotTo(BeEmpty())
-		Expect(client.initialize()).To(Succeed(), "MCP handshake failed")
-		GinkgoWriter.Printf("[setup] session=%s  root=%s\n", client.sessionID, root)
+		client = newMCPClient(baseURL)
+		GinkgoWriter.Printf("[setup] root=%s\n", root)
 	})
 
 	AfterAll(func() {
-		if client != nil {
-			client.resp.Body.Close()
-		}
+		// Nimic de curățat — transport stateless, fără conexiuni persistente.
 	})
 
 	// ── rag_search_code ────────────────────────────────────────────────────────
@@ -701,7 +602,7 @@ var _ = Describe("Functional SSE Tools Integration", Ordered, func() {
 
 			j := toolJSON(res)
 			text := toolText(res)
-		GinkgoWriter.Printf("[list_exports] indexer  status=%s  len=%d\n", j["status"], len(text))
+			GinkgoWriter.Printf("[list_exports] indexer  status=%s  len=%d\n", j["status"], len(text))
 			Expect(j["status"]).To(Equal("success"))
 			// pkg/indexer may or may not be in the index (200-point partial index)
 			// just verify the tool handles the request without error

@@ -215,10 +215,12 @@ func (fw *FileWatcher) shouldSkipDir(path, base string, isRoot bool) bool {
 }
 
 func normalizeExclude(patterns []string) map[string]struct{} {
-	if len(patterns) == 0 {
-		return defaultExcludeDirs
+	// Always start from defaultExcludeDirs so critical dirs like .ragcode
+	// are never accidentally watched (would cause infinite reindex loops).
+	result := make(map[string]struct{}, len(defaultExcludeDirs)+len(patterns))
+	for k, v := range defaultExcludeDirs {
+		result[k] = v
 	}
-	result := make(map[string]struct{}, len(patterns))
 	for _, pattern := range patterns {
 		trimmed := strings.TrimSpace(pattern)
 		if trimmed == "" {

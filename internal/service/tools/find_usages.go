@@ -26,7 +26,9 @@ func NewFindUsagesTool(eng *engine.Engine) *FindUsagesTool {
 
 func (t *FindUsagesTool) Name() string { return "rag_find_usages" }
 func (t *FindUsagesTool) Description() string {
-	return "Fast and deterministic tool to find where a specific class, function, or type is used across the codebase based on the Code Graph (AST Relations). Returns the exact code chunks, files, and line numbers. MANDATORY: You must provide the 'file_path' of the current file to allow the tool to detect the correct workspace and context.\nExample: { \"symbol_name\": \"MyClass\", \"file_path\": \"/path/to/project/main.go\" }"
+	return "Fast and deterministic tool to find where a specific class, function, or type is used across the codebase based on the Code Graph (AST Relations). Returns the exact code chunks, files, and line numbers. " +
+		"OPTIONAL: Provide 'file_path' of the current file for faster workspace detection. If omitted, the server will Auto-Discover the workspace from the last active project. " +
+		"Example: { \"symbol_name\": \"MyClass\", \"file_path\": \"/path/to/project/main.go\" }"
 }
 
 type FindUsagesInput struct {

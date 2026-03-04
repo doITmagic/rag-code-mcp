@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -23,6 +24,9 @@ var (
 	upgradeFlag   = flag.Bool("upgrade", false, "Upgrade existing installation")
 	uninstallFlag = flag.Bool("uninstall", false, "Uninstall the application")
 	assumeYes     = flag.Bool("y", true, "Automatic yes to prompts (non-interactive)")
+	idesFlag      = flag.String("ides", "auto", "Comma-separated IDE list to configure (auto, vs-code, claude, claude-cli, cursor, windsurf, antigravity, gemini-cli, zed)")
+	transportFlag = flag.String("transport", "auto", "MCP transport: 'auto' (SSE if server running, else stdio), 'stdio' (binary), 'sse' (URL)")
+	ssePortFlag   = flag.Int("sse-port", 3000, "Port where rag-code-mcp SSE server listens (used for --transport=sse|auto)")
 )
 
 const (
@@ -129,7 +133,12 @@ func main() {
 	// 5. Handle environment setup based on flags
 	setupEnvironment()
 
-	// 6. Health Check
+	// 6. Configure IDEs automatically
+	selectedIDEs := parseIDESelections(*idesFlag)
+	transportMode := resolveTransport(*transportFlag, *ssePortFlag)
+	configureIDEs(selectedIDEs, binPath, transportMode, *ssePortFlag)
+
+	// 7. Health Check
 	runHealthCheck(binPath)
 
 	success("RagCode MCP installation completed successfully!")
@@ -482,4 +491,356 @@ func printBanner() {
              /____/                         
     Universal Installer (Fast Copy Mode)
 	`)
+}
+
+// --- Transport resolution ---
+
+// resolveTransport determines the effective transport mode.
+// 'auto': uses SSE if server is already running on the configured port, else stdio.
+// 'sse':  always uses SSE URL config.
+// 'stdio': always uses binary command config.
+func resolveTransport(mode string, port int) string {
+	switch strings.ToLower(mode) {
+	case "sse":
+		return "sse"
+	case "stdio":
+		return "stdio"
+	default: // auto
+		if isPortOpen(port) {
+			success(fmt.Sprintf("SSE server detected on port %d → configuring IDEs with SSE URL transport", port))
+			return "sse"
+		}
+		log(fmt.Sprintf("No SSE server on port %d → configuring IDEs with stdio (binary) transport", port))
+		return "stdio"
+	}
+}
+
+// --- IDE Configuration ---
+
+func configureIDEs(selected []string, binDir string, transport string, ssePort int) {
+	log("Configuring IDEs...")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		warn(fmt.Sprintf("Could not determine user home directory for IDE config: %v", err))
+		return
+	}
+	paths := resolveIDEPaths(home)
+	if len(paths) == 0 {
+		warn("No known IDE paths detected")
+		return
+	}
+
+	binPath := filepath.Join(binDir, "rag-code-mcp")
+	if runtime.GOOS == "windows" {
+		binPath += ".exe"
+	}
+
+	if transport == "sse" {
+		log(fmt.Sprintf("Transport mode: SSE URL (http://localhost:%d/sse)", ssePort))
+	} else {
+		log(fmt.Sprintf("Transport mode: stdio (binary: %s)", binPath))
+	}
+
+	selection := normalizeIdeSelection(selected)
+	configuredCount := 0
+
+	for key, cfg := range paths {
+		shouldEnsure := selection.explicit[key]
+
+		// If auto-detecting, only configure if the root folder for the IDE seems to exist
+		if !selection.auto && !shouldEnsure {
+			continue // User explicitly didn't ask for this and we aren't in auto mode
+		}
+
+		dir := filepath.Dir(cfg.path)
+
+		if !shouldEnsure {
+			// Auto mode: check if IDE directory exists before trying to configure
+			if _, err := os.Stat(dir); os.IsNotExist(err) {
+				continue
+			}
+		} else {
+			// Explicit mode: Ensure directory exists
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				warn(fmt.Sprintf("Failed to create %s: %v", dir, err))
+				continue
+			}
+		}
+
+		if updateMCPConfig(key, cfg.displayName, cfg.path, binPath, transport, ssePort) {
+			configuredCount++
+		}
+	}
+
+	if configuredCount == 0 {
+		log("No IDEs were automatically configured. They may not be installed or use non-standard paths.")
+	}
+
+	// Informational: Codex CLI uses TOML format – cannot be auto-configured
+	codexPath := filepath.Join(home, ".codex")
+	if _, err := os.Stat(codexPath); err == nil {
+		log("OpenAI Codex CLI detected at ~/.codex – requires manual config (TOML format).")
+		log("  Add to ~/.codex/config.toml:")
+		log(`  [mcp_servers.ragcode]`)
+		log(fmt.Sprintf(`  command = "%s"`, binPath))
+		log(`  args = []`)
+	}
+}
+
+type idePath struct {
+	path        string
+	displayName string
+}
+
+func resolveIDEPaths(home string) map[string]idePath {
+	paths := map[string]idePath{
+		"windsurf": {
+			path:        filepath.Join(home, ".codeium", "windsurf", "mcp_config.json"),
+			displayName: "Windsurf",
+		},
+		"cursor": {
+			path:        filepath.Join(home, ".cursor", "mcp.config.json"),
+			displayName: "Cursor",
+		},
+		"copilot": {
+			path:        filepath.Join(home, ".aitk", "mcp.json"),
+			displayName: "GitHub Copilot",
+		},
+		"antigravity": {
+			path:        filepath.Join(home, ".gemini", "antigravity", "mcp_config.json"),
+			displayName: "Antigravity",
+		},
+		"mcp-cli": {
+			path:        filepath.Join(home, ".config", "mcp-servers.json"),
+			displayName: "MCP CLI / Generic",
+		},
+		// Claude Code CLI stores MCP servers inside ~/.claude.json under "mcpServers"
+		"claude-cli": {
+			path:        filepath.Join(home, ".claude.json"),
+			displayName: "Claude Code CLI",
+		},
+		// Gemini CLI stores MCP servers inside ~/.gemini/settings.json under "mcpServers"
+		"gemini-cli": {
+			path:        filepath.Join(home, ".gemini", "settings.json"),
+			displayName: "Gemini CLI",
+		},
+	}
+
+	// Claude Desktop (GUI app) – OS-specific paths
+	switch runtime.GOOS {
+	case "darwin":
+		paths["claude"] = idePath{filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json"), "Claude Desktop"}
+	case "windows":
+		appData := os.Getenv("APPDATA")
+		if appData != "" {
+			paths["claude"] = idePath{filepath.Join(appData, "Claude", "claude_desktop_config.json"), "Claude Desktop"}
+		}
+	default: // Linux / others
+		paths["claude"] = idePath{filepath.Join(home, ".config", "Claude", "claude_desktop_config.json"), "Claude Desktop"}
+	}
+
+	// Zed Editor – stores MCP in its main settings.json under "context_servers"
+	switch runtime.GOOS {
+	case "windows":
+		appData := os.Getenv("APPDATA")
+		if appData != "" {
+			paths["zed"] = idePath{filepath.Join(appData, "Zed", "settings.json"), "Zed Editor"}
+		}
+	default: // Linux + macOS
+		paths["zed"] = idePath{filepath.Join(home, ".config", "zed", "settings.json"), "Zed Editor"}
+	}
+
+	// VS Code (modern copilot mcp.json)
+	if vsPath, ok := determineVSCodePath(home); ok {
+		paths["vs-code"] = vsPath
+	}
+
+	return paths
+}
+
+func determineVSCodePath(home string) (idePath, bool) {
+	var userDir string
+	switch runtime.GOOS {
+	case "windows":
+		appData := os.Getenv("APPDATA")
+		if appData == "" {
+			return idePath{}, false
+		}
+		userDir = filepath.Join(appData, "Code", "User")
+	case "darwin":
+		userDir = filepath.Join(home, "Library", "Application Support", "Code", "User")
+	default:
+		userDir = filepath.Join(home, ".config", "Code", "User")
+	}
+
+	newPath := filepath.Join(userDir, "mcp.json") // modern copilot mcp standard
+	return idePath{path: newPath, displayName: "VS Code"}, true
+}
+
+type ideSelection struct {
+	auto     bool
+	explicit map[string]bool
+}
+
+func parseIDESelections(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.ToLower(strings.TrimSpace(part))
+		if part != "" {
+			result = append(result, part)
+		}
+	}
+	return result
+}
+
+func normalizeIdeSelection(selected []string) ideSelection {
+	if len(selected) == 0 {
+		return ideSelection{auto: true, explicit: map[string]bool{}}
+	}
+	sel := ideSelection{explicit: map[string]bool{}}
+	for _, item := range selected {
+		if item == "auto" {
+			sel.auto = true
+			continue
+		}
+		sel.explicit[item] = true
+	}
+	if len(sel.explicit) == 0 {
+		sel.auto = true
+	}
+	return sel
+}
+
+func updateMCPConfig(ideKey, displayName, path, binPath, transport string, ssePort int) bool {
+	// Special case: Zed Editor uses "context_servers" inside its main settings.json
+	if ideKey == "zed" {
+		return updateZedConfig(displayName, path, binPath, transport, ssePort)
+	}
+
+	configMap := make(map[string]interface{})
+
+	// Read existing
+	if data, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(data, &configMap); err != nil {
+			warn(fmt.Sprintf("Failed to parse existing MCP config %s: %v", path, err))
+		}
+	}
+
+	collectionKey := "mcpServers"
+	if ideKey == "vs-code" || ideKey == "copilot" {
+		// New GitHub copilot uses "mcpServers" normally now, but leaving "servers" as fallback check
+		if _, exists := configMap["servers"]; exists {
+			collectionKey = "servers"
+		}
+	}
+
+	servers := make(map[string]interface{})
+	if existing, ok := configMap[collectionKey].(map[string]interface{}); ok {
+		servers = existing
+	}
+
+	if transport == "sse" {
+		servers["ragcode"] = buildSSEServerEntry(ssePort)
+	} else {
+		servers["ragcode"] = buildMCPServerEntry(ideKey, binPath)
+	}
+	configMap[collectionKey] = servers
+
+	data, _ := json.MarshalIndent(configMap, "", "  ")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err == nil {
+		if err := os.WriteFile(path, data, 0644); err == nil {
+			success(fmt.Sprintf("Configured %s (%s) [%s]", displayName, path, transport))
+			return true
+		} else {
+			warn(fmt.Sprintf("Could not write to %s: %v", path, err))
+		}
+	}
+	return false
+}
+
+// updateZedConfig handles Zed Editor's special format where MCP servers
+// live under "context_servers" in the main settings.json.
+// SSE mode: Zed supports HTTP MCP servers via the "url" field inside "command".
+func updateZedConfig(displayName, path, binPath, transport string, ssePort int) bool {
+	configMap := make(map[string]interface{})
+
+	if data, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(data, &configMap); err != nil {
+			warn(fmt.Sprintf("Failed to parse existing Zed config %s: %v", path, err))
+		}
+	}
+
+	contextServers := make(map[string]interface{})
+	if existing, ok := configMap["context_servers"].(map[string]interface{}); ok {
+		contextServers = existing
+	}
+
+	var ragcodeEntry map[string]interface{}
+	if transport == "sse" {
+		// Zed Streamable HTTP: endpoint /mcp, fără sesiuni
+		ragcodeEntry = map[string]interface{}{
+			"command": map[string]interface{}{
+				"url": fmt.Sprintf("http://localhost:%d/mcp", ssePort),
+			},
+			"settings": map[string]interface{}{},
+		}
+	} else {
+		ragcodeEntry = map[string]interface{}{
+			"command": map[string]interface{}{
+				"path": binPath,
+				"args": []string{},
+				"env": map[string]string{
+					"OLLAMA_BASE_URL": "http://localhost:11434",
+					"OLLAMA_EMBED":    config.StableEmbeddingModel,
+					"QDRANT_URL":      "http://localhost:6333",
+				},
+			},
+			"settings": map[string]interface{}{},
+		}
+	}
+	contextServers["ragcode"] = ragcodeEntry
+	configMap["context_servers"] = contextServers
+
+	data, _ := json.MarshalIndent(configMap, "", "  ")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err == nil {
+		if err := os.WriteFile(path, data, 0644); err == nil {
+			success(fmt.Sprintf("Configured %s (%s) [%s]", displayName, path, transport))
+			return true
+		} else {
+			warn(fmt.Sprintf("Could not write to %s: %v", path, err))
+		}
+	}
+	return false
+}
+
+// buildMCPServerEntry builds the stdio (binary) MCP server entry.
+func buildMCPServerEntry(ideKey, binPath string) map[string]interface{} {
+	entry := map[string]interface{}{
+		"command": binPath,
+		"args":    []string{},
+		"env": map[string]string{
+			"OLLAMA_BASE_URL": "http://localhost:11434",
+			"OLLAMA_EMBED":    config.StableEmbeddingModel,
+			"QDRANT_URL":      "http://localhost:6333",
+		},
+	}
+
+	switch ideKey {
+	case "windsurf":
+		entry["disabled"] = false
+	}
+
+	return entry
+}
+
+// buildSSEServerEntry builds the Streamable HTTP (stateless) MCP server entry.
+// Agentul trimite POST direct la /mcp — fără sesiuni, fără sessionid.
+func buildSSEServerEntry(ssePort int) map[string]interface{} {
+	return map[string]interface{}{
+		"url": fmt.Sprintf("http://localhost:%d/mcp", ssePort),
+	}
 }

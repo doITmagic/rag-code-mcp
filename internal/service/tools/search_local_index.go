@@ -38,7 +38,7 @@ func (t *SearchLocalIndexTool) Description() string {
 		"Use 'exact' mode for precise matches of symbols, specific errors, and variable names (Hybrid search). " +
 		"Returns complete source code with file path and line numbers. Supports all registered languages. " +
 		"NEW: Automatically performs 'Graph Context Expansion' - it reads AST structurally related dependencies (methods, structs, interfaces) from the code and auto-fetches their definitions in the same response! " +
-		"IMPORTANT: Always provide the 'file_path' of the file you are currently working on for better context detection."
+		"OPTIONAL: Provide 'file_path' of the file you are currently working on for faster workspace detection. If omitted, the server will Auto-Discover the workspace from the last active project."
 }
 
 type SearchLocalIndexInput struct {

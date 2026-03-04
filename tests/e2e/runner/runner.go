@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -274,9 +273,9 @@ func (r *Runner) runStep(ctx context.Context, step map[string]any) error {
 		return r.stepLXCPushBinaries(ctx, step)
 	case "lxc.exec":
 		return r.stepLXCExec(ctx, step)
-	case "wait.http_sse":
+	case "wait.http", "wait.http_sse": // wait.http_sse păstrat ca alias pentru backward compat
 		return r.stepWaitHTTP(ctx, step)
-	case "mcp.connect_sse":
+	case "mcp.connect", "mcp.connect_sse": // mcp.connect_sse păstrat ca alias pentru backward compat
 		return r.stepMCPConnect(ctx, step)
 	case "mcp.tool_call":
 		return r.stepMCPToolCall(ctx, step)
@@ -474,8 +473,11 @@ func (r *Runner) stepWaitHTTP(ctx context.Context, step map[string]any) error {
 
 	deadline := time.Now().Add(time.Duration(timeoutSec) * time.Second)
 	for time.Now().Before(deadline) {
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		req.Header.Set("Accept", "text/event-stream")
+		// Probe /mcp with a minimal JSON-RPC ping (tools/list)
+		body := []byte(`{"jsonrpc":"2.0","id":"probe","method":"tools/list","params":{}}`)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
 		resp, err := http.DefaultClient.Do(req)
 		if err == nil {
 			_ = resp.Body.Close()
@@ -543,26 +545,9 @@ func (r *Runner) lxcExecCapture(ctx context.Context, container string, cmdArgs [
 
 func (r *Runner) stepMCPConnect(ctx context.Context, step map[string]any) error {
 	baseURL := r.expand(fmt.Sprint(step["base_url"]))
-	initPayload, ok := step["initialize"].(map[string]any)
-	if !ok {
-		return errors.New("initialize missing")
-	}
-	client, err := NewMCPClient(baseURL)
-	if err != nil {
-		return err
-	}
-	r.MCP = client
-
-	// initialize
-	id := "init-1"
-	if err := client.SendJSONRPC(id, "initialize", initPayload); err != nil {
-		return err
-	}
-	if _, err := client.WaitForID(id, 2*time.Minute); err != nil {
-		return err
-	}
-	// notifications/initialized
-	_ = client.SendNotification("notifications/initialized", map[string]any{})
+	// Streamable HTTP stateless: no session management, no initialize handshake needed.
+	// The server auto-initializes each request.
+	r.MCP = NewMCPClient(baseURL)
 	return nil
 }
 
@@ -577,10 +562,8 @@ func (r *Runner) stepMCPToolCall(ctx context.Context, step map[string]any) error
 		"name":      name,
 		"arguments": r.expandAny(args).(map[string]any),
 	}
-	if err := r.MCP.SendJSONRPC(id, "tools/call", payload); err != nil {
-		return err
-	}
-	msg, err := r.MCP.WaitForID(id, 10*time.Minute)
+	// SendJSONRPC este sincron cu transport stateless — răspunsul vine direct.
+	msg, err := r.MCP.SendJSONRPC(id, "tools/call", payload)
 	if err != nil {
 		return err
 	}
@@ -770,176 +753,77 @@ func (r *Runner) lxcGetIP(ctx context.Context, container string) (string, error)
 	return cands[0].ip, nil
 }
 
-// --- MCP client ---
+// --- MCP client (Streamable HTTP stateless) ---
+// POST /mcp — fără sesiuni, fără sessionid, răspuns direct în body.
 
 type MCPClient struct {
-	BaseURL   string
-	SessionID string
-	outCh     chan []byte
-	resp      *http.Response
-	reader    *bufio.Reader
+	BaseURL    string
+	httpClient *http.Client
 }
 
-func NewMCPClient(baseURL string) (*MCPClient, error) {
-	c := &MCPClient{BaseURL: baseURL, outCh: make(chan []byte, 64)}
-
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+"/sse", nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "text/event-stream")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		return nil, fmt.Errorf("unexpected SSE status %d: %s", resp.StatusCode, string(body))
-	}
-	c.resp = resp
-	c.reader = bufio.NewReader(resp.Body)
-
-	endpoint, err := readSSEEvent(c.reader)
-	if err != nil {
-		return nil, err
-	}
-	sid := extractSessionID(endpoint)
-	if sid == "" {
-		return nil, fmt.Errorf("missing sessionid from SSE endpoint event: %s", string(endpoint))
-	}
-	c.SessionID = sid
-	go c.readLoop()
-	return c, nil
-}
-
-func (c *MCPClient) Close() {
-	if c.resp != nil {
-		_ = c.resp.Body.Close()
+func NewMCPClient(baseURL string) *MCPClient {
+	return &MCPClient{
+		BaseURL:    baseURL,
+		httpClient: &http.Client{},
 	}
 }
 
-func (c *MCPClient) readLoop() {
-	defer close(c.outCh)
-	var buf bytes.Buffer
-	for {
-		line, err := c.reader.ReadString('\n')
-		if err != nil {
-			return
-		}
-		line = strings.TrimRight(line, "\r\n")
-		if line == "" {
-			if buf.Len() > 0 {
-				payload := append([]byte(nil), buf.Bytes()...)
-				c.outCh <- payload
-				buf.Reset()
-			}
-			continue
-		}
-		if strings.HasPrefix(line, "data:") {
-			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			buf.WriteString(data)
-		}
-	}
-}
-
-func (c *MCPClient) SendJSONRPC(id, method string, params any) error {
+// SendJSONRPC trimite un request JSON-RPC la /mcp și returnează răspunsul sincron.
+func (c *MCPClient) SendJSONRPC(id, method string, params any) (map[string]any, error) {
 	payload := map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	endpoint := c.BaseURL + "/messages?sessionid=" + c.SessionID
-	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, c.BaseURL+"/mcp", bytes.NewReader(body))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("/messages status %d: %s", resp.StatusCode, string(b))
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
 	}
-	return nil
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		return nil, fmt.Errorf("/mcp status %d: %s", resp.StatusCode, string(respBody))
+	}
+	// Dacă răspunsul e SSE, extragem linia data:
+	if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+		respBody = extractSSEData(respBody)
+	}
+	var msg map[string]any
+	if err := json.Unmarshal(respBody, &msg); err != nil {
+		return nil, fmt.Errorf("decode response: %w\nbody: %s", err, string(respBody))
+	}
+	return msg, nil
 }
 
-func (c *MCPClient) SendNotification(method string, params any) error {
-	payload := map[string]any{"jsonrpc": "2.0", "method": method, "params": params}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	endpoint := c.BaseURL + "/messages?sessionid=" + c.SessionID
-	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("/messages status %d: %s", resp.StatusCode, string(b))
-	}
-	return nil
-}
-
+// WaitForID trimite request-ul și returnează răspunsul direct (transport stateless = sincron).
+// Parametrul timeout este folosit ca HTTP client timeout.
 func (c *MCPClient) WaitForID(id string, timeout time.Duration) (map[string]any, error) {
-	deadline := time.After(timeout)
-	for {
-		select {
-		case <-deadline:
-			return nil, fmt.Errorf("timeout waiting for id=%s", id)
-		case data, ok := <-c.outCh:
-			if !ok {
-				return nil, fmt.Errorf("SSE closed before id=%s", id)
-			}
-			var msg map[string]any
-			if err := json.Unmarshal(data, &msg); err != nil {
-				continue
-			}
-			if msgID, ok := msg["id"].(string); ok && msgID == id {
-				return msg, nil
-			}
-		}
-	}
+	// Cu transport stateless, răspunsul vine direct — nu e nevoie de polling.
+	// Această funcție este păstrată pentru compatibilitate cu stepMCPToolCall.
+	return nil, fmt.Errorf("WaitForID: use SendJSONRPC directly for stateless transport (id=%s)", id)
 }
 
-func readSSEEvent(r *bufio.Reader) ([]byte, error) {
-	var buf bytes.Buffer
-	for {
-		line, err := r.ReadString('\n')
-		if err != nil {
-			return nil, err
-		}
-		line = strings.TrimRight(line, "\r\n")
-		if line == "" {
-			if buf.Len() > 0 {
-				return buf.Bytes(), nil
-			}
-			continue
-		}
+// extractSSEData extrage payload-ul JSON dintr-un răspuns SSE.
+func extractSSEData(body []byte) []byte {
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "data:") {
 			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			buf.WriteString(data)
+			if data != "" && data != "[DONE]" {
+				return []byte(data)
+			}
 		}
 	}
-}
-
-func extractSessionID(endpoint []byte) string {
-	text := string(endpoint)
-	idx := strings.Index(text, "sessionid=")
-	if idx == -1 {
-		return ""
-	}
-	return strings.TrimSpace(text[idx+len("sessionid="):])
+	return body
 }
 
 // --- Tool response extraction + asserts ---

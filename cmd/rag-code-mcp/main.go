@@ -31,7 +31,7 @@ import (
 )
 
 var (
-	Version = "2.1.26"
+	Version = "2.1.28"
 	Commit  = "none"
 	Date    = "24.10.2025"
 )
@@ -167,16 +167,18 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	// SSE Server
+	// Streamable HTTP Server (stateless) — transport modern MCP.
+	// Agenții AI și IDE-urile trimit POST /mcp direct, fără sesiuni sau sessionid.
 	var httpServer *http.Server
 	if *httpPort > 0 {
-		sseHandler := mcp.NewSSEHandler(func(r *http.Request) *mcp.Server {
+		streamableHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 			return server
-		}, nil)
+		}, &mcp.StreamableHTTPOptions{
+			Stateless: true,
+		})
 
 		mux := http.NewServeMux()
-		mux.Handle("/sse", sseHandler)
-		mux.Handle("/messages", sseHandler)
+		mux.Handle("/mcp", streamableHandler)
 
 		httpServer = &http.Server{
 			Addr:    fmt.Sprintf(":%d", *httpPort),
@@ -184,7 +186,7 @@ func main() {
 		}
 
 		go func() {
-			logger.Instance.Info("Starting SSE server on http://localhost:%d/sse", *httpPort)
+			logger.Instance.Info("Starting HTTP server on http://localhost:%d/mcp (Streamable HTTP, stateless)", *httpPort)
 			if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				logger.Instance.Error("HTTP server failed: %v", err)
 				cancel()

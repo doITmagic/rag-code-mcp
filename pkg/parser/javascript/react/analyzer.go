@@ -88,12 +88,21 @@ func IsReactNativeFile(source string) bool {
 }
 
 // Analyze performs React and React Native analysis
+// Uses tree-sitter AST as primary engine, with regex fallback
 func (a *Analyzer) Analyze(source string, filePath string) *ReactInfo {
+	// Try tree-sitter first (accurate AST-based detection)
+	tsAnalyzer := NewTreeSitterAnalyzer()
+	info := tsAnalyzer.Analyze([]byte(source), filePath)
+	if info != nil && (len(info.Components) > 0 || len(info.Hooks) > 0 || len(info.Contexts) > 0) {
+		return info
+	}
+
+	// Fallback to regex-based detection
 	if !IsReactFile(source) && !IsReactNativeFile(source) {
 		return &ReactInfo{}
 	}
 
-	info := &ReactInfo{}
+	info = &ReactInfo{}
 	info.IsReactNative = IsReactNativeFile(source)
 
 	// Detect components

@@ -317,7 +317,8 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 	// Embed ONCE, fan-out to all language collections in parallel
 	langs := parser.SupportedLanguages()
 	if len(langs) == 0 {
-		langs = []string{"go", "python", "php", "html"}
+		log.Printf("[WARN] No parsers registered — SupportedLanguages() returned empty. Skipping fan-out.")
+		return nil, fmt.Errorf("no language parsers registered")
 	}
 
 	t2 := time.Now()
@@ -481,7 +482,8 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 func (e *Engine) ExactSearchPolyglot(ctx context.Context, wsID string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error) {
 	langs := parser.SupportedLanguages()
 	if len(langs) == 0 {
-		langs = []string{"go", "python", "php", "html"}
+		log.Printf("[WARN] No parsers registered — SupportedLanguages() returned empty. Skipping ExactSearch.")
+		return nil, &ErrNoCollectionsFound{WorkspaceID: wsID}
 	}
 
 	type trial struct {

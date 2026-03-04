@@ -49,8 +49,8 @@ var _ = Describe("FindUsagesTool", func() {
 			var resp tools.ToolResponse
 			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
 
-			// Depending on whether auto-index is started or not, status could be indexing_started or indexing_required
-			// FindUsages auto-starts indexing if nothing is found and returns indexing_in_progress
+			// Depending on whether auto-index is started or not, status could be indexing_required or indexing_in_progress
+			// FindUsages auto-starts indexing if nothing is found and returns indexing_in_progress in that case
 			Expect(resp.Status).To(MatchRegexp("indexing_in_progress|indexing_required"))
 		})
 

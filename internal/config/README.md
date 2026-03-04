@@ -22,8 +22,6 @@ The root configuration structure, containing sub-sections for:
 ```go
 import "github.com/doITmagic/rag-code-mcp/internal/config"
 
-// Load will look for config.yaml in the execution directory
-// and apply environment overrides.
 // Load reads configuration from the given path (e.g. ./config.yaml)
 // and applies environment overrides.
 cfg, err := config.Load("./config.yaml")

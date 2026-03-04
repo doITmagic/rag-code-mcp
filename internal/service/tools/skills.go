@@ -114,12 +114,14 @@ func NewInstallSkillTool(eng *engine.Engine) *InstallSkillTool {
 func (t *InstallSkillTool) Name() string { return "rag_install_skill" }
 func (t *InstallSkillTool) Description() string {
 	return "Installs or uninstalls a specific skill into the current workspace. " +
-		"Action must be 'install' or 'uninstall'."
+		"Action must be 'install' or 'uninstall'. " +
+		"Optional 'target' specifies the tool directory: 'agent' (default/Antigravity/OpenCode), 'agents' (GitHub Copilot), 'claude' (Anthropic Claude), 'cursor' (Cursor), 'windsurf' (Windsurf/Codeium)."
 }
 
 type InstallSkillInput struct {
 	SkillID  string `json:"skill_id"`
 	Action   string `json:"action,omitempty"`
+	Target   string `json:"target,omitempty"`
 	FilePath string `json:"file_path,omitempty"`
 }
 
@@ -131,6 +133,7 @@ func (t *InstallSkillTool) Register(server *mcp.Server) {
 		args := map[string]interface{}{
 			"skill_id":  input.SkillID,
 			"action":    input.Action,
+			"target":    input.Target,
 			"file_path": input.FilePath,
 		}
 		start := time.Now()
@@ -151,12 +154,16 @@ func (t *InstallSkillTool) Register(server *mcp.Server) {
 func (t *InstallSkillTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
 	skillID, _ := args["skill_id"].(string)
 	action, _ := args["action"].(string)
+	target, _ := args["target"].(string)
 
 	if skillID == "" {
 		return "", fmt.Errorf("skill_id is required")
 	}
 	if action == "" {
 		action = "install"
+	}
+	if target == "" {
+		target = "agent"
 	}
 
 	filePath, _ := args["file_path"].(string)
@@ -177,7 +184,7 @@ func (t *InstallSkillTool) Execute(ctx context.Context, args map[string]interfac
 	if action == "uninstall" {
 		installErr = skills.UninstallSkill(skillID, workspaceRoot)
 	} else {
-		installErr = skills.InstallSkill(skillID, workspaceRoot)
+		installErr = skills.InstallSkill(skillID, workspaceRoot, target)
 	}
 
 	response := ToolResponse{

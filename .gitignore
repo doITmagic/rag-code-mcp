@@ -4,6 +4,7 @@ test_data/
 qdrant_data/
 barou/
 inspirations/
+relations/
 
 # Binaries
 /cmd/agent-runner/agent-runner

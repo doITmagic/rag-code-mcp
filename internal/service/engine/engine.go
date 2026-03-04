@@ -686,7 +686,7 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 
 	if e.config != nil && e.config.Workspace.AutoInstallSSESkill {
 		if !skills.IsSkillInstalled("ragcode-sse", wctx.Root) {
-			if err := skills.InstallSkill("ragcode-sse", wctx.Root); err != nil {
+			if err := skills.InstallSkill("ragcode-sse", wctx.Root, "agent"); err != nil {
 				log.Printf("[WARN] Failed to install ragcode-sse skill for %s: %v", wctx.Root, err)
 			}
 		}

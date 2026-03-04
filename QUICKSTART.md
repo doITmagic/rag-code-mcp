@@ -127,7 +127,7 @@ Please use the 'rag_index_workspace' tool on this project.
 | "Ollama model not found" | Run `ollama pull qwen3-embedding:0.6b` |
 | IDE doesn't see RagCode | Re-run `./rag-code-install -skip-build` |
 
-For more help, see [Troubleshooting Guide](./docs/TROUBLESHOOTING.md) or open an [Issue](https://github.com/doITmagic/rag-code-mcp/issues).
+For more help, see the [README](./README.md) or open an [Issue](https://github.com/doITmagic/rag-code-mcp/issues).
 
 ---
 

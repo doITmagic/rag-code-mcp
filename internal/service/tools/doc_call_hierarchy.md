@@ -10,7 +10,7 @@ This tool operates as a stateful, recursive orchestrator over the **Code Graph R
 
 1. **Incoming Mode (`direction="incoming"`)**:
    * Identifies all "Caller" nodes by querying the database for any chunk where the `Relations` array contains a `target_name` matching the current symbol.
-   * DB Filter: `{ "Relations[].target_name": "<SymbolName>" }`
+   * DB Filter: `{ "relations[].target_name": "<SymbolName>" }`
    
 2. **Outgoing Mode (`direction="outgoing"`)**:
    * Identifies "Callee" nodes by searching for the symbol itself and extracting all `target_name` entries from its own `Relations` payload metadata.

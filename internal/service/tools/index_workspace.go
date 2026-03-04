@@ -33,8 +33,9 @@ func (t *IndexWorkspaceTool) Description() string {
 }
 
 type IndexWorkspaceInput struct {
-	FilePath string `json:"file_path,omitempty"`
-	Recreate bool   `json:"recreate,omitempty"`
+	FilePath           string `json:"file_path,omitempty"`
+	Recreate           bool   `json:"recreate,omitempty"`
+	IncludeRuntimeInfo bool   `json:"include_runtime_info,omitempty"`
 }
 
 func (t *IndexWorkspaceTool) Register(server *mcp.Server) {
@@ -43,8 +44,9 @@ func (t *IndexWorkspaceTool) Register(server *mcp.Server) {
 		Description: t.Description(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input IndexWorkspaceInput) (*mcp.CallToolResult, any, error) {
 		args := map[string]interface{}{
-			"file_path": input.FilePath,
-			"recreate":  input.Recreate,
+			"file_path":            input.FilePath,
+			"recreate":             input.Recreate,
+			"include_runtime_info": input.IncludeRuntimeInfo,
 		}
 
 		start := time.Now()
@@ -83,7 +85,7 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 
 	response := ToolResponse{
 		Status:  "indexing_started",
-		Message: fmt.Sprintf("🚀 Indexing started for workspace '%s'. The process is running in the background. You can use search_code immediately - results will appear as indexing progresses.", wctx.Root),
+		Message: fmt.Sprintf("🚀 Indexing started for workspace '%s'. The process is running in the background. You can use rag_search (or rag_search_code) immediately - results will appear as indexing progresses.", wctx.Root),
 		Context: ContextMetadata{
 			WorkspaceRoot:   wctx.Root,
 			DetectionSource: wctx.DetectionSource,
@@ -98,8 +100,11 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 		}
 	}
 
-	data := map[string]interface{}{
-		"runtime": map[string]interface{}{
+	data := map[string]interface{}{}
+
+	includeRuntimeInfo, _ := params["include_runtime_info"].(bool)
+	if includeRuntimeInfo {
+		data["runtime"] = map[string]interface{}{
 			"pid":                os.Getpid(),
 			"executable_path":    exePath,
 			"binary_modified_at": binModTime,
@@ -111,7 +116,7 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 				"commit":  serverCommit,
 				"date":    serverDate,
 			},
-		},
+		}
 	}
 
 	// Include current indexing progress so the AI knows how many files are left

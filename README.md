@@ -104,8 +104,8 @@ First query triggers background indexing. Subsequent queries are instant.
 | [🛠️ MCP Tools](#️-11-powerful-mcp-tools) | All 11 tools explained |
 | [🌐 Supported Languages](#-multi-language-code-intelligence) | Go, PHP, Python support |
 | [💻 IDE Integration](#-ide-integration) | Windsurf, Cursor, VS Code, Claude |
-| [⚙️ Configuration](#-configuration) | Advanced settings, models, env vars |
-| [🐛 Troubleshooting](#-troubleshooting) | Common issues and solutions |
+| [⚙️ Configuration](./docs/configuration.md) | Advanced settings, models, env vars |
+| [🐛 Troubleshooting](./docs/troubleshooting.md) | Common issues and solutions |
 | [📚 Documentation](#-documentation) | All guides and references |
 
 ---
@@ -264,8 +264,8 @@ RagCode works with all major AI-powered IDEs:
 - **[IDE Setup](./docs/IDE-SETUP.md)** - Manual IDE configuration
 
 ### Configuration & Operations
-- **[Configuration Guide](#-configuration)** - Models, env vars, advanced settings
-- **[Troubleshooting](#-troubleshooting)** - Common issues and solutions
+- **[Configuration Guide](./docs/configuration.md)** - Models, env vars, advanced settings
+- **[Troubleshooting](./docs/troubleshooting.md)** - Common issues and solutions
 - **[Docker Setup](./docs/docker-setup.md)** - Docker configuration details
 
 ### Language Analyzers

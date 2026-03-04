@@ -92,18 +92,18 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 		},
 	}
 
-	exePath, _ := os.Executable()
-	binModTime := "unknown"
-	if exePath != "" {
-		if stat, statErr := os.Stat(exePath); statErr == nil {
-			binModTime = stat.ModTime().Format(time.RFC3339)
-		}
-	}
-
 	data := map[string]interface{}{}
 
 	includeRuntimeInfo, _ := params["include_runtime_info"].(bool)
 	if includeRuntimeInfo {
+		exePath, _ := os.Executable()
+		binModTime := "unknown"
+		if exePath != "" {
+			if stat, statErr := os.Stat(exePath); statErr == nil {
+				binModTime = stat.ModTime().Format(time.RFC3339)
+			}
+		}
+
 		data["runtime"] = map[string]interface{}{
 			"pid":                os.Getpid(),
 			"executable_path":    exePath,

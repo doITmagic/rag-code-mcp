@@ -109,6 +109,7 @@ func (ca *CodeAnalyzer) AnalyzePaths(paths []string) ([]CodeChunk, error) {
 }
 
 // parseAndCollect parses Python source and collects symbols
+// Uses tree-sitter for accurate AST parsing, with regex as fallback/supplement
 func (ca *CodeAnalyzer) parseAndCollect(filePath string, content []byte) error {
 	moduleName := ca.extractModuleName(filePath)
 
@@ -123,24 +124,67 @@ func (ca *CodeAnalyzer) parseAndCollect(filePath string, content []byte) error {
 	}
 
 	lines := strings.Split(string(content), "\n")
-
-	// Extract module docstring
 	module.Description = ca.extractModuleDocstring(lines)
 
-	// Parse imports
-	module.Imports = ca.extractImports(lines)
+	// Try tree-sitter for imports (more accurate than regex for complex cases)
+	tsParser := NewTreeSitterParser()
+	tsResult, tsErr := tsParser.Parse(content, filePath)
+	if tsErr == nil && tsResult != nil && len(tsResult.Imports) > 0 {
+		module.Imports = tsResult.Imports
+	} else {
+		module.Imports = ca.extractImports(lines)
+	}
 
-	// Parse classes
+	// Always use regex for classes and functions — it captures metaclass,
+	// method calls, dependencies, and other metadata not in tree-sitter scope
 	module.Classes = ca.extractClasses(lines, filePath, content)
-
-	// Parse module-level functions
 	module.Functions = ca.extractFunctions(lines, filePath, content)
-
-	// Parse module-level variables and constants
 	module.Variables, module.Constants = ca.extractVariablesAndConstants(lines, filePath)
+
+	// Augment class bases and function params with tree-sitter type hints when available
+	if tsErr == nil && tsResult != nil {
+		augmentWithTreeSitter(module, tsResult)
+	}
 
 	ca.modules[moduleName] = module
 	return nil
+}
+
+// augmentWithTreeSitter merges tree-sitter type hints into regex-parsed results
+func augmentWithTreeSitter(module *ModuleInfo, ts *PyFileAnalysis) {
+	// Build lookup maps from tree-sitter
+	tsFuncs := make(map[string]*FunctionInfo, len(ts.Functions))
+	for i := range ts.Functions {
+		tsFuncs[ts.Functions[i].Name] = &ts.Functions[i]
+	}
+	tsClasses := make(map[string]*ClassInfo, len(ts.Classes))
+	for i := range ts.Classes {
+		tsClasses[ts.Classes[i].Name] = &ts.Classes[i]
+	}
+
+	// Augment functions: add typed params from tree-sitter if regex missed them
+	for i := range module.Functions {
+		fn := &module.Functions[i]
+		if tsFn, ok := tsFuncs[fn.Name]; ok {
+			if len(fn.Parameters) == 0 && len(tsFn.Parameters) > 0 {
+				fn.Parameters = tsFn.Parameters
+			}
+			// Use tree-sitter async detection (more reliable)
+			if tsFn.IsAsync {
+				fn.IsAsync = true
+			}
+		}
+	}
+
+	// Augment classes: if bases are missing, use tree-sitter's
+	for i := range module.Classes {
+		cls := &module.Classes[i]
+		if tsCls, ok := tsClasses[cls.Name]; ok {
+			if len(cls.Bases) == 0 && len(tsCls.Bases) > 0 {
+				cls.Bases = tsCls.Bases
+			}
+		}
+	}
 }
 
 // extractModuleName derives module name from file path

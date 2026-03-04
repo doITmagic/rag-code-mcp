@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
+	"github.com/doITmagic/rag-code-mcp/pkg/parser/javascript/vue"
 )
 
 func init() {
@@ -36,6 +37,7 @@ var jsExtensions = map[string]bool{
 	".tsx": true,
 	".mjs": true,
 	".cjs": true,
+	".vue": true, // Vue Single File Components
 }
 
 // CanHandle returns true for JS/TS files
@@ -127,6 +129,11 @@ func (ca *CodeAnalyzer) analyzeFile(filePath string) (*fileAnalysis, error) {
 		return nil, err
 	}
 
+	// Route .vue files to the Vue SFC sub-analyzer
+	if filepath.Ext(filePath) == ".vue" {
+		return ca.analyzeVueFile(filePath, content)
+	}
+
 	// Try tree-sitter first (accurate AST parsing)
 	tsParser := NewTreeSitterParser()
 	fa, err := tsParser.ParseFile(content, filePath)
@@ -167,6 +174,41 @@ func (ca *CodeAnalyzer) analyzeFile(filePath string) (*fileAnalysis, error) {
 		fa.Interfaces = ExtractTSInterfaces(source, filePath)
 		fa.Types = ExtractTSTypeAliases(source, filePath)
 		fa.Enums = ExtractTSEnums(source, filePath)
+	}
+
+	return fa, nil
+}
+
+// analyzeVueFile delegates to the Vue SFC sub-analyzer and converts results to fileAnalysis
+func (ca *CodeAnalyzer) analyzeVueFile(filePath string, content []byte) (*fileAnalysis, error) {
+	vueAnalyzer := vue.NewAnalyzer()
+	vueInfo := vueAnalyzer.Analyze(string(content), filePath)
+	if vueInfo == nil {
+		return &fileAnalysis{FilePath: filePath, Language: "vue"}, nil
+	}
+
+	fa := &fileAnalysis{
+		FilePath: filePath,
+		Language: "vue",
+	}
+
+	// Map Vue composables to JS functions
+	for _, comp := range vueInfo.Composables {
+		fa.Functions = append(fa.Functions, JSFunction{
+			Name:       comp.Name,
+			FilePath:   filePath,
+			IsExported: true,
+		})
+	}
+
+	// Map Vue components as class-like symbols
+	for _, comp := range vueInfo.Components {
+		fa.Classes = append(fa.Classes, JSClass{
+			Name:       comp.Name,
+			FilePath:   filePath,
+			IsExported: comp.IsExported,
+			Docstring:  fmt.Sprintf("Vue component (%s)", comp.Type),
+		})
 	}
 
 	return fa, nil

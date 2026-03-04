@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -111,7 +112,8 @@ func CheckAll(ollamaURL, qdrantURL string) []CheckResult {
 
 // FormatResults formats health check results for display
 func FormatResults(results []CheckResult) string {
-	output := "\n=== Dependency Health Check ===\n\n"
+	var output strings.Builder
+	output.WriteString("\n=== Dependency Health Check ===\n\n")
 
 	for _, result := range results {
 		var status string
@@ -124,23 +126,23 @@ func FormatResults(results []CheckResult) string {
 			status = "?"
 		}
 
-		output += fmt.Sprintf("%s %s: %s\n", status, result.Service, result.Message)
+		fmt.Fprintf(&output, "%s %s: %s\n", status, result.Service, result.Message)
 	}
 
-	return output
+	return output.String()
 }
 
 // GetRemediation provides remediation steps for failed checks
 func GetRemediation(results []CheckResult) string {
-	var remediation string
+	var remediation strings.Builder
 
 	for _, result := range results {
 		if result.Status != "ok" {
-			remediation += fmt.Sprintf("\n%s is not accessible:\n", result.Service)
+			fmt.Fprintf(&remediation, "\n%s is not accessible:\n", result.Service)
 
 			switch result.Service {
 			case "Ollama":
-				remediation += `
+				remediation.WriteString(`
   Install Ollama:
     curl -fsSL https://ollama.ai/install.sh | sh
 
@@ -150,9 +152,9 @@ func GetRemediation(results []CheckResult) string {
   Pull required models:
     ollama pull mxbai-embed-large
     ollama pull phi3:medium
-`
+`)
 			case "Qdrant":
-				remediation += `
+				remediation.WriteString(`
   Start Qdrant with Docker:
     docker run -d -p 6333:6333 \
       -v $(pwd)/qdrant_data:/qdrant/storage \
@@ -160,10 +162,10 @@ func GetRemediation(results []CheckResult) string {
 
   Or use docker-compose:
     docker compose up -d qdrant
-`
+`)
 			}
 		}
 	}
 
-	return remediation
+	return remediation.String()
 }

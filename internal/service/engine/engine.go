@@ -259,9 +259,13 @@ func (e *ErrNotIndexed) Error() string {
 type ErrIndexingInProgress struct {
 	WorkspaceRoot string
 	WorkspaceID   string
+	LastPercent   int
 }
 
 func (e *ErrIndexingInProgress) Error() string {
+	if e.LastPercent > 0 && e.LastPercent < 100 {
+		return fmt.Sprintf("indexing in progress for %s (resuming from %d%%)", e.WorkspaceRoot, e.LastPercent)
+	}
 	return fmt.Sprintf("indexing in progress for %s", e.WorkspaceRoot)
 }
 
@@ -296,6 +300,18 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 	// Ensure at least the primary collection exists before embedding (fast fail + indexing trigger)
 	primaryColl := wctx.CollectionName(primaryLang)
 	t1 := time.Now()
+
+	indexerStatePath := filepath.Join(wctx.Root, ".ragcode", "state.json")
+	if idxState, sErr := indexer.LoadState(indexerStatePath); sErr == nil {
+		if idxState.LastPercent > 0 && idxState.LastPercent < 100 {
+			if _, ok := e.indexingJobs.Load(wctx.ID); !ok {
+				log.Printf("[INFO] Detectată indexare întreruptă (rămasă la %d%%). Se reia automat...", idxState.LastPercent)
+				e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+			}
+			return nil, &ErrIndexingInProgress{WorkspaceRoot: wctx.Root, WorkspaceID: wctx.ID, LastPercent: idxState.LastPercent}
+		}
+	}
+
 	exists, err := e.search.CollectionExists(ctx, primaryColl)
 	log.Printf("[TIMER] SearchCode collection_exists_primary=%v (cached=%v)", time.Since(t1), time.Since(t1) < time.Millisecond)
 	if err != nil {
@@ -438,6 +454,17 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 	}
 
 	collection := wctx.CollectionName(lang)
+
+	indexerStatePath := filepath.Join(wctx.Root, ".ragcode", "state.json")
+	if idxState, sErr := indexer.LoadState(indexerStatePath); sErr == nil {
+		if idxState.LastPercent > 0 && idxState.LastPercent < 100 {
+			if _, ok := e.indexingJobs.Load(wctx.ID); !ok {
+				log.Printf("[INFO] Detectată indexare întreruptă (rămasă la %d%%). Se reia automat...", idxState.LastPercent)
+				e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+			}
+			return nil, &ErrIndexingInProgress{WorkspaceRoot: wctx.Root, WorkspaceID: wctx.ID, LastPercent: idxState.LastPercent}
+		}
+	}
 
 	exists, err := e.search.CollectionExists(ctx, collection)
 	if err != nil {

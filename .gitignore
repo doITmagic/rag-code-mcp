@@ -12,9 +12,9 @@ relations/
 test-*
 bin/
 tests/e2e/bin/
-ragcode-installer
+rag-code-install
 index-all
-cmd/rag-code-mcp/rag-code-mcp
+rag-code-mcp
 
 # Test programs
 cmd/test-*/

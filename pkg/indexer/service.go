@@ -316,6 +316,7 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 				if totalFiles > 0 {
 					pct = n * 100 / totalFiles
 				}
+				state.SetLastPercent(pct)
 				fmt.Fprintf(os.Stderr, "\r[INDEX] %s: %d%% (%d/%d files)   ", opts.Language, pct, n, totalFiles)
 				if opts.Progress != nil {
 					opts.Progress(n, totalFiles)
@@ -360,6 +361,7 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 	}
 
 	// 6. Save state
+	state.SetLastPercent(100)
 	if err := state.Save(statePath); err != nil {
 		log.Printf("[WARN] Failed to save index state for %s: %v", root, err)
 	}
@@ -608,7 +610,7 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 				// Throttle: small pause between embeds to avoid overwhelming Ollama.
 				// 150ms adds ~15s per 100 symbols — negligible vs total indexing time,
 				// but prevents Ollama from freezing under sustained concurrent load.
-				time.Sleep(150 * time.Millisecond)
+				time.Sleep(10 * time.Millisecond)
 
 				vector := make([]float32, len(vector64))
 				for i, v := range vector64 {

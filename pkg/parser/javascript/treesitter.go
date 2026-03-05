@@ -1,4 +1,4 @@
-`package javascript
+package javascript
 
 import (
 	"strings"

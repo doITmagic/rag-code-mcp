@@ -783,12 +783,12 @@ RagCode integrates with **GitHub Copilot's Agent Mode** in VS Code through the M
 
 #### Prerequisites
 - **VS Code** with **GitHub Copilot** subscription
-- RagCode installed (via the `ragcode-installer` above)
+- RagCode installed (via the `rag-code-install` above)
 - VS Code version **1.95+** (for MCP support)
 
 #### Setup
 
-`ragcode-installer` automatically configures RagCode for VS Code by creating:
+`rag-code-install` automatically configures RagCode for VS Code by creating:
 ```
 ~/.config/Code/User/globalStorage/mcp-servers.json
 ```

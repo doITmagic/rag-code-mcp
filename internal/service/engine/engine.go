@@ -726,6 +726,12 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 		}
 	}
 
+	statePath := filepath.Join(wctx.Root, ".ragcode", "state.json")
+	if state, err := indexer.LoadState(statePath); err == nil {
+		state.SetLastPercent(1) // Marker for "indexer is globally running"
+		_ = state.Save(statePath)
+	}
+
 	// We'll iterate all supported languages.
 	languages := parser.SupportedLanguages()
 
@@ -747,6 +753,11 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 			log.Printf("[ERROR] Indexing failed for %s: %v", lang, err)
 			indexErrors = append(indexErrors, fmt.Sprintf("%s: %v", lang, err))
 		}
+	}
+
+	if state, err := indexer.LoadState(statePath); err == nil {
+		state.SetLastPercent(100)
+		_ = state.Save(statePath)
 	}
 
 	if e.watchers != nil {

@@ -5,6 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
+
+	"github.com/doITmagic/rag-code-mcp/internal/config"
 )
 
 var skillIDRegex = regexp.MustCompile(`^[a-z0-9-]+$`)
@@ -14,21 +17,22 @@ type SkillInfo struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	Source      string `json:"source,omitempty"`
 }
 
-// ListAvailableSkills fetches the list of skills from the remote GitHub registry.
-func ListAvailableSkills() ([]SkillInfo, error) {
-	registry, err := FetchRemoteRegistry()
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch remote skill registry: %w", err)
-	}
+// ListAvailableSkills returns all skills from all configured repos.
+// This is the new multi-source implementation that replaces the old
+// registry.json-based approach.
+func ListAvailableSkills(cfg config.SkillsConfig) ([]SkillInfo, error) {
+	discovered := ListAllSkills(cfg)
 
-	result := make([]SkillInfo, 0, len(registry.Skills))
-	for _, s := range registry.Skills {
+	result := make([]SkillInfo, 0, len(discovered))
+	for _, s := range discovered {
 		result = append(result, SkillInfo{
 			ID:          s.ID,
 			Name:        s.Name,
 			Description: s.Description,
+			Source:      s.Source,
 		})
 	}
 	return result, nil
@@ -87,10 +91,10 @@ func FindSkillPath(skillID, workspaceRoot string) string {
 	return ""
 }
 
-// InstallSkill downloads a skill from the remote GitHub registry and installs it
+// InstallSkill downloads a skill from the configured repos and installs it
 // into the target tool directory within the workspace.
-// target can be: "agent" (default), "agents", "claude", "cursor".
-func InstallSkill(skillID string, workspaceRoot string, target string) error {
+// target can be: "agent" (default), "agents", "claude", "cursor", "windsurf".
+func InstallSkill(skillID string, workspaceRoot string, target string, cfg config.SkillsConfig) error {
 	if err := validateSkillID(skillID); err != nil {
 		return err
 	}
@@ -100,30 +104,26 @@ func InstallSkill(skillID string, workspaceRoot string, target string) error {
 		return fmt.Errorf("skill '%s' is already installed at %s", skillID, existing)
 	}
 
-	// Fetch registry to resolve the skill's path in the repo
-	registry, err := FetchRemoteRegistry()
-	if err != nil {
-		return fmt.Errorf("failed to fetch registry: %w", err)
+	// Find the skill in the discovered/cached skills
+	skill := FindSkillByID(skillID, cfg)
+	if skill == nil {
+		return fmt.Errorf("skill '%s' not found in any configured skill repository", skillID)
 	}
 
-	var skillPath string
-	for _, s := range registry.Skills {
-		if s.ID == skillID {
-			skillPath = s.Path
-			break
-		}
+	// Parse owner/repo from the source
+	parts := strings.SplitN(skill.Source, "/", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid skill source format: %s", skill.Source)
 	}
-	if skillPath == "" {
-		return fmt.Errorf("skill '%s' not found in registry", skillID)
-	}
+	owner, repoName := parts[0], parts[1]
 
 	// Resolve destination based on the target tool directory
 	destDir := filepath.Join(resolveTargetBaseDir(workspaceRoot, target), skillID)
 
-	if err := downloadSkillFromGitHub(skillPath, destDir); err != nil {
+	if err := downloadSkillFromGitHub(owner, repoName, skill.Branch, skill.RepoPath, destDir); err != nil {
 		// Clean up partial installation on failure
 		_ = os.RemoveAll(destDir)
-		return fmt.Errorf("failed to download skill '%s': %w", skillID, err)
+		return fmt.Errorf("failed to download skill '%s' from %s: %w", skillID, skill.Source, err)
 	}
 
 	return nil

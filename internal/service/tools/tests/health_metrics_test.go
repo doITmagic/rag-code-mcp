@@ -88,12 +88,12 @@ var _ = Describe("Health Metrics & Index Status", func() {
 
 	// ─── 2. Stale chunk detection ────────────────────────────────────────────────
 
-	Describe("rag_search_code — stale chunk detection", func() {
-		var tool *tools.SearchLocalIndexTool
+	Describe("rag_search (SmartSearchTool) — stale chunk detection", func() {
+		var tool *tools.SmartSearchTool
 
 		BeforeEach(func() {
 			eng := setupTestEngine(mockStore)
-			tool = tools.NewSearchLocalIndexTool(eng)
+			tool = tools.NewSmartSearchTool(eng)
 		})
 
 		It("adds a warning when indexed file no longer exists on disk", func() {
@@ -108,18 +108,22 @@ var _ = Describe("Health Metrics & Index Status", func() {
 						Point: storage.Point{
 							ID: "stale-id",
 							Payload: map[string]interface{}{
-								"name":      "DeletedFunc",
-								"content":   "func DeletedFunc() {}",
-								"file_path": missingPath,
+								"name":       "DeletedFunc",
+								"content":    "func DeletedFunc() {}",
+								"file_path":  missingPath,
+								"type":       "function",
+								"signature":  "func DeletedFunc()",
+								"start_line": float64(1),
+								"end_line":   float64(3),
 							},
 						},
 					},
 				}, nil
 			}
 
-			resJSON, err := tool.Execute(ctx, map[string]interface{}{
-				"query":     "deleted func",
-				"file_path": "main.go",
+			resJSON, err := tool.Execute(ctx, tools.SmartSearchInput{
+				Query:    "deleted func",
+				FilePath: "main.go",
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -145,18 +149,22 @@ var _ = Describe("Health Metrics & Index Status", func() {
 						Point: storage.Point{
 							ID: "valid-id",
 							Payload: map[string]interface{}{
-								"name":      "ExistingFunc",
-								"content":   "func ExistingFunc() {}",
-								"file_path": tmpFile.Name(),
+								"name":       "ExistingFunc",
+								"content":    "func ExistingFunc() {}",
+								"file_path":  tmpFile.Name(),
+								"type":       "function",
+								"signature":  "func ExistingFunc()",
+								"start_line": float64(1),
+								"end_line":   float64(3),
 							},
 						},
 					},
 				}, nil
 			}
 
-			resJSON, err := tool.Execute(ctx, map[string]interface{}{
-				"query":     "existing func",
-				"file_path": "main.go",
+			resJSON, err := tool.Execute(ctx, tools.SmartSearchInput{
+				Query:    "existing func",
+				FilePath: "main.go",
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -164,38 +172,6 @@ var _ = Describe("Health Metrics & Index Status", func() {
 			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
 			Expect(resp.Status).To(Equal("success"))
 			Expect(resp.Warning).NotTo(ContainSubstring("stale index"))
-		})
-
-		It("combines stale warning with branch mismatch warning", func() {
-			missingPath := filepath.Join(os.TempDir(), "ragcode_test_missing2_xyz.go")
-			_ = os.Remove(missingPath)
-
-			mockStore.SearchCodeOnlyFunc = func(ctx context.Context, col string, q storage.SearchQuery) ([]storage.SearchResult, error) {
-				return []storage.SearchResult{
-					{
-						Score: 0.9,
-						Point: storage.Point{
-							ID: "stale-2",
-							Payload: map[string]interface{}{
-								"name":      "Func",
-								"content":   "func Func() {}",
-								"file_path": missingPath,
-							},
-						},
-					},
-				}, nil
-			}
-
-			resJSON, err := tool.Execute(ctx, map[string]interface{}{
-				"query":     "func",
-				"file_path": "main.go",
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			var resp tools.ToolResponse
-			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
-			// At minimum stale warning is present
-			Expect(resp.Warning).To(ContainSubstring("stale index"))
 		})
 
 		It("counts multiple missing files in the warning", func() {
@@ -206,14 +182,14 @@ var _ = Describe("Health Metrics & Index Status", func() {
 
 			mockStore.SearchCodeOnlyFunc = func(ctx context.Context, col string, q storage.SearchQuery) ([]storage.SearchResult, error) {
 				return []storage.SearchResult{
-					{Score: 0.9, Point: storage.Point{ID: "id1", Payload: map[string]interface{}{"name": "A", "content": "x", "file_path": missing1}}},
-					{Score: 0.8, Point: storage.Point{ID: "id2", Payload: map[string]interface{}{"name": "B", "content": "y", "file_path": missing2}}},
+					{Score: 0.9, Point: storage.Point{ID: "id1", Payload: map[string]interface{}{"name": "A", "content": "x", "file_path": missing1, "type": "function", "start_line": float64(1), "end_line": float64(1)}}},
+					{Score: 0.8, Point: storage.Point{ID: "id2", Payload: map[string]interface{}{"name": "B", "content": "y", "file_path": missing2, "type": "function", "start_line": float64(1), "end_line": float64(1)}}},
 				}, nil
 			}
 
-			resJSON, err := tool.Execute(ctx, map[string]interface{}{
-				"query":     "func",
-				"file_path": "main.go",
+			resJSON, err := tool.Execute(ctx, tools.SmartSearchInput{
+				Query:    "func",
+				FilePath: "main.go",
 			})
 			Expect(err).NotTo(HaveOccurred())
 

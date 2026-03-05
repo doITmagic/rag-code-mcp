@@ -72,6 +72,9 @@ type Config struct {
 
 	// Workspace configuration (multi-workspace support)
 	Workspace WorkspaceConfig `yaml:"workspace"`
+
+	// Skills configuration (multi-source skill repos)
+	Skills SkillsConfig `yaml:"skills"`
 }
 
 // LLMConfig contains LLM provider settings
@@ -252,6 +255,33 @@ type WorkspaceConfig struct {
 	// WatchDebounce configures debounce duration for filesystem events.
 	// Example: 5s
 	WatchDebounce time.Duration `yaml:"watch_debounce"`
+}
+
+// SkillsConfig contains configuration for multi-source skill repositories
+type SkillsConfig struct {
+	// CacheTTL controls how long the aggregated skill list is cached locally.
+	// Default: 24h. Set to 0 to disable caching.
+	CacheTTL time.Duration `yaml:"cache_ttl"`
+
+	// Repos is the list of GitHub repositories containing skills.
+	// Each repo is scanned for folders containing SKILL.md files.
+	Repos []SkillRepoConfig `yaml:"repos"`
+}
+
+// SkillRepoConfig represents a single GitHub repository that hosts skills.
+type SkillRepoConfig struct {
+	// Repo is the GitHub "owner/repo" identifier, e.g. "anthropics/skills"
+	Repo string `yaml:"repo"`
+
+	// Branch is the git branch to scan. Default: "main"
+	Branch string `yaml:"branch"`
+
+	// SkillsPath is the path within the repo where skills live, e.g. "skills".
+	// Set to "." or "" for repos where skill folders are at the root.
+	SkillsPath string `yaml:"skills_path"`
+
+	// Enabled controls whether this repo is included in skill discovery.
+	Enabled bool `yaml:"enabled"`
 }
 
 // HealthCheckConfig contains health check settings

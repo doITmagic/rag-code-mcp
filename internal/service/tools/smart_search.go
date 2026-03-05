@@ -428,21 +428,21 @@ func (t *SmartSearchTool) handleSearchError(err error, workspaceRoot, workspaceI
 
 	if errors.As(err, &indexingStarted) {
 		response.Status = "indexing_started"
-		response.Message = fmt.Sprintf("🚀 Workspace '%s' was not indexed. Background indexing has been STARTED automatically. Please wait a few moments and try your search again.", indexingStarted.WorkspaceRoot)
 		response.Context.WorkspaceRoot = indexingStarted.WorkspaceRoot
 		if indexingStarted.WorkspaceID != "" {
 			response.Context.IndexingProgress = BuildIndexingProgress(t.engine, indexingStarted.WorkspaceID, indexingStarted.WorkspaceRoot)
 		}
+		response.Message = buildIndexingMessage("🚀", indexingStarted.WorkspaceRoot, response.Context.IndexingProgress)
 		return response.JSON()
 	}
 
 	if errors.As(err, &indexingInProgress) {
 		response.Status = "indexing_in_progress"
-		response.Message = fmt.Sprintf("⏳ Workspace '%s' is currently being indexed.", indexingInProgress.WorkspaceRoot)
 		response.Context.WorkspaceRoot = indexingInProgress.WorkspaceRoot
 		if indexingInProgress.WorkspaceID != "" {
 			response.Context.IndexingProgress = BuildIndexingProgress(t.engine, indexingInProgress.WorkspaceID, indexingInProgress.WorkspaceRoot)
 		}
+		response.Message = buildIndexingMessage("⏳", indexingInProgress.WorkspaceRoot, response.Context.IndexingProgress)
 		return response.JSON()
 	}
 

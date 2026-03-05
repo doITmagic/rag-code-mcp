@@ -66,14 +66,17 @@ func FetchRemoteRegistryFromURL(registryURL string) (*RemoteRegistry, error) {
 	return &registry, nil
 }
 
-// downloadSkillFromGitHub downloads a specific skill from the GitHub repository
+// downloadSkillFromGitHub downloads a specific skill from a GitHub repository
 // by fetching the full repo tarball and extracting only the required skill subtree.
-// skillPath is the path within the repo (e.g. "skills/oxygen-builder").
-// destDir is the local filesystem destination directory.
-func downloadSkillFromGitHub(skillPath, destDir string) error {
+// owner/repoName/branch identify the GitHub repo. skillPath is the path within
+// the repo (e.g. "skills/oxygen-builder"). destDir is the local filesystem destination.
+func downloadSkillFromGitHub(owner, repoName, branch, skillPath, destDir string) error {
+	if branch == "" {
+		branch = "main"
+	}
 	tarURL := fmt.Sprintf(
 		"https://github.com/%s/%s/archive/refs/heads/%s.tar.gz",
-		defaultRepoOwner, defaultRepoName, defaultRepoBranch,
+		owner, repoName, branch,
 	)
 
 	resp, err := httpClient.Get(tarURL)

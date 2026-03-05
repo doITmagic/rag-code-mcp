@@ -31,7 +31,7 @@ import (
 )
 
 var (
-	Version = "2.1.28"
+	Version = "2.1.30"
 	Commit  = "none"
 	Date    = "24.10.2025"
 )
@@ -156,8 +156,8 @@ func main() {
 	tools.NewCallHierarchyTool(eng).Register(server)
 	tools.NewReadFileContextTool(eng).Register(server)
 	tools.NewIndexWorkspaceTool(eng).Register(server)
-	tools.NewListSkillsTool(eng).Register(server)
-	tools.NewInstallSkillTool(eng).Register(server)
+	tools.NewListSkillsTool(eng, cfg.Skills).Register(server)
+	tools.NewInstallSkillTool(eng, cfg.Skills).Register(server)
 	tools.NewEvaluateRagCodeTool(eng, cfg).Register(server)
 	tools.NewCheckUpdateTool(Version, cfg).Register(server)
 	tools.NewApplyUpdateTool(Version).Register(server)

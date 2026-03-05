@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -21,6 +20,7 @@ import (
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
 	"github.com/doITmagic/rag-code-mcp/internal/service/search"
 	"github.com/doITmagic/rag-code-mcp/internal/service/tools"
+	"github.com/doITmagic/rag-code-mcp/internal/uninstall"
 	"github.com/doITmagic/rag-code-mcp/internal/updater"
 	"github.com/doITmagic/rag-code-mcp/internal/utils"
 	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
@@ -34,7 +34,7 @@ import (
 )
 
 var (
-	Version = "2.1.45"
+	Version = "2.1.46"
 	Commit  = "none"
 	Date    = "24.10.2025"
 )
@@ -52,16 +52,7 @@ func main() {
 	flag.Parse()
 
 	if *uninstallFlag {
-		fmt.Println("Delegating to rag-code-install --uninstall...")
-		cmd := exec.Command("rag-code-install", "--uninstall", "-y")
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		cmd.Stdin = os.Stdin
-		if err := cmd.Run(); err != nil {
-			fmt.Printf("\nCould not run installer automatically: %v\n", err)
-			fmt.Println("Please run 'rag-code-install --uninstall' manually.")
-			os.Exit(1)
-		}
+		uninstall.RunUninstall()
 		os.Exit(0)
 	}
 

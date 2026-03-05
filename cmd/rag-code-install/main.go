@@ -224,6 +224,8 @@ func setupEnvironment() {
 	// Qdrant Setup
 	if *qdrantMode == "docker" {
 		log("Setting up Qdrant in Docker...")
+		// Remove stale container if it exists (e.g. from previous install)
+		_ = exec.Command("docker", "rm", "-f", "ragcode-qdrant").Run()
 		cmd := exec.Command("docker", "run", "-d",
 			"--name", "ragcode-qdrant",
 			"--restart", "always",
@@ -479,12 +481,16 @@ func runUninstall() {
 	fmt.Println()
 
 	// 1. Stop running processes
-	log("Step 1/5: Stopping running processes...")
+	log("Step 1/7: Stopping running processes...")
 	stopRunningProcess(targetBin)
 	success("Processes stopped")
 
-	// 2. Remove installation directory
-	log("Step 2/5: Removing installation directory: " + installPath)
+	// 2. Clean per-workspace .ragcode/ directories (read registry BEFORE deleting ~/.ragcode)
+	log("Step 2/7: Cleaning per-workspace data...")
+	cleanWorkspaceData(home)
+
+	// 3. Remove installation directory
+	log("Step 3/7: Removing installation directory: " + installPath)
 	if _, err := os.Stat(installPath); err == nil {
 		if err := os.RemoveAll(installPath); err != nil {
 			warn(fmt.Sprintf("Failed to remove %s: %v", installPath, err))
@@ -510,25 +516,26 @@ func runUninstall() {
 		}
 	}
 
-	// 3. Clean PATH from shell configs
-	log("Step 3/5: Cleaning PATH from shell configuration...")
+	// 4. Clean PATH from shell configs (both current and legacy paths)
+	log("Step 4/7: Cleaning PATH from shell configuration...")
 	removeFromShellConfig(home, binPath)
+	// Also clean legacy PATH entries
+	removeFromShellConfig(home, filepath.Join(home, ".local", "share", "ragcode", "bin"))
 
-	// 4. Remove ragcode entries from IDE MCP configs
-	log("Step 4/5: Removing ragcode from IDE configurations...")
+	// 5. Remove ragcode entries from IDE MCP configs
+	log("Step 5/7: Removing ragcode from IDE configurations...")
 	removeFromIDEConfigs(home)
 
-	// 5. Stop and remove Docker containers
-	log("Step 5/5: Cleaning up Docker containers...")
+	// 6. Stop and remove Docker containers
+	log("Step 6/7: Cleaning up Docker containers...")
 	removeDockerResources()
 
+	// 7. Clean Qdrant collections (if Qdrant is still reachable)
+	log("Step 7/7: Cleaning Qdrant collections...")
+	cleanQdrantCollections()
+
 	fmt.Println()
-	success("RagCode MCP uninstallation complete!")
-	fmt.Println()
-	log("Note: Per-workspace data ({project}/.ragcode/) was NOT removed.")
-	log("      Qdrant vector database collections were NOT removed.")
-	log("      To fully clean up, delete .ragcode/ from your project directories")
-	log("      and remove Qdrant collections manually if needed.")
+	success("RagCode MCP fully uninstalled!")
 }
 
 // removeFromShellConfig removes the RagCode PATH export from .bashrc/.zshrc.
@@ -693,6 +700,138 @@ func removeDockerResources() {
 		} else {
 			success("Removed Docker volume: " + vol)
 		}
+	}
+}
+
+// cleanWorkspaceData reads the registry to find indexed workspaces and removes their .ragcode/ dirs.
+func cleanWorkspaceData(home string) {
+	registryPath := filepath.Join(home, installDirName, "registry.json")
+
+	data, err := os.ReadFile(registryPath)
+	if err != nil {
+		// Registry doesn't exist or unreadable — try common project directories
+		log("Registry not found, scanning common project directories...")
+		scanAndCleanRagcodeDirs(home)
+		return
+	}
+
+	// Registry is a JSON object with workspace paths as keys
+	var registry map[string]interface{}
+	if err := json.Unmarshal(data, &registry); err != nil {
+		warn("Could not parse registry: " + err.Error())
+		scanAndCleanRagcodeDirs(home)
+		return
+	}
+
+	cleaned := 0
+	for wsPath := range registry {
+		ragDir := filepath.Join(wsPath, ".ragcode")
+		if _, err := os.Stat(ragDir); err == nil {
+			if err := os.RemoveAll(ragDir); err != nil {
+				warn(fmt.Sprintf("Failed to remove %s: %v", ragDir, err))
+			} else {
+				success("Removed workspace data: " + ragDir)
+				cleaned++
+			}
+		}
+	}
+
+	if cleaned == 0 {
+		log("No per-workspace .ragcode/ directories found")
+	}
+}
+
+// scanAndCleanRagcodeDirs scans common project directories for .ragcode/ folders.
+func scanAndCleanRagcodeDirs(home string) {
+	// Common project root directories
+	searchRoots := []string{
+		filepath.Join(home, "Projects"),
+		filepath.Join(home, "projects"),
+		filepath.Join(home, "go", "src"),
+		filepath.Join(home, "Code"),
+		filepath.Join(home, "code"),
+		filepath.Join(home, "dev"),
+		filepath.Join(home, "workspace"),
+	}
+
+	cleaned := 0
+	for _, root := range searchRoots {
+		if _, err := os.Stat(root); os.IsNotExist(err) {
+			continue
+		}
+		// Walk up to 4 levels deep looking for .ragcode directories
+		_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return nil
+			}
+			// Limit depth
+			rel, _ := filepath.Rel(root, path)
+			if strings.Count(rel, string(os.PathSeparator)) > 4 {
+				return filepath.SkipDir
+			}
+			if info.IsDir() && info.Name() == ".ragcode" {
+				if err := os.RemoveAll(path); err != nil {
+					warn(fmt.Sprintf("Failed to remove %s: %v", path, err))
+				} else {
+					success("Removed workspace data: " + path)
+					cleaned++
+				}
+				return filepath.SkipDir
+			}
+			return nil
+		})
+	}
+
+	if cleaned == 0 {
+		log("No per-workspace .ragcode/ directories found")
+	}
+}
+
+// cleanQdrantCollections connects to Qdrant and deletes all ragcode-* collections.
+func cleanQdrantCollections() {
+	// Check if Qdrant is reachable
+	conn, err := net.DialTimeout("tcp", "127.0.0.1:6333", 2*time.Second)
+	if err != nil {
+		log("Qdrant not reachable on port 6333, skipping collection cleanup")
+		return
+	}
+	conn.Close()
+
+	// List all collections via Qdrant REST API
+	cmd := exec.Command("curl", "-s", "http://localhost:6333/collections")
+	output, err := cmd.Output()
+	if err != nil {
+		warn("Could not list Qdrant collections: " + err.Error())
+		return
+	}
+
+	var resp struct {
+		Result struct {
+			Collections []struct {
+				Name string `json:"name"`
+			} `json:"collections"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(output, &resp); err != nil {
+		warn("Could not parse Qdrant response: " + err.Error())
+		return
+	}
+
+	deleted := 0
+	for _, col := range resp.Result.Collections {
+		if strings.HasPrefix(col.Name, "ragcode-") {
+			delCmd := exec.Command("curl", "-s", "-X", "DELETE", "http://localhost:6333/collections/"+col.Name)
+			if err := delCmd.Run(); err != nil {
+				warn("Failed to delete collection " + col.Name + ": " + err.Error())
+			} else {
+				success("Deleted Qdrant collection: " + col.Name)
+				deleted++
+			}
+		}
+	}
+
+	if deleted == 0 {
+		log("No ragcode collections found in Qdrant")
 	}
 }
 

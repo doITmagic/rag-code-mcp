@@ -56,3 +56,7 @@ workspace:
   auto_install_sse_skill: true
   watch_enabled: true
   watch_debounce: 5s
+
+
+# Auto-update: check for new version and apply on startup (uses 24h cache)
+auto_update: true

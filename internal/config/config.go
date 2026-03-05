@@ -75,6 +75,9 @@ type Config struct {
 
 	// Skills configuration (multi-source skill repos)
 	Skills SkillsConfig `yaml:"skills"`
+
+	// AutoUpdate enables automatic update check and apply on startup
+	AutoUpdate bool `yaml:"auto_update"`
 }
 
 // LLMConfig contains LLM provider settings

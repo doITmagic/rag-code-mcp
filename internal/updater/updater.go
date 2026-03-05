@@ -20,6 +20,7 @@ import (
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/codeclysm/extract/v3"
+	"github.com/doITmagic/rag-code-mcp/internal/utils"
 	"gopkg.in/yaml.v3"
 )
 
@@ -35,17 +36,11 @@ var (
 )
 
 func getCachePath() (string, error) {
-	configDir, err := os.UserConfigDir()
-	if err != nil {
-		return "", fmt.Errorf("failed to get user config dir: %w", err)
+	appDir := utils.RagCodeHome()
+	if err := os.MkdirAll(appDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create ragcode dir: %w", err)
 	}
-
-	appConfigDir := filepath.Join(configDir, "rag-code-mcp")
-	if err := os.MkdirAll(appConfigDir, 0755); err != nil {
-		return "", fmt.Errorf("failed to create config dir: %w", err)
-	}
-
-	return filepath.Join(appConfigDir, cacheFile), nil
+	return filepath.Join(appDir, cacheFile), nil
 }
 
 func GetCachedUpdate() (*UpdateCache, error) {

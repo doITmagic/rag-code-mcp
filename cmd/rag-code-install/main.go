@@ -469,11 +469,231 @@ func runHealthCheck(binDir string) {
 func runUninstall() {
 	home, _ := os.UserHomeDir()
 	installPath := filepath.Join(home, installDirName)
-	log("Uninstalling RagCode from: " + installPath)
-	if err := os.RemoveAll(installPath); err != nil {
-		fail(fmt.Sprintf("Failed to uninstall: %v", err))
+	binPath := filepath.Join(installPath, binDirName)
+	targetBin := filepath.Join(binPath, "rag-code-mcp")
+	if runtime.GOOS == "windows" {
+		targetBin += ".exe"
 	}
-	success("Uninstallation complete.")
+
+	log("Uninstalling RagCode MCP...")
+	fmt.Println()
+
+	// 1. Stop running processes
+	log("Step 1/5: Stopping running processes...")
+	stopRunningProcess(targetBin)
+	success("Processes stopped")
+
+	// 2. Remove installation directory
+	log("Step 2/5: Removing installation directory: " + installPath)
+	if _, err := os.Stat(installPath); err == nil {
+		if err := os.RemoveAll(installPath); err != nil {
+			warn(fmt.Sprintf("Failed to remove %s: %v", installPath, err))
+		} else {
+			success("Removed " + installPath)
+		}
+	} else {
+		log("Directory not found, skipping: " + installPath)
+	}
+
+	// Also clean up legacy paths if they exist
+	legacyPaths := []string{
+		filepath.Join(home, ".local", "share", "ragcode"),
+		filepath.Join(home, ".local", "state", "ragcode"),
+	}
+	for _, lp := range legacyPaths {
+		if _, err := os.Stat(lp); err == nil {
+			if err := os.RemoveAll(lp); err != nil {
+				warn(fmt.Sprintf("Failed to remove legacy path %s: %v", lp, err))
+			} else {
+				success("Removed legacy path: " + lp)
+			}
+		}
+	}
+
+	// 3. Clean PATH from shell configs
+	log("Step 3/5: Cleaning PATH from shell configuration...")
+	removeFromShellConfig(home, binPath)
+
+	// 4. Remove ragcode entries from IDE MCP configs
+	log("Step 4/5: Removing ragcode from IDE configurations...")
+	removeFromIDEConfigs(home)
+
+	// 5. Stop and remove Docker containers
+	log("Step 5/5: Cleaning up Docker containers...")
+	removeDockerResources()
+
+	fmt.Println()
+	success("RagCode MCP uninstallation complete!")
+	fmt.Println()
+	log("Note: Per-workspace data ({project}/.ragcode/) was NOT removed.")
+	log("      Qdrant vector database collections were NOT removed.")
+	log("      To fully clean up, delete .ragcode/ from your project directories")
+	log("      and remove Qdrant collections manually if needed.")
+}
+
+// removeFromShellConfig removes the RagCode PATH export from .bashrc/.zshrc.
+func removeFromShellConfig(home, binDir string) {
+	shellConfigs := []string{
+		filepath.Join(home, ".bashrc"),
+		filepath.Join(home, ".zshrc"),
+	}
+
+	for _, cfg := range shellConfigs {
+		content, err := os.ReadFile(cfg)
+		if err != nil {
+			continue
+		}
+
+		original := string(content)
+		if !strings.Contains(original, "RagCode") && !strings.Contains(original, binDir) {
+			continue
+		}
+
+		// Remove the RagCode block (comment + export line + surrounding blank lines)
+		lines := strings.Split(original, "\n")
+		var cleaned []string
+		skip := false
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "# RagCode MCP" {
+				skip = true
+				continue
+			}
+			if skip && strings.Contains(line, binDir) {
+				skip = false
+				continue
+			}
+			skip = false
+			cleaned = append(cleaned, line)
+		}
+
+		newContent := strings.Join(cleaned, "\n")
+		if newContent != original {
+			if err := os.WriteFile(cfg, []byte(newContent), 0644); err != nil {
+				warn("Failed to clean " + cfg + ": " + err.Error())
+			} else {
+				success("Cleaned PATH from " + cfg)
+			}
+		}
+	}
+}
+
+// removeFromIDEConfigs removes the "ragcode" entry from all known IDE MCP config files.
+func removeFromIDEConfigs(home string) {
+	paths := resolveIDEPaths(home)
+	for key, ide := range paths {
+		if key == "zed" {
+			removeZedRagcodeEntry(ide.displayName, ide.path)
+			continue
+		}
+		removeRagcodeFromJSON(ide.displayName, ide.path)
+	}
+}
+
+// removeRagcodeFromJSON removes the "ragcode" key from mcpServers/servers in a JSON config file.
+func removeRagcodeFromJSON(displayName, path string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return // File doesn't exist
+	}
+
+	var configMap map[string]interface{}
+	if err := json.Unmarshal(data, &configMap); err != nil {
+		return
+	}
+
+	modified := false
+	for _, key := range []string{"mcpServers", "servers"} {
+		servers, ok := configMap[key].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if _, exists := servers["ragcode"]; exists {
+			delete(servers, "ragcode")
+			configMap[key] = servers
+			modified = true
+		}
+	}
+
+	if modified {
+		newData, _ := json.MarshalIndent(configMap, "", "  ")
+		if err := os.WriteFile(path, newData, 0644); err != nil {
+			warn("Failed to update " + displayName + ": " + err.Error())
+		} else {
+			success("Removed ragcode from " + displayName + " (" + path + ")")
+		}
+	}
+}
+
+// removeZedRagcodeEntry removes ragcode from Zed's context_servers in settings.json.
+func removeZedRagcodeEntry(displayName, path string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+
+	var configMap map[string]interface{}
+	if err := json.Unmarshal(data, &configMap); err != nil {
+		return
+	}
+
+	servers, ok := configMap["context_servers"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	if _, exists := servers["ragcode"]; !exists {
+		return
+	}
+
+	delete(servers, "ragcode")
+	configMap["context_servers"] = servers
+
+	newData, _ := json.MarshalIndent(configMap, "", "  ")
+	if err := os.WriteFile(path, newData, 0644); err != nil {
+		warn("Failed to update " + displayName + ": " + err.Error())
+	} else {
+		success("Removed ragcode from " + displayName + " (" + path + ")")
+	}
+}
+
+// removeDockerResources stops and removes ragcode Docker containers and volumes.
+func removeDockerResources() {
+	if _, err := exec.LookPath("docker"); err != nil {
+		log("Docker not found, skipping container cleanup")
+		return
+	}
+
+	containers := []string{"ragcode-qdrant", "ragcode-ollama"}
+	for _, name := range containers {
+		// Check if container exists
+		check := exec.Command("docker", "inspect", name)
+		if err := check.Run(); err != nil {
+			continue // Doesn't exist
+		}
+
+		// Stop
+		_ = exec.Command("docker", "stop", name).Run()
+		// Remove
+		if err := exec.Command("docker", "rm", "-f", name).Run(); err != nil {
+			warn("Failed to remove container " + name + ": " + err.Error())
+		} else {
+			success("Removed Docker container: " + name)
+		}
+	}
+
+	// Remove volumes
+	volumes := []string{"ragcode-qdrant-data"}
+	for _, vol := range volumes {
+		check := exec.Command("docker", "volume", "inspect", vol)
+		if err := check.Run(); err != nil {
+			continue
+		}
+		if err := exec.Command("docker", "volume", "rm", vol).Run(); err != nil {
+			warn("Failed to remove volume " + vol + ": " + err.Error())
+		} else {
+			success("Removed Docker volume: " + vol)
+		}
+	}
 }
 
 func log(msg string)     { fmt.Printf("\033[0;34m==>\033[0m %s\n", msg) }

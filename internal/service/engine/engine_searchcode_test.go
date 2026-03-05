@@ -11,6 +11,10 @@ import (
 	"github.com/doITmagic/rag-code-mcp/pkg/llm"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 	"github.com/doITmagic/rag-code-mcp/pkg/workspace/resolver"
+
+	// Register parsers so parser.SupportedLanguages() returns non-empty.
+	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/go"
+	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/python"
 )
 
 // ─── Mocks ─────────────────────────────────────────────────────────────────────
@@ -31,7 +35,7 @@ func (c *countingLLM) Generate(_ context.Context, _ string, _ ...llm.GenerateOpt
 func (c *countingLLM) GenerateStream(_ context.Context, _ string, _ ...llm.GenerateOption) (<-chan string, <-chan error) {
 	return nil, nil
 }
-func (c *countingLLM) Name() string               { return "counting-mock" }
+func (c *countingLLM) Name() string                  { return "counting-mock" }
 func (c *countingLLM) GetEmbeddingDimension() uint64 { return 2 }
 
 // multiLangStore accepts any collection as existing and tracks SearchCodeOnly call count.

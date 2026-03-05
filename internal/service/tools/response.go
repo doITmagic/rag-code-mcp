@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
@@ -113,6 +114,28 @@ func (r *ToolResponse) SetFallbackWarning(inferred bool) {
 	if inferred {
 		r.Warning = fmt.Sprintf("Workspace root was inferred from history (%s). Results may be inaccurate if you've changed projects.", r.Context.WorkspaceRoot)
 	}
+}
+
+// buildIndexingMessage constructs a rich message for indexing-in-progress or indexing-started
+// scenarios that includes progress info and explicit retry guidance for agents.
+func buildIndexingMessage(emoji, workspace string, progress *IndexingProgressSummary) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("%s Workspace '%s' is currently being indexed.", emoji, workspace))
+
+	if progress != nil {
+		if progress.Elapsed != "" {
+			sb.WriteString(fmt.Sprintf(" Elapsed: %s.", progress.Elapsed))
+		}
+		// Summarize per-language progress
+		for lang, lp := range progress.Languages {
+			if lp.TotalFiles > 0 {
+				sb.WriteString(fmt.Sprintf(" [%s: %d/%d files (%d%%)]", lang, lp.DoneFiles, lp.TotalFiles, lp.Percent))
+			}
+		}
+	}
+
+	sb.WriteString(" Please wait a moment and try your search again.")
+	return sb.String()
 }
 
 // ContextFromWorkspace builds a ContextMetadata from a resolved WorkspaceContext.

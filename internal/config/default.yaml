@@ -63,5 +63,23 @@ workspace:
   watch_enabled: true
   watch_debounce: 1s
 
+# Multi-source skill repositories
+# Skills are discovered by scanning for folders containing SKILL.md
+skills:
+  cache_ttl: 24h
+  repos:
+    - repo: "doITmagic/ai-agent-skills"
+      branch: "main"
+      skills_path: "skills"
+      enabled: true
+    - repo: "anthropics/skills"
+      branch: "main"
+      skills_path: "skills"
+      enabled: true
+    - repo: "arpitg1304/robotics-agent-skills"
+      branch: "main"
+      skills_path: "skills"
+      enabled: true
+
 health_check:
   enable_on_startup: true

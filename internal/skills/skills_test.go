@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/doITmagic/rag-code-mcp/internal/config"
 )
 
 func TestValidateSkillID(t *testing.T) {
@@ -106,6 +108,7 @@ func TestUninstallSkillFromMultipleLocations(t *testing.T) {
 
 func TestInstallSkillPathTraversal(t *testing.T) {
 	tempDir := t.TempDir()
+	emptyCfg := config.SkillsConfig{}
 
 	evilIDs := []string{
 		"../foo",
@@ -115,7 +118,7 @@ func TestInstallSkillPathTraversal(t *testing.T) {
 	}
 
 	for _, id := range evilIDs {
-		if err := InstallSkill(id, tempDir, "agent"); err == nil {
+		if err := InstallSkill(id, tempDir, "agent", emptyCfg); err == nil {
 			t.Errorf("InstallSkill should have rejected ID '%s'", id)
 		}
 	}

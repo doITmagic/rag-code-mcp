@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"path/filepath"
 	"strings"
-
 )
 
 // APIAnalyzerImpl implements APIAnalyzer by reusing PackageInfo from CodeAnalyzer.

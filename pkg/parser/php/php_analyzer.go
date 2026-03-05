@@ -70,4 +70,3 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 		Language: "php",
 	}, nil
 }
-

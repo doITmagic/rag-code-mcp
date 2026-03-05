@@ -30,7 +30,7 @@ var (
 )
 
 const (
-	installDirName = ".local/share/ragcode"
+	installDirName = ".ragcode"
 	binDirName     = "bin"
 )
 

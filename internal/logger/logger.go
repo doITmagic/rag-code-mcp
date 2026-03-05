@@ -6,9 +6,10 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
+
+	"github.com/doITmagic/rag-code-mcp/internal/utils"
 )
 
 // SyncWriter wraps an *os.File and calls Sync() after every Write,
@@ -145,36 +146,10 @@ func ResolveLogPath(path string) (string, error) {
 	return path, nil
 }
 
-// defaultLogPath returns the platform-appropriate default log file path.
-//
-//	Linux:   ~/.local/state/ragcode/ragcode.log  (XDG State Dir)
-//	macOS:   ~/Library/Logs/ragcode/ragcode.log
-//	Windows: %LOCALAPPDATA%\ragcode\ragcode.log
+// defaultLogPath returns the default log file path.
+// All platforms: ~/.ragcode/logs/ragcode.log (or platform equivalent via RagCodeHome).
 func defaultLogPath() string {
-	switch runtime.GOOS {
-	case "windows":
-		base := os.Getenv("LOCALAPPDATA")
-		if base == "" {
-			home, err := os.UserHomeDir()
-			if err != nil {
-				return ""
-			}
-			base = filepath.Join(home, "AppData", "Local")
-		}
-		return filepath.Join(base, "ragcode", "ragcode.log")
-	case "darwin":
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return ""
-		}
-		return filepath.Join(home, "Library", "Logs", "ragcode", "ragcode.log")
-	default: // linux și alte sisteme UNIX
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return ""
-		}
-		return filepath.Join(home, ".local", "state", "ragcode", "ragcode.log")
-	}
+	return filepath.Join(utils.RagCodeHome(), "logs", "ragcode.log")
 }
 
 // InitLoggerFromEnv initializes logger based on environment variables.
@@ -188,7 +163,7 @@ func InitLoggerFromEnv() {
 
 	path := os.Getenv("MCP_LOG_FILE")
 	if path == "" {
-		// Use XDG state dir default: ~/.local/state/ragcode/ragcode.log
+		// Use ~/.ragcode/logs/ragcode.log
 		path = defaultLogPath()
 	}
 

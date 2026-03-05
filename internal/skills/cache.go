@@ -9,6 +9,7 @@ import (
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
+	"github.com/doITmagic/rag-code-mcp/internal/utils"
 )
 
 // SkillsCache holds the cached skill discovery results.
@@ -19,13 +20,9 @@ type SkillsCache struct {
 }
 
 // cacheFilePath returns the path to the skills cache file.
-// Stored alongside the ragcode binary in ~/.local/share/ragcode/.
+// Stored in ~/.ragcode/ alongside all other ragcode application data.
 func cacheFilePath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(os.TempDir(), "ragcode_skills_cache.json")
-	}
-	return filepath.Join(home, ".local", "share", "ragcode", "skills_cache.json")
+	return filepath.Join(utils.RagCodeHome(), "skills_cache.json")
 }
 
 // loadCache reads the cache from disk. Returns nil if cache is missing or invalid.

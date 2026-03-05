@@ -686,6 +686,11 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 		return err
 	}
 
+	// Persist workspace in registry so it's available for future fallback
+	// detection (e.g. when file_path is missing). This is idempotent —
+	// updates LastUsedAt if the workspace is already registered.
+	e.resolver.RegisterWorkspace(wctx.Root, filepath.Base(wctx.Root))
+
 	if e.config != nil && e.config.Workspace.AutoInstallSSESkill {
 		if !skills.IsSkillInstalled("ragcode-sse", wctx.Root) {
 			if err := skills.InstallSkill("ragcode-sse", wctx.Root, "agent", e.config.Skills); err != nil {

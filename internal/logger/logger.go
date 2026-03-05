@@ -147,9 +147,9 @@ func ResolveLogPath(path string) (string, error) {
 }
 
 // defaultLogPath returns the default log file path.
-// All platforms: ~/.ragcode/logs/ragcode.log (or platform equivalent via RagCodeHome).
+// Resolved via utils.GetLogDir() which respects config overrides.
 func defaultLogPath() string {
-	return filepath.Join(utils.RagCodeHome(), "logs", "ragcode.log")
+	return filepath.Join(utils.GetLogDir(), "ragcode.log")
 }
 
 // InitLoggerFromEnv initializes logger based on environment variables.

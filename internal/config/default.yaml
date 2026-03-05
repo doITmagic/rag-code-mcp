@@ -20,7 +20,6 @@ logging:
   level: debug
   format: text
   output: file
-  path: mcp.log
 
 # Multi-workspace configuration
 workspace:
@@ -86,3 +85,12 @@ auto_update: true
 
 health_check:
   enable_on_startup: true
+
+# Global application paths (non-workspace).
+# Empty = use defaults under ~/.ragcode/
+# All paths support ~ expansion and absolute paths.
+paths:
+  logs_dir: ""          # default: ~/.ragcode/logs/
+  registry: ""          # default: ~/.ragcode/registry.json
+  skills_cache: ""      # default: ~/.ragcode/skills_cache.json
+  update_cache: ""      # default: ~/.ragcode/update_cache.json

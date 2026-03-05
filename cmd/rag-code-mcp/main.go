@@ -33,7 +33,7 @@ import (
 )
 
 var (
-	Version = "2.1.31"
+	Version = "2.1.33"
 	Commit  = "none"
 	Date    = "24.10.2025"
 )
@@ -65,8 +65,15 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Config
+	// Config — resolve bare filenames (e.g. "config.yaml") relative to the
+	// executable's directory, not CWD.  IDEs launch the binary with arbitrary
+	// working directories, so a relative path would miss the installed config.
 	cfgPath := *configPath
+	if filepath.Base(cfgPath) == cfgPath { // bare filename, no dir separators
+		if exePath, err := os.Executable(); err == nil {
+			cfgPath = filepath.Join(filepath.Dir(exePath), cfgPath)
+		}
+	}
 	if err := config.EnsureConfigExists(cfgPath); err != nil {
 		logger.Instance.Warn("Could not create default config: %v", err)
 	}
@@ -79,6 +86,21 @@ func main() {
 
 	// Apply CLI overrides
 	config.ApplyCLIOverrides(cfg, *ollamaURLFlag, *ollamaModel, *ollamaEmbed, *qdrantURLFlag)
+
+	// Apply config-driven path overrides so all modules (logger, skills cache,
+	// updater cache, registry) use the paths from config.yaml instead of defaults.
+	utils.ApplyPathOverrides(
+		cfg.Paths.LogsDir,
+		cfg.Paths.Registry,
+		cfg.Paths.SkillsCache,
+		cfg.Paths.UpdateCache,
+	)
+
+	// Re-initialize logger if config specifies a custom log directory,
+	// since initial logger was created before config was loaded.
+	if cfg.Paths.LogsDir != "" {
+		logger.InitLoggerFromEnv()
+	}
 
 	// Auto-update: check for new version and apply on startup
 	if cfg.AutoUpdate {

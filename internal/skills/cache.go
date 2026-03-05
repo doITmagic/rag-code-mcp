@@ -20,9 +20,9 @@ type SkillsCache struct {
 }
 
 // cacheFilePath returns the path to the skills cache file.
-// Stored in ~/.ragcode/ alongside all other ragcode application data.
+// Resolved via utils.GetSkillsCachePath() which respects config overrides.
 func cacheFilePath() string {
-	return filepath.Join(utils.RagCodeHome(), "skills_cache.json")
+	return utils.GetSkillsCachePath()
 }
 
 // loadCache reads the cache from disk. Returns nil if cache is missing or invalid.

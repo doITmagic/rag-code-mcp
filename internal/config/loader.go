@@ -28,21 +28,21 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	// Parse YAML
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	// Parse YAML - Start with default config so missing fields retain their default values
+	cfg := DefaultConfig()
+	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
 	// Apply environment variable overrides
-	applyEnvOverrides(&cfg)
+	applyEnvOverrides(cfg)
 
 	// Validate configuration
-	if err := validate(&cfg); err != nil {
+	if err := validate(cfg); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	return &cfg, nil
+	return cfg, nil
 }
 
 // Save writes the configuration to a file

@@ -83,7 +83,7 @@ func main() {
 	}
 
 	// 3. Define files to install
-	binaries := []string{"rag-code-mcp", "ragcode-installer"}
+	binaries := []string{"rag-code-mcp", "rag-code-install"}
 	resources := []string{"README.md", "llms.txt", "LICENSE", "config.yaml"}
 
 	log("Copying files from: " + sourceDir)

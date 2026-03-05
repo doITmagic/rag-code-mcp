@@ -18,8 +18,9 @@ type FileState struct {
 
 // State represents the persistent state of a workspace index.
 type State struct {
-	Files map[string]FileState `json:"files"`
-	mu    sync.RWMutex
+	LastPercent int                  `json:"last_percent"` // 0-100 indicating global progress
+	Files       map[string]FileState `json:"files"`
+	mu          sync.RWMutex
 }
 
 // NewState creates a new, empty index state.
@@ -106,4 +107,11 @@ func (s *State) IsChanged(path string, info os.FileInfo) bool {
 
 	// Simple check based on mod time and size (fastest)
 	return !info.ModTime().Equal(state.ModTime) || info.Size() != state.Size
+}
+
+// SetLastPercent updates the global indexing percentage.
+func (s *State) SetLastPercent(percent int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.LastPercent = percent
 }

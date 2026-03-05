@@ -132,20 +132,23 @@ func (s *Service) IndexMarkdownFiles(ctx context.Context, collection string, mdF
 		return 0, nil
 	}
 
-	log.Printf("[INFO] 📚 Indexing %d markdown file(s) into %s...", len(mdFiles), collection)
+	total := len(mdFiles)
+	log.Printf("[INFO] 📚 Indexing %d markdown file(s) into %s...", total, collection)
 
 	totalChunks := 0
-	for _, path := range mdFiles {
+	for i, path := range mdFiles {
+		log.Printf("[INFO] 📄 [%d/%d] %s", i+1, total, filepath.Base(path))
 		n, err := s.indexSingleMarkdown(ctx, collection, path, cfg)
 		if err != nil {
 			log.Printf("[WARN] Failed to index markdown %s: %v", path, err)
 			continue
 		}
+		log.Printf("[INFO]     → %d chunk(s) indexed", n)
 		totalChunks += n
 	}
 
 	if totalChunks > 0 {
-		log.Printf("[INFO] ✅ Indexed %d markdown chunks from %d file(s)", totalChunks, len(mdFiles))
+		log.Printf("[INFO] ✅ Indexed %d markdown chunks from %d file(s)", totalChunks, total)
 	}
 
 	return totalChunks, nil
@@ -180,9 +183,6 @@ func (s *Service) indexSingleMarkdown(ctx context.Context, collection, path stri
 
 		// Update activity watchdog
 		s.lastActivity.Store(time.Now().Unix())
-
-		// Throttle (same as code indexing)
-		time.Sleep(150 * time.Millisecond)
 
 		// Convert float64 → float32
 		vector := make([]float32, len(vector64))

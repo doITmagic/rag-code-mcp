@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -10,6 +12,7 @@ import (
 	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
 	"github.com/doITmagic/rag-code-mcp/pkg/llm"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
+	"github.com/doITmagic/rag-code-mcp/pkg/workspace/contract"
 	"github.com/doITmagic/rag-code-mcp/pkg/workspace/resolver"
 
 	// Register parsers so parser.SupportedLanguages() returns non-empty.
@@ -268,3 +271,44 @@ var errSearchFailed = &searchError{"simulated storage failure"}
 type searchError struct{ msg string }
 
 func (e *searchError) Error() string { return e.msg }
+
+func TestSearchCodeResumeInterruptedIndexing(t *testing.T) {
+	llmProvider := &countingLLM{}
+	eng := newEngineCountingLLM(&testStore{existing: map[string]bool{}}, llmProvider)
+
+	// Mock resolver configures a fake detector returning a tmp root
+	rootDir := t.TempDir()
+	eng.SetResolver(resolver.New(resolver.Dependencies{Detector: &mockDirDetector{root: rootDir}}))
+
+	// Creăm state.json cu LastPercent = 55%
+	state := indexer.NewState()
+	state.SetLastPercent(55)
+	statePath := filepath.Join(rootDir, ".ragcode", "state.json")
+	if err := state.Save(statePath); err != nil {
+		t.Fatalf("Failed to save fake state.json: %v", err)
+	}
+
+	// Colecția nu există, iar LastPercent e 55, ar trebui să dea eroare specifică "resuming from 55%"
+	_, err := eng.SearchCode(context.Background(), "dummy.go", "test", 10, false)
+	if err == nil {
+		t.Fatalf("Expected ErrIndexingInProgress, got nil")
+	}
+
+	errStr := err.Error()
+	expectedSubstr := "resuming from 55%"
+	if !strings.Contains(errStr, expectedSubstr) {
+		t.Errorf("Expected error to contain %q, but got %q", expectedSubstr, errStr)
+	}
+}
+
+// mockDirDetector is like mockDetector but allows specifying the root dir
+type mockDirDetector struct {
+	root string
+}
+
+func (m *mockDirDetector) DetectFromFilePath(_ context.Context, path string) (*contract.WorkspaceCandidate, *contract.ResolveWorkspaceError) {
+	return &contract.WorkspaceCandidate{
+		Root:       m.root,
+		Confidence: 1.0,
+	}, nil
+}

@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -33,7 +34,7 @@ import (
 )
 
 var (
-	Version = "2.1.33"
+	Version = "2.1.45"
 	Commit  = "none"
 	Date    = "24.10.2025"
 )
@@ -47,7 +48,22 @@ func main() {
 	qdrantURLFlag := flag.String("qdrant-url", "", "Qdrant URL override")
 	httpPort := flag.Int("http-port", 3000, "Port for SSE server (default 3000, set -1 to disable)")
 	versionFlag := flag.Bool("version", false, "Print version and exit")
+	uninstallFlag := flag.Bool("uninstall", false, "Uninstall RagCode MCP from this system")
 	flag.Parse()
+
+	if *uninstallFlag {
+		fmt.Println("Delegating to rag-code-install --uninstall...")
+		cmd := exec.Command("rag-code-install", "--uninstall", "-y")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Stdin = os.Stdin
+		if err := cmd.Run(); err != nil {
+			fmt.Printf("\nCould not run installer automatically: %v\n", err)
+			fmt.Println("Please run 'rag-code-install --uninstall' manually.")
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 
 	logger.InitLoggerFromEnv()
 

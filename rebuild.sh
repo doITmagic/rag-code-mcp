@@ -11,4 +11,6 @@ perl -0777 -i -pe 's/(\bVersion\s*=\s*")([^"]+)(")/${1}'"$nv"'${3}/' "$MAIN_GO"
 mkdir -p "$BIN_DIR"
 go build -o "$BIN_DIR/rag-code-mcp" "$ROOT_DIR/cmd/rag-code-mcp"
 go build -o "$BIN_DIR/rag-code-install" "$ROOT_DIR/cmd/rag-code-install"
+cp "$ROOT_DIR/internal/config/default.yaml" "$BIN_DIR/config.yaml"
 echo "$cv -> $nv"
+

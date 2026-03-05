@@ -111,7 +111,6 @@ archives:
       - LICENSE
       - README.md
       - llms.txt
-      - config.yaml
       - .env.example
 
 checksum:

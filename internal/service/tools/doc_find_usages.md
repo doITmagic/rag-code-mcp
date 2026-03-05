@@ -19,7 +19,7 @@ It completely **bypasses the Semantic Embedder (LLM)** and issues an Exact Match
 }
 ```
 
-By querying the exact path of the payload JSON, the database operates efficiently and precisely, scanning the `Relations` arrays of every indexed AST node (both methods, classes or standalone functions) to identify callers, implementers, and dependent types referencing the `SymbolName`.
+By querying the exact path of the payload JSON, the database operates efficiently and precisely, scanning the `relations` arrays of every indexed AST node (both methods, classes or standalone functions) to identify callers, implementers, and dependent types referencing the `SymbolName`.
 
 ## Features
 - **Deterministic and Robust**: Resolves complex usage paths correctly regardless of lexical variations or generic terms used by developers. Zero semantic hallucinations!

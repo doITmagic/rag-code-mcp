@@ -57,6 +57,12 @@ func (s *progressStore) get(workspaceID string, workspaceRoot string) *IndexProg
 		if p := loadIndexStatus(workspaceRoot); p != nil && p.WorkspaceID == workspaceID {
 			s.jobs[workspaceID] = p // cache in memory for subsequent calls
 			cp := *p
+			if p.Languages != nil {
+				cp.Languages = make(map[string]IndexLanguageProgress, len(p.Languages))
+				for k, v := range p.Languages {
+					cp.Languages[k] = v
+				}
+			}
 			return &cp
 		}
 	}

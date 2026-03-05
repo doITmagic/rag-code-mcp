@@ -135,12 +135,18 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 	actualBytes := 0
 
 	for _, result := range allResults {
-		// is_public filter: use payload field when present, fallback to naming convention
-		isPublic, _ := result.Point.Payload["is_public"].(bool)
-		if !isPublic {
-			name, _ := result.Point.Payload["name"].(string)
-			if !isExported(name) {
+		// is_public filter: prefer explicit payload field; fallback to naming convention only for Go
+		if isPublicVal, ok := result.Point.Payload["is_public"]; ok {
+			if isPublic, okBool := isPublicVal.(bool); okBool && !isPublic {
 				continue
+			}
+		} else {
+			lang, _ := result.Point.Payload["language"].(string)
+			if strings.EqualFold(lang, "go") {
+				name, _ := result.Point.Payload["name"].(string)
+				if !isExported(name) {
+					continue
+				}
 			}
 		}
 
@@ -160,7 +166,7 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 		docstring, _ := result.Point.Payload["docstring"].(string)
 
 		descLine := strings.Split(docstring, "\n")[0]
-		filePath, _ := result.Point.Payload["file_path"].(string)
+		payloadFilePath, _ := result.Point.Payload["file_path"].(string)
 		startLineVal := result.Point.Payload["start_line"]
 		startLine := 0
 		switch v := startLineVal.(type) {
@@ -173,9 +179,9 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 		relsRaw, _ := result.Point.Payload["relations"].([]interface{})
 
 		actualBytes += len(name) + len(signature) + len(descLine)
-		if filePath != "" && !seenFiles[filePath] {
-			seenFiles[filePath] = true
-			if info, statErr := os.Stat(filePath); statErr == nil {
+		if payloadFilePath != "" && !seenFiles[payloadFilePath] {
+			seenFiles[payloadFilePath] = true
+			if info, statErr := os.Stat(payloadFilePath); statErr == nil {
 				baselineBytes += int(info.Size())
 			}
 		}
@@ -185,7 +191,7 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 			Type:           symType,
 			Signature:      signature,
 			Description:    descLine,
-			FilePath:       filePath,
+			FilePath:       payloadFilePath,
 			StartLine:      startLine,
 			Package:        packageName,
 			RelationsCount: len(relsRaw),

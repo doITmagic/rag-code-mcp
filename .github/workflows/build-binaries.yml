@@ -45,7 +45,7 @@ jobs:
           go build -o bin/index-all ./cmd/index-all
           
           echo "Building rag-code-install..."
-          go build -o bin/rag-code-install ./cmd/install
+          go build -o bin/rag-code-install ./cmd/rag-code-install
           
           chmod +x bin/*
 

@@ -150,7 +150,8 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 			startLine = v
 		}
 
-		// Extract exactly which relation(s) matched to show reasoning
+		// Extract exactly which relation type(s) matched to show reasoning (deduplicated)
+		seenRelTypes := make(map[string]struct{})
 		var matchedRelations []string
 		if relationsRaw, hasRel := result.Point.Payload["relations"]; hasRel {
 			if relList, ok := relationsRaw.([]interface{}); ok {
@@ -158,7 +159,10 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 					if rMap, ok := relItem.(map[string]interface{}); ok {
 						if target, _ := rMap["target_name"].(string); target == symbolName {
 							relType, _ := rMap["type"].(string)
-							matchedRelations = append(matchedRelations, relType)
+							if _, seen := seenRelTypes[relType]; !seen {
+								seenRelTypes[relType] = struct{}{}
+								matchedRelations = append(matchedRelations, relType)
+							}
 						}
 					}
 				}

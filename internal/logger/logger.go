@@ -50,7 +50,15 @@ func (l *SimpleLogger) shouldLog(msgLevel string) bool {
 	if logLevel == "" {
 		logLevel = "info"
 	}
-	return levels[msgLevel] >= levels[logLevel]
+	configuredLevel, ok := levels[logLevel]
+	if !ok {
+		configuredLevel = levels["info"]
+	}
+	msgLevelValue, ok := levels[msgLevel]
+	if !ok {
+		return false
+	}
+	return msgLevelValue >= configuredLevel
 }
 
 // Debug logs a debug message (only if MCP_LOG_LEVEL is set to 'debug').
@@ -87,6 +95,9 @@ func (l *SimpleLogger) Error(format string, args ...interface{}) {
 func (l *SimpleLogger) Warn(format string, args ...interface{}) {
 	if l.shouldLog("warn") {
 		fmt.Fprintf(os.Stderr, "[WARN] "+format+"\n", args...)
+		if l.writer != nil {
+			fmt.Fprintf(l.writer, "[WARN] "+format+"\n", args...)
+		}
 	}
 }
 

@@ -89,6 +89,13 @@ func New(path string) (*Registry, error) {
 	return r, nil
 }
 
+// RegisterWorkspace persists a workspace in the registry.
+// It wraps Upsert — idempotent, updates LastUsedAt if already exists.
+func (r *Registry) RegisterWorkspace(root, name, client string) error {
+	_, err := r.Upsert(root, name, client)
+	return err
+}
+
 // SetAuditSink configures an optional sink for auditable lifecycle events.
 func (r *Registry) SetAuditSink(sink AuditSink) {
 	r.mu.Lock()

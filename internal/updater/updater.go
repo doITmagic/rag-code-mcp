@@ -31,16 +31,15 @@ type UpdateCache struct {
 }
 
 var (
-	cacheFile  = "update_cache.json"
 	cacheMutex sync.Mutex
 )
 
 func getCachePath() (string, error) {
-	appDir := utils.RagCodeHome()
-	if err := os.MkdirAll(appDir, 0755); err != nil {
+	path := utils.GetUpdateCachePath()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return "", fmt.Errorf("failed to create ragcode dir: %w", err)
 	}
-	return filepath.Join(appDir, cacheFile), nil
+	return path, nil
 }
 
 func GetCachedUpdate() (*UpdateCache, error) {

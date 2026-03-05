@@ -19,6 +19,7 @@ type Registry interface {
 	ResolveAlias(ctx context.Context, alias string) (*contract.WorkspaceCandidate, *contract.ResolveWorkspaceError)
 	RecordFeedback(ctx context.Context, feedback *contract.PathFeedback) error
 	PromoteCandidate(ctx context.Context, root, client string, executionSucceeded bool) error
+	RegisterWorkspace(root, name, client string) error
 	GetActiveWorkspace() (string, error)
 }
 
@@ -79,6 +80,16 @@ func (r *Resolver) GetActiveWorkspace() (string, error) {
 		return "", nil
 	}
 	return r.deps.Registry.GetActiveWorkspace()
+}
+
+// RegisterWorkspace persists a workspace in the registry so it can be
+// used for future fallback detection. Should be called when a workspace
+// is confirmed (e.g. at indexing time).
+func (r *Resolver) RegisterWorkspace(root, name string) {
+	if r.deps.Registry == nil {
+		return
+	}
+	_ = r.deps.Registry.RegisterWorkspace(root, name, "ragcode")
 }
 
 // Resolve evaluates the incoming request using the deterministic cascade.

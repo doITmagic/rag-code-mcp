@@ -76,6 +76,9 @@ type Config struct {
 	// Skills configuration (multi-source skill repos)
 	Skills SkillsConfig `yaml:"skills"`
 
+	// Paths configuration (global application paths)
+	Paths PathsConfig `yaml:"paths"`
+
 	// AutoUpdate enables automatic update check and apply on startup
 	AutoUpdate bool `yaml:"auto_update"`
 }
@@ -291,4 +294,24 @@ type SkillRepoConfig struct {
 type HealthCheckConfig struct {
 	// EnableOnStartup controls whether health checks are run when the server starts
 	EnableOnStartup bool `yaml:"enable_on_startup"`
+}
+
+// PathsConfig centralizes all global (non-workspace) application paths.
+// Empty values mean "use default" which resolves to ~/.ragcode/ subtree.
+type PathsConfig struct {
+	// LogsDir is the directory for log files.
+	// Default: ~/.ragcode/logs/
+	LogsDir string `yaml:"logs_dir"`
+
+	// Registry is the path to the workspace registry file.
+	// Default: ~/.ragcode/registry.json
+	Registry string `yaml:"registry"`
+
+	// SkillsCache is the path to the skills cache file.
+	// Default: ~/.ragcode/skills_cache.json
+	SkillsCache string `yaml:"skills_cache"`
+
+	// UpdateCache is the path to the update cache file.
+	// Default: ~/.ragcode/update_cache.json
+	UpdateCache string `yaml:"update_cache"`
 }

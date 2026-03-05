@@ -223,10 +223,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 		}
 	}
 
-	// Add markdown payload as well under a human readable format
-	// actually, the standard pattern for tools in rag-code-mcp:
-	// To return string so the AI can read it, we change ToolResponse struct or just return the JSON string.
-	// We'll construct a generic Map to marshal it all manually just like rag_search_code.
+	// Wrap the formatted usages and metadata in the standard ToolResponse format.
 
 	resp := ToolResponse{
 		Status:  "success",

@@ -40,6 +40,20 @@ var _ = Describe("FindUsagesTool", func() {
 			Expect(resp.Error).To(ContainSubstring("symbol_name parameter is required"))
 		})
 
+		It("should return indexing_required if ErrNoCollectionsFound", func() {
+			mockStore.CollectionExistsFunc = func(ctx context.Context, name string) (bool, error) {
+				return false, nil
+			}
+			resJSON, err := tool.Execute(ctx, map[string]interface{}{"symbol_name": "GhostFunc", "file_path": "main.go"})
+			Expect(err).NotTo(HaveOccurred())
+			var resp tools.ToolResponse
+			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
+
+			// Depending on whether auto-index is started or not, status could be indexing_required or indexing_in_progress
+			// FindUsages auto-starts indexing if nothing is found and returns indexing_in_progress in that case
+			Expect(resp.Status).To(MatchRegexp("indexing_in_progress|indexing_required"))
+		})
+
 		It("should return no_results if no usages are found", func() {
 			mockStore.SearchFunc = func(ctx context.Context, col string, q storage.SearchQuery) ([]storage.SearchResult, error) {
 				return []storage.SearchResult{}, nil

@@ -107,13 +107,6 @@ func main() {
 		runAutoUpdate()
 	}
 
-	// Kill any existing processes on the HTTP port before health checks
-	if *httpPort > 0 {
-		if err := utils.KillProcessesOnPort(*httpPort); err != nil {
-			logger.Instance.Warn("Failed to kill processes on port %d: %v", *httpPort, err)
-		}
-	}
-
 	// Health checks (only embedding model is strictly required for core RAG)
 	if cfg.HealthCheck.EnableOnStartup {
 		models := []string{cfg.LLM.OllamaEmbed}
@@ -217,8 +210,8 @@ func main() {
 		go func() {
 			logger.Instance.Info("Starting HTTP server on http://localhost:%d/mcp (Streamable HTTP, stateless)", *httpPort)
 			if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				logger.Instance.Error("HTTP server failed: %v", err)
-				cancel()
+				logger.Instance.Error("HTTP server failed to start (port probably in use): %v", err)
+				// Do not call cancel() here, Stdio server should continue to function!
 			}
 		}()
 	}

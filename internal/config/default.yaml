@@ -81,5 +81,8 @@ skills:
       skills_path: "skills"
       enabled: true
 
+# Auto-update: check for new version and apply on startup (uses 24h cache)
+auto_update: true
+
 health_check:
   enable_on_startup: true

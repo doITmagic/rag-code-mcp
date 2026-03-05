@@ -13,12 +13,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/doITmagic/rag-code-mcp/internal/config"
 	"github.com/doITmagic/rag-code-mcp/internal/healthcheck"
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
 	"github.com/doITmagic/rag-code-mcp/internal/service/search"
 	"github.com/doITmagic/rag-code-mcp/internal/service/tools"
+	"github.com/doITmagic/rag-code-mcp/internal/updater"
 	"github.com/doITmagic/rag-code-mcp/internal/utils"
 	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
 	"github.com/doITmagic/rag-code-mcp/pkg/llm"
@@ -77,6 +79,11 @@ func main() {
 
 	// Apply CLI overrides
 	config.ApplyCLIOverrides(cfg, *ollamaURLFlag, *ollamaModel, *ollamaEmbed, *qdrantURLFlag)
+
+	// Auto-update: check for new version and apply on startup
+	if cfg.AutoUpdate {
+		runAutoUpdate()
+	}
 
 	// Kill any existing processes on the HTTP port before health checks
 	if *httpPort > 0 {
@@ -213,4 +220,66 @@ func main() {
 			logger.Instance.Error("HTTP shutdown error: %v", err)
 		}
 	}
+}
+
+// runAutoUpdate checks for a newer version on GitHub and applies it automatically.
+// Uses the same 24h cache as rag_check_update to avoid hitting GitHub on every restart.
+// Non-fatal: if anything fails, logs a warning and continues normal startup.
+func runAutoUpdate() {
+	logger.Instance.Info("Auto-update: checking for new version...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	info, err := updater.CheckForUpdates(ctx, Version, false) // false = use cache
+	if err != nil {
+		logger.Instance.Warn("Auto-update check failed: %v", err)
+		return
+	}
+	if info == nil {
+		logger.Instance.Info("Auto-update: already on latest version (%s)", Version)
+		return
+	}
+
+	// Compare versions to be sure
+	current, errCur := semver.NewVersion(Version)
+	latest, errLat := semver.NewVersion(info.LatestVersion)
+	if errCur != nil || errLat != nil {
+		logger.Instance.Warn("Auto-update: cannot parse versions (current=%s, latest=%s)", Version, info.LatestVersion)
+		return
+	}
+	if !latest.GreaterThan(current) {
+		logger.Instance.Info("Auto-update: current version %s is up to date", Version)
+		return
+	}
+
+	logger.Instance.Info("Auto-update: new version available %s → %s, downloading...", Version, info.LatestVersion)
+
+	// Download to temp file
+	tmpDir, err := os.MkdirTemp("", "ragcode-autoupdate-*")
+	if err != nil {
+		logger.Instance.Warn("Auto-update: cannot create temp dir: %v", err)
+		return
+	}
+	defer os.RemoveAll(tmpDir)
+
+	archivePath := filepath.Join(tmpDir, "update.tar.gz")
+	if err := info.DownloadAndVerify(ctx, archivePath); err != nil {
+		logger.Instance.Warn("Auto-update: download/verify failed: %v", err)
+		return
+	}
+
+	logger.Instance.Info("Auto-update: applying update %s...", info.LatestVersion)
+
+	// ApplyUpdate swaps the binary and calls os.Exit(0) via a goroutine.
+	// The process manager (IDE/systemd/etc.) will restart with the new version.
+	if err := updater.ApplyUpdate(archivePath); err != nil {
+		logger.Instance.Warn("Auto-update: apply failed: %v", err)
+		return
+	}
+
+	// If we reach here, ApplyUpdate scheduled an os.Exit(0) in ~1s.
+	// Wait for it to take effect.
+	logger.Instance.Info("Auto-update: successfully updated to %s, restarting...", info.LatestVersion)
+	time.Sleep(2 * time.Second)
 }

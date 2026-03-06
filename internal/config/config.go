@@ -6,6 +6,15 @@ import (
 
 // DefaultWorkspaceDetectionMarkers defines default files/directories used to
 // detect workspace roots across config generation and runtime detection.
+const (
+	DefaultOllamaBaseURL = "http://localhost:11434"
+	DefaultQdrantURL     = "http://localhost:6333"
+
+	// StableEmbeddingModel is the current officially recommended embedding model.
+	// Changing this impacts the installer and may require re-indexing.
+	StableEmbeddingModel = "qwen3-embedding:0.6b"
+)
+
 var DefaultWorkspaceDetectionMarkers = []string{
 	".git",
 	"go.mod",
@@ -63,6 +72,15 @@ type Config struct {
 
 	// Workspace configuration (multi-workspace support)
 	Workspace WorkspaceConfig `yaml:"workspace"`
+
+	// Skills configuration (multi-source skill repos)
+	Skills SkillsConfig `yaml:"skills"`
+
+	// Paths configuration (global application paths)
+	Paths PathsConfig `yaml:"paths"`
+
+	// AutoUpdate enables automatic update check and apply on startup
+	AutoUpdate bool `yaml:"auto_update"`
 }
 
 // LLMConfig contains LLM provider settings
@@ -233,10 +251,67 @@ type WorkspaceConfig struct {
 	// in workspace roots to ensure AI follows the "Golden Rule"
 	// Default: true
 	AutoCreateIDERules bool `yaml:"auto_create_ide_rules"`
+
+	// AutoInstallSSESkill installs the ragcode-sse skill into detected workspaces.
+	AutoInstallSSESkill bool `yaml:"auto_install_sse_skill"`
+
+	// WatchEnabled controls filesystem watchers for incremental reindexing.
+	WatchEnabled bool `yaml:"watch_enabled"`
+
+	// WatchDebounce configures debounce duration for filesystem events.
+	// Example: 5s
+	WatchDebounce time.Duration `yaml:"watch_debounce"`
+}
+
+// SkillsConfig contains configuration for multi-source skill repositories
+type SkillsConfig struct {
+	// CacheTTL controls how long the aggregated skill list is cached locally.
+	// Default: 24h. Set to 0 to disable caching.
+	CacheTTL time.Duration `yaml:"cache_ttl"`
+
+	// Repos is the list of GitHub repositories containing skills.
+	// Each repo is scanned for folders containing SKILL.md files.
+	Repos []SkillRepoConfig `yaml:"repos"`
+}
+
+// SkillRepoConfig represents a single GitHub repository that hosts skills.
+type SkillRepoConfig struct {
+	// Repo is the GitHub "owner/repo" identifier, e.g. "anthropics/skills"
+	Repo string `yaml:"repo"`
+
+	// Branch is the git branch to scan. Default: "main"
+	Branch string `yaml:"branch"`
+
+	// SkillsPath is the path within the repo where skills live, e.g. "skills".
+	// Set to "." or "" for repos where skill folders are at the root.
+	SkillsPath string `yaml:"skills_path"`
+
+	// Enabled controls whether this repo is included in skill discovery.
+	Enabled bool `yaml:"enabled"`
 }
 
 // HealthCheckConfig contains health check settings
 type HealthCheckConfig struct {
 	// EnableOnStartup controls whether health checks are run when the server starts
 	EnableOnStartup bool `yaml:"enable_on_startup"`
+}
+
+// PathsConfig centralizes all global (non-workspace) application paths.
+// Empty values mean "use default" which resolves to ~/.ragcode/ subtree.
+type PathsConfig struct {
+	// LogsDir is the directory for log files.
+	// Default: ~/.ragcode/logs/
+	LogsDir string `yaml:"logs_dir"`
+
+	// Registry is the path to the workspace registry file.
+	// Default: ~/.ragcode/registry.json
+	Registry string `yaml:"registry"`
+
+	// SkillsCache is the path to the skills cache file.
+	// Default: ~/.ragcode/skills_cache.json
+	SkillsCache string `yaml:"skills_cache"`
+
+	// UpdateCache is the path to the update cache file.
+	// Default: ~/.ragcode/update_cache.json
+	UpdateCache string `yaml:"update_cache"`
 }

@@ -3,15 +3,18 @@ data/
 test_data/
 qdrant_data/
 barou/
+inspirations/
+relations/
 
 # Binaries
 /cmd/agent-runner/agent-runner
 /rag-code-mcp
 test-*
 bin/
-ragcode-installer
+tests/e2e/bin/
+rag-code-install
 index-all
-cmd/rag-code-mcp/rag-code-mcp
+rag-code-mcp
 
 # Test programs
 cmd/test-*/
@@ -59,6 +62,7 @@ temp/
 scripts/
 .ragcode/
 .agent/skills/
+build-binaries.sh
 
 # Debug logs
 startup_debug.txt

@@ -1,15 +1,20 @@
 package config
 
 import (
+	_ "embed"
 	"fmt"
-	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"gopkg.in/yaml.v3"
 )
+
+//go:embed default.yaml
+var defaultConfigBytes []byte
 
 // Load reads and parses the configuration file
 func Load(path string) (*Config, error) {
@@ -23,35 +28,21 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	// Parse YAML
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	// Parse YAML - Start with default config so missing fields retain their default values
+	cfg := DefaultConfig()
+	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
-	// Auto-migrate file-based config BEFORE env overrides to see if we should save
-	if migrateEmbeddingModel(&cfg) {
-		log.Printf("🔄 Auto-migrating configuration file '%s' to stable embedding models...", path)
-		if err := Save(path, &cfg); err != nil {
-			log.Printf("⚠️  Failed to persist migrated configuration to '%s': %v", path, err)
-		} else {
-			log.Printf("✅ Configuration file successfully updated.")
-		}
-	}
-
 	// Apply environment variable overrides
-	applyEnvOverrides(&cfg)
-
-	// Auto-migrate again after env overrides (in memory) to ensure any deprecated models
-	// from environment variables are also updated
-	migrateEmbeddingModel(&cfg)
+	applyEnvOverrides(cfg)
 
 	// Validate configuration
-	if err := validate(&cfg); err != nil {
+	if err := validate(cfg); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	return &cfg, nil
+	return cfg, nil
 }
 
 // Save writes the configuration to a file
@@ -68,87 +59,55 @@ func Save(path string, cfg *Config) error {
 	return nil
 }
 
-// DefaultConfig returns a default configuration
+// DefaultConfig returns a default configuration structure
 func DefaultConfig() *Config {
-	return &Config{
-		LLM: LLMConfig{
-			Provider:         "ollama",
-			OllamaBaseURL:    "http://localhost:11434",
-			OllamaModel:      "qwen2.5-coder:0.5b",
-			OllamaEmbed:      "qwen3-embedding:0.6b",
-			LlamafileBaseURL: "http://localhost:8080",
-			Temperature:      0.7,
-			MaxTokens:        2048,
-			Timeout:          60 * time.Second,
-			MaxRetries:       3,
-			// Legacy fields for backward compatibility
-			BaseURL:    "http://localhost:11434",
-			Model:      "qwen2.5-coder:0.5b",
-			EmbedModel: "qwen3-embedding:0.6b",
-		},
-		Memory: MemoryConfig{
-			ShortTermSize:  10,
-			EnableLongTerm: false,
-		},
-		Storage: StorageConfig{
-			VectorDB: VectorDBConfig{
-				Provider:   "qdrant",
-				URL:        "http://localhost:6333",
-				Collection: "do-ai",
+	// Parse the embedded default YAML to ensure struct defaults match file defaults
+	var cfg Config
+	if err := yaml.Unmarshal(defaultConfigBytes, &cfg); err != nil {
+		// Fallback to hardcoded defaults if parsing fails (should not happen)
+		// Note: logger may not be initialized yet at this point, use fmt fallback
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to parse embedded default config: %v\n", err)
+		return &Config{
+			LLM: LLMConfig{
+				Provider:      "ollama",
+				OllamaBaseURL: "http://localhost:11434",
+				OllamaEmbed:   StableEmbeddingModel,
+				MaxTokens:     1024,
+				Timeout:       60 * time.Second,
 			},
-			Redis: RedisConfig{
-				Enabled: false,
-				URL:     "localhost:6379",
-				DB:      0,
+			Storage: StorageConfig{
+				VectorDB: VectorDBConfig{URL: "http://localhost:6333"},
 			},
-			SQLite: SQLiteConfig{
-				Path: "./data/do-ai.db",
-			},
-		},
-		Server: ServerConfig{
-			Host:            "0.0.0.0",
-			Port:            8080,
-			EnableWebSocket: true,
-		},
-		Logging: LoggingConfig{
-			Level:     "info",
-			Format:    "text",
-			Output:    "stdout",
-			MaxSizeMB: 10,
-		},
-		RagCode: RagCodeConfig{
-			Enabled:        false,
-			IndexOnStartup: false,
-			Paths:          []string{"./internal", "./cmd"},
-			Collection:     "do-ai-code",
-			Model:          "",
-			Include:        []string{"**/*.go"},
-			Exclude:        []string{"**/*_test.go", "vendor/**", ".git/**", "testdata/**"},
-			SearchLimit:    5,
-		},
-		Docs: DocsConfig{
-			Collection: "do-ai-docs",
-			ReadmePath: "./README.md",
-			DocsPaths:  []string{"./docs"},
-		},
-		APIDocs: APIDocsConfig{
-			Collection: "do-ai-api-docs",
-		},
-		Workspace: WorkspaceConfig{
-			Enabled:            true,
-			AutoIndex:          true,
-			MaxWorkspaces:      10,
-			DetectionMarkers:   append([]string(nil), DefaultWorkspaceDetectionMarkers...),
-			ExcludePatterns:    []string{"node_modules", ".git", "vendor", "target", "build", "dist", ".venv"},
-			CollectionPrefix:   "ragcode",
-			IndexInclude:       []string{}, // Empty means use global rag_code.include
-			IndexExclude:       []string{}, // Empty means use global rag_code.exclude
-			AutoCreateIDERules: true,
-		},
-		HealthCheck: HealthCheckConfig{
-			EnableOnStartup: true,
-		},
+			Logging: LoggingConfig{Level: "info"},
+		}
 	}
+	return &cfg
+}
+
+// EnsureConfigExists creates a default config.yaml if it doesn't exist
+func EnsureConfigExists(configPath string) error {
+	// Check if config file already exists
+	if _, err := os.Stat(configPath); err == nil {
+		return nil // File exists, nothing to do
+	}
+
+	logger.Instance.Info("📝 Config file not found, creating default configuration at: %s", configPath)
+
+	// Ensure directory exists
+	dir := filepath.Dir(configPath)
+	if dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create config directory: %w", err)
+		}
+	}
+
+	// Write embedded config content
+	if err := os.WriteFile(configPath, defaultConfigBytes, 0644); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	logger.Instance.Info("✓ Created default configuration file: %s", configPath)
+	return nil
 }
 
 // applyEnvOverrides applies environment variable overrides to the configuration
@@ -254,6 +213,11 @@ func applyEnvOverrides(cfg *Config) {
 			cfg.Workspace.AutoCreateIDERules = v
 		}
 	}
+	if wsSSESkill := os.Getenv("WORKSPACE_AUTO_INSTALL_SSE_SKILL"); wsSSESkill != "" {
+		if v, err := strconv.ParseBool(wsSSESkill); err == nil {
+			cfg.Workspace.AutoInstallSSESkill = v
+		}
+	}
 
 	// HealthCheck configuration overrides
 	if healthOnStartup := os.Getenv("HEALTH_CHECK_ON_STARTUP"); healthOnStartup != "" {
@@ -263,31 +227,49 @@ func applyEnvOverrides(cfg *Config) {
 	}
 }
 
-// migrateEmbeddingModel automatically migrates from old unstable embedding model
-func migrateEmbeddingModel(cfg *Config) bool {
+// ApplyCLIOverrides applies command-line flag overrides to the configuration
+func ApplyCLIOverrides(cfg *Config, ollamaURL, ollamaModel, ollamaEmbed, qdrantURL string) {
+	if ollamaURL != "" {
+		cfg.LLM.OllamaBaseURL = ollamaURL
+	}
+	if ollamaModel != "" {
+		cfg.LLM.OllamaModel = ollamaModel
+	}
+	if ollamaEmbed != "" {
+		cfg.LLM.OllamaEmbed = ollamaEmbed
+	}
+	if qdrantURL != "" {
+		cfg.Storage.VectorDB.URL = qdrantURL
+	}
+}
+
+// MigrateEmbeddingModel automatically migrates from old unstable embedding model
+func MigrateEmbeddingModel(cfg *Config) bool {
 	migrated := false
 
 	// List of deprecated/unstable models that should be migrated
-	deprecatedModels := []string{"nomic-embed-text"}
-	newStableModel := "mxbai-embed-large"
+	deprecatedModels := []string{"nomic-embed-text", "mxbai-embed-large"}
+	newStableModel := StableEmbeddingModel
 
 	// Check if current model is deprecated
 	for _, deprecated := range deprecatedModels {
 		if cfg.LLM.OllamaEmbed == deprecated {
-			log.Printf("⚠️  MIGRATION: Detected deprecated embedding model '%s'", deprecated)
-			log.Printf("   Automatically upgrading to stable model '%s'", newStableModel)
-			log.Printf("   Note: Existing indexed data will need to be re-indexed.")
-			log.Printf("   Use 'rag_index_workspace' tool with 'recreate: true' to rebuild indexes.")
+			logger.Instance.Warn("╔══════════════════════════════════════════════════════════════╗")
+			logger.Instance.Warn("║           ⚠️  EMBEDDING MODEL MIGRATION REQUIRED              ║")
+			logger.Instance.Warn("╠══════════════════════════════════════════════════════════════╣")
+			logger.Instance.Warn("║  Deprecated model : %-41s ║", deprecated)
+			logger.Instance.Warn("║  New stable model : %-41s ║", newStableModel)
+			logger.Instance.Warn("╠══════════════════════════════════════════════════════════════╣")
+			logger.Instance.Warn("║  ⚡ ACTION REQUIRED: All existing indexes are INCOMPATIBLE.  ║")
+			logger.Instance.Warn("║  Vector spaces differ between models — old results will be   ║")
+			logger.Instance.Warn("║  garbage until you re-index.                                 ║")
+			logger.Instance.Warn("║                                                              ║")
+			logger.Instance.Warn("║  Run: rag_index_workspace with recreate: true                ║")
+			logger.Instance.Warn("╚══════════════════════════════════════════════════════════════╝")
 
 			cfg.LLM.OllamaEmbed = newStableModel
 			migrated = true
 			break
-		}
-
-		// Also check legacy field
-		if cfg.LLM.EmbedModel == deprecated {
-			cfg.LLM.EmbedModel = newStableModel
-			migrated = true
 		}
 	}
 
@@ -306,9 +288,10 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("llm.provider must be 'ollama'")
 	}
 
-	// Validate ollama model configuration
-	if cfg.LLM.OllamaModel == "" && cfg.LLM.Model == "" {
-		return fmt.Errorf("llm.ollama_model (or legacy llm.model) is required for ollama provider")
+	// Note: ollama_model is now optional as only embeddings are required for core RAG functionality.
+	// We no longer enforce presence of a generation model.
+	if cfg.LLM.OllamaModel == "" && cfg.LLM.Model != "" {
+		cfg.LLM.OllamaModel = cfg.LLM.Model
 	}
 
 	// Ensure log max size

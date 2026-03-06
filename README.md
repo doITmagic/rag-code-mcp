@@ -21,7 +21,7 @@
 
 RagCode is a **Model Context Protocol (MCP) server** that instantly makes your project **AI-ready**. It enables AI assistants like **GitHub Copilot**, **Cursor**, **Windsurf**, and **Claude** to understand your entire codebase through **semantic vector search**, bridging the gap between your code and Large Language Models (LLMs).
 
-Built with the official [Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk), RagCode provides **10 powerful tools** to index, search, and analyze code, making it the ultimate solution for **AI-ready software development**.
+Built with the official [Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk), RagCode provides **11 powerful tools** to index, search, and analyze code — including **Markdown documentation search** — making it the ultimate solution for **AI-ready software development**.
 
 ## ⚡ One-Command Installation
 
@@ -29,27 +29,27 @@ Built with the official [Model Context Protocol Go SDK](https://github.com/model
 
 ### Linux (amd64)
 ```bash
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./rag-code-install -ollama=docker -qdrant=docker
 ```
 
 ### macOS (Apple Silicon / Intel)
 ```bash
 # Apple Silicon (M1/M2/M3)
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_arm64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_arm64.tar.gz | tar xz && ./rag-code-install -ollama=docker -qdrant=docker
 
 # Intel Macs
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_amd64.tar.gz | tar xz && ./rag-code-install -ollama=docker -qdrant=docker
 ```
 
 ### Windows (PowerShell)
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_windows_amd64.zip" -OutFile "ragcode.zip"; Expand-Archive ragcode.zip -DestinationPath . -Force; .\ragcode-installer.exe -ollama=docker -qdrant=docker
+Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_windows_amd64.zip" -OutFile "ragcode.zip"; Expand-Archive ragcode.zip -DestinationPath . -Force; .\rag-code-install.exe -ollama=docker -qdrant=docker
 ```
 
 **That's it!** The installer automatically:
 - ✅ Downloads and installs the `rag-code-mcp` binary
-- ✅ Sets up Ollama and Qdrant in Docker containers
-- ✅ Downloads required AI models (`phi3:medium`, `mxbai-embed-large`)
+- ✅ Sets up Qdrant in Docker containers
+- ✅ Downloads required embedding model (`qwen3-embedding:0.6b`)
 - ✅ Configures your IDE (VS Code, Cursor, Windsurf, Claude Desktop)
 - ✅ Adds binaries to your PATH
 
@@ -101,11 +101,11 @@ First query triggers background indexing. Subsequent queries are instant.
 |---------|-------------|
 | [🔒 Privacy & Security](#-privacy-first-100-local-ai) | 100% local, zero cloud dependencies |
 | [🚀 Why RagCode?](#-why-ragcode-performance-benefits) | Performance benefits, comparisons |
-| [🛠️ MCP Tools](#️-10-powerful-mcp-tools) | All 10 tools explained |
+| [🛠️ MCP Tools](#️-11-powerful-mcp-tools) | All 11 tools explained |
 | [🌐 Supported Languages](#-multi-language-code-intelligence) | Go, PHP, Python support |
 | [💻 IDE Integration](#-ide-integration) | Windsurf, Cursor, VS Code, Claude |
-| [⚙️ Configuration](./docs/CONFIGURATION.md) | Advanced settings, models, env vars |
-| [🐛 Troubleshooting](./docs/TROUBLESHOOTING.md) | Common issues and solutions |
+| [⚙️ Configuration](#-configuration) | Advanced settings, models, env vars |
+| [🐛 Troubleshooting](#-troubleshooting) | Common issues and solutions |
 | [📚 Documentation](#-documentation) | All guides and references |
 
 ---
@@ -114,7 +114,7 @@ First query triggers background indexing. Subsequent queries are instant.
 
 **Your code never leaves your machine.** RagCode runs entirely on your local infrastructure:
 
-- ✅ **Local AI Models** - Uses Ollama for LLM and embeddings (runs on your hardware)
+- ✅ **Local AI Models** - Uses Ollama for embeddings (runs on your hardware)
 - ✅ **Local Vector Database** - Qdrant runs in Docker on your machine
 - ✅ **Zero Cloud Dependencies** - No external API calls, no data transmission
 - ✅ **No API Costs** - Free forever, no usage limits or subscriptions
@@ -161,20 +161,36 @@ First query triggers background indexing. Subsequent queries are instant.
 
 ---
 
-## 🛠️ 10 Powerful MCP Tools
+## 🛠️ 11 Powerful MCP Tools
+
+### 🔍 Search & Navigation (Core)
 
 | Tool | Description | Use When |
 |------|-------------|----------|
-| `rag_search_code` | Semantic search by meaning | **First choice** for exploration |
-| `rag_hybrid_search` | Keyword + semantic for exact matches | Need exact identifiers |
-| `rag_get_function_details` | Complete function source code | Know exact function name |
-| `rag_find_type_definition` | Type/class with fields and methods | Understand data models |
-| `rag_find_implementations` | All usages and callers | Before refactoring |
-| `rag_list_package_exports` | All exported symbols | Explore unfamiliar packages |
-| `rag_search_docs` | Search Markdown documentation | Setup, architecture info |
-| `rag_get_code_context` | Code snippet with context | Have file:line reference |
-| `rag_index_workspace` | Reindex codebase | After major changes |
-| `rag_evaluate` | AI-to-Developer feedback tool | Request AI self-evaluation |
+| `rag_search` | **Intelligent unified search** — runs semantic + exact searches in parallel, auto-adapts response format. Supports `include_docs` to also search Markdown documentation, and `include_full_content` to force full source code output. | **First choice for any search** |
+| `rag_find_usages` | Find all usages of a class, function, or type across the codebase (AST-based) | Before refactoring |
+| `rag_call_hierarchy` | Explore caller/callee relationships for a symbol (incoming/outgoing, configurable depth) | Understanding execution flow |
+| `rag_list_package_exports` | List all public functions, classes, and types in a package/module | Explore unfamiliar packages |
+| `rag_read_file_context` | Read specific lines from a file with surrounding AST context | Have file:line reference |
+
+### 📦 Indexing & Management
+
+| Tool | Description | Use When |
+|------|-------------|----------|
+| `rag_index_workspace` | Index or reindex a workspace (code + Markdown documentation) | After major changes |
+| `rag_list_skills` | List available embedded skills and their installation status | Discover capabilities |
+| `rag_install_skill` | Install or uninstall a skill into the current workspace | Add automation/templates |
+
+### 🔧 System
+
+| Tool | Description | Use When |
+|------|-------------|----------|
+| `rag_evaluate` | AI-to-Developer feedback on RagCode performance | Provide feedback |
+| `rag_check_update` | Check for available RagCode updates | Staying current |
+| `rag_apply_update` | Download and install latest RagCode version | Upgrading |
+
+> [!TIP]
+> **`rag_search` is all you need for most queries.** It automatically combines semantic and exact search, adapts output format based on confidence, and with `include_docs: true` also searches project documentation (README, guides, Markdown files).
 
 📖 **[Full Tool Reference →](./docs/tool_schema_v2.md)**
 
@@ -224,8 +240,8 @@ RagCode works with all major AI-powered IDEs:
 | Component | Requirement | Notes |
 |-----------|-------------|-------|
 | **CPU** | 4 cores | For running Ollama models |
-| **RAM** | 16 GB | 8 GB for `phi3:medium`, 4 GB for `mxbai-embed-large`, 4 GB system |
-| **Disk** | 10 GB free | ~8 GB for models + 2 GB for data |
+| **RAM** | 2 GB | < 1 GB for `qwen3-embedding:0.6b`, 1 GB system |
+| **Disk** | 1 GB free | ~639 MB for model + data |
 | **OS** | Linux, macOS, Windows | Docker required for Qdrant |
 
 ### Recommended (for better performance)
@@ -233,11 +249,11 @@ RagCode works with all major AI-powered IDEs:
 | Component | Requirement | Notes |
 |-----------|-------------|-------|
 | **CPU** | 8+ cores | Better concurrent operations |
-| **RAM** | 32 GB | Comfortable multi-workspace indexing |
+| **RAM** | 8 GB | Comfortable multi-workspace indexing |
 | **GPU** | NVIDIA 8GB+ VRAM | Significantly speeds up Ollama (optional) |
 | **Disk** | 20 GB SSD | Faster indexing and search |
 
-📖 **[Full Requirements →](./docs/CONFIGURATION.md#-system-requirements)**
+📖 **[Full Requirements →](#-system-requirements)**
 
 ---
 
@@ -248,15 +264,14 @@ RagCode works with all major AI-powered IDEs:
 - **[IDE Setup](./docs/IDE-SETUP.md)** - Manual IDE configuration
 
 ### Configuration & Operations
-- **[Configuration Guide](./docs/CONFIGURATION.md)** - Models, env vars, advanced settings
-- **[Troubleshooting](./docs/TROUBLESHOOTING.md)** - Common issues and solutions
-- **[Docker Setup](./docs/docker-setup.md)** - Docker configuration details
+- **[Configuration Guide](#-configuration)** - Models, env vars, advanced settings
+- **[Troubleshooting](#-troubleshooting)** - Common issues and solutions
 
 ### Language Analyzers
-- **[Go Analyzer](./internal/ragcode/analyzers/golang/README.md)** - Functions, types, interfaces, GoDoc
-- **[PHP Analyzer](./internal/ragcode/analyzers/php/README.md)** - Classes, traits, PHPDoc
-- **[Laravel Analyzer](./internal/ragcode/analyzers/php/laravel/README.md)** - Eloquent, routes, controllers
-- **[Python Analyzer](./internal/ragcode/analyzers/python/README.md)** - Classes, decorators, type hints
+- **[Go Analyzer](./pkg/parser/go/README.md)** - Functions, types, interfaces, GoDoc
+- **[PHP Analyzer](./pkg/parser/php/README.md)** - Classes, traits, PHPDoc
+- **[Laravel Analyzer](./pkg/parser/php/laravel/README.md)** - Eloquent, routes, controllers
+- **[Python Analyzer](./pkg/parser/python/README.md)** - Classes, decorators, type hints
 
 ### Technical Reference
 - **[Architecture Overview](./docs/architecture.md)** - Technical deep dive

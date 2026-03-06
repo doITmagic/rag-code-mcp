@@ -1,8 +1,8 @@
-# RagCode MCP Server
+# RagCode: The Agent-Ready RAG Engine
 
 <!-- AI Agents: This is the summarized documentation for RagCode. For full details, see llms-full.txt -->
 
-> Privacy-first MCP server for semantic code search using RAG. Runs 100% locally.
+> **More than just MCP.** A protocol-agnostic, privacy-first RAG engine for autonomous agents. Runs 100% locally via MCP or SSE/HTTP.
 
 ## Why RagCode?
 
@@ -10,6 +10,8 @@
 - **98% token savings** - returns only relevant code, not entire files
 - **Zero cost** - no API fees, runs on local Ollama + Qdrant
 - **Privacy-first** - code never leaves your machine
+- **Agent-Ready Architecture** - Not limited to MCP; any agent can build queries via SSE/HTTP.
+- **Skill-Extensible** - Use the `ragcode-sse` skill to allow agents to interact with the project context directly.
 
 ## RagCode vs Generic RAG
 
@@ -33,22 +35,22 @@ Unlike generic RAG that splits code into arbitrary text chunks, RagCode:
 
 **Linux:**
 ```bash
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./rag-code-install -ollama=docker -qdrant=docker
 ```
 
 **macOS (Apple Silicon):**
 ```bash
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_arm64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_arm64.tar.gz | tar xz && ./rag-code-install -ollama=docker -qdrant=docker
 ```
 
 **macOS (Intel):**
 ```bash
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_amd64.tar.gz | tar xz && ./ragcode-installer -ollama=docker -qdrant=docker
+curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_amd64.tar.gz | tar xz && ./rag-code-install -ollama=docker -qdrant=docker
 ```
 
 **Windows (PowerShell):**
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_windows_amd64.zip" -OutFile "ragcode.zip"; Expand-Archive ragcode.zip -DestinationPath . -Force; .\ragcode-installer.exe -ollama=docker -qdrant=docker
+Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_windows_amd64.zip" -OutFile "ragcode.zip"; Expand-Archive ragcode.zip -DestinationPath . -Force; .\rag-code-install.exe -ollama=docker -qdrant=docker
 ```
 
 **Windows with WSL:** Install Linux version in WSL, then configure Windows IDEs to use `wsl.exe` as command with args `["-e", "/home/USER/.local/share/ragcode/bin/rag-code-mcp"]`.
@@ -59,21 +61,27 @@ Key flags: `-ollama` (docker/local), `-qdrant` (docker/remote), `-gpu`, `-models
 
 User: "Find authentication middleware in this codebase"
 → RagCode uses `rag_search_code` tool
-→ Returns exact functions with file paths and line numbers
-→ AI can now reason about the code without reading 50 files
+## 13 Powerful MCP Tools
 
-## 10 MCP Tools
+### Search & Exploration
+1. `rag_search_code` - **USE FIRST** - Comprehensive search by MEANING (`discovery` mode) or EXACT matches (`exact` mode). Returns complete source + file:line. Supports **Go, PHP, Python, HTML.**
+2. `rag_search_docs` - Doc snippets with file paths. **Markdown only.**
+3. `rag_get_code_context` - Code snippet with configurable context lines. **Any text file.**
 
-1. `rag_search_code` - **USE FIRST** - Semantic search by MEANING. Returns complete source code + file:line. Better than rag_hybrid_search for exploration. **Go, PHP, Python, HTML.**
-2. `rag_hybrid_search` - Keyword + semantic for **EXACT matches** only. Returns code + file:line + metadata. Use when rag_search_code misses exact terms. **Go, PHP, Python, HTML.**
-3. `rag_get_function_details` - **COMPLETE** function source: signature, params, return types, body. **Go, PHP, Python.**
-4. `rag_find_type_definition` - Complete type source with fields, methods, inheritance chain. **Go, PHP, Python.**
-5. `rag_find_implementations` - All callers/usages with code snippets + file:line. **Use before refactoring.** **Go, PHP, Python.**
-6. `rag_list_package_exports` - Structured list: symbol names, types, signatures. **Go, PHP, Python.**
-7. `rag_search_docs` - Doc snippets with file paths. **Markdown only. Not for code** - use rag_search_code.
-8. `rag_get_code_context` - Code snippet with configurable context lines. **Any text file.**
-9. `rag_index_workspace` - Reindex codebase. **USUALLY AUTOMATIC.** Call after git pull/branch switch. **Go, PHP, Python, HTML.**
-10. `rag_evaluate` - Request AI self-evaluation on performance and quality. **Use to share feedback.**
+### Symbol Intelligence (Planned & Implemented)
+4. `rag_get_function_details` - **COMPLETE** function source: signature, params, return types, body. **Go, PHP, Python.**
+5. `rag_find_type_definition` - Complete type source with fields, methods, inheritance chain. **Go, PHP, Python.**
+6. `rag_find_implementations` - All callers/usages with code snippets + file:line. **Go, PHP, Python.**
+7. `rag_list_package_exports` - Structured list: symbol names, types, signatures. **Go, PHP, Python.**
+
+### System & Workspace
+8. `rag_index_workspace` - Reindex codebase. **USUALLY AUTOMATIC.** Call after git pull/branch switch.
+9. `rag_list_skills` - List all available and installed skills in the current workspace.
+10. `rag_install_skill` - Install a pre-defined skill (e.g., `ragcode-sse`) into the workspace.
+11. `rag_evaluate` - Request AI self-evaluation on performance and quality. **Use to share feedback.**
+12. `rag_check_update` - Check for new versions of the RagCode MCP server.
+13. `rag_apply_update` - Download and apply the latest update and restart the server.
+14. `rag-code-install` - Local installation and environment setup tool.
 
 ## Configuration
 
@@ -82,8 +90,7 @@ Config file: `~/.local/share/ragcode/config.yaml`
 ```yaml
 llm:
   provider: "ollama"
-  model: "phi3:medium"
-  embed_model: "mxbai-embed-large"
+  ollama_embed: "qwen3-embedding:0.6b"
 
 storage:
   vector_db:

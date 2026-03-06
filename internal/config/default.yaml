@@ -1,0 +1,96 @@
+# RagCode MCP Server Configuration
+# Auto-generated on first run
+
+llm:
+  provider: ollama
+  ollama_base_url: http://localhost:11434
+  ollama_embed: qwen3-embedding:0.6b
+  temperature: 0.7
+  max_tokens: 1024
+  timeout: 60s
+  max_retries: 3
+
+storage:
+  vector_db:
+    provider: qdrant
+    url: http://localhost:6333
+    api_key: ""
+
+logging:
+  level: debug
+  format: text
+  output: file
+
+# Multi-workspace configuration
+workspace:
+  enabled: true
+  auto_index: true
+  max_workspaces: 10
+  # Markers to detect project root
+  detection_markers:
+    - .git
+    - go.mod
+    - package.json
+    - Cargo.toml
+    - pyproject.toml
+    - setup.py
+    - requirements.txt
+    - composer.json
+    - pom.xml
+    - build.gradle
+    - Gemfile
+    - Package.swift
+    - .ragcode
+    - .agent
+    - .idea
+    - .vscode
+    - .vs
+    - .cursor
+    - .windsurf
+  # Folders to ignore during indexing
+  exclude_patterns:
+    - node_modules
+    - .git
+    - vendor
+    - target
+    - build
+    - dist
+    - .venv
+  collection_prefix: ragcode
+  auto_create_ide_rules: true
+  auto_install_sse_skill: false
+  watch_enabled: true
+  watch_debounce: 1s
+
+# Multi-source skill repositories
+# Skills are discovered by scanning for folders containing SKILL.md
+skills:
+  cache_ttl: 24h
+  repos:
+    - repo: "doITmagic/ai-agent-skills"
+      branch: "main"
+      skills_path: "skills"
+      enabled: true
+    - repo: "anthropics/skills"
+      branch: "main"
+      skills_path: "skills"
+      enabled: true
+    - repo: "arpitg1304/robotics-agent-skills"
+      branch: "main"
+      skills_path: "skills"
+      enabled: true
+
+# Auto-update: check for new version and apply on startup (uses 24h cache)
+auto_update: true
+
+health_check:
+  enable_on_startup: true
+
+# Global application paths (non-workspace).
+# Empty = use defaults under ~/.ragcode/
+# All paths support ~ expansion and absolute paths.
+paths:
+  logs_dir: ""          # default: ~/.ragcode/logs/
+  registry: ""          # default: ~/.ragcode/registry.json
+  skills_cache: ""      # default: ~/.ragcode/skills_cache.json
+  update_cache: ""      # default: ~/.ragcode/update_cache.json

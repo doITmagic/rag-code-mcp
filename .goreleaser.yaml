@@ -111,7 +111,7 @@ archives:
       - LICENSE
       - README.md
       - llms.txt
-      - .env.example
+      - internal/config/default.yaml
 
 checksum:
   name_template: 'checksums.txt'

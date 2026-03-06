@@ -19,9 +19,6 @@ var (
 	reModuleExports = regexp.MustCompile(`(?m)^module\.exports\s*=\s*(\w+|{|class|function)`)
 	reExportsDot    = regexp.MustCompile(`(?m)^exports\.(\w+)\s*=`)
 
-	// Router creation
-	reRouterCreate = regexp.MustCompile(`(?m)(?:const|let|var)\s+\w+\s*=\s*(?:express\.)?Router\s*\(\s*\)`)
-
 	// Common built-in middleware
 	builtinMiddleware = map[string]bool{
 		"express.json":          true,

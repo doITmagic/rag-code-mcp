@@ -8,17 +8,14 @@ import (
 var (
 	// Vue SFC block detection
 	reTemplateBlock = regexp.MustCompile(`(?s)<template(?:\s[^>]*)?>(.+?)</template>`)
-	reScriptBlock   = regexp.MustCompile(`(?s)<script(?:\s[^>]*)?>(.+?)</script>`)
-	reStyleBlock    = regexp.MustCompile(`(?s)<style(?:\s[^>]*)?>(.+?)</style>`)
 	reScriptSetup   = regexp.MustCompile(`<script\s+[^>]*setup[^>]*>`)
-	reScriptLang    = regexp.MustCompile(`<script\s+[^>]*lang=["'](ts|tsx)["']`)
 
 	// Options API
 	reDefineComponent = regexp.MustCompile(`(?m)defineComponent\s*\(\s*\{`)
 	reExportDefault   = regexp.MustCompile(`(?m)^export\s+default\s+\{`)
 	reOptionsProps    = regexp.MustCompile(`(?m)^\s+props\s*:\s*[\[{]`)
 	reOptionsEmits    = regexp.MustCompile(`(?m)^\s+emits\s*:\s*[\[{]`)
-	reOptionsData     = regexp.MustCompile(`(?m)^\s+data\s*\(\s*\)`)
+
 	reOptionsMethods  = regexp.MustCompile(`(?m)^\s+methods\s*:\s*\{`)
 	reOptionsComputed = regexp.MustCompile(`(?m)^\s+computed\s*:\s*\{`)
 	reOptionsWatch    = regexp.MustCompile(`(?m)^\s+watch\s*:\s*\{`)

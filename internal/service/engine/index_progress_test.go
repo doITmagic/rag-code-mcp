@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// TestProgressStorDeepCopy verifies that get() returns an independent copy
+// TestProgressStoreDeepCopy verifies that get() returns an independent copy
 // of the Languages map, so callers cannot corrupt the cached snapshot.
 func TestProgressStoreDeepCopy(t *testing.T) {
 	store := newProgressStore()

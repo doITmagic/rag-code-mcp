@@ -254,9 +254,7 @@ func (a *Analyzer) detectAPIRoutes(source string, filePath string) []APIRoute {
 		if route != "" {
 			ext := filepath.Ext(route)
 			route = strings.TrimSuffix(route, ext)
-			if strings.HasSuffix(route, "/index") {
-				route = strings.TrimSuffix(route, "/index")
-			}
+			route = strings.TrimSuffix(route, "/index")
 		}
 		if route != "" && len(routes) == 0 {
 			routes = append(routes, APIRoute{

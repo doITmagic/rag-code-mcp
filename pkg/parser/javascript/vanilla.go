@@ -11,9 +11,6 @@ var (
 	reFuncDecl   = regexp.MustCompile(`(?m)^(export\s+)?(default\s+)?(async\s+)?function\s*\*?\s+(\w+)\s*(<[^>]*>)?\s*\(([^)]*)\)(?:\s*:\s*([^\s{]+))?\s*\{`)
 	reArrowConst = regexp.MustCompile(`(?m)^(export\s+)?(default\s+)?(?:const|let|var)\s+(\w+)\s*(?::\s*[^=]+)?\s*=\s*(async\s+)?(?:\([^)]*\)|[a-zA-Z_]\w*)\s*(?::\s*\w[^\s=]*\s*)?\s*=>\s*`)
 
-	reModuleExports = regexp.MustCompile(`(?m)^module\.exports\s*=\s*`)
-	reExportsMethod = regexp.MustCompile(`(?m)^exports\.(\w+)\s*=\s*`)
-
 	// Classes
 	reClassDecl   = regexp.MustCompile(`(?m)^(export\s+)?(default\s+)?(abstract\s+)?class\s+(\w+)(?:\s+extends\s+(\w+(?:\.\w+)*))?(?:\s+implements\s+([\w\s,.<>]+))?\s*\{`)
 	reMethod      = regexp.MustCompile(`(?m)^\s+(static\s+)?(async\s+)?(get\s+|set\s+)?(#)?(\w+)\s*\(([^)]*)\)(?:\s*:\s*([^\s{]+))?\s*\{`)
@@ -26,11 +23,10 @@ var (
 	reTSProp    = regexp.MustCompile(`^\s+(\w+)(\?)?:\s*(.+?);?\s*$`)
 
 	// Imports
-	reImportDefault    = regexp.MustCompile(`(?m)^import\s+(type\s+)?(\w+)\s+from\s+['"]([^'"]+)['"]`)
-	reImportNamed      = regexp.MustCompile(`(?m)^import\s+(type\s+)?\{([^}]+)\}\s+from\s+['"]([^'"]+)['"]`)
-	reImportNamespace  = regexp.MustCompile(`(?m)^import\s+\*\s+as\s+(\w+)\s+from\s+['"]([^'"]+)['"]`)
-	reImportSideEffect = regexp.MustCompile(`(?m)^import\s+['"]([^'"]+)['"]`)
-	reRequire          = regexp.MustCompile(`(?m)(?:const|let|var)\s+(\{[^}]+\}|\w+)\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)`)
+	reImportDefault   = regexp.MustCompile(`(?m)^import\s+(type\s+)?(\w+)\s+from\s+['"]([^'"]+)['"]`)
+	reImportNamed     = regexp.MustCompile(`(?m)^import\s+(type\s+)?\{([^}]+)\}\s+from\s+['"]([^'"]+)['"]`)
+	reImportNamespace = regexp.MustCompile(`(?m)^import\s+\*\s+as\s+(\w+)\s+from\s+['"]([^'"]+)['"]`)
+	reRequire         = regexp.MustCompile(`(?m)(?:const|let|var)\s+(\{[^}]+\}|\w+)\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)`)
 
 	// Exports
 	reExportNamed   = regexp.MustCompile(`(?m)^export\s+\{([^}]+)\}`)

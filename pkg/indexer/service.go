@@ -476,11 +476,7 @@ func unwrapOllamaProvider(p llm.Provider) (*llm.OllamaLLMProvider, bool) {
 	if op, ok := p.(*llm.OllamaLLMProvider); ok {
 		return op, true
 	}
-	// Wrapped in RetryableProvider — try to extract via type assertion on the
-	// EnsureLoaded interface that OllamaLLMProvider implements.
-	type modelLoader interface {
-		EnsureLoaded(ctx context.Context) error
-	}
+	// Wrapped in RetryableProvider — try to extract via Unwrap.
 	type unwrapper interface {
 		Unwrap() llm.Provider
 	}

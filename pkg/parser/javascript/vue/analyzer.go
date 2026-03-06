@@ -3,6 +3,9 @@ package vue
 import (
 	"regexp"
 	"strings"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 var (
@@ -176,7 +179,7 @@ func (a *Analyzer) detectSFCComponent(fullSource, scriptContent, filePath string
 		if idx := strings.LastIndex(name, "/"); idx != -1 {
 			name = name[idx+1:]
 		}
-		comp.Name = strings.Title(name)
+		comp.Name = cases.Title(language.English).String(name)
 	}
 
 	// Extract props

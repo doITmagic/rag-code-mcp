@@ -72,15 +72,47 @@ func callMCP(baseURL, id, method string, params any, timeout time.Duration) (map
 
 // extractSSEData parses `data: {...}` lines from an SSE response body.
 func extractSSEData(body []byte) []byte {
-	for _, line := range strings.Split(string(body), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "data:") {
-			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			if data != "" && data != "[DONE]" {
-				return []byte(data)
+	lines := strings.Split(string(body), "\n")
+	var dataLines []string
+
+	flushEvent := func() []byte {
+		if len(dataLines) == 0 {
+			return nil
+		}
+		joined := strings.Join(dataLines, "\n")
+		trimmed := strings.TrimSpace(joined)
+		if trimmed == "" || trimmed == "[DONE]" {
+			return nil
+		}
+		return []byte(trimmed)
+	}
+
+	for _, rawLine := range lines {
+		// Preserve internal spaces but normalize line endings.
+		line := strings.TrimRight(rawLine, "\r")
+		trimmed := strings.TrimSpace(line)
+
+		// Blank line = end of current event.
+		if trimmed == "" {
+			if data := flushEvent(); data != nil {
+				return data
 			}
+			dataLines = dataLines[:0]
+			continue
+		}
+
+		if strings.HasPrefix(trimmed, "data:") {
+			payload := strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))
+			dataLines = append(dataLines, payload)
 		}
 	}
+
+	// Handle case where the last event is not terminated by a blank line.
+	if data := flushEvent(); data != nil {
+		return data
+	}
+
+	// Fallback: return the original body if we couldn't extract a valid SSE data payload.
 	return body
 }
 

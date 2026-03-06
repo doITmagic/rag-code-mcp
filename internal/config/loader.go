@@ -3,13 +3,13 @@ package config
 import (
 	_ "embed"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"gopkg.in/yaml.v3"
 )
 
@@ -65,7 +65,8 @@ func DefaultConfig() *Config {
 	var cfg Config
 	if err := yaml.Unmarshal(defaultConfigBytes, &cfg); err != nil {
 		// Fallback to hardcoded defaults if parsing fails (should not happen)
-		log.Printf("[WARN] Failed to parse embedded default config: %v", err)
+		// Note: logger may not be initialized yet at this point, use fmt fallback
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to parse embedded default config: %v\n", err)
 		return &Config{
 			LLM: LLMConfig{
 				Provider:      "ollama",
@@ -90,7 +91,7 @@ func EnsureConfigExists(configPath string) error {
 		return nil // File exists, nothing to do
 	}
 
-	log.Printf("📝 Config file not found, creating default configuration at: %s", configPath)
+	logger.Instance.Info("📝 Config file not found, creating default configuration at: %s", configPath)
 
 	// Ensure directory exists
 	dir := filepath.Dir(configPath)
@@ -105,7 +106,7 @@ func EnsureConfigExists(configPath string) error {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 
-	log.Printf("✓ Created default configuration file: %s", configPath)
+	logger.Instance.Info("✓ Created default configuration file: %s", configPath)
 	return nil
 }
 
@@ -253,18 +254,18 @@ func MigrateEmbeddingModel(cfg *Config) bool {
 	// Check if current model is deprecated
 	for _, deprecated := range deprecatedModels {
 		if cfg.LLM.OllamaEmbed == deprecated {
-			log.Printf("╔══════════════════════════════════════════════════════════════╗")
-			log.Printf("║           ⚠️  EMBEDDING MODEL MIGRATION REQUIRED              ║")
-			log.Printf("╠══════════════════════════════════════════════════════════════╣")
-			log.Printf("║  Deprecated model : %-41s ║", deprecated)
-			log.Printf("║  New stable model : %-41s ║", newStableModel)
-			log.Printf("╠══════════════════════════════════════════════════════════════╣")
-			log.Printf("║  ⚡ ACTION REQUIRED: All existing indexes are INCOMPATIBLE.  ║")
-			log.Printf("║  Vector spaces differ between models — old results will be   ║")
-			log.Printf("║  garbage until you re-index.                                 ║")
-			log.Printf("║                                                              ║")
-			log.Printf("║  Run: rag_index_workspace with recreate: true                ║")
-			log.Printf("╚══════════════════════════════════════════════════════════════╝")
+			logger.Instance.Warn("╔══════════════════════════════════════════════════════════════╗")
+			logger.Instance.Warn("║           ⚠️  EMBEDDING MODEL MIGRATION REQUIRED              ║")
+			logger.Instance.Warn("╠══════════════════════════════════════════════════════════════╣")
+			logger.Instance.Warn("║  Deprecated model : %-41s ║", deprecated)
+			logger.Instance.Warn("║  New stable model : %-41s ║", newStableModel)
+			logger.Instance.Warn("╠══════════════════════════════════════════════════════════════╣")
+			logger.Instance.Warn("║  ⚡ ACTION REQUIRED: All existing indexes are INCOMPATIBLE.  ║")
+			logger.Instance.Warn("║  Vector spaces differ between models — old results will be   ║")
+			logger.Instance.Warn("║  garbage until you re-index.                                 ║")
+			logger.Instance.Warn("║                                                              ║")
+			logger.Instance.Warn("║  Run: rag_index_workspace with recreate: true                ║")
+			logger.Instance.Warn("╚══════════════════════════════════════════════════════════════╝")
 
 			cfg.LLM.OllamaEmbed = newStableModel
 			migrated = true

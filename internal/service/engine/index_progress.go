@@ -2,11 +2,12 @@ package engine
 
 import (
 	"encoding/json"
-	"log"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/doITmagic/rag-code-mcp/internal/logger"
 )
 
 const indexStatusFile = "index_status.json"
@@ -154,17 +155,17 @@ func saveIndexStatus(workspaceRoot string, p *IndexProgress) {
 	}
 	dir := filepath.Join(workspaceRoot, ".ragcode")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		log.Printf("[WARN] index_status: cannot create .ragcode dir: %v", err)
+		logger.Instance.Warn("index_status: cannot create .ragcode dir: %v", err)
 		return
 	}
 	path := filepath.Join(dir, indexStatusFile)
 	b, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
-		log.Printf("[WARN] index_status: marshal failed: %v", err)
+		logger.Instance.Warn("index_status: marshal failed: %v", err)
 		return
 	}
 	if err := os.WriteFile(path, b, 0o644); err != nil {
-		log.Printf("[WARN] index_status: write failed for %s: %v", path, err)
+		logger.Instance.Warn("index_status: write failed for %s: %v", path, err)
 	}
 }
 
@@ -178,7 +179,7 @@ func loadIndexStatus(workspaceRoot string) *IndexProgress {
 	}
 	var p IndexProgress
 	if err := json.Unmarshal(b, &p); err != nil {
-		log.Printf("[WARN] index_status: parse failed for %s: %v", path, err)
+		logger.Instance.Warn("index_status: parse failed for %s: %v", path, err)
 		return nil
 	}
 	return &p

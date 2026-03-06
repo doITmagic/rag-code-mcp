@@ -8,9 +8,9 @@ import (
 // Regex patterns for JavaScript/TypeScript symbol extraction
 var (
 	// Functions
-	reFuncDecl      = regexp.MustCompile(`(?m)^(export\s+)?(default\s+)?(async\s+)?function\s*\*?\s+(\w+)\s*(<[^>]*>)?\s*\(([^)]*)\)(?:\s*:\s*([^\s{]+))?\s*\{`)
-	reArrowConst    = regexp.MustCompile(`(?m)^(export\s+)?(default\s+)?(?:const|let|var)\s+(\w+)\s*(?::\s*[^=]+)?\s*=\s*(async\s+)?(?:\([^)]*\)|[a-zA-Z_]\w*)\s*(?::\s*\w[^\s=]*\s*)?\s*=>\s*`)
-	reArrowExport   = regexp.MustCompile(`(?m)^export\s+(?:default\s+)?\(([^)]*)\)\s*=>\s*`)
+	reFuncDecl   = regexp.MustCompile(`(?m)^(export\s+)?(default\s+)?(async\s+)?function\s*\*?\s+(\w+)\s*(<[^>]*>)?\s*\(([^)]*)\)(?:\s*:\s*([^\s{]+))?\s*\{`)
+	reArrowConst = regexp.MustCompile(`(?m)^(export\s+)?(default\s+)?(?:const|let|var)\s+(\w+)\s*(?::\s*[^=]+)?\s*=\s*(async\s+)?(?:\([^)]*\)|[a-zA-Z_]\w*)\s*(?::\s*\w[^\s=]*\s*)?\s*=>\s*`)
+
 	reModuleExports = regexp.MustCompile(`(?m)^module\.exports\s*=\s*`)
 	reExportsMethod = regexp.MustCompile(`(?m)^exports\.(\w+)\s*=\s*`)
 

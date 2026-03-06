@@ -494,14 +494,26 @@ func unwrapOllamaProvider(p llm.Provider) (*llm.OllamaLLMProvider, bool) {
 
 // ensureOllamaAlive checks if Ollama is responsive and the embedding model is loaded.
 // If not, it attempts a restart and model reload. Returns an error only if recovery fails.
-func (s *Service) ensureOllamaAlive() error {
+// Respects the parent context — returns immediately if ctx is cancelled.
+func (s *Service) ensureOllamaAlive(ctx context.Context) error {
+	// Bail out early if context is already done (e.g. test timeout)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	if err := healthcheck.PingOllama(""); err != nil {
 		logger.Instance.Warn("🔌 Circuit breaker: Ollama is unresponsive, attempting restart...")
 		attemptOllamaRestart()
 
-		// Wait for recovery with short polling
+		// Wait for recovery with short polling — exit early on context cancellation
 		for i := 0; i < 10; i++ {
-			time.Sleep(3 * time.Second)
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("context cancelled during Ollama recovery: %w", ctx.Err())
+			case <-time.After(3 * time.Second):
+			}
 			if err := healthcheck.PingOllama(""); err == nil {
 				logger.Instance.Info("✅ Circuit breaker: Ollama recovered after restart")
 				break
@@ -515,9 +527,9 @@ func (s *Service) ensureOllamaAlive() error {
 
 	// Ollama is alive — now ensure the embedding model is loaded in memory
 	if ollamaProvider, ok := unwrapOllamaProvider(s.embedder); ok {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		loadCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		defer cancel()
-		if err := ollamaProvider.EnsureLoaded(ctx); err != nil {
+		if err := ollamaProvider.EnsureLoaded(loadCtx); err != nil {
 			return fmt.Errorf("embedding model failed to reload: %w", err)
 		}
 	}
@@ -555,8 +567,17 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 			for sym := range jobs {
 				// Circuit breaker: if we've had consecutive failures, check Ollama before retrying
 				if consecutiveFailures >= circuitBreakerThreshold {
+					// Check context first — if already cancelled, abort immediately
+					select {
+					case <-ctx.Done():
+						results <- result{err: ctx.Err()}
+						for range jobs {
+						}
+						return
+					default:
+					}
 					logger.Instance.Warn("🔌 Circuit breaker tripped after %d consecutive embed failures — checking Ollama health", consecutiveFailures)
-					if err := s.ensureOllamaAlive(); err != nil {
+					if err := s.ensureOllamaAlive(ctx); err != nil {
 						logger.Instance.Error("🔴 Circuit breaker: Ollama unrecoverable: %v — aborting remaining embeds", err)
 						results <- result{err: fmt.Errorf("ollama unrecoverable after %d consecutive failures: %w", consecutiveFailures, err)}
 						// Drain remaining jobs so we don't deadlock

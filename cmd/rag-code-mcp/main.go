@@ -103,6 +103,14 @@ func main() {
 		if takeOver {
 			logger.Instance.Info("Our version %s > master %s → taking over as new master", Version, masterVersion)
 			proxy.KillProcessOnPort(*httpPort)
+			// Verify the port is actually free before proceeding as master.
+			// If kill failed (missing lsof, permissions, stubborn process), the HTTP
+			// server would fail to bind silently. Instead, fall back to proxy mode.
+			if proxy.PortIsOccupied(*httpPort) {
+				logger.Instance.Warn("Port %d still occupied after kill attempt — falling back to proxy mode", *httpPort)
+				proxy.RunProxyMode(*httpPort)
+				return
+			}
 			// Fall through to normal master startup below.
 		} else {
 			// Enter proxy mode — no heavy initialization.

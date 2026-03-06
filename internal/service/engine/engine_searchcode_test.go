@@ -309,15 +309,15 @@ func TestSearchCodeResumeInterruptedIndexing(t *testing.T) {
 		t.Fatalf("Expected no error, search should continue, got: %v", err)
 	}
 
-	// Verificăm că indexarea a fost repornită în background
-	for i := 0; i < 50; i++ {
-		if _, ok := eng.indexingJobs.Load(wctx.ID); ok {
-			return // Success
-			time.Sleep(20 * time.Millisecond)
+	// Așteptăm ca job-ul din background să se termine și să iasă din indexingJobs.
+	// (Previne eroarea de t.TempDir() "directory not empty").
+	for i := 0; i < 100; i++ {
+		if _, ok := eng.indexingJobs.Load(wctx.ID); !ok {
+			return // Success: job started and cleanly finished
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Errorf("Expected background indexing to be resumed, but no active job found")
+	t.Errorf("Expected background indexing to finish, but job is still active")
 }
 
 // mockDirDetector is like mockDetector but allows specifying the root dir

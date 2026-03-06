@@ -150,15 +150,15 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 
 	// Collect unique file paths from the hierarchy for telemetry
 	seenFiles := make(map[string]bool)
-	baselineBytes := 0
+	baselineBytes := int64(0)
 	collectFiles(rootNode, seenFiles)
 	for fp := range seenFiles {
 		if info, err := os.Stat(fp); err == nil {
-			baselineBytes += int(info.Size())
+			baselineBytes += info.Size()
 		}
 	}
 	// actualBytes = just the text of the hierarchy message (what we actually send)
-	actualBytes := sb.Len()
+	actualBytes := int64(sb.Len())
 
 	resp := ToolResponse{
 		Status:  "success",

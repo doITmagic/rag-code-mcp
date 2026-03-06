@@ -2,13 +2,13 @@ package telemetry
 
 // Savings Represents the efficiency gains of using the MCP tool versus standard naive execution.
 type Savings struct {
-	BytesAvoided  int `json:"bytes_avoided"`
-	TokensSaved   int `json:"tokens_saved"`
-	EfficiencyPct int `json:"efficiency_pct"`
+	BytesAvoided  int64 `json:"bytes_avoided"`
+	TokensSaved   int64 `json:"tokens_saved"`
+	EfficiencyPct int   `json:"efficiency_pct"`
 }
 
 // CalculateSavings returns the exact savings based on baseline vs actual metrics.
-func CalculateSavings(baselineBytes, actualBytes int) *Savings {
+func CalculateSavings(baselineBytes, actualBytes int64) *Savings {
 	if baselineBytes <= actualBytes {
 		return nil
 	}

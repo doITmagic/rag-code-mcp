@@ -212,8 +212,8 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 	}
 
 	// Calculate telemetry
-	baselineBytes := 0
-	actualBytes := 0
+	baselineBytes := int64(0)
+	actualBytes := int64(0)
 	seenFiles := make(map[string]bool)
 	var staleFiles []string // files referenced in index but no longer on disk
 
@@ -244,7 +244,7 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 			if !seenFiles[m.filePath] {
 				seenFiles[m.filePath] = true
 				if info, err := os.Stat(m.filePath); err == nil {
-					baselineBytes += int(info.Size())
+					baselineBytes += info.Size()
 				} else if os.IsNotExist(err) {
 					staleFiles = append(staleFiles, m.filePath)
 				}
@@ -275,11 +275,11 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 			}
 			fullData = append(fullData, item)
 
-			actualBytes += len(m.content)
+			actualBytes += int64(len(m.content))
 			if !seenFiles[m.filePath] {
 				seenFiles[m.filePath] = true
 				if info, err := os.Stat(m.filePath); err == nil {
-					baselineBytes += int(info.Size())
+					baselineBytes += info.Size()
 				} else if os.IsNotExist(err) {
 					staleFiles = append(staleFiles, m.filePath)
 				}

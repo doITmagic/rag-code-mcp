@@ -1,6 +1,7 @@
 // cmd/sse-client-test is a manual HTTP MCP client for the RagCode MCP server.
 // It primarily tests the Streamable HTTP (stateless) transport via POST /mcp
-// and only does best-effort parsing of SSE-style `data:` lines in responses.
+// and does best-effort parsing of SSE-style `data:` lines in responses.
+//
 // NOTE: The directory/binary name is legacy; a more accurate name would be `mcp-http-client-test`.
 package main
 

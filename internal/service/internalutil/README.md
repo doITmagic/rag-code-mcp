@@ -9,4 +9,4 @@ The `internalutil` package under `service` provides data conversion helpers spec
 
 ## Rationale
 
-These helpers are localized to the service directory as they often bridges the gap between the `pkg` interfaces and the specific needs of the `engine` and `tools` implementations.
+These helpers are localized to the service directory as they often bridge the gap between the `pkg` interfaces and the specific needs of the `engine` and `tools` implementations.

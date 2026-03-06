@@ -5,7 +5,7 @@
 `rag_list_package_exports` is responsible for extracting the public interface of any package, module, or namespace tracked by the RAG MCP Engine.
 
 ## Background
-Historically, package exploration depended on fuzzy LLM prompts targeting keywords like *"package X exports"*. This approach missed rare types, hallucinates definitions, and relied on unpredictable vector scoring mechanisms.
+Historically, package exploration depended on fuzzy LLM prompts targeting keywords like *"package X exports"*. This approach missed rare types, hallucinated definitions, and relied on unpredictable vector scoring mechanisms.
 
 Now, this tool operates deterministically over the **Code Graph payload metadata**.
 

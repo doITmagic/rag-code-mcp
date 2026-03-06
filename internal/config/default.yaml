@@ -58,7 +58,7 @@ workspace:
     - .venv
   collection_prefix: ragcode
   auto_create_ide_rules: true
-  auto_install_sse_skill: true
+  auto_install_sse_skill: false
   watch_enabled: true
   watch_debounce: 1s
 

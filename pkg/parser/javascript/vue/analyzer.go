@@ -15,10 +15,6 @@ var (
 	reExportDefault   = regexp.MustCompile(`(?m)^export\s+default\s+\{`)
 	reOptionsProps    = regexp.MustCompile(`(?m)^\s+props\s*:\s*[\[{]`)
 	reOptionsEmits    = regexp.MustCompile(`(?m)^\s+emits\s*:\s*[\[{]`)
-
-	reOptionsMethods  = regexp.MustCompile(`(?m)^\s+methods\s*:\s*\{`)
-	reOptionsComputed = regexp.MustCompile(`(?m)^\s+computed\s*:\s*\{`)
-	reOptionsWatch    = regexp.MustCompile(`(?m)^\s+watch\s*:\s*\{`)
 	reComponentName   = regexp.MustCompile(`(?m)^\s+name\s*:\s*['"](\w+)['"]`)
 
 	// Composition API
@@ -27,7 +23,6 @@ var (
 	reComputed    = regexp.MustCompile(`\bcomputed\s*\(`)
 	reWatch       = regexp.MustCompile(`\bwatch(?:Effect)?\s*\(`)
 	reDefineProps = regexp.MustCompile(`(?m)defineProps\s*[<(]`)
-	reDefineEmits = regexp.MustCompile(`(?m)defineEmits\s*[<(]`)
 
 	// Vue 3 imports
 	reVue3Import = regexp.MustCompile(`(?m)^import\s+.*\s+from\s+['"]vue['"]`)
@@ -55,18 +50,13 @@ var (
 	}
 
 	// Vuex patterns
-	reVuexStore    = regexp.MustCompile(`(?m)(?:new\s+Vuex\.Store|createStore)\s*\(\s*\{`)
-	reVuexState    = regexp.MustCompile(`(?m)^\s+state\s*:\s*(?:\(\s*\)\s*=>)?\s*\{`)
-	reVuexGetter   = regexp.MustCompile(`(?m)^\s+getters\s*:\s*\{`)
-	reVuexMutation = regexp.MustCompile(`(?m)^\s+mutations\s*:\s*\{`)
-	reVuexAction   = regexp.MustCompile(`(?m)^\s+actions\s*:\s*\{`)
+	reVuexStore = regexp.MustCompile(`(?m)(?:new\s+Vuex\.Store|createStore)\s*\(\s*\{`)
 
 	// Pinia patterns
 	rePiniaStore = regexp.MustCompile(`(?m)defineStore\s*\(\s*['"](\w+)['"]`)
 
 	// Custom directives
 	reDirectiveGlobal = regexp.MustCompile(`(?m)app\.directive\s*\(\s*['"](\w[\w-]*)['"]`)
-	reDirectiveLocal  = regexp.MustCompile(`(?m)^\s+directives\s*:\s*\{`)
 
 	// Plugins
 	rePluginUse = regexp.MustCompile(`(?m)app\.use\s*\(\s*(\w+)`)

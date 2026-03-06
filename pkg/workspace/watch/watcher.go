@@ -2,13 +2,13 @@ package watch
 
 import (
 	"context"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -88,7 +88,7 @@ func NewFileWatcher(root string, opts Options, onChange func(context.Context, st
 // Start begins watching the directory tree.
 func (fw *FileWatcher) Start() {
 	if isInvalidRoot(fw.root) {
-		log.Printf("[ERROR] Cannot start watcher on invalid root directory: %s", fw.root)
+		logger.Instance.Error("Cannot start watcher on invalid root directory: %s", fw.root)
 		return
 	}
 
@@ -101,16 +101,16 @@ func (fw *FileWatcher) Start() {
 				return filepath.SkipDir
 			}
 			if err := fw.watcher.Add(path); err != nil {
-				log.Printf("[WARN] Unable to watch %s: %v", path, err)
+				logger.Instance.Warn("Unable to watch %s: %v", path, err)
 			}
 		}
 		return nil
 	})
 	if err != nil {
-		log.Printf("[WARN] Error walking directory for watcher setup: %v", err)
+		logger.Instance.Warn("Error walking directory for watcher setup: %v", err)
 	}
 
-	log.Printf("👀 Watcher started for %s", fw.root)
+	logger.Instance.Info("👀 Watcher started for %s", fw.root)
 	go fw.watchLoop()
 }
 
@@ -132,7 +132,7 @@ func (fw *FileWatcher) watchLoop() {
 					base := filepath.Base(event.Name)
 					if !fw.shouldSkipDir(event.Name, base, false) {
 						if err := fw.watcher.Add(event.Name); err != nil {
-							log.Printf("[WARN] Unable to watch new dir %s: %v", event.Name, err)
+							logger.Instance.Warn("Unable to watch new dir %s: %v", event.Name, err)
 						}
 					}
 				}
@@ -148,7 +148,7 @@ func (fw *FileWatcher) watchLoop() {
 			if !ok {
 				return
 			}
-			log.Printf("[ERROR] Watcher error: %v", err)
+			logger.Instance.Error("Watcher error: %v", err)
 
 		case <-fw.stopChan:
 			return
@@ -178,7 +178,7 @@ func (fw *FileWatcher) triggerDebouncedIndex() {
 			return
 		}
 
-		log.Printf("♻️ File changes detected in %s (%d files) - Triggering reindex...", fw.root, len(files))
+		logger.Instance.Info("♻️ File changes detected in %s (%d files) — triggering reindex...", fw.root, len(files))
 
 		if fw.onChange == nil {
 			return
@@ -186,9 +186,9 @@ func (fw *FileWatcher) triggerDebouncedIndex() {
 
 		ctx := context.Background()
 		if err := fw.onChange(ctx, fw.root, files); err != nil {
-			log.Printf("[ERROR] Auto-reindexing failed: %v", err)
+			logger.Instance.Error("Auto-reindexing failed: %v", err)
 		} else {
-			log.Printf("✅ Auto-reindexing complete for %s", fw.root)
+			logger.Instance.Info("✅ Auto-reindexing complete for %s", fw.root)
 		}
 	})
 }

@@ -3,7 +3,6 @@ package llm
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
+	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/ollama/ollama/api"
 )
 
@@ -71,7 +71,7 @@ func NewOllamaLLMProvider(cfg config.LLMConfig) (*OllamaLLMProvider, error) {
 
 	client := api.NewClient(parsedURL, httpClient)
 
-	log.Printf("🎯 Ollama (native client): embed=%s, url=%s, keep_alive=%v", embedModelName, baseURL, defaultKeepAlive)
+	logger.Instance.Info("🎯 Ollama (native client): embed=%s, url=%s, keep_alive=%v", embedModelName, baseURL, defaultKeepAlive)
 
 	return &OllamaLLMProvider{
 		client:    client,
@@ -113,7 +113,7 @@ func (p *OllamaLLMProvider) EnsureLoaded(ctx context.Context) error {
 		return nil
 	}
 
-	log.Printf("[WARN] 🔄 Embedding model '%s' is NOT loaded in Ollama memory — reloading...", p.embedName)
+	logger.Instance.Warn("🔄 Embedding model '%s' is NOT loaded in Ollama memory — reloading...", p.embedName)
 	return p.Warmup(ctx)
 }
 
@@ -138,7 +138,7 @@ func (p *OllamaLLMProvider) GenerateStream(_ context.Context, _ string, _ ...Gen
 // Call this at startup to avoid cold-start timeouts on the first embed request.
 // Uses a generous 2-minute timeout since model loading can be slow.
 func (p *OllamaLLMProvider) Warmup(ctx context.Context) error {
-	log.Printf("🔥 Warming up Ollama model '%s' (pre-loading into memory)...", p.embedName)
+	logger.Instance.Info("🔥 Warming up Ollama model '%s' (pre-loading into memory)...", p.embedName)
 	warmupCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
@@ -158,7 +158,7 @@ func (p *OllamaLLMProvider) Warmup(ctx context.Context) error {
 		p.cachedDim = uint64(dim)
 	}
 
-	log.Printf("✅ Ollama model '%s' warmed up: dim=%d, load=%v, total=%v",
+	logger.Instance.Info("✅ Ollama model '%s' warmed up: dim=%d, load=%v, total=%v",
 		p.embedName, dim, resp.LoadDuration, time.Since(start))
 	return nil
 }
@@ -208,21 +208,21 @@ func (p *OllamaLLMProvider) GetEmbeddingDimension() uint64 {
 		dim := p.queryModelDimension()
 		if dim > 0 {
 			p.cachedDim = dim
-			log.Printf("✅ Embedding dimension for '%s' from /api/show: %d", p.embedName, dim)
+			logger.Instance.Info("✅ Embedding dimension for '%s' from /api/show: %d", p.embedName, dim)
 			return
 		}
 
 		// 3. Fallback: Probe with a dummy embedding
-		log.Printf("🔍 Probing Ollama for embedding dimension of model '%s'...", p.embedName)
+		logger.Instance.Debug("🔍 Probing Ollama for embedding dimension of model '%s'...", p.embedName)
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 
 		vec, err := p.Embed(ctx, "probe")
 		if err == nil && len(vec) > 0 {
 			p.cachedDim = uint64(len(vec))
-			log.Printf("✅ Auto-detected embedding dimension for '%s': %d", p.embedName, p.cachedDim)
+			logger.Instance.Info("✅ Auto-detected embedding dimension for '%s': %d", p.embedName, p.cachedDim)
 		} else {
-			log.Printf("⚠️  WARNING: Failed to probe dimension for '%s': %v. Defaulting to 1024.", p.embedName, err)
+			logger.Instance.Warn("⚠️ Failed to probe dimension for '%s': %v. Defaulting to 1024.", p.embedName, err)
 			p.cachedDim = 1024 // Final fallback
 		}
 	})
@@ -240,7 +240,7 @@ func (p *OllamaLLMProvider) queryModelDimension() uint64 {
 		Model: p.embedName,
 	})
 	if err != nil {
-		log.Printf("⚠️  Could not query model info for '%s': %v", p.embedName, err)
+		logger.Instance.Warn("⚠️ Could not query model info for '%s': %v", p.embedName, err)
 		return 0
 	}
 

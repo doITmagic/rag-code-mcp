@@ -3,10 +3,11 @@ package logger
 import (
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/utils"
@@ -27,16 +28,38 @@ func (sw SyncWriter) Write(p []byte) (n int, err error) {
 }
 
 // SimpleLogger provides basic logging with file rotation and levels.
+// It wraps the robust log/slog standard library package.
 type SimpleLogger struct {
+	mu      sync.Mutex
 	logFile *os.File
 	writer  io.Writer
+	slogger *slog.Logger
+	level   *slog.LevelVar
 }
 
 // Global logger instance
-var Instance = &SimpleLogger{}
+var Instance = &SimpleLogger{
+	level: new(slog.LevelVar),
+}
+
+func init() {
+	Instance.level.Set(slog.LevelInfo)
+	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: Instance.level,
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if a.Key == slog.TimeKey {
+				a.Value = slog.StringValue(a.Value.Time().Format("2006-01-02 15:04:05.000"))
+			}
+			return a
+		},
+	})
+	Instance.slogger = slog.New(handler)
+}
 
 // Close closes the underlying log file.
 func (l *SimpleLogger) Close() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.logFile != nil {
 		_ = l.logFile.Close()
 		l.logFile = nil
@@ -44,71 +67,39 @@ func (l *SimpleLogger) Close() {
 	}
 }
 
-func (l *SimpleLogger) shouldLog(msgLevel string) bool {
-	levels := map[string]int{"debug": 0, "info": 1, "warn": 2, "error": 3}
-	logLevel := strings.ToLower(os.Getenv("MCP_LOG_LEVEL"))
-	if logLevel == "" {
-		logLevel = "info"
-	}
-	configuredLevel, ok := levels[logLevel]
-	if !ok {
-		configuredLevel = levels["info"]
-	}
-	msgLevelValue, ok := levels[msgLevel]
-	if !ok {
-		return false
-	}
-	return msgLevelValue >= configuredLevel
-}
-
 // Debug logs a debug message (only if MCP_LOG_LEVEL is set to 'debug').
 func (l *SimpleLogger) Debug(format string, args ...interface{}) {
-	if l.shouldLog("debug") {
-		fmt.Fprintf(os.Stderr, "[DEBUG] "+format+"\n", args...)
-		if l.writer != nil {
-			fmt.Fprintf(l.writer, "[DEBUG] "+format+"\n", args...)
-		}
+	if l.level.Level() <= slog.LevelDebug {
+		l.slogger.Debug(fmt.Sprintf(format, args...))
 	}
 }
 
 // Info logs an informational message.
 func (l *SimpleLogger) Info(format string, args ...interface{}) {
-	if l.shouldLog("info") {
-		fmt.Fprintf(os.Stderr, "[INFO] "+format+"\n", args...)
-		if l.writer != nil {
-			fmt.Fprintf(l.writer, "[INFO] "+format+"\n", args...)
-		}
+	if l.level.Level() <= slog.LevelInfo {
+		l.slogger.Info(fmt.Sprintf(format, args...))
 	}
 }
 
 // Error logs an error message.
 func (l *SimpleLogger) Error(format string, args ...interface{}) {
-	if l.shouldLog("error") {
-		fmt.Fprintf(os.Stderr, "[ERROR] "+format+"\n", args...)
-		if l.writer != nil {
-			fmt.Fprintf(l.writer, "[ERROR] "+format+"\n", args...)
-		}
+	if l.level.Level() <= slog.LevelError {
+		l.slogger.Error(fmt.Sprintf(format, args...))
 	}
 }
 
 // Warn logs a warning message.
 func (l *SimpleLogger) Warn(format string, args ...interface{}) {
-	if l.shouldLog("warn") {
-		fmt.Fprintf(os.Stderr, "[WARN] "+format+"\n", args...)
-		if l.writer != nil {
-			fmt.Fprintf(l.writer, "[WARN] "+format+"\n", args...)
-		}
+	if l.level.Level() <= slog.LevelWarn {
+		l.slogger.Warn(fmt.Sprintf(format, args...))
 	}
 }
 
 // Highlight logs a message with CYAN color for terminal output.
 func (l *SimpleLogger) Highlight(format string, args ...interface{}) {
-	if l.shouldLog("info") {
-		// Cyan: \033[36m, Reset: \033[0m
-		fmt.Fprintf(os.Stderr, "\033[36m[SEARCH] "+format+"\033[0m\n", args...)
-		if l.writer != nil {
-			fmt.Fprintf(l.writer, "[SEARCH] "+format+"\n", args...)
-		}
+	if l.level.Level() <= slog.LevelInfo {
+		msg := fmt.Sprintf(format, args...)
+		l.slogger.Info(fmt.Sprintf("\033[36m[SEARCH] %s\033[0m", msg))
 	}
 }
 
@@ -165,8 +156,18 @@ func defaultLogPath() string {
 
 // InitLoggerFromEnv initializes logger based on environment variables.
 func InitLoggerFromEnv() {
-	// Default to stderr to avoid interfering with MCP stdio protocol
-	log.SetOutput(os.Stderr)
+	// Parse log level
+	logLevel := strings.ToLower(os.Getenv("MCP_LOG_LEVEL"))
+	switch logLevel {
+	case "debug":
+		Instance.level.Set(slog.LevelDebug)
+	case "warn":
+		Instance.level.Set(slog.LevelWarn)
+	case "error":
+		Instance.level.Set(slog.LevelError)
+	default:
+		Instance.level.Set(slog.LevelInfo)
+	}
 
 	if Instance.logFile != nil {
 		Instance.Close()
@@ -198,20 +199,31 @@ func InitLoggerFromEnv() {
 		return
 	}
 
+	Instance.mu.Lock()
 	Instance.logFile = f
 	Instance.writer = SyncWriter{File: f}
+	w := io.MultiWriter(os.Stderr, Instance.writer)
+	Instance.mu.Unlock()
 
-	// FORCE DEBUG WRITE DIRECTLY TO FILE
-	timestamp := time.Now().Format(time.RFC3339)
-	if _, err := Instance.writer.Write([]byte(fmt.Sprintf("--- STARTING SESSION %s ---\n", timestamp))); err != nil {
-		fmt.Fprintf(os.Stderr, "[WARN] Failed to write startup line to log file: %v\n", err)
-	}
+	// Switch handler to use multiwriter
+	handler := slog.NewTextHandler(w, &slog.HandlerOptions{
+		Level: Instance.level,
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			// Clean up output logs to match expected simple format
+			if a.Key == slog.TimeKey {
+				a.Value = slog.StringValue(a.Value.Time().Format("2006-01-02 15:04:05.000"))
+			}
+			return a
+		},
+	})
+	Instance.slogger = slog.New(handler)
 
-	log.SetOutput(io.MultiWriter(os.Stderr, Instance.writer))
+	// Ensure stdlib log messages flow into slog as well
+	slog.SetDefault(Instance.slogger)
 
-	// Log startup info to verify location
-	fmt.Fprintf(os.Stderr, "[INFO] Logging to file: %s\n", path)
-	log.Printf("Logger initialized successfully writing to %s", path)
+	// STARTING SESSION mark
+	Instance.slogger.Info(fmt.Sprintf("--- STARTING SESSION %s ---", time.Now().Format(time.RFC3339)))
+	Instance.slogger.Info(fmt.Sprintf("Logger initialized successfully writing to %s", path))
 }
 
 // RotateLogFile checks file size and rotates if needed.

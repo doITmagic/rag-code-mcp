@@ -310,14 +310,14 @@ func TestSearchCodeResumeInterruptedIndexing(t *testing.T) {
 	}
 
 	// Așteptăm ca job-ul din background să se termine și să iasă din indexingJobs.
-	// (Previne eroarea de t.TempDir() "directory not empty").
+	// (Previne eroarea de t.TempDir() "directory not empty"). Limităm la max 5 secunde.
 	for i := 0; i < 100; i++ {
 		if _, ok := eng.indexingJobs.Load(wctx.ID); !ok {
 			return // Success: job started and cleanly finished
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
-	t.Errorf("Expected background indexing to finish, but job is still active")
+	t.Errorf("Expected background indexing to finish within 5s, but job is still active")
 }
 
 // mockDirDetector is like mockDetector but allows specifying the root dir

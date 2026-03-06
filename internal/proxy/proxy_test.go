@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -217,8 +219,15 @@ func TestWriteErrorResponse_InvalidJSON_NilID(t *testing.T) {
 // ── PortIsOccupied tests ─────────────────────────────────────────────
 
 func TestPortIsOccupied_FreePort(t *testing.T) {
-	if PortIsOccupied(59999) {
-		t.Error("expected port 59999 to be free")
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+	
+	if PortIsOccupied(port) {
+		t.Errorf("expected ephemeral port %d to be free", port)
 	}
 }
 
@@ -228,8 +237,14 @@ func TestPortIsOccupied_OccupiedPort(t *testing.T) {
 	defer server.Close()
 
 	// Extract port from server URL (e.g. "http://127.0.0.1:12345")
-	parts := strings.Split(server.URL, ":")
-	portStr := parts[len(parts)-1]
+	u, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("failed to parse url: %v", err)
+	}
+	_, portStr, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		t.Fatalf("failed to split host/port: %v", err)
+	}
 	var port int
 	_, _ = fmt.Sscanf(portStr, "%d", &port)
 
@@ -268,8 +283,14 @@ func TestQueryMasterVersion_ValidResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	parts := strings.Split(server.URL, ":")
-	portStr := parts[len(parts)-1]
+	u, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("failed to parse url: %v", err)
+	}
+	_, portStr, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		t.Fatalf("failed to split host/port: %v", err)
+	}
 	var port int
 	_, _ = fmt.Sscanf(portStr, "%d", &port)
 
@@ -280,7 +301,14 @@ func TestQueryMasterVersion_ValidResponse(t *testing.T) {
 }
 
 func TestQueryMasterVersion_Unreachable(t *testing.T) {
-	version := QueryMasterVersion(59998)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+	
+	version := QueryMasterVersion(port)
 	if version != "" {
 		t.Errorf("expected empty version for unreachable port, got %q", version)
 	}

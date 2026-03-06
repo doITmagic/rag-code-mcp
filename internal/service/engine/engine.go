@@ -309,7 +309,7 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 				log.Printf("[INFO] Detectată indexare întreruptă (rămasă la %d%%). Se reia automat...", idxState.LastPercent)
 				e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 			}
-			// In ambele cazuri continuăm — Qdrant are deja date parțiale, progresul e inclus în response
+			// În ambele cazuri continuăm — Qdrant are deja date parțiale, iar progresul este adăugat în răspuns la nivelul MCP tool-ului
 			log.Printf("[INFO] Indexing in progress (%d%%) — searching available results in Qdrant", idxState.LastPercent)
 		}
 	}
@@ -465,7 +465,7 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 				log.Printf("[INFO] Detectată indexare întreruptă (rămasă la %d%%). Se reia automat...", idxState.LastPercent)
 				e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 			}
-			// În ambele cazuri continuăm — Qdrant are deja date parțiale, progresul e inclus în response
+			// În ambele cazuri continuăm — Qdrant are deja date parțiale, iar progresul este adăugat în răspuns la nivelul MCP tool-ului
 			log.Printf("[INFO] Indexing in progress (%d%%) — searching available results in Qdrant", idxState.LastPercent)
 		}
 	}

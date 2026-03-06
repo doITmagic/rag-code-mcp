@@ -371,9 +371,10 @@ var _ = Describe("FindUsagesTool", func() {
 			}
 
 			// Patch interface locally for brevity, since SearchResult requires storage.SearchResult cast
-			resJSON, _ := tool.Execute(ctx, map[string]interface{}{"symbol_name": "MySymbol", "file_path": "main.go"})
+			resJSON, err := tool.Execute(ctx, map[string]interface{}{"symbol_name": "MySymbol", "file_path": "main.go"})
+			Expect(err).NotTo(HaveOccurred())
 			var resp tools.ToolResponse
-			json.Unmarshal([]byte(resJSON), &resp)
+			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
 
 			data := resp.Data.([]interface{})
 			Expect(data).To(HaveLen(3))

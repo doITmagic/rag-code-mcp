@@ -168,5 +168,63 @@ var _ = Describe("FindUsagesTool", func() {
 			Expect(names["GoCallerFunc"]).To(BeTrue())
 			Expect(names["py_caller_func"]).To(BeTrue())
 		})
+		It("should return error if workspace detection fails", func() {
+			// Provide an invalid file_path to trigger detection failure
+			resJSON, err := tool.Execute(ctx, map[string]interface{}{"symbol_name": "GhostFunc", "file_path": "/invalid/path/that/does/not/exist.go"})
+			Expect(err).NotTo(HaveOccurred())
+			var resp tools.ToolResponse
+			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
+			Expect(resp.Status).To(Equal("error"))
+			Expect(resp.Error).To(ContainSubstring("failed to detect workspace"))
+		})
+
+		It("should deduplicate relation types and correctly compute telemetry", func() {
+			mockStore.ExactSearchFunc = func(ctx context.Context, col string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error) {
+				return []storage.SearchResult{
+					{
+						Score: 1.0,
+						Point: storage.Point{
+							ID: "usage-1",
+							Payload: map[string]interface{}{
+								"name":       "CallerFunc",
+								"type":       "function",
+								"file_path":  "test.go", // Needs to match for telemetry
+								"start_line": 10,
+								"content":    "func CallerFunc() { MySymbol(); MySymbol() }",
+								// Duplicate relation types
+								"relations": []interface{}{
+									map[string]interface{}{"target_name": "MySymbol", "type": "calls"},
+									map[string]interface{}{"target_name": "MySymbol", "type": "calls"},
+									map[string]interface{}{"target_name": "OtherSymbol", "type": "implements"},
+								},
+							},
+						},
+					},
+				}, nil
+			}
+
+			resJSON, err := tool.Execute(ctx, map[string]interface{}{
+				"symbol_name": "MySymbol",
+				"file_path":   "main.go",
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			var resp tools.ToolResponse
+			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
+			Expect(resp.Status).To(Equal("success"))
+
+			data := resp.Data.([]interface{})
+			Expect(data).To(HaveLen(1))
+			usage := data[0].(map[string]interface{})
+
+			// Check deduplicated relations (should only have one "calls")
+			matchReason := usage["match_reason"].([]interface{})
+			Expect(matchReason).To(HaveLen(1))
+			Expect(matchReason[0]).To(Equal("calls"))
+
+			// Check Telemetry population
+			Expect(resp.Context.Telemetry).NotTo(BeNil())
+			Expect(resp.Context.Telemetry.BytesAvoided).To(BeNumerically(">", 0))
+		})
 	})
 })

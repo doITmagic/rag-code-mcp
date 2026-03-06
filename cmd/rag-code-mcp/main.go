@@ -4,12 +4,14 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -25,6 +27,7 @@ import (
 	"github.com/doITmagic/rag-code-mcp/internal/utils"
 	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
 	"github.com/doITmagic/rag-code-mcp/pkg/llm"
+	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/docs"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/go"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/html"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/php"
@@ -34,7 +37,7 @@ import (
 )
 
 var (
-	Version = "2.1.48"
+	Version = "2.1.50"
 	Commit  = "none"
 	Date    = "24.10.2025"
 )
@@ -223,11 +226,20 @@ func main() {
 		}()
 	}
 
-	// Stdio Server (always runs, in parallel with SSE if http-port is set)
+	// Stdio Server (always runs, in parallel with HTTP if http-port is set)
 	logger.Instance.Info("Starting Stdio server")
 	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil {
-		if ctx.Err() == nil {
-			logger.Instance.Error("Stdio server error: %v", err)
+		// EOF on stdin = MCP protocol normal shutdown (client closes stdin to signal disconnect).
+		// This is NOT a crash — always log it but never exit(1) for EOF.
+		isEOF := err == io.EOF || strings.Contains(err.Error(), "EOF")
+		isCtxDone := ctx.Err() != nil
+
+		if isEOF || isCtxDone {
+			// Normal shutdown path — always log so it appears in diagnostics.
+			logger.Instance.Info("Stdio transport closed (reason: EOF=%v, ctx_cancelled=%v): %v", isEOF, isCtxDone, err)
+		} else {
+			// Unexpected error with context still active — real failure.
+			logger.Instance.Error("Stdio server error (unexpected, context still active): %v", err)
 			os.Exit(1)
 		}
 	}

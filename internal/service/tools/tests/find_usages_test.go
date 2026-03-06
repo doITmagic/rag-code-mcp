@@ -3,6 +3,8 @@ package tests
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -179,6 +181,15 @@ var _ = Describe("FindUsagesTool", func() {
 		})
 
 		It("should deduplicate relation types and correctly compute telemetry", func() {
+			tmpDir := GinkgoT().TempDir()
+			testFile := filepath.Join(tmpDir, "test.go")
+
+			// Needs to be >0 bytes to calculate savings
+			codeSnippet := "func CallerFunc() { MySymbol(); MySymbol() }"
+			padding := strings.Repeat("// pad to make file larger than snippet\n", 50)
+			err := os.WriteFile(testFile, []byte(codeSnippet+"\n"+padding), 0644)
+			Expect(err).NotTo(HaveOccurred())
+
 			mockStore.ExactSearchFunc = func(ctx context.Context, col string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error) {
 				return []storage.SearchResult{
 					{
@@ -188,9 +199,9 @@ var _ = Describe("FindUsagesTool", func() {
 							Payload: map[string]interface{}{
 								"name":       "CallerFunc",
 								"type":       "function",
-								"file_path":  "test.go", // Needs to match for telemetry
+								"file_path":  testFile, // Needs to match for telemetry
 								"start_line": 10,
-								"content":    "func CallerFunc() { MySymbol(); MySymbol() }",
+								"content":    codeSnippet,
 								// Duplicate relation types
 								"relations": []interface{}{
 									map[string]interface{}{"target_name": "MySymbol", "type": "calls"},
@@ -203,9 +214,10 @@ var _ = Describe("FindUsagesTool", func() {
 				}, nil
 			}
 
+			// Pass the testFile so mockDetector uses its dir as wctx.Root
 			resJSON, err := tool.Execute(ctx, map[string]interface{}{
 				"symbol_name": "MySymbol",
-				"file_path":   "main.go",
+				"file_path":   testFile,
 			})
 			Expect(err).NotTo(HaveOccurred())
 

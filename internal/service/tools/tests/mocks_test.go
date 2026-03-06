@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"strings"
 	"sync"
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
@@ -105,8 +106,21 @@ type mockDetector struct {
 }
 
 func (m *mockDetector) DetectFromFilePath(ctx context.Context, filePath string) (*contract.WorkspaceCandidate, *contract.ResolveWorkspaceError) {
+	if filePath == "/invalid/path/that/does/not/exist.go" {
+		return nil, &contract.ResolveWorkspaceError{Message: "failed to detect workspace"}
+	}
+
+	root := m.Root
+	if len(filePath) > 0 && filePath[0] == '/' && !strings.Contains(filePath, "/mock/") {
+		importPath := filePath
+		lastSlash := strings.LastIndex(importPath, "/")
+		if lastSlash > 0 {
+			root = importPath[:lastSlash]
+		}
+	}
+
 	return &contract.WorkspaceCandidate{
-		Root:       m.Root,
+		Root:       root,
 		Confidence: 1.0,
 		Reason:     contract.ReasonFilePath,
 		Source:     "file_path",

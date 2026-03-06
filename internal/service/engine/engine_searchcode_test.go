@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
 	"github.com/doITmagic/rag-code-mcp/internal/service/search"
@@ -298,6 +299,17 @@ func TestSearchCodeResumeInterruptedIndexing(t *testing.T) {
 	expectedSubstr := "resuming from 55%"
 	if !strings.Contains(errStr, expectedSubstr) {
 		t.Errorf("Expected error to contain %q, but got %q", expectedSubstr, errStr)
+	}
+
+	// Determine the resolved workspace ID to wait for background indexer
+	wctx, _ := eng.DetectContext(context.Background(), "dummy.go")
+	if wctx != nil {
+		for i := 0; i < 50; i++ {
+			if _, ok := eng.indexingJobs.Load(wctx.ID); !ok {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
 	}
 }
 

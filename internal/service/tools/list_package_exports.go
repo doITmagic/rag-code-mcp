@@ -135,18 +135,17 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 	actualBytes := 0
 
 	for _, result := range allResults {
-		// is_public filter: prefer explicit payload field; fallback to naming convention only for Go
+		// is_public filter: prefer explicit payload field; fallback to naming convention.
+		// When is_public is absent (old indexed entries), use isExported as a universal
+		// safety net — any symbol starting with a lowercase letter is excluded.
 		if isPublicVal, ok := result.Point.Payload["is_public"]; ok {
 			if isPublic, okBool := isPublicVal.(bool); okBool && !isPublic {
 				continue
 			}
 		} else {
-			lang, _ := result.Point.Payload["language"].(string)
-			if strings.EqualFold(lang, "go") {
-				name, _ := result.Point.Payload["name"].(string)
-				if !isExported(name) {
-					continue
-				}
+			name, _ := result.Point.Payload["name"].(string)
+			if !isExported(name) {
+				continue
 			}
 		}
 

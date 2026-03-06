@@ -25,9 +25,6 @@ var (
 
 	// Next.js imports
 	reNextImport = regexp.MustCompile(`(?m)^import\s+.*\s+from\s+['"]next/`)
-	reNextRouter = regexp.MustCompile(`(?m)^import\s+.*\s+from\s+['"]next/(?:router|navigation)['"]`)
-	reNextImage  = regexp.MustCompile(`\bImage\b.*from\s+['"]next/image['"]`)
-	reNextLink   = regexp.MustCompile(`\bLink\b.*from\s+['"]next/link['"]`)
 
 	// Special file names (app router)
 	appRouterFiles = map[string]string{

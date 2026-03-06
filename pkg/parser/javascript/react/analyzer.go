@@ -22,17 +22,6 @@ var (
 		"useScrollToTop": true, "useTheme": true,
 	}
 
-	// React Native core components
-	rnComponents = map[string]bool{
-		"View": true, "Text": true, "Image": true, "ScrollView": true,
-		"FlatList": true, "SectionList": true, "TouchableOpacity": true,
-		"TouchableHighlight": true, "TouchableWithoutFeedback": true,
-		"Pressable": true, "TextInput": true, "Switch": true,
-		"ActivityIndicator": true, "Modal": true, "Alert": true,
-		"SafeAreaView": true, "StatusBar": true, "KeyboardAvoidingView": true,
-		"VirtualizedList": true, "Animated": true, "Dimensions": true,
-	}
-
 	// React Native modules for detection
 	rnModules = map[string]string{
 		"AsyncStorage":       "storage",
@@ -50,14 +39,14 @@ var (
 	}
 
 	// Patterns
-	reHookCall       = regexp.MustCompile(`\buse[A-Z]\w*\s*\(`)
-	reCreateContext  = regexp.MustCompile(`(?m)(?:const|let|var)\s+(\w+)\s*=\s*(?:React\.)?createContext\s*\(`)
-	reJSXElement     = regexp.MustCompile(`<[A-Z]\w*[\s/>]`)
-	reReactImport    = regexp.MustCompile(`(?m)^import\s+.*\s+from\s+['"]react['"]`)
-	reRNImport       = regexp.MustCompile(`(?m)^import\s+.*\s+from\s+['"]react-native['"]`)
-	reRNNavImport    = regexp.MustCompile(`(?m)^import\s+.*\s+from\s+['"]@react-navigation/`)
-	rePropsType      = regexp.MustCompile(`\(\s*\{([^}]+)\}\s*(?::\s*\w+)?\s*\)`)
-	rePropsParam     = regexp.MustCompile(`\(\s*(\w+)\s*:\s*(\w+)\s*\)`)
+	reHookCall      = regexp.MustCompile(`\buse[A-Z]\w*\s*\(`)
+	reCreateContext = regexp.MustCompile(`(?m)(?:const|let|var)\s+(\w+)\s*=\s*(?:React\.)?createContext\s*\(`)
+	reJSXElement    = regexp.MustCompile(`<[A-Z]\w*[\s/>]`)
+	reReactImport   = regexp.MustCompile(`(?m)^import\s+.*\s+from\s+['"]react['"]`)
+	reRNImport      = regexp.MustCompile(`(?m)^import\s+.*\s+from\s+['"]react-native['"]`)
+	reRNNavImport   = regexp.MustCompile(`(?m)^import\s+.*\s+from\s+['"]@react-navigation/`)
+	rePropsType     = regexp.MustCompile(`\(\s*\{([^}]+)\}\s*(?::\s*\w+)?\s*\)`)
+
 	reFuncComponent  = regexp.MustCompile(`(?m)^(export\s+)?(default\s+)?(?:const|function)\s+([A-Z]\w*)\s*`)
 	reClassComponent = regexp.MustCompile(`(?m)class\s+(\w+)\s+extends\s+(?:React\.)?(?:Component|PureComponent)`)
 

@@ -99,6 +99,12 @@ func QueryMasterVersion(port int) string {
 	if !ok {
 		return ""
 	}
+	// Validate this is actually a RagCode instance, not another MCP server.
+	// Prevents misidentifying and killing unrelated services on the same port.
+	name, _ := serverInfo["name"].(string)
+	if name != "ragcode" {
+		return ""
+	}
 	version, _ := serverInfo["version"].(string)
 	return version
 }

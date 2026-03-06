@@ -244,7 +244,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 		Context: ContextMetadata{
 			WorkspaceRoot:    wctx.Root,
 			DetectionSource:  wctx.DetectionSource,
-			Telemetry:        telemetry.CalculateSavings(int(baselineBytes), int(actualBytes)),
+			Telemetry:        telemetry.CalculateSavings(baselineBytes, actualBytes),
 			IndexingProgress: BuildIndexingProgress(t.engine, wctx.ID, wctx.Root),
 		},
 	}

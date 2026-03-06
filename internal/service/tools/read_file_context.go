@@ -318,12 +318,12 @@ func (t *ReadFileContextTool) buildResponse(wctx *engine.WorkspaceContext, res C
 		}
 	}
 
-	baselineBytes := 0
+	baselineBytes := int64(0)
 	if info, err := os.Stat(res.FilePath); err == nil {
-		baselineBytes = int(info.Size())
+		baselineBytes = info.Size()
 	}
 	// Measure extracted snippet relative to baseline file length
-	actualBytes := len(res.CodeSnippet)
+	actualBytes := int64(len(res.CodeSnippet))
 	resp.Context.Telemetry = telemetry.CalculateSavings(baselineBytes, actualBytes)
 
 	jsonStr, err := resp.JSON()

@@ -131,8 +131,8 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 	exports := make(map[string][]ExportedSymbol)
 	seenNames := make(map[string]bool)
 	seenFiles := make(map[string]bool)
-	baselineBytes := 0
-	actualBytes := 0
+	baselineBytes := int64(0)
+	actualBytes := int64(0)
 
 	for _, result := range allResults {
 		// is_public filter: prefer explicit payload field; fallback to naming convention.
@@ -177,11 +177,11 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 
 		relsRaw, _ := result.Point.Payload["relations"].([]interface{})
 
-		actualBytes += len(name) + len(signature) + len(descLine)
+		actualBytes += int64(len(name) + len(signature) + len(descLine))
 		if payloadFilePath != "" && !seenFiles[payloadFilePath] {
 			seenFiles[payloadFilePath] = true
 			if info, statErr := os.Stat(payloadFilePath); statErr == nil {
-				baselineBytes += int(info.Size())
+				baselineBytes += info.Size()
 			}
 		}
 

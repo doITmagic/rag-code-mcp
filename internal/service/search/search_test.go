@@ -39,18 +39,19 @@ func (m *mockEmbedder) GetEmbeddingDimension() uint64 { return 3 }
 
 // mockVectorStore tracks which store methods are called.
 type mockVectorStore struct {
-	storage.VectorStore // embed to satisfy non-overridden methods
-	searchCodeOnlyCalls int
-	exactSearchCalls    int
-	searchCalls         int
-	exactSearchResults  []storage.SearchResult
-	exactSearchErr      error
-	searchCodeOnlyErr   error
+	storage.VectorStore   // embed to satisfy non-overridden methods
+	searchCodeOnlyCalls   int
+	exactSearchCalls      int
+	searchCalls           int
+	exactSearchResults    []storage.SearchResult
+	exactSearchErr        error
+	searchCodeOnlyResults []storage.SearchResult
+	searchCodeOnlyErr     error
 }
 
 func (m *mockVectorStore) SearchCodeOnly(_ context.Context, _ string, _ storage.SearchQuery) ([]storage.SearchResult, error) {
 	m.searchCodeOnlyCalls++
-	return nil, m.searchCodeOnlyErr
+	return m.searchCodeOnlyResults, m.searchCodeOnlyErr
 }
 
 func (m *mockVectorStore) Search(_ context.Context, _ string, _ storage.SearchQuery) ([]storage.SearchResult, error) {
@@ -196,4 +197,42 @@ func errContains(err error, sub string) bool {
 		}
 	}
 	return false
+}
+
+// TestHybridSearchCorrectness verifies lexical boosting, ranking, and limits
+func TestHybridSearchCorrectness(t *testing.T) {
+	emb := &mockEmbedder{}
+	// Mock SearchCodeOnly to return 3 results:
+	candidates := []storage.SearchResult{
+		{Score: 0.9, Point: storage.Point{ID: "doc1", Payload: map[string]interface{}{"text": "unrelated content"}}},
+		{Score: 0.6, Point: storage.Point{ID: "doc2", Payload: map[string]interface{}{"text": "this has the best test logic and more test test"}}},
+		{Score: 0.3, Point: storage.Point{ID: "doc3", Payload: map[string]interface{}{"content": "just some logic"}}},
+	}
+
+	store := &mockVectorStore{searchCodeOnlyResults: candidates}
+	svc := NewService(emb, store)
+
+	// "test logic" -> tokens "test", "logic"
+	// doc1: 0 lexical
+	// doc2: "test" x3, "logic" x1 = 4 lexical (max) => score = 0.6(semantic)*0.6 + 1.0(lexical)*0.4 = 0.36 + 0.4 = 0.76
+	// doc3: "logic" x1 = 1 lexical => score = 0.3*0.6 + 0.25*0.4 = 0.18 + 0.10 = 0.28
+	// doc1: score = 0.9*0.6 + 0 = 0.54
+	// Expected order: doc2 (0.76), doc1 (0.54), doc3 (0.28)
+
+	results, err := svc.HybridSearch(context.Background(), "col", "test logic", 2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should be limited to 2 results despite 3 candidates
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+
+	if results[0].Point.ID != "doc2" {
+		t.Errorf("expected doc2 to be first due to lexical boost, got %s", results[0].Point.ID)
+	}
+	if results[1].Point.ID != "doc1" {
+		t.Errorf("expected doc1 to be second, got %s", results[1].Point.ID)
+	}
 }

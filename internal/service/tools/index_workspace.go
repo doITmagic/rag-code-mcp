@@ -95,14 +95,12 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 
 	includeRuntimeInfo, _ := params["include_runtime_info"].(bool)
 	if includeRuntimeInfo {
+		// Expose only non-sensitive runtime information to avoid leaking
+		// precise uptime or internal build metadata (commit hash/date).
 		data["runtime"] = map[string]interface{}{
-			"started_at": serverStart.Format(time.RFC3339),
-			"uptime":     time.Since(serverStart).String(),
 			"go_version": runtime.Version(),
 			"build_info": map[string]string{
 				"version": serverVersion,
-				"commit":  serverCommit,
-				"date":    serverDate,
 			},
 		}
 	}

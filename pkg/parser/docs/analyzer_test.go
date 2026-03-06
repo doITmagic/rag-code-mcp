@@ -27,11 +27,11 @@ func TestAnalyzer_CanHandle(t *testing.T) {
 
 func TestAnalyzer_MarkdownParsing(t *testing.T) {
 	analyzer := NewAnalyzer()
-	
+
 	// Create a temporary md file
 	tmpDir := t.TempDir()
 	mdFile := filepath.Join(tmpDir, "test.md")
-	
+
 	mdContent := `
 # Main Title
 
@@ -77,10 +77,10 @@ console.log("Hello, World!");
 
 func TestAnalyzer_TreesitterParsing_YAML(t *testing.T) {
 	analyzer := NewAnalyzer()
-	
+
 	tmpDir := t.TempDir()
 	yamlFile := filepath.Join(tmpDir, "config.yaml")
-	
+
 	yamlContent := `
 server:
   port: 8080
@@ -96,7 +96,7 @@ database:
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Greater(t, len(result.Symbols), 0, "Should extract symbols from yaml via treesitter")
-	
+
 	for _, sym := range result.Symbols {
 		assert.Equal(t, "config.yaml", sym.Name)
 		assert.Equal(t, "yaml", sym.Language)
@@ -106,10 +106,10 @@ database:
 
 func TestAnalyzer_TreesitterParsing_JSON(t *testing.T) {
 	analyzer := NewAnalyzer()
-	
+
 	tmpDir := t.TempDir()
 	jsonFile := filepath.Join(tmpDir, "data.json")
-	
+
 	jsonContent := `
 {
   "project": "rag-code-mcp",
@@ -128,10 +128,10 @@ func TestAnalyzer_TreesitterParsing_JSON(t *testing.T) {
 
 func TestAnalyzer_TreesitterParsing_CSS(t *testing.T) {
 	analyzer := NewAnalyzer()
-	
+
 	tmpDir := t.TempDir()
 	cssFile := filepath.Join(tmpDir, "style.css")
-	
+
 	cssContent := `
 body {
   background-color: red;

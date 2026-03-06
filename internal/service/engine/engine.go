@@ -48,6 +48,11 @@ type Engine struct {
 	// detectionCache stores resolved WorkspaceContext with TTL to avoid
 	// repeated full resolver cascades for the same path.
 	detectionCache sync.Map // map[string]*detectionCacheEntry
+
+	// resumeAttempts throttles auto-resume of interrupted indexing.
+	// Key: workspace ID, Value: time.Time of last resume attempt.
+	// Prevents CPU/log churn when indexing keeps failing (e.g. Ollama down).
+	resumeAttempts sync.Map
 }
 
 // detectionCacheEntry wraps a cached WorkspaceContext with an expiry.
@@ -305,9 +310,15 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 	if idxState, sErr := indexer.LoadState(indexerStatePath); sErr == nil {
 		if idxState.LastPercent > 0 && idxState.LastPercent < 100 {
 			if _, ok := e.indexingJobs.Load(wctx.ID); !ok {
-				// Indexare întreruptă (crash/restart) — repornim în background dar continuăm search-ul
-				log.Printf("[INFO] Detectată indexare întreruptă (rămasă la %d%%). Se reia automat...", idxState.LastPercent)
-				e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+				// Throttle auto-resume: only once per 5 minutes per workspace to avoid
+				// CPU/log churn when indexing keeps failing (e.g. Ollama is down).
+				const resumeCooldown = 5 * time.Minute
+				now := time.Now()
+				if last, loaded := e.resumeAttempts.Load(wctx.ID); !loaded || now.Sub(last.(time.Time)) > resumeCooldown {
+					e.resumeAttempts.Store(wctx.ID, now)
+					log.Printf("[INFO] Detectată indexare întreruptă (rămasă la %d%%). Se reia automat...", idxState.LastPercent)
+					e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+				}
 			}
 			// În ambele cazuri continuăm — Qdrant are deja date parțiale, iar progresul este adăugat în răspuns la nivelul MCP tool-ului
 			log.Printf("[INFO] Indexing in progress (%d%%) — searching available results in Qdrant", idxState.LastPercent)
@@ -461,9 +472,15 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 	if idxState, sErr := indexer.LoadState(indexerStatePath); sErr == nil {
 		if idxState.LastPercent > 0 && idxState.LastPercent < 100 {
 			if _, ok := e.indexingJobs.Load(wctx.ID); !ok {
-				// Indexare întreruptă (crash/restart) — repornim în background dar continuăm search-ul
-				log.Printf("[INFO] Detectată indexare întreruptă (rămasă la %d%%). Se reia automat...", idxState.LastPercent)
-				e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+				// Throttle auto-resume: only once per 5 minutes per workspace to avoid
+				// CPU/log churn when indexing keeps failing (e.g. Ollama is down).
+				const resumeCooldown = 5 * time.Minute
+				now := time.Now()
+				if last, loaded := e.resumeAttempts.Load(wctx.ID); !loaded || now.Sub(last.(time.Time)) > resumeCooldown {
+					e.resumeAttempts.Store(wctx.ID, now)
+					log.Printf("[INFO] Detectată indexare întreruptă (rămasă la %d%%). Se reia automat...", idxState.LastPercent)
+					e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+				}
 			}
 			// În ambele cazuri continuăm — Qdrant are deja date parțiale, iar progresul este adăugat în răspuns la nivelul MCP tool-ului
 			log.Printf("[INFO] Indexing in progress (%d%%) — searching available results in Qdrant", idxState.LastPercent)

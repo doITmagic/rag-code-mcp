@@ -74,9 +74,13 @@ func forwardToMaster(client *http.Client, url string, message []byte) ([]byte, e
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	const maxResponseBytes = 10 * 1024 * 1024 // 10MB — consistent with scanner buffer in RunProxyMode
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
+	}
+	if int64(len(body)) > maxResponseBytes {
+		return nil, fmt.Errorf("response too large (>10MB) from master")
 	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {

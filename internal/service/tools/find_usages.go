@@ -140,7 +140,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 		signature, _ := result.Point.Payload["signature"].(string)
 		code, _ := result.Point.Payload["content"].(string)
 
-		filePath, _ := result.Point.Payload["file_path"].(string)
+		resultFilePath, _ := result.Point.Payload["file_path"].(string)
 		startLineVal := result.Point.Payload["start_line"]
 		startLine := 0
 		switch v := startLineVal.(type) {
@@ -174,9 +174,9 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 
 		actualBytes += int64(len(code))
 		// Validate file path is within workspace root before stat
-		if filePath != "" && !seenFiles[filePath] {
-			seenFiles[filePath] = true
-			clean := filepath.Clean(filePath)
+		if resultFilePath != "" && !seenFiles[resultFilePath] {
+			seenFiles[resultFilePath] = true
+			clean := filepath.Clean(resultFilePath)
 			if wctx.Root != "" && strings.HasPrefix(clean, filepath.Clean(wctx.Root)+string(filepath.Separator)) {
 				if info, statErr := os.Stat(clean); statErr == nil {
 					baselineBytes += info.Size()
@@ -188,7 +188,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 			Name:        name,
 			Type:        symType,
 			Signature:   signature,
-			FilePath:    filePath,
+			FilePath:    resultFilePath,
 			StartLine:   startLine,
 			Package:     pkg,
 			Snippet:     code,

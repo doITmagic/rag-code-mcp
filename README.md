@@ -268,10 +268,10 @@ RagCode works with all major AI-powered IDEs:
 - **[Troubleshooting](#-troubleshooting)** - Common issues and solutions
 
 ### Language Analyzers
-- **[Go Analyzer](./internal/ragcode/analyzers/golang/README.md)** - Functions, types, interfaces, GoDoc
-- **[PHP Analyzer](./internal/ragcode/analyzers/php/README.md)** - Classes, traits, PHPDoc
-- **[Laravel Analyzer](./internal/ragcode/analyzers/php/laravel/README.md)** - Eloquent, routes, controllers
-- **[Python Analyzer](./internal/ragcode/analyzers/python/README.md)** - Classes, decorators, type hints
+- **[Go Analyzer](./pkg/parser/go/README.md)** - Functions, types, interfaces, GoDoc
+- **[PHP Analyzer](./pkg/parser/php/README.md)** - Classes, traits, PHPDoc
+- **[Laravel Analyzer](./pkg/parser/php/laravel/README.md)** - Eloquent, routes, controllers
+- **[Python Analyzer](./pkg/parser/python/README.md)** - Classes, decorators, type hints
 
 ### Technical Reference
 - **[Architecture Overview](./docs/architecture.md)** - Technical deep dive

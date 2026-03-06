@@ -75,16 +75,14 @@ type UsageResult struct {
 func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
 	symbolName, ok := args["symbol_name"].(string)
 	if !ok || symbolName == "" {
-		resp := ToolResponse{Status: "error", Error: "symbol_name parameter is required"}
-		return resp.JSON()
+		return "", fmt.Errorf("symbol_name parameter is required")
 	}
 
 	filePath, _ := args["file_path"].(string)
 
 	wctx, err := t.engine.DetectContext(ctx, filePath)
 	if err != nil {
-		resp := ToolResponse{Status: "error", Error: fmt.Sprintf("failed to detect workspace: %v", err)}
-		return resp.JSON()
+		return "", fmt.Errorf("failed to detect workspace: %w", err)
 	}
 
 	// Fan-out to all language collections in parallel — zero embedding
@@ -108,8 +106,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 			return resp.JSON()
 		}
 
-		resp := ToolResponse{Status: "error", Error: fmt.Sprintf("usage search failed: %v", err)}
-		return resp.JSON()
+		return "", fmt.Errorf("usage search failed: %w", err)
 	}
 
 	if len(allResults) > 0 {

@@ -34,12 +34,9 @@ var _ = Describe("FindUsagesTool", func() {
 
 	Describe("Execute", func() {
 		It("should fail if symbol_name is missing", func() {
-			resJSON, err := tool.Execute(ctx, map[string]interface{}{"file_path": "main.go"})
-			Expect(err).NotTo(HaveOccurred())
-			var resp tools.ToolResponse
-			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
-			Expect(resp.Status).To(Equal("error"))
-			Expect(resp.Error).To(ContainSubstring("symbol_name parameter is required"))
+			_, err := tool.Execute(ctx, map[string]interface{}{"file_path": "main.go"})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("symbol_name parameter is required"))
 		})
 
 		It("should return indexing_required if ErrNoCollectionsFound", func() {
@@ -172,12 +169,9 @@ var _ = Describe("FindUsagesTool", func() {
 		})
 		It("should return error if workspace detection fails", func() {
 			// Provide an invalid file_path to trigger detection failure
-			resJSON, err := tool.Execute(ctx, map[string]interface{}{"symbol_name": "GhostFunc", "file_path": "/invalid/path/that/does/not/exist.go"})
-			Expect(err).NotTo(HaveOccurred())
-			var resp tools.ToolResponse
-			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
-			Expect(resp.Status).To(Equal("error"))
-			Expect(resp.Error).To(ContainSubstring("failed to detect workspace"))
+			_, err := tool.Execute(ctx, map[string]interface{}{"symbol_name": "GhostFunc", "file_path": "/invalid/path/that/does/not/exist.go"})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to detect workspace"))
 		})
 
 		It("should deduplicate relation types and correctly compute telemetry", func() {

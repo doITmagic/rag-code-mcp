@@ -305,10 +305,12 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 	if idxState, sErr := indexer.LoadState(indexerStatePath); sErr == nil {
 		if idxState.LastPercent > 0 && idxState.LastPercent < 100 {
 			if _, ok := e.indexingJobs.Load(wctx.ID); !ok {
+				// Indexare întreruptă (crash/restart) — repornim în background dar continuăm search-ul
 				log.Printf("[INFO] Detectată indexare întreruptă (rămasă la %d%%). Se reia automat...", idxState.LastPercent)
 				e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 			}
-			return nil, &ErrIndexingInProgress{WorkspaceRoot: wctx.Root, WorkspaceID: wctx.ID, LastPercent: idxState.LastPercent}
+			// In ambele cazuri continuăm — Qdrant are deja date parțiale, progresul e inclus în response
+			log.Printf("[INFO] Indexing in progress (%d%%) — searching available results in Qdrant", idxState.LastPercent)
 		}
 	}
 
@@ -459,10 +461,12 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 	if idxState, sErr := indexer.LoadState(indexerStatePath); sErr == nil {
 		if idxState.LastPercent > 0 && idxState.LastPercent < 100 {
 			if _, ok := e.indexingJobs.Load(wctx.ID); !ok {
+				// Indexare întreruptă (crash/restart) — repornim în background dar continuăm search-ul
 				log.Printf("[INFO] Detectată indexare întreruptă (rămasă la %d%%). Se reia automat...", idxState.LastPercent)
 				e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 			}
-			return nil, &ErrIndexingInProgress{WorkspaceRoot: wctx.Root, WorkspaceID: wctx.ID, LastPercent: idxState.LastPercent}
+			// În ambele cazuri continuăm — Qdrant are deja date parțiale, progresul e inclus în response
+			log.Printf("[INFO] Indexing in progress (%d%%) — searching available results in Qdrant", idxState.LastPercent)
 		}
 	}
 

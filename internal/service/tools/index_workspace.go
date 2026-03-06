@@ -74,7 +74,8 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 			Status: "error",
 			Error:  err.Error(),
 		}
-		return response.JSON()
+		body, _ := response.JSON()
+		return body, err
 	}
 
 	recreate, _ := params["recreate"].(bool)

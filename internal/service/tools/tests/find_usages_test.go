@@ -115,6 +115,78 @@ var _ = Describe("FindUsagesTool", func() {
 			Expect(usage["name"]).To(Equal("CallerFunc"))
 		})
 
+		It("should correctly format markdown fencing for snippets containing backticks", func() {
+			mockStore.ExactSearchFunc = func(ctx context.Context, col string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error) {
+				return []storage.SearchResult{
+					{
+						Score: 1.0,
+						Point: storage.Point{
+							ID: "usage-1",
+							Payload: map[string]interface{}{
+								"name":      "CodeBlockFunc",
+								"type":      "function",
+								"file_path": "example.go",
+								"content":   "// Here is a single backtick: `\n// Here are three: ```\nfunc CodeBlockFunc() {}",
+								"relations": []interface{}{
+									map[string]interface{}{"target_name": "MySymbol", "type": "calls"},
+								},
+							},
+						},
+					},
+					{
+						Score: 0.9,
+						Point: storage.Point{
+							ID: "usage-2",
+							Payload: map[string]interface{}{
+								"name":      "LongFences",
+								"type":      "function",
+								"file_path": "example.md",
+								"content":   "test with ````` 5 backticks",
+								"relations": []interface{}{
+									map[string]interface{}{"target_name": "MySymbol", "type": "calls"},
+								},
+							},
+						},
+					},
+					{
+						Score: 0.8,
+						Point: storage.Point{
+							ID: "usage-3",
+							Payload: map[string]interface{}{
+								"name":      "EmptySnippet",
+								"type":      "function",
+								"file_path": "example.txt",
+								"content":   "   \n\n  ", // Mostly whitespace
+								"relations": []interface{}{
+									map[string]interface{}{"target_name": "MySymbol", "type": "calls"},
+								},
+							},
+						},
+					},
+				}, nil
+			}
+
+			resJSON, err := tool.Execute(ctx, map[string]interface{}{
+				"symbol_name": "MySymbol",
+				"file_path":   "main.go",
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			var resp tools.ToolResponse
+			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
+			Expect(resp.Status).To(Equal("success"))
+
+			msg := resp.Message
+			// We expect the first snippet block (which has ``` inside) to be fenced with ````
+			Expect(msg).To(ContainSubstring("\n````go\n// Here is a single backtick: `\n// Here are three: ```\nfunc CodeBlockFunc() {}\n````\n"))
+
+			// We expect the second block to be fenced with `````` (6 backticks, since inside has 5)
+			Expect(msg).To(ContainSubstring("\n``````markdown\ntest with ````` 5 backticks\n``````\n"))
+
+			// EmptySnippet whitespace block should be fenced with basic ```
+			Expect(msg).To(ContainSubstring("\n```text\n   \n\n  \n```\n"))
+		})
+
 		It("should send relations[].target_name as filter key to ExactSearch", func() {
 			var capturedFilter map[string]interface{}
 			mockStore.ExactSearchFunc = func(ctx context.Context, col string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error) {

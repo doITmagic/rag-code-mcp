@@ -1,4 +1,4 @@
-// cmd/sse-client-test is a manual HTTP MCP client for the RagCode MCP server.
+// cmd/mcp-http-client-test is a manual HTTP MCP client for the RagCode MCP server.
 // It primarily tests the Streamable HTTP (stateless) transport via POST /mcp
 // and does best-effort parsing of SSE-style `data:` lines in responses.
 //

@@ -41,7 +41,7 @@ usage() {
   echo "  -repo-url  Git repo to clone inside container (default: ${REPO_URL_DEFAULT})"
   echo "  -repo-dir  Target directory for clone inside container (default: ${REPO_DIR_DEFAULT})"
   echo "  -repo-ref  Git ref to checkout inside container after clone (default: empty)"
-  echo "  -bin-dir   Directory with prebuilt binaries: rag-code-install, rag-code-mcp, sse-client-test (default: build locally)"
+  echo "  -bin-dir   Directory with prebuilt binaries: rag-code-install, rag-code-mcp, mcp-http-client-test (default: build locally)"
   echo "  -sse-file  File inside repo used as file_path (default: ${SSE_FILE_DEFAULT})"
   echo "  -sse-query Query for rag_search_code (default: ${SSE_QUERY_DEFAULT})"
   echo "  -sse-limit Limit for rag_search_code (default: ${SSE_LIMIT_DEFAULT})"
@@ -173,16 +173,16 @@ build_binaries() {
   echo "==> Build: rag-code-mcp"
   go build -o "${BUILD_DIR}/rag-code-mcp" "${REPO_ROOT}/cmd/rag-code-mcp"
 
-  echo "==> Build: sse-client-test"
-  go build -o "${BUILD_DIR}/sse-client-test" "${REPO_ROOT}/cmd/sse-client-test"
+  echo "==> Build: mcp-http-client-test"
+  go build -o "${BUILD_DIR}/mcp-http-client-test" "${REPO_ROOT}/cmd/mcp-http-client-test"
 }
 
 push_binaries() {
   echo "==> LXC: push binaries"
   lxc file push "${BUILD_DIR}/rag-code-install" "${NAME}/root/rag-code-install"
   lxc file push "${BUILD_DIR}/rag-code-mcp" "${NAME}/root/rag-code-mcp"
-  lxc file push "${BUILD_DIR}/sse-client-test" "${NAME}/root/sse-client-test"
-  lxc exec "${NAME}" -- bash -lc 'chmod +x /root/rag-code-install /root/rag-code-mcp /root/sse-client-test'
+  lxc file push "${BUILD_DIR}/mcp-http-client-test" "${NAME}/root/mcp-http-client-test"
+  lxc exec "${NAME}" -- bash -lc 'chmod +x /root/rag-code-install /root/rag-code-mcp /root/mcp-http-client-test'
 }
 
 start_mcp_and_wait() {
@@ -205,12 +205,12 @@ run_sse_e2e() {
 
   echo "==> LXC: run SSE client E2E"
   if [[ "${SSE_EMIT_JSON:-}" == "1" ]]; then
-    lxc exec "${NAME}" -- bash -lc "/root/sse-client-test -url http://127.0.0.1:${PORT} -path '${REPO_DIR}/${SSE_FILE}' -query '${SSE_QUERY}' -mode '${SSE_MODE}' -limit ${SSE_LIMIT} -out /root/sse_out.json"
+    lxc exec "${NAME}" -- bash -lc "/root/mcp-http-client-test -url http://127.0.0.1:${PORT} -path '${REPO_DIR}/${SSE_FILE}' -query '${SSE_QUERY}' -mode '${SSE_MODE}' -limit ${SSE_LIMIT} -out /root/sse_out.json"
     echo "@@@SSE_OUT_BEGIN@@@"
     lxc exec "${NAME}" -- bash -lc "cat /root/sse_out.json"
     echo "@@@SSE_OUT_END@@@"
   else
-    lxc exec "${NAME}" -- bash -lc "/root/sse-client-test -url http://127.0.0.1:${PORT} -path '${REPO_DIR}/${SSE_FILE}' -query '${SSE_QUERY}' -mode '${SSE_MODE}' -limit ${SSE_LIMIT}"
+    lxc exec "${NAME}" -- bash -lc "/root/mcp-http-client-test -url http://127.0.0.1:${PORT} -path '${REPO_DIR}/${SSE_FILE}' -query '${SSE_QUERY}' -mode '${SSE_MODE}' -limit ${SSE_LIMIT}"
   fi
 }
 

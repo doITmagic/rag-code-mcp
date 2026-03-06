@@ -53,6 +53,9 @@ func (t *IndexWorkspaceTool) Register(server *mcp.Server) {
 		if err != nil {
 			logger.Instance.Error("rag_index_workspace failed (%v): %v", time.Since(start), err)
 			res := &mcp.CallToolResult{}
+			if result != "" {
+				res.Content = []mcp.Content{&mcp.TextContent{Text: result}}
+			}
 			res.SetError(err)
 			return res, nil, nil
 		}

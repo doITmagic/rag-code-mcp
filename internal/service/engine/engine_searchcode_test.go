@@ -3,7 +3,6 @@ package engine
 import (
 	"context"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -281,6 +280,20 @@ func TestSearchCodeResumeInterruptedIndexing(t *testing.T) {
 	rootDir := t.TempDir()
 	eng.SetResolver(resolver.New(resolver.Dependencies{Detector: &mockDirDetector{root: rootDir}}))
 
+	// Get workspace ID early
+	wctx, _ := eng.DetectContext(context.Background(), "dummy.go")
+	if wctx == nil {
+		t.Fatalf("Failed to detect context")
+	}
+	// Make the collection exist so search continues
+	goColl := CollectionNameFor(wctx.ID, "go")
+	store := &multiLangStore{
+		testStore: testStore{
+			existing: map[string]bool{goColl: true},
+		},
+	}
+	eng.SetSearchService(search.NewService(llmProvider, store))
+
 	// Creăm state.json cu LastPercent = 55%
 	state := indexer.NewState()
 	state.SetLastPercent(55)
@@ -289,28 +302,22 @@ func TestSearchCodeResumeInterruptedIndexing(t *testing.T) {
 		t.Fatalf("Failed to save fake state.json: %v", err)
 	}
 
-	// Colecția nu există, iar LastPercent e 55, ar trebui să dea eroare specifică "resuming from 55%"
+	// Cu noua logică: search-ul NU mai blochează când LastPercent e între 1-99.
+	// Indexarea întreruptă e reluată automat în background, iar search-ul continuă în Qdrant.
 	_, err := eng.SearchCode(context.Background(), "dummy.go", "test", 10, false)
-	if err == nil {
-		t.Fatalf("Expected ErrIndexingInProgress, got nil")
+	if err != nil {
+		t.Fatalf("Expected no error, search should continue, got: %v", err)
 	}
 
-	errStr := err.Error()
-	expectedSubstr := "resuming from 55%"
-	if !strings.Contains(errStr, expectedSubstr) {
-		t.Errorf("Expected error to contain %q, but got %q", expectedSubstr, errStr)
-	}
-
-	// Determine the resolved workspace ID to wait for background indexer
-	wctx, _ := eng.DetectContext(context.Background(), "dummy.go")
-	if wctx != nil {
-		for i := 0; i < 50; i++ {
-			if _, ok := eng.indexingJobs.Load(wctx.ID); !ok {
-				break
-			}
-			time.Sleep(10 * time.Millisecond)
+	// Verificăm că indexarea a fost repornită în background
+	for i := 0; i < 50; i++ {
+		if _, ok := eng.indexingJobs.Load(wctx.ID); ok {
+			return // Success
+			time.Sleep(20 * time.Millisecond)
 		}
+		time.Sleep(10 * time.Millisecond)
 	}
+	t.Errorf("Expected background indexing to be resumed, but no active job found")
 }
 
 // mockDirDetector is like mockDetector but allows specifying the root dir

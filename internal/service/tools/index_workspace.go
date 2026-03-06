@@ -88,7 +88,7 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 
 	response := ToolResponse{
 		Status:  "indexing_started",
-		Message: fmt.Sprintf("🚀 Indexing started for workspace '%s'. The process is running in the background. You can use rag_search (or rag_search_code) immediately - results will appear as indexing progresses.", wctx.Root),
+		Message: fmt.Sprintf("🚀 Indexing started for workspace '%s'. The process is running in the background. You can use rag_search immediately - results will appear as indexing progresses.", wctx.Root),
 		Context: ContextMetadata{
 			WorkspaceRoot:   wctx.Root,
 			DetectionSource: wctx.DetectionSource,

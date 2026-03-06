@@ -87,6 +87,8 @@ func extractSSEData(body []byte) []byte {
 		return []byte(trimmed)
 	}
 
+	var lastValidData []byte
+
 	for _, rawLine := range lines {
 		// Preserve internal spaces but normalize line endings.
 		line := strings.TrimRight(rawLine, "\r")
@@ -95,7 +97,7 @@ func extractSSEData(body []byte) []byte {
 		// Blank line = end of current event.
 		if trimmed == "" {
 			if data := flushEvent(); data != nil {
-				return data
+				lastValidData = data
 			}
 			dataLines = dataLines[:0]
 			continue
@@ -109,7 +111,11 @@ func extractSSEData(body []byte) []byte {
 
 	// Handle case where the last event is not terminated by a blank line.
 	if data := flushEvent(); data != nil {
-		return data
+		lastValidData = data
+	}
+
+	if lastValidData != nil {
+		return lastValidData
 	}
 
 	// Fallback: return the original body if we couldn't extract a valid SSE data payload.

@@ -109,12 +109,6 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 		return "", fmt.Errorf("usage search failed: %w", err)
 	}
 
-	if len(allResults) > 0 {
-		sort.SliceStable(allResults, func(i, j int) bool {
-			return allResults[i].Score > allResults[j].Score
-		})
-	}
-
 	if len(allResults) == 0 {
 		resp := ToolResponse{
 			Status:  "success",

@@ -361,28 +361,5 @@ var _ = Describe("FindUsagesTool", func() {
 			Expect(resp.Context.Telemetry).NotTo(BeNil())
 		})
 
-		It("should maintain stable sort ordering of results by score", func() {
-			mockStore.ExactSearchFunc = func(ctx context.Context, col string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error) {
-				return []storage.SearchResult{
-					{Score: 0.5, Point: storage.Point{ID: "low-score", Payload: map[string]interface{}{"name": "Low", "relations": []interface{}{map[string]interface{}{"target_name": "MySymbol", "type": "calls"}}}}},
-					{Score: 0.9, Point: storage.Point{ID: "high-score", Payload: map[string]interface{}{"name": "High", "relations": []interface{}{map[string]interface{}{"target_name": "MySymbol", "type": "calls"}}}}},
-					{Score: 0.7, Point: storage.Point{ID: "mid-score", Payload: map[string]interface{}{"name": "Mid", "relations": []interface{}{map[string]interface{}{"target_name": "MySymbol", "type": "calls"}}}}},
-				}, nil
-			}
-
-			// Patch interface locally for brevity, since SearchResult requires storage.SearchResult cast
-			resJSON, err := tool.Execute(ctx, map[string]interface{}{"symbol_name": "MySymbol", "file_path": "main.go"})
-			Expect(err).NotTo(HaveOccurred())
-			var resp tools.ToolResponse
-			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
-
-			data := resp.Data.([]interface{})
-			Expect(data).To(HaveLen(3))
-
-			// Ordered by sequence: High (0.9), Mid (0.7), Low (0.5)
-			Expect(data[0].(map[string]interface{})["name"]).To(Equal("High"))
-			Expect(data[1].(map[string]interface{})["name"]).To(Equal("Mid"))
-			Expect(data[2].(map[string]interface{})["name"]).To(Equal("Low"))
-		})
 	})
 })

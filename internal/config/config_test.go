@@ -30,15 +30,6 @@ func TestDefaultConfigValues(t *testing.T) {
 	if cfg.Workspace.CollectionPrefix != "ragcode" {
 		t.Errorf("Workspace.CollectionPrefix = %q, want %q", cfg.Workspace.CollectionPrefix, "ragcode")
 	}
-	if cfg.RagCode.Collection != "do-ai-code" {
-		t.Errorf("RagCode.Collection = %q, want %q", cfg.RagCode.Collection, "do-ai-code")
-	}
-	if cfg.Docs.Collection != "do-ai-docs" {
-		t.Errorf("Docs.Collection = %q, want %q", cfg.Docs.Collection, "do-ai-docs")
-	}
-	if cfg.APIDocs.Collection != "do-ai-api-docs" {
-		t.Errorf("APIDocs.Collection = %q, want %q", cfg.APIDocs.Collection, "do-ai-api-docs")
-	}
 }
 
 func TestLoadMissingFileReturnsDefaultConfig(t *testing.T) {
@@ -160,8 +151,9 @@ func TestValidateDefaultsProviderAndRequiresModel(t *testing.T) {
 	cfgNoModel := DefaultConfig()
 	cfgNoModel.LLM.OllamaModel = ""
 	cfgNoModel.LLM.Model = ""
-	if err := validate(cfgNoModel); err == nil {
-		t.Fatalf("validate(cfg without model) = nil error, want non-nil")
+	// Validation no longer requires a generation model since it's embedding-only.
+	if err := validate(cfgNoModel); err != nil {
+		t.Fatalf("validate(cfg without model) returned error: %v, want nil", err)
 	}
 
 	cfgBadProvider := DefaultConfig()
@@ -178,5 +170,57 @@ func TestValidateServerPort(t *testing.T) {
 	cfg.Server.Port = 70000
 	if err := validate(cfg); err != nil {
 		t.Fatalf("validate(cfg with high port) returned unexpected error: %v", err)
+	}
+}
+
+func TestDefaultConfigPathsAreEmpty(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.Paths.LogsDir != "" {
+		t.Errorf("Paths.LogsDir = %q, want empty (use default)", cfg.Paths.LogsDir)
+	}
+	if cfg.Paths.Registry != "" {
+		t.Errorf("Paths.Registry = %q, want empty (use default)", cfg.Paths.Registry)
+	}
+	if cfg.Paths.SkillsCache != "" {
+		t.Errorf("Paths.SkillsCache = %q, want empty (use default)", cfg.Paths.SkillsCache)
+	}
+	if cfg.Paths.UpdateCache != "" {
+		t.Errorf("Paths.UpdateCache = %q, want empty (use default)", cfg.Paths.UpdateCache)
+	}
+}
+
+func TestPathsConfigParsedFromYAML(t *testing.T) {
+	tempDir := t.TempDir()
+	path := filepath.Join(tempDir, "config.yaml")
+
+	yamlContent := []byte(`
+llm:
+  provider: ollama
+paths:
+  logs_dir: /var/log/ragcode
+  registry: /opt/ragcode/registry.json
+  skills_cache: /opt/ragcode/skills.json
+  update_cache: /opt/ragcode/updates.json
+`)
+	if err := os.WriteFile(path, yamlContent, 0o644); err != nil {
+		t.Fatalf("failed to write temp config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load(%q) returned error: %v", path, err)
+	}
+
+	if cfg.Paths.LogsDir != "/var/log/ragcode" {
+		t.Errorf("Paths.LogsDir = %q, want %q", cfg.Paths.LogsDir, "/var/log/ragcode")
+	}
+	if cfg.Paths.Registry != "/opt/ragcode/registry.json" {
+		t.Errorf("Paths.Registry = %q, want %q", cfg.Paths.Registry, "/opt/ragcode/registry.json")
+	}
+	if cfg.Paths.SkillsCache != "/opt/ragcode/skills.json" {
+		t.Errorf("Paths.SkillsCache = %q, want %q", cfg.Paths.SkillsCache, "/opt/ragcode/skills.json")
+	}
+	if cfg.Paths.UpdateCache != "/opt/ragcode/updates.json" {
+		t.Errorf("Paths.UpdateCache = %q, want %q", cfg.Paths.UpdateCache, "/opt/ragcode/updates.json")
 	}
 }

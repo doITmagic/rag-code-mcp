@@ -1,0 +1,114 @@
+package parser
+
+import (
+	"context"
+	"sync"
+)
+
+var (
+	mu        sync.RWMutex
+	analyzers = make(map[string]Analyzer)
+)
+
+// Register adds an analyzer to the global registry.
+func Register(a Analyzer) {
+	mu.Lock()
+	defer mu.Unlock()
+	analyzers[a.Name()] = a
+}
+
+// GetByName returns an analyzer by its name (e.g., "go").
+func GetByName(name string) Analyzer {
+	mu.RLock()
+	defer mu.RUnlock()
+	return analyzers[name]
+}
+
+// GetByFile returns an analyzer that can handle the given file path.
+func GetByFile(filePath string) Analyzer {
+	mu.RLock()
+	defer mu.RUnlock()
+	for _, a := range analyzers {
+		if a.CanHandle(filePath) {
+			return a
+		}
+	}
+	return nil
+}
+
+// SupportedLanguages returns a list of all registered language names.
+func SupportedLanguages() []string {
+	mu.RLock()
+	defer mu.RUnlock()
+	langs := make([]string, 0, len(analyzers))
+	for name := range analyzers {
+		langs = append(langs, name)
+	}
+	return langs
+}
+
+// SymbolType identifies the kind of code symbol.
+type SymbolType string
+
+const (
+	Function  SymbolType = "function"
+	Method    SymbolType = "method"
+	Class     SymbolType = "class"
+	Interface SymbolType = "interface"
+	Type      SymbolType = "type"
+	Const     SymbolType = "const"
+	Var       SymbolType = "var"
+)
+
+// RelationType identifies how a symbol interacts with another.
+type RelationType string
+
+const (
+	RelCalls       RelationType = "calls"
+	RelImplements  RelationType = "implements"
+	RelInheritance RelationType = "inheritance"
+	RelDependency  RelationType = "dependency"
+	RelUsesTrait   RelationType = "uses_trait"
+	RelUsesType    RelationType = "uses_type"
+)
+
+// Relation describes a connection pointing to another code entity.
+type Relation struct {
+	TargetName string       `json:"target_name"`
+	Type       RelationType `json:"type"`
+}
+
+// Symbol represents a generic code entity (function, class, etc.)
+type Symbol struct {
+	Name      string         `json:"name"`
+	Type      SymbolType     `json:"type"`
+	Package   string         `json:"package"`
+	Content   string         `json:"content"`
+	Signature string         `json:"signature"`
+	Docstring string         `json:"docstring"`
+	StartLine int            `json:"start_line"`
+	EndLine   int            `json:"end_line"`
+	FilePath  string         `json:"file_path"`
+	Language  string         `json:"language"`
+	IsPublic  bool           `json:"is_public"` // Whether the symbol is public/exported
+	Relations []Relation     `json:"relations"` // Captured structural dependencies (AST graph)
+	Metadata  map[string]any `json:"metadata"`
+}
+
+// Result is what a parser returns for a given file or directory.
+type Result struct {
+	Symbols  []Symbol
+	Language string
+}
+
+// Analyzer is the interface for language-specific parsers.
+type Analyzer interface {
+	// Name returns the analyzer name (e.g., "golang", "python").
+	Name() string
+
+	// CanHandle returns true if the analyzer supports the given file extension.
+	CanHandle(filePath string) bool
+
+	// Analyze extracts symbols from a file or directory.
+	Analyze(ctx context.Context, path string) (*Result, error)
+}

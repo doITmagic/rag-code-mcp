@@ -41,11 +41,8 @@ jobs:
           echo "Building rag-code-mcp..."
           go build -o bin/rag-code-mcp ./cmd/rag-code-mcp
           
-          echo "Building index-all..."
-          go build -o bin/index-all ./cmd/index-all
-          
-          echo "Building ragcode-installer..."
-          go build -o bin/ragcode-installer ./cmd/install
+          echo "Building rag-code-install..."
+          go build -o bin/rag-code-install ./cmd/rag-code-install
           
           chmod +x bin/*
 

@@ -42,7 +42,6 @@ func newProgressStore() *progressStore {
 
 func (s *progressStore) get(workspaceID string, workspaceRoot string) *IndexProgress {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if p, ok := s.jobs[workspaceID]; ok {
 		cp := *p
 		if p.Languages != nil {
@@ -55,12 +54,20 @@ func (s *progressStore) get(workspaceID string, workspaceRoot string) *IndexProg
 			t := *p.CompletedAt
 			cp.CompletedAt = &t
 		}
+		s.mu.Unlock()
 		return &cp
 	}
-	// Not in memory (e.g. after restart) — try loading from disk.
+	s.mu.Unlock()
+
+	// Not in memory (e.g. after restart) — try loading from disk outside the lock.
 	if workspaceRoot != "" {
 		if p := loadIndexStatus(workspaceRoot); p != nil && p.WorkspaceID == workspaceID {
-			s.jobs[workspaceID] = p // cache in memory for subsequent calls
+			s.mu.Lock()
+			if _, exists := s.jobs[workspaceID]; !exists {
+				s.jobs[workspaceID] = p // cache in memory for subsequent calls
+			}
+			s.mu.Unlock()
+
 			cp := *p
 			if p.Languages != nil {
 				cp.Languages = make(map[string]IndexLanguageProgress, len(p.Languages))
@@ -130,30 +137,58 @@ func (s *progressStore) update(workspaceID, lang string, done, total int, now ti
 
 func (s *progressStore) complete(workspaceID, workspaceRoot string, now time.Time) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	p, ok := s.jobs[workspaceID]
 	if !ok {
+		s.mu.Unlock()
 		return
 	}
 	p.State = "completed"
 	p.UpdatedAt = now
 	p.CompletedAt = &now
+
+	cp := *p
+	if p.Languages != nil {
+		cp.Languages = make(map[string]IndexLanguageProgress, len(p.Languages))
+		for k, v := range p.Languages {
+			cp.Languages[k] = v
+		}
+	}
+	if p.CompletedAt != nil {
+		t := *p.CompletedAt
+		cp.CompletedAt = &t
+	}
+	s.mu.Unlock()
+
 	// Persist to disk so index_age survives process restarts.
-	saveIndexStatus(workspaceRoot, p)
+	saveIndexStatus(workspaceRoot, &cp)
 }
 
 func (s *progressStore) fail(workspaceID, workspaceRoot string, now time.Time, errMsg string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	p, ok := s.jobs[workspaceID]
 	if !ok {
+		s.mu.Unlock()
 		return
 	}
 	p.State = "failed"
 	p.Error = errMsg
 	p.UpdatedAt = now
+
+	cp := *p
+	if p.Languages != nil {
+		cp.Languages = make(map[string]IndexLanguageProgress, len(p.Languages))
+		for k, v := range p.Languages {
+			cp.Languages[k] = v
+		}
+	}
+	if p.CompletedAt != nil {
+		t := *p.CompletedAt
+		cp.CompletedAt = &t
+	}
+	s.mu.Unlock()
+
 	// Persist failed state too so we know something went wrong.
-	saveIndexStatus(workspaceRoot, p)
+	saveIndexStatus(workspaceRoot, &cp)
 }
 
 // saveIndexStatus writes the IndexProgress snapshot to {workspaceRoot}/.ragcode/index_status.json.

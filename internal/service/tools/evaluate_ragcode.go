@@ -114,14 +114,22 @@ func (t *EvaluateRagCodeTool) Execute(ctx context.Context, args map[string]inter
 		b.WriteString(fmt.Sprintf("- **Models**: Chat=%s, Embed=%s\n", t.cfg.LLM.OllamaModel, t.cfg.LLM.OllamaEmbed))
 	}
 
+	data := map[string]interface{}{
+		"workspace_root":   workspaceRoot,
+		"detection_source": source,
+		"health_status":    healthStatus,
+	}
+	if t.cfg != nil {
+		data["models"] = map[string]string{
+			"chat":  t.cfg.LLM.OllamaModel,
+			"embed": t.cfg.LLM.OllamaEmbed,
+		}
+	}
+
 	response := ToolResponse{
 		Status:  "success",
 		Message: b.String(),
-		Data: map[string]interface{}{
-			"workspace_root":   workspaceRoot,
-			"detection_source": source,
-			"health_status":    healthStatus,
-		},
+		Data:    data,
 		Context: ContextMetadata{
 			WorkspaceRoot:   workspaceRoot,
 			DetectionSource: source,

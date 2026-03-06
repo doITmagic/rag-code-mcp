@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os/exec"
@@ -62,10 +63,31 @@ func QueryMasterVersion(port int) string {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		return ""
+	}
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ""
+	}
+
 	// Parse the response — may be direct JSON or SSE-wrapped.
 	var result map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return ""
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
+		// Not direct JSON — try SSE extraction if Content-Type matches.
+		contentType := resp.Header.Get("Content-Type")
+		if strings.HasPrefix(contentType, "text/event-stream") {
+			payload := extractSSEPayload(bodyBytes)
+			if payload == nil {
+				return ""
+			}
+			if err := json.Unmarshal(payload, &result); err != nil {
+				return ""
+			}
+		} else {
+			return ""
+		}
 	}
 
 	// Navigate: result.serverInfo.version

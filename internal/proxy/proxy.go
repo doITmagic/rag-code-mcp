@@ -112,6 +112,9 @@ func forwardToMaster(client *http.Client, url string, message []byte) ([]byte, e
 // only well-formed JSON is ever forwarded to the IDE.
 func extractSSEPayload(body []byte) json.RawMessage {
 	scanner := bufio.NewScanner(bytes.NewReader(body))
+	// Expand scanner buffer to 10MB to avoid dropping large JSON-RPC SSE payloads
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+
 	var lastValid json.RawMessage
 	var dataLines []string
 
@@ -138,6 +141,10 @@ func extractSSEPayload(body []byte) json.RawMessage {
 			payload := strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))
 			dataLines = append(dataLines, payload)
 		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		logger.Instance.Error("Proxy SSE extraction scan error: %v", err)
 	}
 
 	// Handle unterminated last event.

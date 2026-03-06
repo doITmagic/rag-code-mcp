@@ -38,7 +38,7 @@ import (
 )
 
 var (
-	Version = "2.1.52"
+	Version = "2.1.53"
 	Commit  = "none"
 	Date    = "24.10.2025"
 )
@@ -89,17 +89,15 @@ func main() {
 		if masterVersion != "" {
 			logger.Instance.Info("Detected existing master on port %d (version=%s, our version=%s)", *httpPort, masterVersion, Version)
 		} else {
-			logger.Instance.Info("Detected occupied port %d but could not query master version", *httpPort)
+			log.Fatalf("Port %d is occupied but could not verify it corresponds to a rag-code-mcp master. Failing fast to avoid proxying to an unknown service.", *httpPort)
 		}
 
 		// Compare versions using semver: take over only if strictly newer.
 		takeOver := false
-		if masterVersion != "" {
-			current, errC := semver.NewVersion(Version)
-			master, errM := semver.NewVersion(masterVersion)
-			if errC == nil && errM == nil && current.GreaterThan(master) {
-				takeOver = true
-			}
+		current, errC := semver.NewVersion(Version)
+		master, errM := semver.NewVersion(masterVersion)
+		if errC == nil && errM == nil && current.GreaterThan(master) {
+			takeOver = true
 		}
 
 		if takeOver {

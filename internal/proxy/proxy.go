@@ -19,9 +19,8 @@ import (
 // as HTTP POST requests to the master instance on the given port,
 // and writes the responses back to stdout.
 //
-// This function blocks until stdin is closed (EOF) or the context is cancelled.
-// It never returns under normal operation — the process exits when the IDE
-// closes the stdin pipe.
+// This function blocks while stdin is open and readable, and returns when
+// stdin is closed (EOF) or a read error occurs (e.g. scanner error).
 func RunProxyMode(port int) {
 	logger.Instance.Info("Entering PROXY mode → forwarding Stdio to http://127.0.0.1:%d/mcp", port)
 

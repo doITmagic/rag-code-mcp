@@ -416,26 +416,28 @@ func (p *TreeSitterParser) extractDocstringFromBody(fnNode *gotreesitter.Node, s
 		if child.Type(lang) != "block" {
 			continue
 		}
-		for j := 0; j < child.ChildCount(); j++ {
-			stmt := child.Child(j)
-			if stmt.Type(lang) != "expression_statement" {
-				break
-			}
-			for k := 0; k < stmt.ChildCount(); k++ {
-				expr := stmt.Child(k)
-				if expr.Type(lang) == "string" {
-					text := expr.Text(source)
-					// Strip triple quotes
-					for _, q := range []string{`"""`, `'''`} {
-						text = strings.TrimPrefix(text, q)
-						text = strings.TrimSuffix(text, q)
-					}
-					text = strings.Trim(text, `"'`)
-					return strings.TrimSpace(text)
-				}
-			}
-			break
+		// Found the block — check if first statement is a docstring
+		if child.ChildCount() == 0 {
+			return ""
 		}
+		stmt := child.Child(0)
+		if stmt.Type(lang) != "expression_statement" {
+			return ""
+		}
+		for k := 0; k < stmt.ChildCount(); k++ {
+			expr := stmt.Child(k)
+			if expr.Type(lang) == "string" {
+				text := expr.Text(source)
+				// Strip triple quotes
+				for _, q := range []string{`"""`, `'''`} {
+					text = strings.TrimPrefix(text, q)
+					text = strings.TrimSuffix(text, q)
+				}
+				text = strings.Trim(text, `"'`)
+				return strings.TrimSpace(text)
+			}
+		}
+		return ""
 	}
 	return ""
 }

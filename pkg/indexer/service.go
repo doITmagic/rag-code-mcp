@@ -310,25 +310,29 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 				n := int(doneFiles.Add(1))
 				pct := 0
 				if totalFiles > 0 {
-						pct = n * 100 / totalFiles
-					}
-					logger.Instance.Info("📄 [%d/%d] %s (%s, %d%%)", n, totalFiles, filepath.Base(path), opts.Language, pct)
-					if opts.Progress != nil {
-						opts.Progress(n, totalFiles)
-					}
-					symCount, indexErr := s.IndexFile(ctx, collection, path, state)
-					// Release slot immediately after processing
-					globalIndexSemaphore <- struct{}{}
-
-					if indexErr != nil {
-						logger.Instance.Error("Failed to index %s: %v", path, indexErr)
-						errMu.Lock()
-						fileErrs = append(fileErrs, fmt.Sprintf("%s: %v", path, indexErr))
-						errMu.Unlock()
-					} else {
-						logger.Instance.Info("  → %d symbol(s) indexed from %s", symCount, filepath.Base(path))
-					}
+					pct = n * 100 / totalFiles
 				}
+
+				state.SetLastPercent(pct) // <-- SALVARE PROGRES!
+
+				logger.Instance.Info("📄 [%d/%d] %s (%s, %d%%)", n, totalFiles, filepath.Base(path), opts.Language, pct)
+				if opts.Progress != nil {
+					opts.Progress(n, totalFiles)
+				}
+
+				symCount, indexErr := s.IndexFile(ctx, collection, path, state)
+				// Release slot immediately after processing
+				globalIndexSemaphore <- struct{}{}
+
+				if indexErr != nil {
+					logger.Instance.Error("Failed to index %s: %v", path, indexErr)
+					errMu.Lock()
+					fileErrs = append(fileErrs, fmt.Sprintf("%s: %v", path, indexErr))
+					errMu.Unlock()
+				} else {
+					logger.Instance.Info("  → %d symbol(s) indexed from %s", symCount, filepath.Base(path))
+				}
+			}
 		}()
 	}
 

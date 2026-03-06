@@ -19,6 +19,7 @@ import (
 	"github.com/doITmagic/rag-code-mcp/internal/config"
 	"github.com/doITmagic/rag-code-mcp/internal/healthcheck"
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
+	"github.com/doITmagic/rag-code-mcp/internal/proxy"
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
 	"github.com/doITmagic/rag-code-mcp/internal/service/search"
 	"github.com/doITmagic/rag-code-mcp/internal/service/tools"
@@ -37,7 +38,7 @@ import (
 )
 
 var (
-	Version = "2.1.50"
+	Version = "2.1.53"
 	Commit  = "none"
 	Date    = "24.10.2025"
 )
@@ -73,6 +74,50 @@ func main() {
 	if *versionFlag {
 		fmt.Printf("RagCode MCP  version=%s  commit=%s  date=%s\n", Version, Commit, Date)
 		os.Exit(0)
+	}
+
+	// ── Single-instance enforcement ──────────────────────────────────────
+	// If the HTTP port is already occupied by another rag-code-mcp instance,
+	// we decide our role based on version comparison:
+	//   • Our version is newer  → kill the old master, become the new master.
+	//   • Our version is same/older → enter lightweight proxy mode (Stdio↔HTTP).
+	//
+	// This ensures only ONE heavy process (Qdrant, Ollama, indexer) runs at
+	// any time, while multiple IDEs can still use Stdio transport seamlessly.
+	if *httpPort > 0 && proxy.PortIsOccupied(*httpPort) {
+		masterVersion := proxy.QueryMasterVersion(*httpPort)
+		if masterVersion != "" {
+			logger.Instance.Info("Detected existing master on port %d (version=%s, our version=%s)", *httpPort, masterVersion, Version)
+		} else {
+			log.Fatalf("Port %d is occupied but could not verify it corresponds to a rag-code-mcp master. Failing fast to avoid proxying to an unknown service.", *httpPort)
+		}
+
+		// Compare versions using semver: take over only if strictly newer.
+		takeOver := false
+		current, errC := semver.NewVersion(Version)
+		master, errM := semver.NewVersion(masterVersion)
+		if errC == nil && errM == nil && current.GreaterThan(master) {
+			takeOver = true
+		}
+
+		if takeOver {
+			logger.Instance.Info("Our version %s > master %s → taking over as new master", Version, masterVersion)
+			proxy.KillProcessOnPort(*httpPort)
+			// Verify the port is actually free before proceeding as master.
+			// If kill failed (missing lsof, permissions, stubborn process), the HTTP
+			// server would fail to bind silently. Instead, fall back to proxy mode.
+			if proxy.PortIsOccupied(*httpPort) {
+				logger.Instance.Warn("Port %d still occupied after kill attempt — falling back to proxy mode", *httpPort)
+				proxy.RunProxyMode(*httpPort)
+				return
+			}
+			// Fall through to normal master startup below.
+		} else {
+			// Enter proxy mode — no heavy initialization.
+			logger.Instance.Info("Entering proxy mode (master version=%s, our version=%s)", masterVersion, Version)
+			proxy.RunProxyMode(*httpPort)
+			return
+		}
 	}
 
 	// Config — resolve bare filenames (e.g. "config.yaml") relative to the

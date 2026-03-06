@@ -236,3 +236,23 @@ func TestHybridSearchCorrectness(t *testing.T) {
 		t.Errorf("expected doc1 to be second, got %s", results[1].Point.ID)
 	}
 }
+
+// TestHybridSearchZeroLimit verifies that a limit of zero (or less) returns instantly
+func TestHybridSearchZeroLimit(t *testing.T) {
+	emb := &mockEmbedder{}
+	store := &mockVectorStore{}
+	svc := NewService(emb, store)
+
+	results, err := svc.HybridSearch(context.Background(), "col", "test logic", 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(results) != 0 {
+		t.Fatalf("expected 0 results, got %d", len(results))
+	}
+
+	if store.searchCodeOnlyCalls != 0 {
+		t.Fatalf("expected 0 search calls, got %d", store.searchCodeOnlyCalls)
+	}
+}

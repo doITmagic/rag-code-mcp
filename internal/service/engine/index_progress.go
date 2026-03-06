@@ -53,7 +53,7 @@ func (s *progressStore) get(workspaceID string, workspaceRoot string) *IndexProg
 		}
 		return &cp
 	}
-	// Not in memory (e.g. after restart) — try loading from disc.
+	// Not in memory (e.g. after restart) — try loading from disk.
 	if workspaceRoot != "" {
 		if p := loadIndexStatus(workspaceRoot); p != nil && p.WorkspaceID == workspaceID {
 			s.jobs[workspaceID] = p // cache in memory for subsequent calls
@@ -130,7 +130,7 @@ func (s *progressStore) complete(workspaceID, workspaceRoot string, now time.Tim
 	p.State = "completed"
 	p.UpdatedAt = now
 	p.CompletedAt = &now
-	// Persist to disc so index_age survives process restarts.
+	// Persist to disk so index_age survives process restarts.
 	saveIndexStatus(workspaceRoot, p)
 }
 

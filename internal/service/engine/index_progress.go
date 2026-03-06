@@ -51,6 +51,10 @@ func (s *progressStore) get(workspaceID string, workspaceRoot string) *IndexProg
 				cp.Languages[k] = v
 			}
 		}
+		if p.CompletedAt != nil {
+			t := *p.CompletedAt
+			cp.CompletedAt = &t
+		}
 		return &cp
 	}
 	// Not in memory (e.g. after restart) — try loading from disk.
@@ -63,6 +67,10 @@ func (s *progressStore) get(workspaceID string, workspaceRoot string) *IndexProg
 				for k, v := range p.Languages {
 					cp.Languages[k] = v
 				}
+			}
+			if p.CompletedAt != nil {
+				t := *p.CompletedAt
+				cp.CompletedAt = &t
 			}
 			return &cp
 		}

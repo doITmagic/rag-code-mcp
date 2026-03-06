@@ -104,7 +104,6 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 			}
 			if idx != nil {
 				resp.Status = "indexing_in_progress"
-				resp.Data = map[string]any{"indexing": idx}
 			}
 			return resp.JSON()
 		}
@@ -231,7 +230,22 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 		if u.Snippet != "" {
 			// Find language for code block wrapping based on file extension
 			lang := internalutil.LanguageFromPath(u.FilePath)
-			response.WriteString(fmt.Sprintf("\n```%s\n%s\n```\n\n", lang, u.Snippet))
+
+			// Calculate max backticks to create a safe fence
+			maxBackticks := 2 // Minimum 3 backticks needed (max+1)
+			currentBackticks := 0
+			for i := 0; i < len(u.Snippet); i++ {
+				if u.Snippet[i] == '`' {
+					currentBackticks++
+					if currentBackticks > maxBackticks {
+						maxBackticks = currentBackticks
+					}
+				} else {
+					currentBackticks = 0
+				}
+			}
+			fence := strings.Repeat("`", maxBackticks+1)
+			response.WriteString(fmt.Sprintf("\n%s%s\n%s\n%s\n\n", fence, lang, u.Snippet, fence))
 		}
 	}
 

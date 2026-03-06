@@ -371,7 +371,8 @@ func TestIndexFile_EmbedHang_Timeout(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- svc.IndexFile(ctx, "timeout-test", goFile, state)
+		_, err := svc.IndexFile(ctx, "timeout-test", goFile, state)
+		done <- err
 	}()
 
 	select {

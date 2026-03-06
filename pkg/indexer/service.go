@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/healthcheck"
+	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/doITmagic/rag-code-mcp/pkg/llm"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
@@ -78,10 +79,10 @@ var globalIndexSemaphore = func() chan struct{} {
 			n = ramWorkers
 		}
 
-		log.Printf("[INFO] 🧠 Detected %dGB RAM. Dynamic indexing concurrency set to %d workers.", memGB, n)
+		logger.Instance.Info("🧠 Detected %dGB RAM. Dynamic indexing concurrency set to %d workers.", memGB, n)
 	} else {
 		// Fallback for non-Linux or failures, strictly safe
-		log.Printf("[WARN] 🧠 Could not detect system RAM. Defaulting to safe concurrency limit of 1 worker.")
+		logger.Instance.Warn("🧠 Could not detect system RAM. Defaulting to safe concurrency limit of 1 worker.")
 		n = 1
 	}
 
@@ -127,12 +128,12 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 	statePath := filepath.Join(root, ".ragcode", "state.json")
 	state, err := LoadState(statePath)
 	if err != nil {
-		log.Printf("[WARN] Failed to load index state for %s: %v", root, err)
+		logger.Instance.Warn("Failed to load index state for %s: %v", root, err)
 		state = NewState()
 	}
 
 	if opts.Recreate {
-		log.Printf("[INFO] Recreate flag set, ignoring existing state for %s", root)
+		logger.Instance.Info("Recreate flag set, ignoring existing state for %s", root)
 		state = NewState()
 	}
 
@@ -172,66 +173,61 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 		return fmt.Errorf("failed to scan workspace: %w", err)
 	}
 
-	// 2. Separate markdown docs from code files
-	var changedCodeFiles []string
-	var changedMarkdownFiles []string
+	// 2. Filter files by language and supported parser
+	var filteredFiles []string
 	for _, p := range changedFiles {
-		if IsMarkdownFile(p) {
-			changedMarkdownFiles = append(changedMarkdownFiles, p)
-		} else {
-			changedCodeFiles = append(changedCodeFiles, p)
+		a := parser.GetByFile(p)
+		if a == nil {
+			continue // Unrecognized file type
 		}
-	}
-
-	// 3. Filter code files by language if specified
-	if opts.Language != "" {
-		var filtered []string
-		for _, p := range changedCodeFiles {
-			if a := parser.GetByFile(p); a != nil && a.Name() == opts.Language {
-				filtered = append(filtered, p)
-			}
+		if opts.Language != "" && a.Name() != opts.Language {
+			continue // Does not match requested language layer
 		}
-		changedCodeFiles = filtered
+		filteredFiles = append(filteredFiles, p)
 	}
+	changedFiles = filteredFiles
 
-	if len(changedCodeFiles) == 0 && len(changedMarkdownFiles) == 0 {
-		log.Printf("[INFO] No changes detected in %s (Language: %s)", root, opts.Language)
+	if len(changedFiles) == 0 {
+		logger.Instance.Debug("No changes detected in %s (Language: %s)", root, opts.Language)
 		return nil
 	}
 
 	// 3. Ensure collection exists ONLY if we have files to index
 	if opts.Recreate {
-		log.Printf("[INFO] Dropping collection %s for recreation", collection)
+		logger.Instance.Info("Dropping collection %s for recreation", collection)
 		if err := s.deleteCollectionForRecreate(ctx, collection); err != nil {
+			logger.Instance.Error("Failed to drop collection %s: %v", collection, err)
 			return err
 		}
 	}
 
 	exists, err := s.store.CollectionExists(ctx, collection)
 	if err != nil {
+		logger.Instance.Error("Failed to check collection status for %s: %v", collection, err)
 		return fmt.Errorf("failed to check collection status: %w", err)
 	}
 	if !exists {
-		log.Printf("[INFO] Creating collection %s", collection)
+		logger.Instance.Info("Creating collection %s", collection)
 		// We'll use a dummy embedding to get the dimension
 		dummy, err := s.embedder.Embed(ctx, "test")
 		if err != nil {
+			logger.Instance.Error("Failed to get embedding dimensions for %s: %v", collection, err)
 			return fmt.Errorf("failed to get embedding dimensions: %w", err)
 		}
 		if err := s.store.CreateCollection(ctx, collection, len(dummy)); err != nil {
+			logger.Instance.Error("Failed to create collection %s: %v", collection, err)
 			return fmt.Errorf("failed to create collection: %w", err)
 		}
 	}
 
-	totalFiles := len(changedCodeFiles)
-	totalMarkdown := len(changedMarkdownFiles)
-	log.Printf("[INFO] Indexing %d changed code files + %d markdown files in %s (Language: %s)", totalFiles, totalMarkdown, root, opts.Language)
+	totalFiles := len(changedFiles)
+	logger.Instance.Info("Indexing %d file(s) in %s (Language: %s)", totalFiles, root, opts.Language)
 
 	// Ensure the embedding model is loaded in Ollama's memory before starting.
 	// If another program evicted it, this will reload it (with up to 2min timeout).
 	if ollamaProvider, ok := unwrapOllamaProvider(s.embedder); ok {
 		if err := ollamaProvider.EnsureLoaded(ctx); err != nil {
-			log.Printf("[ERROR] Cannot ensure embedding model is loaded: %v", err)
+			logger.Instance.Error("Cannot ensure embedding model is loaded: %v", err)
 			return fmt.Errorf("embedding model not available: %w", err)
 		}
 	}
@@ -241,7 +237,7 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 	numFileWorkers := cap(globalIndexSemaphore)
 
 	filePaths := make(chan string, totalFiles)
-	for _, p := range changedCodeFiles {
+	for _, p := range changedFiles {
 		filePaths <- p
 	}
 	close(filePaths)
@@ -265,7 +261,7 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 			select {
 			case <-saveTicker.C:
 				if err := state.Save(statePath); err != nil {
-					log.Printf("[WARN] Periodic state save failed for %s: %v", root, err)
+					logger.Instance.Warn("Periodic state save failed for %s: %v", root, err)
 				}
 			case <-stallTicker.C:
 				current := doneFiles.Load()
@@ -278,14 +274,14 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 					stallCount++
 					semLen := len(globalIndexSemaphore)
 					semCap := cap(globalIndexSemaphore)
-					log.Printf("[WARN] ⚠️ Indexing stall detected for %s/%s: %d/%d files total. No successful embedding activity for %ds. Semaphore: %d/%d slots available. Stall count: %d",
+					logger.Instance.Warn("⚠️ Indexing stall detected for %s/%s: %d/%d files. No embed activity for %ds. Semaphore: %d/%d. Stall count: %d",
 						opts.Language, root, current, totalFiles, elapsedSinceActivity, semLen, semCap, stallCount)
 					if stallCount >= 2 {
 						// Check if Ollama is still alive
 						if err := healthcheck.PingOllama(""); err != nil {
-							log.Printf("[ERROR] 🔴 Ollama HTTP is unresponsive (%v). Forcing restart...", err)
+							logger.Instance.Error("🔴 Ollama HTTP is unresponsive (%v). Forcing restart...", err)
 						} else {
-							log.Printf("[ERROR] 🔴 Ollama HTTP ping is OK, but embedding goroutines are DEADLOCKED. Forcing restart to break stall!")
+							logger.Instance.Error("🔴 Ollama HTTP ping is OK but embedding goroutines are DEADLOCKED. Forcing restart!")
 						}
 						// Always attempt strict restart to kill stuck runners
 						attemptOllamaRestart()
@@ -293,7 +289,7 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 					if stallCount >= 3 {
 						buf := make([]byte, 8192)
 						n := runtime.Stack(buf, true)
-						log.Printf("[ERROR] 🔴 Deadlock confirmed in indexing goroutines for %s. Goroutine dump to follow:\n%s", root, string(buf[:n]))
+						logger.Instance.Error("🔴 Deadlock confirmed in indexing goroutines for %s. Goroutine dump:\n%s", root, string(buf[:n]))
 					}
 				} else {
 					stallCount = 0
@@ -314,54 +310,39 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 				n := int(doneFiles.Add(1))
 				pct := 0
 				if totalFiles > 0 {
-					pct = n * 100 / totalFiles
-				}
-				fmt.Fprintf(os.Stderr, "\r[INDEX] %s: %d%% (%d/%d files)   ", opts.Language, pct, n, totalFiles)
-				if opts.Progress != nil {
-					opts.Progress(n, totalFiles)
-				}
-				indexErr := s.IndexFile(ctx, collection, path, state)
-				// Release slot immediately after processing
-				globalIndexSemaphore <- struct{}{}
+						pct = n * 100 / totalFiles
+					}
+					logger.Instance.Info("📄 [%d/%d] %s (%s, %d%%)", n, totalFiles, filepath.Base(path), opts.Language, pct)
+					if opts.Progress != nil {
+						opts.Progress(n, totalFiles)
+					}
+					symCount, indexErr := s.IndexFile(ctx, collection, path, state)
+					// Release slot immediately after processing
+					globalIndexSemaphore <- struct{}{}
 
-				if indexErr != nil {
-					log.Printf("[ERROR] Failed to index %s: %v", path, indexErr)
-					errMu.Lock()
-					fileErrs = append(fileErrs, fmt.Sprintf("%s: %v", path, indexErr))
-					errMu.Unlock()
+					if indexErr != nil {
+						logger.Instance.Error("Failed to index %s: %v", path, indexErr)
+						errMu.Lock()
+						fileErrs = append(fileErrs, fmt.Sprintf("%s: %v", path, indexErr))
+						errMu.Unlock()
+					} else {
+						logger.Instance.Info("  → %d symbol(s) indexed from %s", symCount, filepath.Base(path))
+					}
 				}
-			}
 		}()
 	}
 
 	fileWg.Wait()
 	close(saveStop) // Stop the periodic save goroutine
-	fmt.Fprintf(os.Stderr, "\r[INDEX] %s: done (%d files indexed)            \n", opts.Language, totalFiles)
+	logger.Instance.Info("[INDEX] %s done: %d file(s) indexed", opts.Language, totalFiles)
 
 	if len(fileErrs) > 0 {
-		log.Printf("[WARN] %d file(s) failed to index in %s", len(fileErrs), root)
+		logger.Instance.Warn("%d file(s) failed to index in %s", len(fileErrs), root)
 	}
 
-	// 5. Index markdown documentation files
-	if len(changedMarkdownFiles) > 0 {
-		mdCfg := DefaultMarkdownConfig()
-		mdChunks, err := s.IndexMarkdownFiles(ctx, collection, changedMarkdownFiles, mdCfg)
-		if err != nil {
-			log.Printf("[WARN] Markdown indexing had errors: %v", err)
-		}
-		if mdChunks > 0 {
-			// Update state for markdown files
-			for _, p := range changedMarkdownFiles {
-				if info, err := os.Stat(p); err == nil {
-					state.UpdateFile(p, info)
-				}
-			}
-		}
-	}
-
-	// 6. Save state
+	// 5. Save state
 	if err := state.Save(statePath); err != nil {
-		log.Printf("[WARN] Failed to save index state for %s: %v", root, err)
+		logger.Instance.Warn("Failed to save index state for %s: %v", root, err)
 	}
 
 	return nil
@@ -371,44 +352,44 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 // Attempts: 1) systemctl restart ollama, 2) fallback to `ollama serve` in background.
 // After restart, waits up to 15s for Ollama to become responsive again.
 func attemptOllamaRestart() {
-	log.Printf("[INFO] ⚙️ Executing forced Ollama auto-recovery sequence...")
+	logger.Instance.Info("⚙️ Executing forced Ollama auto-recovery sequence...")
 
 	// Strategy 1: systemctl (works if Ollama is managed as a systemd service)
 	out, err := exec.Command("systemctl", "restart", "ollama").CombinedOutput()
 	if err != nil {
-		log.Printf("[WARN] ⚠️ 'systemctl restart ollama' failed: %v. Output: %s", err, strings.TrimSpace(string(out)))
+		logger.Instance.Warn("⚠️ 'systemctl restart ollama' failed: %v. Output: %s", err, strings.TrimSpace(string(out)))
 
 		// Strategy 2: kill any existing ollama processes and start fresh
-		log.Printf("[INFO] 🔪 forcefully killing any existing 'ollama serve' processes via pkill...")
+		logger.Instance.Info("🔪 Forcefully killing any existing 'ollama serve' processes via pkill...")
 		_ = exec.Command("pkill", "-9", "-f", "ollama serve").Run()
 		time.Sleep(1 * time.Second)
 
-		log.Printf("[INFO] 🚀 Starting standalone 'ollama serve' in background...")
+		logger.Instance.Info("🚀 Starting standalone 'ollama serve' in background...")
 		cmd := exec.Command("ollama", "serve")
 		cmd.Stdout = nil
 		cmd.Stderr = nil
 		if err := cmd.Start(); err != nil {
-			log.Printf("[ERROR] ❌ Failed to start ollama serve: %v", err)
+			logger.Instance.Error("❌ Failed to start ollama serve: %v", err)
 			return
 		}
-		log.Printf("[INFO] ✅ Started 'ollama serve' successfully (PID %d)", cmd.Process.Pid)
+		logger.Instance.Info("✅ Started 'ollama serve' successfully (PID %d)", cmd.Process.Pid)
 		// Don't wait — it runs as a daemon
 		go func() { _ = cmd.Wait() }()
 	} else {
-		log.Printf("[INFO] ✅ 'systemctl restart ollama' executed successfully.")
+		logger.Instance.Info("✅ 'systemctl restart ollama' executed successfully.")
 	}
 
 	// Wait for Ollama to come back up
-	log.Printf("[INFO] ⏳ Waiting for Ollama HTTP heartbeat to return (max 15s)...")
+	logger.Instance.Info("⏳ Waiting for Ollama HTTP heartbeat to return (max 15s)...")
 	for i := 0; i < 5; i++ {
 		time.Sleep(3 * time.Second)
 		if err := healthcheck.PingOllama(""); err == nil {
-			log.Printf("[INFO] 🎉 Ollama HTTP API is FULLY ONLINE after recovery! Resuming indexing.")
+			logger.Instance.Info("🎉 Ollama HTTP API is FULLY ONLINE after recovery! Resuming indexing.")
 			return
 		}
-		log.Printf("[WARN] ⏱️ Ollama not yet ready... (%d/5 attempts)", i+1)
+		logger.Instance.Warn("⏱️ Ollama not yet ready... (%d/5 attempts)", i+1)
 	}
-	log.Printf("[ERROR] 💀 Ollama FATAL: Did not recover after restart limits.")
+	logger.Instance.Error("💀 Ollama FATAL: Did not recover after restart limits.")
 }
 
 func (s *Service) deleteCollectionForRecreate(ctx context.Context, collection string) error {
@@ -444,32 +425,32 @@ func (s *Service) deleteCollectionForRecreate(ctx context.Context, collection st
 	}
 }
 
-func (s *Service) IndexFile(ctx context.Context, collection, path string, state *State) error {
+func (s *Service) IndexFile(ctx context.Context, collection, path string, state *State) (int, error) {
 	// We no longer apply a hard 2-minute timeout here.
 	// Files with hundreds of symbols processed on a low-RAM or saturated parallel system
 	// naturally take >2m. The individual embed requests have 30s timeouts which is sufficient protection.
 	a := parser.GetByFile(path)
 	if a == nil {
-		return nil // Unsupported file type
+		logger.Instance.Debug("Skipping unsupported file type: %s", path)
+		return 0, nil
 	}
 
 	res, err := a.Analyze(ctx, path)
 	if err != nil {
-		return fmt.Errorf("analyze failed: %w", err)
+		logger.Instance.Error("Analyze failed for %s: %v", path, err)
+		return 0, fmt.Errorf("analyze failed: %w", err)
 	}
 
 	// Remove old points for this file if we are updating
 	if err := s.store.DeleteByFilter(ctx, collection, "file_path", path); err != nil {
-		log.Printf("[WARN] Failed to delete old points for %s: %v", path, err)
+		logger.Instance.Warn("Failed to delete old points for %s: %v", path, err)
 	}
 
-	if len(res.Symbols) == 0 {
-		return nil
-	}
-
-	// Index new symbols
-	if err := s.IndexItems(ctx, collection, res.Symbols); err != nil {
-		return err
+	if len(res.Symbols) > 0 {
+		// Index new symbols
+		if err := s.IndexItems(ctx, collection, res.Symbols); err != nil {
+			return 0, err
+		}
 	}
 
 	// Update state
@@ -477,7 +458,7 @@ func (s *Service) IndexFile(ctx context.Context, collection, path string, state 
 		state.UpdateFile(path, info)
 	}
 
-	return nil
+	return len(res.Symbols), nil
 }
 
 // circuitBreakerThreshold is the number of consecutive embed failures that
@@ -511,17 +492,17 @@ func unwrapOllamaProvider(p llm.Provider) (*llm.OllamaLLMProvider, bool) {
 // If not, it attempts a restart and model reload. Returns an error only if recovery fails.
 func (s *Service) ensureOllamaAlive() error {
 	if err := healthcheck.PingOllama(""); err != nil {
-		log.Printf("[WARN] 🔌 Circuit breaker: Ollama is unresponsive, attempting restart...")
+		logger.Instance.Warn("🔌 Circuit breaker: Ollama is unresponsive, attempting restart...")
 		attemptOllamaRestart()
 
 		// Wait for recovery with short polling
 		for i := 0; i < 10; i++ {
 			time.Sleep(3 * time.Second)
 			if err := healthcheck.PingOllama(""); err == nil {
-				log.Printf("[INFO] ✅ Circuit breaker: Ollama recovered after restart")
+				logger.Instance.Info("✅ Circuit breaker: Ollama recovered after restart")
 				break
 			}
-			log.Printf("[WARN] Circuit breaker: waiting for Ollama... (%d/10)", i+1)
+			logger.Instance.Warn("Circuit breaker: waiting for Ollama... (%d/10)", i+1)
 			if i == 9 {
 				return fmt.Errorf("Ollama did not recover after restart (waited 30s)")
 			}
@@ -570,9 +551,9 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 			for sym := range jobs {
 				// Circuit breaker: if we've had consecutive failures, check Ollama before retrying
 				if consecutiveFailures >= circuitBreakerThreshold {
-					log.Printf("[WARN] 🔌 Circuit breaker tripped after %d consecutive embed failures — checking Ollama health", consecutiveFailures)
+					logger.Instance.Warn("🔌 Circuit breaker tripped after %d consecutive embed failures — checking Ollama health", consecutiveFailures)
 					if err := s.ensureOllamaAlive(); err != nil {
-						log.Printf("[ERROR] 🔴 Circuit breaker: Ollama unrecoverable: %v — aborting remaining embeds", err)
+						logger.Instance.Error("🔴 Circuit breaker: Ollama unrecoverable: %v — aborting remaining embeds", err)
 						results <- result{err: fmt.Errorf("ollama unrecoverable after %d consecutive failures: %w", consecutiveFailures, err)}
 						// Drain remaining jobs so we don't deadlock
 						for range jobs {
@@ -596,7 +577,7 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 
 				if err != nil {
 					consecutiveFailures++
-					log.Printf("[WARN] Embed failed for %s (consecutive failures: %d): %v", sym.Name, consecutiveFailures, err)
+					logger.Instance.Warn("Embed failed for %s (consecutive failures: %d): %v", sym.Name, consecutiveFailures, err)
 					results <- result{err: fmt.Errorf("failed to embed %s: %w", sym.Name, err)}
 					continue
 				}
@@ -664,7 +645,7 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 		}
 	}
 
-	log.Printf("[INFO] Indexed %d symbols into %s", len(allPoints), collection)
+	logger.Instance.Debug("Indexed %d symbols into %s", len(allPoints), collection)
 	return nil
 }
 

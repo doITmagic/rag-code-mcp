@@ -698,8 +698,8 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) er
 	collection := wctx.CollectionName(lang)
 
 	for _, p := range files {
-		if err := e.indexer.IndexFile(ctx, collection, p, state); err != nil {
-			log.Printf("[ERROR] Failed to index %s: %v", p, err)
+		if _, indexErr := e.indexer.IndexFile(ctx, collection, p, state); indexErr != nil {
+			log.Printf("[ERROR] Failed to index %s: %v", p, indexErr)
 		}
 	}
 

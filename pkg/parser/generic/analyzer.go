@@ -14,7 +14,7 @@ func init() {
 	// Register for file types that don't have specialized AST parsers.
 	// NOTE: .ts, .jsx, .tsx, .vue are intentionally excluded — they are
 	// handled by the dedicated javascript package (pkg/parser/javascript).
-	exts := []string{".css", ".scss", ".sql", ".sh", ".bash", ".svelte", ".yaml", ".yml", ".json"}
+	exts := []string{".txt", ".csv", ".log", ".env", ".gitignore", ".dockerignore", ".bash"}
 	pkgParser.Register(NewAnalyzer("generic", exts))
 }
 

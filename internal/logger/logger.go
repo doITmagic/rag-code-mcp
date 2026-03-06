@@ -13,18 +13,15 @@ import (
 	"github.com/doITmagic/rag-code-mcp/internal/utils"
 )
 
-// SyncWriter wraps an *os.File and calls Sync() after every Write,
-// ensuring log entries are flushed to disk immediately (no buffering).
+// SyncWriter wraps an *os.File and forwards writes directly to it.
+// It relies on OS buffering and file close/rotation for flushing to disk,
+// rather than calling Sync on every write (which is expensive under high volume).
 type SyncWriter struct {
 	File *os.File
 }
 
 func (sw SyncWriter) Write(p []byte) (n int, err error) {
-	n, err = sw.File.Write(p)
-	if err == nil {
-		_ = sw.File.Sync()
-	}
-	return
+	return sw.File.Write(p)
 }
 
 // SimpleLogger provides basic logging with file rotation and levels.
@@ -218,7 +215,8 @@ func InitLoggerFromEnv() {
 	})
 	Instance.slogger = slog.New(handler)
 
-	// Ensure stdlib log messages flow into slog as well
+	// Route slog as default so any library using slog gets the same handler.
+	// Note: stdlib log.Print* calls are NOT automatically routed through slog.
 	slog.SetDefault(Instance.slogger)
 
 	// STARTING SESSION mark
@@ -244,46 +242,103 @@ func RotateLogFile(path string, maxSizeMB int) {
 	// Log rotation needed
 	fmt.Fprintf(os.Stderr, "[INFO] Log file %s exceeds %dMB (%d bytes). Rotating...\n", path, maxSizeMB, info.Size())
 
-	// Read file
-	content, err := os.ReadFile(path)
+	// Stream-based rotation: copy tail to temp file, then replace original.
+	// Avoids reading entire log into memory.
+	fileSize := info.Size()
+	cutOffset := fileSize / 10
+	if cutOffset == 0 {
+		return
+	}
+
+	f, err := os.Open(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[WARN] Failed to read log file for rotation: %v\n", err)
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to open log file for rotation: %v\n", err)
+		return
+	}
+	defer f.Close()
+
+	// Seek past cutoff and find next newline
+	if _, err := f.Seek(cutOffset, io.SeekStart); err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to seek in log file for rotation: %v\n", err)
 		return
 	}
 
-	// Calculate cutoff (remove ~10%)
-	cutSize := len(content) / 10
-	if cutSize == 0 {
-		return
-	}
+	const scanBuf = 4096
+	buf := make([]byte, scanBuf)
+	offset := cutOffset
+	cutoff := int64(-1)
 
-	// Find next newline after cutoff to keep lines intact
-	cutoffIndex := -1
-	for i := cutSize; i < len(content); i++ {
-		if content[i] == '\n' {
-			cutoffIndex = i + 1
+	for {
+		n, readErr := f.Read(buf)
+		if n > 0 {
+			for i := 0; i < n; i++ {
+				if buf[i] == '\n' {
+					cutoff = offset + int64(i) + 1
+					break
+				}
+			}
+			if cutoff != -1 {
+				break
+			}
+			offset += int64(n)
+		}
+		if readErr == io.EOF {
 			break
+		}
+		if readErr != nil {
+			fmt.Fprintf(os.Stderr, "[WARN] Failed to read log file for rotation: %v\n", readErr)
+			return
 		}
 	}
 
-	if cutoffIndex == -1 {
-		cutoffIndex = cutSize
+	if cutoff == -1 {
+		cutoff = cutOffset
 	}
 
-	if cutoffIndex >= len(content) {
+	if cutoff >= fileSize {
 		if err := os.Truncate(path, 0); err != nil {
 			fmt.Fprintf(os.Stderr, "[WARN] Failed to truncate log file: %v\n", err)
 		}
 		return
 	}
 
-	newContent := content[cutoffIndex:]
+	// Copy tail to temp file
+	tmp, err := os.CreateTemp(filepath.Dir(path), "ragcode-logrotate-*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to create temp file for log rotation: %v\n", err)
+		return
+	}
+	tmpName := tmp.Name()
+	defer func() {
+		tmp.Close()
+		_ = os.Remove(tmpName) // best-effort cleanup; harmless if rename succeeded
+	}()
 
-	// Rewrite file
-	if err := os.WriteFile(path, newContent, 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "[WARN] Failed to write rotated log file: %v\n", err)
+	if _, err := f.Seek(cutoff, io.SeekStart); err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to seek in log file for rotation: %v\n", err)
 		return
 	}
 
-	fmt.Fprintf(os.Stderr, "[INFO] Log file rotated. Removed %d bytes.\n", cutoffIndex)
+	if _, err := io.Copy(tmp, f); err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to copy log tail for rotation: %v\n", err)
+		return
+	}
+
+	if err := tmp.Chmod(info.Mode()); err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to set permissions on rotated log file: %v\n", err)
+		return
+	}
+
+	if err := tmp.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to close temp log file: %v\n", err)
+		return
+	}
+
+	// Atomic replace
+	if err := os.Rename(tmpName, path); err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to replace log file during rotation: %v\n", err)
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "[INFO] Log file rotated. Removed %d bytes.\n", cutoff)
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -124,8 +125,8 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 	var usages []UsageResult
 	seenIDs := make(map[string]bool)
 	seenFiles := make(map[string]bool)
-	baselineBytes := 0
-	actualBytes := 0
+	var baselineBytes int64
+	var actualBytes int64
 
 	for _, result := range allResults {
 		if seenIDs[result.Point.ID] {
@@ -159,6 +160,9 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 					if rMap, ok := relItem.(map[string]interface{}); ok {
 						if target, _ := rMap["target_name"].(string); target == symbolName {
 							relType, _ := rMap["type"].(string)
+							if relType == "" {
+								continue
+							}
 							if _, seen := seenRelTypes[relType]; !seen {
 								seenRelTypes[relType] = struct{}{}
 								matchedRelations = append(matchedRelations, relType)
@@ -169,11 +173,15 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 			}
 		}
 
-		actualBytes += len(code)
+		actualBytes += int64(len(code))
+		// Validate file path is within workspace root before stat
 		if filePath != "" && !seenFiles[filePath] {
 			seenFiles[filePath] = true
-			if info, statErr := os.Stat(filePath); statErr == nil {
-				baselineBytes += int(info.Size())
+			clean := filepath.Clean(filePath)
+			if wctx.Root != "" && strings.HasPrefix(clean, filepath.Clean(wctx.Root)+string(filepath.Separator)) {
+				if info, statErr := os.Stat(clean); statErr == nil {
+					baselineBytes += info.Size()
+				}
 			}
 		}
 
@@ -236,7 +244,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 		Context: ContextMetadata{
 			WorkspaceRoot:    wctx.Root,
 			DetectionSource:  wctx.DetectionSource,
-			Telemetry:        telemetry.CalculateSavings(baselineBytes, actualBytes),
+			Telemetry:        telemetry.CalculateSavings(int(baselineBytes), int(actualBytes)),
 			IndexingProgress: BuildIndexingProgress(t.engine, wctx.ID, wctx.Root),
 		},
 	}

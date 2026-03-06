@@ -84,32 +84,50 @@ func forwardToMaster(client *http.Client, url string, message []byte) ([]byte, e
 		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
 	}
 
-	// If response is SSE (text/event-stream), extract the last data payload.
-	contentType := resp.Header.Get("Content-Type")
-	if strings.HasPrefix(contentType, "text/event-stream") {
-		body = extractSSEData(body)
+	// Validate response is well-formed JSON before forwarding to IDE.
+	// Strategy: try json.Unmarshal first (handles application/json).
+	// If it fails and Content-Type is SSE, extract JSON from data: lines.
+	var validated json.RawMessage
+	if json.Unmarshal(body, &validated) == nil {
+		// Body is already valid JSON — use it directly.
+		return validated, nil
 	}
 
-	return body, nil
+	// Not direct JSON — try SSE extraction if Content-Type matches.
+	contentType := resp.Header.Get("Content-Type")
+	if !strings.HasPrefix(contentType, "text/event-stream") {
+		return nil, fmt.Errorf("response is neither valid JSON nor SSE (content-type=%s, %d bytes)", contentType, len(body))
+	}
+
+	extracted := extractSSEPayload(body)
+	if extracted == nil {
+		return nil, fmt.Errorf("failed to extract valid JSON from SSE response (%d bytes)", len(body))
+	}
+	return extracted, nil
 }
 
-// extractSSEData parses SSE-formatted response and returns
-// the last valid JSON data payload.
-func extractSSEData(body []byte) []byte {
-	lines := strings.Split(string(body), "\n")
-	var lastData []byte
+// extractSSEPayload parses SSE-formatted response body and returns
+// the last valid JSON-RPC payload. Returns nil if no valid JSON is found.
+// All extracted data is validated through json.Unmarshal to ensure
+// only well-formed JSON is ever forwarded to the IDE.
+func extractSSEPayload(body []byte) json.RawMessage {
+	scanner := bufio.NewScanner(bytes.NewReader(body))
+	var lastValid json.RawMessage
 	var dataLines []string
 
-	for _, rawLine := range lines {
-		line := strings.TrimRight(rawLine, "\r")
+	for scanner.Scan() {
+		line := scanner.Text()
 		trimmed := strings.TrimSpace(line)
 
 		if trimmed == "" {
-			// End of event — flush accumulated data lines.
+			// End of SSE event — flush accumulated data lines.
 			if len(dataLines) > 0 {
 				combined := strings.Join(dataLines, "\n")
-				if combined != "[DONE]" && json.Valid([]byte(combined)) {
-					lastData = []byte(combined)
+				if combined != "[DONE]" {
+					var msg json.RawMessage
+					if json.Unmarshal([]byte(combined), &msg) == nil {
+						lastValid = msg
+					}
 				}
 				dataLines = dataLines[:0]
 			}
@@ -125,15 +143,15 @@ func extractSSEData(body []byte) []byte {
 	// Handle unterminated last event.
 	if len(dataLines) > 0 {
 		combined := strings.Join(dataLines, "\n")
-		if combined != "[DONE]" && json.Valid([]byte(combined)) {
-			lastData = []byte(combined)
+		if combined != "[DONE]" {
+			var msg json.RawMessage
+			if json.Unmarshal([]byte(combined), &msg) == nil {
+				lastValid = msg
+			}
 		}
 	}
 
-	if lastData != nil {
-		return lastData
-	}
-	return body
+	return lastValid
 }
 
 // writeErrorResponse writes a JSON-RPC error response to the writer,

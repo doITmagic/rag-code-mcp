@@ -51,7 +51,7 @@
           "mode": "0755"
         },
         {
-          "src": "${bin_dir}/sse-client-test",
+          "src": "${bin_dir}/mcp-http-client-test",
           "dst": "/root/mcp-client-test",
           "mode": "0755"
         }

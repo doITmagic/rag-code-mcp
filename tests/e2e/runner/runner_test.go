@@ -43,7 +43,7 @@ func buildBinaries(t *testing.T, repoRoot, binDir string) {
 
 	build("rag-code-install", "./cmd/rag-code-install")
 	build("rag-code-mcp", "./cmd/rag-code-mcp")
-	build("sse-client-test", "./cmd/sse-client-test")
+	build("mcp-http-client-test", "./cmd/mcp-http-client-test")
 }
 
 func TestRunner_CleanDockerScenario_WritesCaptureFiles(t *testing.T) {

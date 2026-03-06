@@ -101,7 +101,7 @@ func TestForwardToMaster_JSONResponse(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(expectedBytes)
+		_, _ = w.Write(expectedBytes)
 	}))
 	defer server.Close()
 
@@ -144,7 +144,7 @@ func TestForwardToMaster_SSEResponse(t *testing.T) {
 func TestForwardToMaster_ServerError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("internal error"))
+		_, _ = w.Write([]byte("internal error"))
 	}))
 	defer server.Close()
 
@@ -162,7 +162,7 @@ func TestForwardToMaster_ServerError(t *testing.T) {
 func TestForwardToMaster_InvalidContentType(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte("this is not json or sse"))
+		_, _ = w.Write([]byte("this is not json or sse"))
 	}))
 	defer server.Close()
 
@@ -231,7 +231,7 @@ func TestPortIsOccupied_OccupiedPort(t *testing.T) {
 	parts := strings.Split(server.URL, ":")
 	portStr := parts[len(parts)-1]
 	var port int
-	fmt.Sscanf(portStr, "%d", &port)
+	_, _ = fmt.Sscanf(portStr, "%d", &port)
 
 	if !PortIsOccupied(port) {
 		t.Errorf("expected port %d to be occupied", port)
@@ -245,7 +245,7 @@ func TestQueryMasterVersion_ValidResponse(t *testing.T) {
 		// Read and validate the incoming request is an initialize call.
 		body, _ := io.ReadAll(r.Body)
 		var req map[string]any
-		json.Unmarshal(body, &req)
+		_ = json.Unmarshal(body, &req)
 
 		if req["method"] != "initialize" {
 			t.Errorf("expected initialize method, got %v", req["method"])
@@ -264,14 +264,14 @@ func TestQueryMasterVersion_ValidResponse(t *testing.T) {
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 
 	parts := strings.Split(server.URL, ":")
 	portStr := parts[len(parts)-1]
 	var port int
-	fmt.Sscanf(portStr, "%d", &port)
+	_, _ = fmt.Sscanf(portStr, "%d", &port)
 
 	version := QueryMasterVersion(port)
 	if version != "2.1.51" {

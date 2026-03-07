@@ -184,6 +184,10 @@ func (f *fakeRegistry) GetActiveWorkspace() (string, error) {
 	return "", nil
 }
 
+func (f *fakeRegistry) FindParentWorkspace(path string) (string, bool) {
+	return "", false
+}
+
 type branchstateAnnotator struct {
 	mgr *branchstate.Manager
 }

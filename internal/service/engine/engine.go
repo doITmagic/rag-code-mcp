@@ -180,6 +180,10 @@ func (e *Engine) DetectFromParams(ctx context.Context, params map[string]interfa
 // If path is empty, it falls back to the last active workspace from the registry.
 // Results are cached with a 5s TTL to avoid redundant resolver invocations.
 func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceContext, error) {
+	// Log incoming detection request for debugging workspace resolution
+	hintFromCtx := transport.GetWorkspaceHint(ctx)
+	logger.Instance.Info("[WS-DETECT] ▶ DetectContext called: path=%q, X-Workspace-Hint=%q", path, hintFromCtx)
+
 	// Normalize cache key
 	cacheKey := strings.TrimSpace(path)
 	if entry, ok := e.detectionCache.LoadAndDelete(cacheKey); ok {
@@ -187,6 +191,7 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 		if time.Now().Before(ce.expiry) {
 			// Re-store valid entry atomically before returning
 			e.detectionCache.Store(cacheKey, ce)
+			logger.Instance.Debug("[WS-DETECT] ◀ Cache hit: root=%s, source=%s", ce.wctx.Root, ce.wctx.DetectionSource)
 			return ce.wctx, nil
 		}
 	}
@@ -195,8 +200,10 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 	source := "explicit_file_path"
 
 	if strings.TrimSpace(path) == "" {
+		logger.Instance.Info("[WS-DETECT] Tier 1 skipped: no explicit path in request params")
+
 		// Tier 2: Try workspace hint from adapter (IDE's CWD injected via X-Workspace-Hint header)
-		if hint := strings.TrimSpace(transport.GetWorkspaceHint(ctx)); hint != "" {
+		if hint := strings.TrimSpace(hintFromCtx); hint != "" {
 			abs, err := filepath.Abs(hint)
 			if err == nil {
 				// Validate the path actually exists on disk before using it
@@ -205,18 +212,27 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 					source = "hint_fallback"
 					// Use hint as cache key so different IDEs don't share the same empty-string entry
 					cacheKey = abs
+					logger.Instance.Info("[WS-DETECT] ✅ Tier 2 matched: using X-Workspace-Hint=%s", abs)
+				} else {
+					logger.Instance.Warn("[WS-DETECT] Tier 2 skipped: hint path does not exist on disk: %s (err: %v)", abs, statErr)
 				}
+			} else {
+				logger.Instance.Warn("[WS-DETECT] Tier 2 skipped: could not resolve hint to abs path: %v", err)
 			}
+		} else {
+			logger.Instance.Info("[WS-DETECT] Tier 2 skipped: no X-Workspace-Hint header in request")
 		}
 
 		// Tier 3: Fall back to last active workspace from registry
 		if req.FilePath == "" {
 			active, err := e.GetActiveWorkspace()
 			if err != nil || active == "" {
+				logger.Instance.Warn("[WS-DETECT] ❌ All tiers exhausted — no workspace detected")
 				return nil, fmt.Errorf("❌ No workspace detected. Please provide the 'file_path' of the file you are currently working on to help detect the project context.")
 			}
 			req.WorkspaceRoot = active
 			source = "registry_fallback"
+			logger.Instance.Info("[WS-DETECT] ✅ Tier 3 matched: using registry fallback=%s", active)
 		}
 	} else {
 		abs, err := filepath.Abs(path)
@@ -224,6 +240,7 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 			return nil, fmt.Errorf("failed to resolve path: %w", err)
 		}
 		req.FilePath = abs
+		logger.Instance.Info("[WS-DETECT] ✅ Tier 1 matched: using explicit path=%s", abs)
 	}
 
 	resp, wsErr := e.resolver.Resolve(ctx, req)
@@ -241,6 +258,9 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 		ReindexRequired: resp.ReindexRequired,
 		HeadSHA:         resp.HeadSHA,
 	}
+
+	logger.Instance.Info("[WS-DETECT] ◀ Resolved: root=%s, id=%s, branch=%s, source=%s, risk=%s",
+		wctx.Root, wctx.ID, wctx.Branch, source, wctx.MismatchRisk)
 
 	// Don't cache entries that require reindex or are high-risk — let next call re-evaluate
 	if !wctx.ReindexRequired && wctx.MismatchRisk != "high" {

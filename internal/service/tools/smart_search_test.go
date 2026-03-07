@@ -92,6 +92,82 @@ func TestGroupDocsByTree(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "Different files with same signature should NOT merge",
+			input: []mergedResult{
+				{
+					id: "1", filePath: "file1.md", symbolType: "documentation", signature: "### Intro",
+					startLine: 1, endLine: 3, score: 0.8,
+				},
+				{
+					id: "2", filePath: "file2.md", symbolType: "documentation", signature: "### Intro",
+					startLine: 4, endLine: 6, score: 0.9,
+				},
+			},
+			expected: 2, // Should stay separate because filePath differs
+			check: func(t *testing.T, results []mergedResult) {
+				if len(results) != 2 {
+					t.Fatalf("Expected 2 results, got %d", len(results))
+				}
+			},
+		},
+		{
+			name: "Gap retrieval works properly or falls back gracefully",
+			input: []mergedResult{
+				{
+					id: "c1", filePath: tempFilePath, symbolType: "documentation", signature: "### Test Gap",
+					startLine: 1, endLine: 2, score: 0.8, // Line A, B
+				},
+				{
+					id: "c2", filePath: tempFilePath, symbolType: "documentation", signature: "### Test Gap",
+					startLine: 19, endLine: 20, score: 0.9, // Line S, T
+				},
+			},
+			expected: 1, 
+			check: func(t *testing.T, results []mergedResult) {
+				if len(results) != 1 {
+					t.Fatalf("Expected 1 result after merge, got %d", len(results))
+				}
+				merged := results[0]
+				if merged.startLine != 1 || merged.endLine != 20 {
+					t.Errorf("Expected lines 1-20, got %d-%d", merged.startLine, merged.endLine)
+				}
+				// By our current logic it will attempt to fetch lines 1-20. Let's verify.
+				if !strings.Contains(merged.content, "Line F") {
+					t.Errorf("Expected merged content to fetch gap lines, but didn't find 'Line F'")
+				}
+			},
+		},
+		{
+			name: "Non-doc AST files (JSON, YAML) merge correctly if signature matches",
+			input: []mergedResult{
+				{
+					id: "y1", filePath: "config.yaml", symbolType: "documentation", signature: "server:",
+					startLine: 10, endLine: 12, score: 0.6, content: "port: 8080",
+				},
+				{
+					id: "y2", filePath: "config.yaml", symbolType: "documentation", signature: "server:",
+					startLine: 15, endLine: 18, score: 0.7, content: "host: localhost",
+				},
+			},
+			expected: 1,
+			check: func(t *testing.T, results []mergedResult) {
+				if len(results) != 1 {
+					t.Fatalf("Expected 1 result after merge, got %d", len(results))
+				}
+				// Because "config.yaml" doesn't actually exist on disk, we expect the fallback [...] logic!
+				merged := results[0]
+				if merged.startLine != 10 || merged.endLine != 18 {
+					t.Errorf("Expected lines 10-18, got %d-%d", merged.startLine, merged.endLine)
+				}
+				if !strings.Contains(merged.content, "port: 8080") || !strings.Contains(merged.content, "host: localhost") {
+					t.Errorf("Missing content in fake fallback merge")
+				}
+				if !strings.Contains(merged.content, "[...]") {
+					t.Errorf("Expected fallback [...] marker for missing file, got:\n%s", merged.content)
+				}
+			},
+		},
 	}
 
 	for _, tc := range tests {

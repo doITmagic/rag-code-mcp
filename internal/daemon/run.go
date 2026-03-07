@@ -161,7 +161,8 @@ func Run(rcfg RunConfig) error {
 	streamableHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		return mcpServer
 	}, &mcp.StreamableHTTPOptions{
-		Stateless: true,
+		Stateless:    true,
+		JSONResponse: true,
 	})
 
 	mcpMux := http.NewServeMux()

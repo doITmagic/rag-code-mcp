@@ -54,10 +54,24 @@ func RunBridge(ctx context.Context, socketPath string, stdin io.Reader, stdout i
 			continue
 		}
 
-		body, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
+		// Check for non-2xx status — daemon might return HTML errors
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			resp.Body.Close()
+			writeJSONRPCError(stdout, line, fmt.Errorf("daemon returned HTTP %d", resp.StatusCode))
+			continue
+		}
+
+		const maxResponseSize = 10 * 1024 * 1024 // 10MB
+		body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize+1))
 		resp.Body.Close()
 		if err != nil {
 			writeJSONRPCError(stdout, line, fmt.Errorf("read response: %w", err))
+			continue
+		}
+
+		// Detect truncated response (exceeded max size)
+		if len(body) > maxResponseSize {
+			writeJSONRPCError(stdout, line, fmt.Errorf("response exceeds %dMB limit", maxResponseSize/(1024*1024)))
 			continue
 		}
 

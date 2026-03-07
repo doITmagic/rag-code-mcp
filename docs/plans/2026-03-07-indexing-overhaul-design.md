@@ -90,24 +90,25 @@ watchdog goroutine (1 single):   ← 60s interval
   "state": "running",
   "global_percent": 47,
   "current_language": "go",
-  "languages_queued": ["md", "go", "python", "php", "html"],
+  "job_id": "abc123-1741348800000000000",
   "languages": {
-    "md": { "done": 120, "total": 120, "percent": 100, "state": "completed" },
-    "go": { "done": 234, "total": 500, "percent": 46,  "state": "running"   },
-    "py": { "done": 0,   "total": 89,  "percent": 0,   "state": "pending"   }
+    "md": { "total_files": 120, "done_files": 120, "percent": 100, "updated_at": "2026-03-07T12:02:00Z" },
+    "go": { "total_files": 500, "done_files": 234, "percent": 46,  "updated_at": "2026-03-07T12:04:10Z" },
+    "py": { "total_files": 89,  "done_files": 0,   "percent": 0,   "updated_at": "2026-03-07T12:05:00Z" }
   },
   "started_at": "2026-03-07T12:00:00Z",
-  "updated_at": "2026-03-07T12:05:23Z",
-  "error": ""
+  "updated_at": "2026-03-07T12:05:23Z"
 }
 ```
 
-### Workspace Serialization
+### Workspace Concurrency
 
-- `indexingJobs sync.Map` remains for detecting an active job
-- If indexing is requested for an already-active workspace → rejected immediately (existing behavior)
-- If indexing is requested for another workspace while one is active → rejected with clear message (`ErrIndexingBusy`)
-- No queue (YAGNI) — user can re-trigger after completion
+- `indexingJobs sync.Map` tracks active indexing jobs per workspace ID
+- If indexing is requested for an **already-active workspace** → deduplicated immediately (no-op)
+- Concurrent indexing across **different workspaces** is **allowed** — each workspace has its own job
+- When multiple workspaces index simultaneously, a warning is logged at engine level since Ollama
+  model-runner serializes embed requests anyway (implicit Ollama-level queuing)
+- No global serialization lock — YAGNI; user can re-trigger completion independently per workspace
 
 ### Logging Standard
 

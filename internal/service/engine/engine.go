@@ -791,10 +791,14 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 	if e.config != nil {
 		excludePatterns = e.config.Workspace.ExcludePatterns
 	}
+	// Pre-scan: single WalkDir counting files per language before indexing begins.
+	// This gives progressStore an accurate denominator from the start, so
+	// GlobalPercent increases monotonically. One combined walk avoids
+	// O(languages x files) traversals that per-language scans would incur.
 	if e.progress != nil {
+		fileCounts := e.indexer.CountAllFiles(wctx.Root, excludePatterns)
 		for _, lang := range languages {
-			count := e.indexer.CountFiles(wctx.Root, lang, excludePatterns)
-			e.progress.preRegister(wctx.ID, lang, count, time.Now())
+			e.progress.preRegister(wctx.ID, lang, fileCounts[lang], time.Now())
 		}
 	}
 

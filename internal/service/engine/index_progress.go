@@ -122,10 +122,10 @@ func (s *progressStore) triggerFlush() {
 // It is a no-op if the workspace job has not been started yet.
 func (s *progressStore) preRegister(workspaceID, lang string, totalFiles int, now time.Time) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	p, ok := s.jobs[workspaceID]
 	if !ok {
+		s.mu.Unlock()
 		return
 	}
 	if p.Languages == nil {
@@ -141,6 +141,9 @@ func (s *progressStore) preRegister(workspaceID, lang string, totalFiles int, no
 		p.GlobalPercent = calcGlobalPercent(p.Languages)
 	}
 	p.UpdatedAt = now
+	s.mu.Unlock()
+	// Flush so the updated totals are persisted promptly.
+	s.triggerFlush()
 }
 
 func (s *progressStore) get(workspaceID string, workspaceRoot string) *IndexProgress {
@@ -190,7 +193,6 @@ func (s *progressStore) get(workspaceID string, workspaceRoot string) *IndexProg
 
 func (s *progressStore) start(workspaceID, workspaceRoot, jobID string, now time.Time) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.jobs[workspaceID] = &IndexProgress{
 		JobID:         jobID,
 		WorkspaceID:   workspaceID,
@@ -200,6 +202,10 @@ func (s *progressStore) start(workspaceID, workspaceRoot, jobID string, now time
 		UpdatedAt:     now,
 		Languages:     map[string]IndexLanguageProgress{},
 	}
+	s.mu.Unlock()
+	// Flush immediately so index_status.json exists from the moment indexing starts.
+	// Without this, a crash before the first update() would leave no status file.
+	s.triggerFlush()
 }
 
 func (s *progressStore) update(workspaceID, lang string, done, total int, now time.Time) {

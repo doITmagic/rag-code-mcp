@@ -432,20 +432,6 @@ func fetchRemoteStableModel(ctx context.Context) (string, error) {
 	return cfg.LLM.OllamaEmbed, nil
 }
 
-func moveFile(src, dst string) error {
-	err := os.Rename(src, dst)
-	if err == nil {
-		return nil
-	}
-
-	// Cross-device rename fallback
-	input, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(dst, input, 0755)
-}
-
 func downloadFile(ctx context.Context, url, dest string) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {

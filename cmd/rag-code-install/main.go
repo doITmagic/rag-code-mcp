@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -15,13 +16,12 @@ import (
 	"strings"
 	"syscall"
 	"time"
-    "context"
 
-    "github.com/doITmagic/rag-code-mcp/internal/updater"
-    "github.com/codeclysm/extract/v3"
+	"github.com/codeclysm/extract/v3"
 	"github.com/doITmagic/rag-code-mcp/internal/config"
 	"github.com/doITmagic/rag-code-mcp/internal/healthcheck"
 	"github.com/doITmagic/rag-code-mcp/internal/uninstall"
+	"github.com/doITmagic/rag-code-mcp/internal/updater"
 )
 
 var (
@@ -921,7 +921,9 @@ func downloadAndExtractLatest() (string, error) {
 	defer f.Close()
 
 	extractDir := filepath.Join(tempDir, "extracted")
-	os.MkdirAll(extractDir, 0755)
+	if err := os.MkdirAll(extractDir, 0755); err != nil {
+		return "", err
+	}
 
 	if err := extract.Archive(ctx, f, extractDir, nil); err != nil {
 		return "", err

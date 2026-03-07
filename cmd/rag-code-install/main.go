@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -430,9 +429,11 @@ func stopRunningProcess(binPath string) {
 						time.Sleep(100 * time.Millisecond)
 					}
 
-					// Send SIGKILL just in case it's still alive
-					_ = process.Signal(syscall.SIGKILL)
-					time.Sleep(200 * time.Millisecond)
+					// After grace period, only SIGKILL if process still appears alive
+					if err := process.Signal(syscall.Signal(0)); err == nil {
+						_ = process.Signal(syscall.SIGKILL)
+						time.Sleep(200 * time.Millisecond)
+					}
 					return
 				}
 			}
@@ -884,33 +885,19 @@ func downloadAndExtractLatest() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	cleanup := true
+	defer func() {
+		if cleanup {
+			os.RemoveAll(tempDir)
+		}
+	}()
 
 	archivePath := filepath.Join(tempDir, "release-archive")
 	log("Downloading " + info.AssetURL)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", info.AssetURL, nil)
-	if err != nil {
-		return "", err
-	}
-	client := &http.Client{Timeout: 5 * time.Minute}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("failed to download: status %d", resp.StatusCode)
-	}
-
-	out, err := os.Create(archivePath)
-	if err != nil {
-		return "", err
-	}
-	_, copyErr := io.Copy(out, resp.Body)
-	out.Close()
-	if copyErr != nil {
-		return "", copyErr
+	// Use DownloadAndVerify for checksum-verified downloads (supply-chain security)
+	if err := info.DownloadAndVerify(ctx, archivePath); err != nil {
+		return "", fmt.Errorf("failed to download and verify release: %w", err)
 	}
 
 	log("Extracting archive...")
@@ -929,6 +916,7 @@ func downloadAndExtractLatest() (string, error) {
 		return "", err
 	}
 
+	cleanup = false // success — caller is responsible for cleanup
 	return extractDir, nil
 }
 

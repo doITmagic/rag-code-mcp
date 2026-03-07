@@ -108,5 +108,3 @@ func (s *State) IsChanged(path string, info os.FileInfo) bool {
 	// Simple check based on mod time and size (fastest)
 	return !info.ModTime().Equal(state.ModTime) || info.Size() != state.Size
 }
-
-

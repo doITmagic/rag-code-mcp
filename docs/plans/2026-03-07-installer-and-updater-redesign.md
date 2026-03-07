@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Refactor the installer and and updater so that the installer behaves as a smart, standalone process that manages dependencies directly from its directory (or downloads the latest release if missing), and the updater completely defers installation to the installer by downloading the archive, extracting it, and spawning the new installer.
+**Goal:** Refactor the installer and updater so that the installer behaves as a smart, standalone process that manages dependencies directly from its directory (or downloads the latest release if missing), and the updater completely defers installation to the installer by downloading the archive, extracting it, and spawning the new installer.
 
 **Architecture:** 
 1. `rag-code-install` will no longer use a fallback directory. It will check if required files exist alongside it. If not, it will download the latest release archive, extract it to a temporary directory, and copy them to `~/.ragcode/bin`.

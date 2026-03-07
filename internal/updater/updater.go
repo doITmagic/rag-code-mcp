@@ -329,6 +329,37 @@ func (info *UpdateInfo) DownloadAndVerify(ctx context.Context, destPath string) 
 	return nil
 }
 
+// DownloadVerifyAndApply is a shared helper that downloads the release archive,
+// verifies its checksum, and hands off to ApplyUpdate (which spawns the installer
+// and exits). Both the daemon AutoUpdate worker and the MCP ApplyUpdateTool use this.
+func DownloadVerifyAndApply(ctx context.Context, info *UpdateInfo) error {
+	ext := ".tar.gz"
+	if strings.HasSuffix(info.AssetURL, ".zip") {
+		ext = ".zip"
+	}
+
+	tempFile, err := os.CreateTemp("", "ragcode_update_*"+ext)
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tempPath := tempFile.Name()
+	if err := tempFile.Close(); err != nil {
+		_ = os.Remove(tempPath)
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
+	defer os.Remove(tempPath)
+
+	if err := info.DownloadAndVerify(ctx, tempPath); err != nil {
+		return fmt.Errorf("failed to download update: %w", err)
+	}
+
+	if err := ApplyUpdate(tempPath); err != nil {
+		return fmt.Errorf("failed to install update: %w", err)
+	}
+
+	return nil
+}
+
 // ApplyUpdate extracts the binary from the archive, spawns the installer, and exits.
 func ApplyUpdate(archivePath string) error {
 	self, err := os.Executable()
@@ -346,10 +377,16 @@ func ApplyUpdate(archivePath string) error {
 	if err != nil {
 		return fmt.Errorf("could not create temp dir: %w", err)
 	}
+	// Clean up tempDir on all error paths; only skip on successful handoff (os.Exit).
+	cleanup := true
+	defer func() {
+		if cleanup {
+			os.RemoveAll(tempDir)
+		}
+	}()
 
 	// Extract the archive completely
 	if err := extractArchive(archivePath, tempDir); err != nil {
-		os.RemoveAll(tempDir)
 		return fmt.Errorf("failed to extract archive: %w", err)
 	}
 
@@ -378,6 +415,9 @@ func ApplyUpdate(archivePath string) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start new installer: %w", err)
 	}
+
+	// Handoff successful — installer owns cleanup now
+	cleanup = false
 
 	// Exit gracefully and let the installer take over
 	fmt.Printf("Update handed off to new installer (PID %d). Shutting down...\n", cmd.Process.Pid)

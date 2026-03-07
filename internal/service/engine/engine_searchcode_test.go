@@ -371,14 +371,24 @@ func TestSearchCodeAutoResumesInterruptedIndexing(t *testing.T) {
 		t.Error("cooldown violated: auto-resume was triggered again within the 5-minute window")
 	}
 
-	// Wait for the background indexing goroutine to finish writing to wsRoot/.ragcode/
-	// before the test returns. Without this, t.TempDir() cleanup races with the goroutine
-	// and fails with "directory not empty".
+	// Stop the progress flusher goroutine before the test returns.
+	// Without this the goroutine can still write to wsRoot/.ragcode/ while
+	// t.TempDir() cleanup removes the directory, triggering a race under -race.
+	t.Cleanup(func() {
+		if eng.progress != nil {
+			eng.progress.stop()
+		}
+	})
+
+	// Wait for the background indexing goroutine to drain before test returns.
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if len(eng.ActiveIndexingJobs()) == 0 {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+	if jobs := eng.ActiveIndexingJobs(); len(jobs) != 0 {
+		t.Fatalf("background indexing jobs still active after 5s wait: %v", jobs)
 	}
 }

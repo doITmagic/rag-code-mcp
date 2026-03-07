@@ -220,15 +220,9 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 	// here only added complexity without meaningful throughput gain.
 	var fileErrs []string
 	for _, path := range changedFiles {
-		n := int(doneFiles.Add(1))
-		pct := n * 100 / totalFiles
-
-		logger.Instance.Debug("[IDX] ws=%s lang=%s [%d/%d] %s (%d%%)",
-			wsName, opts.Language, n, totalFiles, filepath.Base(path), pct)
-
-		if opts.Progress != nil {
-			opts.Progress(n, totalFiles)
-		}
+		fileNum := int(doneFiles.Load()) + 1
+		logger.Instance.Debug("[IDX] ws=%s lang=%s [%d/%d] %s (indexing...)",
+			wsName, opts.Language, fileNum, totalFiles, filepath.Base(path))
 
 		symCount, indexErr := s.IndexFile(ctx, collection, path, state)
 		if indexErr != nil {
@@ -236,6 +230,14 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 			fileErrs = append(fileErrs, fmt.Sprintf("%s: %v", path, indexErr))
 		} else {
 			logger.Instance.Debug("[IDX] ws=%s lang=%s %s → %d symbol(s)", wsName, opts.Language, filepath.Base(path), symCount)
+		}
+
+		// Increment after IndexFile so 100% is only reported once the last file is done.
+		n := int(doneFiles.Add(1))
+		pct := n * 100 / totalFiles
+		logger.Instance.Debug("[IDX] ws=%s lang=%s [%d/%d] done (%d%%)", wsName, opts.Language, n, totalFiles, pct)
+		if opts.Progress != nil {
+			opts.Progress(n, totalFiles)
 		}
 	}
 

@@ -16,7 +16,9 @@ import (
 // RunBridge reads JSON-RPC messages from stdin, forwards each as an HTTP POST
 // to the daemon via Unix socket, and writes the JSON response to stdout.
 //
-// This is the core of the stdio adapter — zero SSE, pure JSON request/response.
+// The adapter reads/writes single JSON payloads (no SSE framing).
+// Accept header includes text/event-stream for StreamableHTTPHandler compatibility,
+// but JSONResponse=true on the server forces pure JSON responses.
 // Returns nil on stdin EOF (normal IDE shutdown).
 func RunBridge(ctx context.Context, socketPath string, stdin io.Reader, stdout io.Writer, workspaceHint string) error {
 	client := &http.Client{

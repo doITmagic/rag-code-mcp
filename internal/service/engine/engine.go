@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -184,11 +185,16 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 
 	if strings.TrimSpace(path) == "" {
 		// Tier 2: Try workspace hint from adapter (IDE's CWD injected via X-Workspace-Hint header)
-		if hint := transport.GetWorkspaceHint(ctx); hint != "" {
+		if hint := strings.TrimSpace(transport.GetWorkspaceHint(ctx)); hint != "" {
 			abs, err := filepath.Abs(hint)
 			if err == nil {
-				req.FilePath = abs
-				source = "hint_fallback"
+				// Validate the path actually exists on disk before using it
+				if _, statErr := os.Stat(abs); statErr == nil {
+					req.FilePath = abs
+					source = "hint_fallback"
+					// Use hint as cache key so different IDEs don't share the same empty-string entry
+					cacheKey = abs
+				}
 			}
 		}
 

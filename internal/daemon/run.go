@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/updater"
@@ -181,32 +180,10 @@ func Run(rcfg RunConfig) error {
 			}
 
 			logger.Instance.Info("AutoUpdate: New version %s found! Downloading and applying...", info.LatestVersion)
-			err = func() error {
-				ext := ".tar.gz"
-				if strings.HasSuffix(info.AssetURL, ".zip") {
-					ext = ".zip"
-				}
 
-				tempFile, err := os.CreateTemp("", "ragcode_update_*"+ext)
-				if err != nil {
-					return err
-				}
-				tempPath := tempFile.Name()
-				tempFile.Close()
-				defer os.Remove(tempPath)
-
-				if err := info.DownloadAndVerify(ctx, tempPath); err != nil {
-					return err
-				}
-
-				// Trigger the handoff. This will spawn the new installer AND exit(0) the current daemon.
-				if err := updater.ApplyUpdate(tempPath); err != nil {
-					return err
-				}
-				return nil
-			}()
-
-			if err != nil {
+			// Use the shared download+verify+apply helper.
+			// On success this calls os.Exit(0) internally (handoff to installer).
+			if err := updater.DownloadVerifyAndApply(ctx, info); err != nil {
 				logger.Instance.Error("AutoUpdate apply failed: %v", err)
 			}
 		}()

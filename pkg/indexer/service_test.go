@@ -156,9 +156,9 @@ func TestIndexItemsParallelism(t *testing.T) {
 	Expect(len(mockS.upsertPoints)).To(Equal(100))
 }
 
-// TestIndexWorkspaceParallelFiles verifies that multiple files are indexed concurrently
-// with no data races on shared state. Run with -race to detect races.
-func TestIndexWorkspaceParallelFiles(t *testing.T) {
+// TestIndexWorkspaceSequentialFiles verifies that multiple files are indexed correctly
+// in a sequential for loop. Run with -race to detect races on shared state.
+func TestIndexWorkspaceSequentialFiles(t *testing.T) {
 	RegisterTestingT(t)
 
 	// One file per sub-package directory so each IndexFile call yields exactly 1 symbol.
@@ -179,7 +179,7 @@ func TestIndexWorkspaceParallelFiles(t *testing.T) {
 	mockS := &mockStore{}
 	svc := NewService(mockEmbed, mockS)
 
-	err := svc.IndexWorkspace(context.Background(), dir, "test-parallel", Options{Language: "go"})
+	err := svc.IndexWorkspace(context.Background(), dir, "test-sequential", Options{Language: "go"})
 	Expect(err).NotTo(HaveOccurred())
 
 	// Each sub-package has 1 function → numFiles symbols total
@@ -191,56 +191,51 @@ func TestIndexWorkspaceParallelFiles(t *testing.T) {
 	Expect(int(atomic.LoadInt32(&mockEmbed.embedCount))).To(BeNumerically(">=", numFiles))
 }
 
-// TestGlobalSemaphoreOrder verifies that the semaphore protocol is correct:
-// acquire = receive a token (<-ch), release = send a token back (ch <- struct{}{}).
-// A pre-filled buffered channel of capacity N means N concurrent workers can acquire.
-// If acquire/release were swapped, this test would deadlock and be caught by the timeout.
-func TestGlobalSemaphoreOrder(t *testing.T) {
+// TestIndexWorkspaceProgressIsAscending verifies that Progress callback is called
+// in strictly ascending order — guaranteed by the sequential for loop.
+func TestIndexWorkspaceProgressIsAscending(t *testing.T) {
 	RegisterTestingT(t)
 
-	const cap = 3
-	sem := make(chan struct{}, cap)
-	// Pre-fill: each token represents a free slot.
-	for i := 0; i < cap; i++ {
-		sem <- struct{}{}
+	dir := t.TempDir()
+	const numFiles = 5
+	for i := 0; i < numFiles; i++ {
+		pkgDir := filepath.Join(dir, fmt.Sprintf("ppkg%d", i))
+		Expect(os.MkdirAll(pkgDir, 0755)).To(Succeed())
+		src := fmt.Sprintf("package ppkg%d\n\nfunc PF%d() {}\n", i, i)
+		Expect(os.WriteFile(filepath.Join(pkgDir, "f.go"), []byte(src), 0644)).To(Succeed())
 	}
 
-	// Acquire all N tokens — should not block.
-	for i := 0; i < cap; i++ {
-		select {
-		case <-sem: // acquire = receive
-		default:
-			t.Fatalf("acquire %d should not block on a fresh semaphore", i)
-		}
-	}
+	var calls []int
+	var mu sync.Mutex
 
-	// Semaphore empty — next acquire MUST block.
-	select {
-	case <-sem:
-		t.Fatal("acquire should block when semaphore is exhausted")
-	default:
-		// expected — would block
-	}
+	mockEmbed := &mockEmbedder{}
+	mockS := &mockStore{}
+	svc := NewService(mockEmbed, mockS)
 
-	// Release one slot.
-	sem <- struct{}{} // release = send
+	err := svc.IndexWorkspace(context.Background(), dir, "test-ascending", Options{
+		Language: "go",
+		Progress: func(done, total int) {
+			mu.Lock()
+			calls = append(calls, done)
+			mu.Unlock()
+		},
+	})
+	Expect(err).NotTo(HaveOccurred())
+	Expect(len(calls)).To(Equal(numFiles))
 
-	// Now acquire should succeed again.
-	select {
-	case <-sem:
-		// OK
-	default:
-		t.Fatal("acquire should succeed after release")
+	// Sequential: each call must increment by exactly 1
+	for i := 1; i < len(calls); i++ {
+		Expect(calls[i]).To(Equal(calls[i-1]+1), "progress calls must be strictly ascending")
 	}
 }
 
 // TestIndexWorkspaceNoDeadlock runs IndexWorkspace with many files and a tight timeout.
-// If the semaphore is inverted (the original bug), this will deadlock and fail via timeout.
+// With the sequential model there is no semaphore to deadlock, but this verifies
+// that IndexWorkspace completes within a reasonable time.
 func TestIndexWorkspaceNoDeadlock(t *testing.T) {
 	RegisterTestingT(t)
 
 	dir := t.TempDir()
-	// Create more files than the semaphore capacity to trigger contention.
 	const numFiles = 20
 	for i := 0; i < numFiles; i++ {
 		pkgDir := filepath.Join(dir, fmt.Sprintf("dpkg%d", i))
@@ -264,7 +259,7 @@ func TestIndexWorkspaceNoDeadlock(t *testing.T) {
 	case err := <-done:
 		Expect(err).NotTo(HaveOccurred())
 	case <-time.After(30 * time.Second):
-		t.Fatal("IndexWorkspace deadlocked — semaphore acquire/release likely inverted")
+		t.Fatal("IndexWorkspace took too long — possible infinite loop or deadlock")
 	}
 
 	mockS.mu.Lock()

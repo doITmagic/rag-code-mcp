@@ -22,76 +22,6 @@ import (
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 )
 
-// getSystemMemoryGB attempts to read total system memory from /proc/meminfo (Linux).
-// Returns 0 if unable to read.
-func getSystemMemoryGB() int {
-	if runtime.GOOS != "linux" {
-		return 0
-	}
-	data, err := os.ReadFile("/proc/meminfo")
-	if err != nil {
-		return 0
-	}
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(line, "MemTotal:") {
-			var kb int
-			if _, err := fmt.Sscanf(line, "MemTotal: %d kB", &kb); err == nil {
-				return kb / (1024 * 1024)
-			}
-		}
-	}
-	return 0
-}
-
-// globalIndexSemaphore limits the total number of concurrent file-indexing workers
-// across ALL active workspace indexing jobs.
-// To prevent Ollama OOM while maximizing speed, we scale concurrency based on system RAM:
-// - <= 8GB  RAM: 1 worker  (Survival mode)
-// - <= 16GB RAM: 2 workers
-// - <= 32GB RAM: 3 workers
-// - > 32GB  RAM: 4 workers (Max Cap for high-end systems to leave RAM for OS/IDE)
-var globalIndexSemaphore = func() chan struct{} {
-	n := runtime.NumCPU() / 4
-	if n < 2 {
-		n = 2
-	}
-	if n > 4 {
-		n = 4
-	}
-
-	memGB := getSystemMemoryGB()
-	if memGB > 0 {
-		var ramWorkers int
-		switch {
-		case memGB <= 8:
-			ramWorkers = 1
-		case memGB <= 16:
-			ramWorkers = 2
-		case memGB <= 32:
-			ramWorkers = 3
-		default:
-			ramWorkers = 4
-		}
-
-		// Take the minimum between CPU-recommended workers and RAM-allowed workers
-		if ramWorkers < n {
-			n = ramWorkers
-		}
-
-		logger.Instance.Info("🧠 Detected %dGB RAM. Dynamic indexing concurrency set to %d workers.", memGB, n)
-	} else {
-		// Fallback for non-Linux or failures, strictly safe
-		logger.Instance.Warn("🧠 Could not detect system RAM. Defaulting to safe concurrency limit of 1 worker.")
-		n = 1
-	}
-
-	ch := make(chan struct{}, n)
-	for i := 0; i < n; i++ {
-		ch <- struct{}{}
-	}
-	return ch
-}()
 
 const (
 	deleteCollectionTimeout = 10 * time.Second
@@ -101,6 +31,7 @@ const (
 // Options configures the indexer.
 type Options struct {
 	Language        string
+	WorkspaceName   string // basename of workspace root, used for logging
 	ExcludePatterns []string
 	Recreate        bool
 	Progress        func(doneFiles, totalFiles int)
@@ -220,34 +151,25 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 		}
 	}
 
+	wsName := opts.WorkspaceName
+	if wsName == "" {
+		wsName = filepath.Base(root)
+	}
+
 	totalFiles := len(changedFiles)
-	logger.Instance.Info("Indexing %d file(s) in %s (Language: %s)", totalFiles, root, opts.Language)
+	logger.Instance.Info("[IDX] ws=%s lang=%s ▶ %d file(s) to index", wsName, opts.Language, totalFiles)
 
 	// Ensure the embedding model is loaded in Ollama's memory before starting.
 	// If another program evicted it, this will reload it (with up to 2min timeout).
 	if ollamaProvider, ok := unwrapOllamaProvider(s.embedder); ok {
 		if err := ollamaProvider.EnsureLoaded(ctx); err != nil {
-			logger.Instance.Error("Cannot ensure embedding model is loaded: %v", err)
+			logger.Instance.Error("[IDX] ws=%s lang=%s ❌ embedding model not available: %v", wsName, opts.Language, err)
 			return fmt.Errorf("embedding model not available: %w", err)
 		}
 	}
 
-	// 4. Process changed files using the global semaphore to cap total concurrency
-	// across all active workspace indexing jobs (prevents CPU/RAM overload).
-	numFileWorkers := cap(globalIndexSemaphore)
-
-	filePaths := make(chan string, totalFiles)
-	for _, p := range changedFiles {
-		filePaths <- p
-	}
-	close(filePaths)
-
-	var (
-		fileWg    sync.WaitGroup
-		errMu     sync.Mutex
-		fileErrs  []string
-		doneFiles atomic.Int64
-	)
+	// 4. File-level counters for watchdog (accessed from two goroutines via atomic).
+	var doneFiles atomic.Int64
 
 	// Dedicated periodic-save goroutine + stall watchdog: detects silent deadlocks.
 	saveStop := make(chan struct{})
@@ -261,35 +183,29 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 			select {
 			case <-saveTicker.C:
 				if err := state.Save(statePath); err != nil {
-					logger.Instance.Warn("Periodic state save failed for %s: %v", root, err)
+					logger.Instance.Warn("[IDX] ws=%s lang=%s periodic state save failed: %v", wsName, opts.Language, err)
 				}
 			case <-stallTicker.C:
 				current := doneFiles.Load()
-				// We only trigger stall logic if we haven't finished all files AND
-				// we haven't successfully embedded ANY new symbol in the last 60 seconds.
 				lastActivitySec := s.lastActivity.Load()
 				elapsedSinceActivity := time.Now().Unix() - lastActivitySec
 
 				if current < int64(totalFiles) && elapsedSinceActivity >= 60 {
 					stallCount++
-					semLen := len(globalIndexSemaphore)
-					semCap := cap(globalIndexSemaphore)
-					logger.Instance.Warn("⚠️ Indexing stall detected for %s/%s: %d/%d files. No embed activity for %ds. Semaphore: %d/%d. Stall count: %d",
-						opts.Language, root, current, totalFiles, elapsedSinceActivity, semLen, semCap, stallCount)
+					logger.Instance.Warn("[IDX] ws=%s lang=%s ⚠️ STALL: no embed activity for %ds [%d/%d] (stall #%d)",
+						wsName, opts.Language, elapsedSinceActivity, current, totalFiles, stallCount)
 					if stallCount >= 2 {
-						// Check if Ollama is still alive
 						if err := healthcheck.PingOllama(""); err != nil {
-							logger.Instance.Error("🔴 Ollama HTTP is unresponsive (%v). Forcing restart...", err)
+							logger.Instance.Error("[IDX] ws=%s lang=%s ❌ Ollama unresponsive: %v — forcing restart", wsName, opts.Language, err)
 						} else {
-							logger.Instance.Error("🔴 Ollama HTTP ping is OK but embedding goroutines are DEADLOCKED. Forcing restart!")
+							logger.Instance.Error("[IDX] ws=%s lang=%s ❌ Ollama ping OK but embed goroutine STALLED — forcing restart", wsName, opts.Language)
 						}
-						// Always attempt strict restart to kill stuck runners
 						attemptOllamaRestart()
 					}
 					if stallCount >= 3 {
 						buf := make([]byte, 8192)
 						n := runtime.Stack(buf, true)
-						logger.Instance.Error("🔴 Deadlock confirmed in indexing goroutines for %s. Goroutine dump:\n%s", root, string(buf[:n]))
+						logger.Instance.Error("[IDX] ws=%s lang=%s goroutine dump:\n%s", wsName, opts.Language, string(buf[:n]))
 					}
 				} else {
 					stallCount = 0
@@ -300,53 +216,42 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 		}
 	}()
 
-	for i := 0; i < numFileWorkers; i++ {
-		fileWg.Add(1)
-		go func() {
-			defer fileWg.Done()
-			for path := range filePaths {
-				// Acquire global slot — blocks if too many concurrent indexers active
-				<-globalIndexSemaphore
-				n := int(doneFiles.Add(1))
-				pct := 0
-				if totalFiles > 0 {
-					pct = n * 100 / totalFiles
-				}
+	// 5. Sequential file processing — no worker pool, no semaphore.
+	// Embed is serial in Ollama anyway (numWorkers=1 in IndexItems), so parallelism
+	// here only added complexity without meaningful throughput gain.
+	var fileErrs []string
+	for _, path := range changedFiles {
+		n := int(doneFiles.Add(1))
+		pct := n * 100 / totalFiles
 
-				logger.Instance.Info("📄 [%d/%d] %s (%s, %d%%)", n, totalFiles, filepath.Base(path), opts.Language, pct)
-				if opts.Progress != nil {
-					opts.Progress(n, totalFiles)
-				}
+		logger.Instance.Debug("[IDX] ws=%s lang=%s [%d/%d] %s (%d%%)",
+			wsName, opts.Language, n, totalFiles, filepath.Base(path), pct)
 
-				symCount, indexErr := s.IndexFile(ctx, collection, path, state)
-				// Release slot immediately after processing
-				globalIndexSemaphore <- struct{}{}
+		if opts.Progress != nil {
+			opts.Progress(n, totalFiles)
+		}
 
-				if indexErr != nil {
-					logger.Instance.Error("Failed to index %s: %v", path, indexErr)
-					errMu.Lock()
-					fileErrs = append(fileErrs, fmt.Sprintf("%s: %v", path, indexErr))
-					errMu.Unlock()
-				} else {
-					logger.Instance.Info("  → %d symbol(s) indexed from %s", symCount, filepath.Base(path))
-				}
-			}
-		}()
+		symCount, indexErr := s.IndexFile(ctx, collection, path, state)
+		if indexErr != nil {
+			logger.Instance.Warn("[IDX] ws=%s lang=%s ⚠️ %s: %v", wsName, opts.Language, filepath.Base(path), indexErr)
+			fileErrs = append(fileErrs, fmt.Sprintf("%s: %v", path, indexErr))
+		} else {
+			logger.Instance.Debug("[IDX] ws=%s lang=%s %s → %d symbol(s)", wsName, opts.Language, filepath.Base(path), symCount)
+		}
 	}
 
-	fileWg.Wait()
-	close(saveStop) // Stop the periodic save goroutine
-	logger.Instance.Info("[INDEX] %s done: %d file(s) indexed", opts.Language, totalFiles)
+	close(saveStop)
 
 	if len(fileErrs) > 0 {
-		logger.Instance.Warn("%d file(s) failed to index in %s", len(fileErrs), root)
+		logger.Instance.Warn("[IDX] ws=%s lang=%s %d file(s) failed to index", wsName, opts.Language, len(fileErrs))
 	}
 
-	// 5. Save state
+	// 6. Save state
 	if err := state.Save(statePath); err != nil {
-		logger.Instance.Warn("Failed to save index state for %s: %v", root, err)
+		logger.Instance.Warn("[IDX] ws=%s lang=%s failed to save state: %v", wsName, opts.Language, err)
 	}
 
+	logger.Instance.Info("[IDX] ws=%s lang=%s ✅ DONE %d file(s)", wsName, opts.Language, totalFiles)
 	return nil
 }
 

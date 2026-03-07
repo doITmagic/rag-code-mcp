@@ -8,78 +8,78 @@
 
 ## Problem
 
-### Bug 1 — Progress inaccurat (`last_percent`)
+### Bug 1 — Inaccurate Progress (`last_percent`)
 
-`state.json` conține câmpul `last_percent` care este **per-limbaj**, nu global.
-La fiecare limbaj nou, progresul se resetează de la 0 la 100, independent.
+`state.json` contains the `last_percent` field which is **per-language**, not global.
+For each new language, the progress resets from 0 to 100, independently.
 
-**Fluxul buggy:**
+**Buggy flow:**
 ```
 engine.IndexWorkspace:
-  state.json ← last_percent=1         (start global)
+  state.json ← last_percent=1         (global start)
 
   lang="md":
     indexer ← LoadState → last_percent=1
-    procesează fișiere → last_percent=46, 87, 100 (salvat periodic)
+    processes files → last_percent=46, 87, 100 (saved periodically)
     final → state.json: last_percent=100
 
   lang="go":
-    indexer ← LoadState → last_percent=100  (preia valoarea de la md!)
-    procesează fișiere → last_percent=3, 5, 8... (RESET!)
-    search vede 5% → "indexare întreruptă" fals pozitiv
+    indexer ← LoadState → last_percent=100  (picks up value from md!)
+    processes files → last_percent=3, 5, 8... (RESET!)
+    search sees 5% → "indexing interrupted" false positive
 ```
 
-**Efecte observate:**
-- Căutarea refuza indexarea la >80% md cu mesaj de "indexare în progres" fără procent real
-- `last_percent` se reseta între limbaje confuzând logica de auto-resume
-- `progressStore` in-memory era corect dar nu persista suficient de des pe disk
+**Observed effects:**
+- Search refused indexing at >80% md with "indexing in progress" message without real percentage
+- `last_percent` reset between languages confusing the auto-resume logic
+- `progressStore` in-memory was correct but did not persist to disk frequently enough
 
-### Bug 2 — Goroutine complexity nedebuggabilă
+### Bug 2 — Undebuggable Goroutine Complexity
 
-`globalIndexSemaphore` (package-level var) creează o concurență greu de urmărit:
-- N file workers per apel `IndexWorkspace`
-- 1 periodic save goroutine per apel (5 limbaje → 5 goroutine secvențiale)
-- 1 stall watchdog goroutine per apel
-- Workers partajează semaphore-ul global → comportament non-determinist dacă 2 workspace-uri indexează simultan
+`globalIndexSemaphore` (package-level var) creates concurrency that is hard to trace:
+- N file workers per `IndexWorkspace` call
+- 1 periodic save goroutine per call (5 languages → 5 sequential goroutines)
+- 1 stall watchdog goroutine per call
+- Workers share the global semaphore → non-deterministic behavior if 2 workspaces index simultaneously
 
-Deoarece `IndexItems` are `numWorkers=1` (embed-ul e serial la Ollama), paralelismul file workers nu aduce câștig real de performanță, dar adaugă complexitate maximă.
+Since `IndexItems` has `numWorkers=1` (embedding is serial at Ollama), file worker parallelism provides no real performance gain, but adds maximum complexity.
 
 ---
 
-## Soluție
+## Solution
 
-### Principii de design
+### Design Principles
 
-1. **O singură sursă de adevăr pentru progres** — `index_status.json` (nu `state.json`)
-2. **3 goroutine fixe** — indiferent de câte limbaje există
-3. **1 workspace la un moment dat** — simplu, determinist, ușor de depanat
-4. **Verbosity prin log levels** — per-fișier la Debug, per-limbaj la Info, erori la Warn/Error
+1. **Single source of truth for progress** — `index_status.json` (not `state.json`)
+2. **3 fixed goroutines** — regardless of how many languages exist
+3. **1 workspace at a time** — simple, deterministic, easy to debug
+4. **Verbosity via log levels** — per-file at Debug, per-language at Info, errors at Warn/Error
 
-### Arhitectura nouă
+### New Architecture
 
 ```
 StartIndexingAsync(ws):   ← 1 goroutine
-  1. Pre-scan ALL languages → total_files_global (sumă)
-  2. for lang in languages:          ← secvențial
-       for file in lang_files:       ← secvențial (for loop simplu, fără pool)
+  1. Pre-scan ALL languages → total_files_global (sum)
+  2. for lang in languages:          ← sequential
+       for file in lang_files:       ← sequential (simple for loop, no pool)
          IndexFile(file)             ← AST → embed → Qdrant
          progress++
          lang_pct  = progress_in_lang / lang_files * 100
          global_pct = progress_total / total_files * 100
          ← debounced write (500ms)
 
-save goroutine (1 singur):   ← debounced 500ms
+save goroutine (1 single):   ← debounced 500ms
   index_status.json ← global_pct + per-lang breakdown
 
-watchdog goroutine (1 singur):   ← 60s interval
-  dacă nu embed activity → Warn + restart Ollama dacă necesar
+watchdog goroutine (1 single):   ← 60s interval
+  if no embed activity → Warn + restart Ollama if needed
 ```
 
-### Fișiere de stare
+### State Files
 
-| Fișier | Rol | Câmpuri relevante |
+| File | Role | Relevant Fields |
 |---|---|---|
-| `state.json` | File tracking (modtime/size) | `files{}` — **fără `last_percent`** |
+| `state.json` | File tracking (modtime/size) | `files{}` — **no `last_percent`** |
 | `index_status.json` | Progress tracking | `global_percent`, `languages{}`, `state`, `current_language` |
 
 **`index_status.json` format:**
@@ -102,25 +102,25 @@ watchdog goroutine (1 singur):   ← 60s interval
 }
 ```
 
-### Serialitate workspace-uri
+### Workspace Serialization
 
-- `indexingJobs sync.Map` rămâne pentru a detecta job activ
-- Dacă se cere indexare pentru un workspace deja activ → respins imediat (comportament existent)
-- Dacă se cere indexare pentru alt workspace când unul e activ → respins cu mesaj clar (`ErrIndexingBusy`)
-- Nu există coadă (YAGNI) — utilizatorul poate re-triggera după terminare
+- `indexingJobs sync.Map` remains for detecting an active job
+- If indexing is requested for an already-active workspace → rejected immediately (existing behavior)
+- If indexing is requested for another workspace while one is active → rejected with clear message (`ErrIndexingBusy`)
+- No queue (YAGNI) — user can re-trigger after completion
 
-### Standard de logging
+### Logging Standard
 
 **Format:** `[IDX] ws=<name> lang=<lang> [<n>/<total>] <file> (<lang_pct>%) global=<global_pct>%`
 
-| Nivel | Conținut | Default vizibil |
+| Level | Content | Visible by Default |
 |---|---|---|
-| `Debug` | Per fișier processat | ❌ (MCP_LOG_LEVEL=debug) |
-| `Info` | Start/Done limbaj, global complete | ✅ |
-| `Warn` | Eroare fișier individual, stall detectat | ✅ |
-| `Error` | Eșec limbaj, Ollama/Qdrant down | ✅ |
+| `Debug` | Per file processed | ❌ (MCP_LOG_LEVEL=debug) |
+| `Info` | Language start/done, global complete | ✅ |
+| `Warn` | Individual file error, stall detected | ✅ |
+| `Error` | Language failure, Ollama/Qdrant down | ✅ |
 
-**Exemple Info (default):**
+**Info examples (default):**
 ```
 [IDX] ws=rag-code-mcp  ▶ starting 5 languages (total files: 1247)
 [IDX] ws=rag-code-mcp lang=md     ✅ DONE 120 files in 0m45s (global=10%)
@@ -128,7 +128,7 @@ watchdog goroutine (1 singur):   ← 60s interval
 [IDX] ws=rag-code-mcp  ✅ COMPLETE all 5 languages in 8m42s
 ```
 
-**Exemple Debug (MCP_LOG_LEVEL=debug):**
+**Debug examples (MCP_LOG_LEVEL=debug):**
 ```
 [IDX] ws=rag-code-mcp lang=go [  1/500] main.go     ( 0%) global=10%
 [IDX] ws=rag-code-mcp lang=go [234/500] engine.go   (46%) global=23%
@@ -136,22 +136,22 @@ watchdog goroutine (1 singur):   ← 60s interval
 
 ---
 
-## Ce NU se schimbă
+## What Does NOT Change
 
-- `globalIndexSemaphore` — **eliminat** (nu aduce beneficiu real cu embed serial)
-- `IndexItems` numWorkers=1 — rămâne (Ollama e serial oricum)
-- Circuit breaker Ollama — rămâne (util)
-- `EnsureLoaded` la start limbaj — rămâne
-- Periodic state.json save (file tracking) — rămâne
+- `globalIndexSemaphore` — **removed** (provides no real benefit with serial embedding)
+- `IndexItems` numWorkers=1 — remains (Ollama is serial anyway)
+- Ollama circuit breaker — remains (useful)
+- `EnsureLoaded` at language start — remains
+- Periodic state.json save (file tracking) — remains
 
-## Ce se schimbă
+## What Changes
 
-| Componentă | Schimbare |
+| Component | Change |
 |---|---|
-| `pkg/indexer/service.go` | Elimină `globalIndexSemaphore` + file worker pool → for loop simplu |
-| `pkg/indexer/service.go` | Elimină `state.SetLastPercent()` din file processing |
-| `pkg/indexer/state.go` | Elimină câmpul `LastPercent` din `State` struct |
-| `internal/service/engine/index_progress.go` | Adaugă `global_percent` calculat + flush debounced la `index_status.json` |
-| `internal/service/engine/engine.go` | Pre-scan total files înainte de loop; search logic citește `index_status.json` |
-| `internal/service/engine/engine.go` | Adaugă `ErrIndexingBusy` pentru al doilea workspace |
-| Toate fișierele de indexare | `log.Printf` → `logger.Instance.*` cu format standardizat `[IDX]` |
+| `pkg/indexer/service.go` | Remove `globalIndexSemaphore` + file worker pool → simple for loop |
+| `pkg/indexer/service.go` | Remove `state.SetLastPercent()` from file processing |
+| `pkg/indexer/state.go` | Remove `LastPercent` field from `State` struct |
+| `internal/service/engine/index_progress.go` | Add computed `global_percent` + debounced flush to `index_status.json` |
+| `internal/service/engine/engine.go` | Pre-scan total files before loop; search logic reads `index_status.json` |
+| `internal/service/engine/engine.go` | Add `ErrIndexingBusy` for second workspace |
+| All indexing files | `log.Printf` → `logger.Instance.*` with standardized `[IDX]` format |

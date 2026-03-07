@@ -56,6 +56,32 @@ func TestResolveFilePath(t *testing.T) {
 	}
 }
 
+func TestResolveFilePathNestedWorkspaceOverride(t *testing.T) {
+	// Detector finds /tmp/parent/nested as the workspace root (has its own .git)
+	detector := &fakeDetector{candidate: &contract.WorkspaceCandidate{
+		Root:   "/tmp/parent/nested",
+		Reason: contract.ReasonFilePath,
+	}}
+	// Registry knows /tmp/parent is an already-registered workspace
+	reg := &fakeRegistry{parentRoot: "/tmp/parent"}
+	r := New(Dependencies{Detector: detector, Registry: reg})
+	req := contract.ResolveWorkspaceRequest{FilePath: "/tmp/parent/nested/src/main.py"}
+
+	resp, err := r.Resolve(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.ResolvedRoot != "/tmp/parent" {
+		t.Fatalf("expected parent root /tmp/parent, got %s", resp.ResolvedRoot)
+	}
+	if resp.PathResolutionSource != "nested_workspace_override" {
+		t.Fatalf("expected source nested_workspace_override, got %s", resp.PathResolutionSource)
+	}
+	if resp.PathResolutionConfidence >= 0.95 {
+		t.Fatalf("expected reduced confidence (<0.95), got %f", resp.PathResolutionConfidence)
+	}
+}
+
 func TestResolveAlias(t *testing.T) {
 	registry := &fakeRegistry{candidate: &contract.WorkspaceCandidate{Root: "/tmp/alias", Reason: contract.ReasonWorkspaceAlias}}
 	r := New(Dependencies{Registry: registry})
@@ -235,6 +261,7 @@ type fakeRegistry struct {
 	err           *contract.ResolveWorkspaceError
 	feedbackCount int
 	promoteCount  int
+	parentRoot    string // if set, FindParentWorkspace returns this
 }
 
 func (f *fakeRegistry) ResolveAlias(ctx context.Context, alias string) (*contract.WorkspaceCandidate, *contract.ResolveWorkspaceError) {
@@ -268,6 +295,9 @@ func (f *fakeRegistry) GetActiveWorkspace() (string, error) {
 }
 
 func (f *fakeRegistry) FindParentWorkspace(path string) (string, bool) {
+	if f.parentRoot != "" {
+		return f.parentRoot, true
+	}
 	return "", false
 }
 

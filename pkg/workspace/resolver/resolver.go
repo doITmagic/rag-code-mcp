@@ -185,7 +185,7 @@ func (r *Resolver) handleFilePath(ctx context.Context, path string) (*contract.R
 		}
 	}
 
-	r.log(ctx, "file_path", map[string]any{"root": result.Root, "source": "file_path"})
+	r.log(ctx, "file_path", map[string]any{"root": result.Root, "source": result.Source})
 	if result.Source == "" {
 		result.Source = "file_path"
 	}

@@ -20,24 +20,156 @@ type IndexLanguageProgress struct {
 }
 
 type IndexProgress struct {
-	JobID         string                           `json:"job_id"`
-	WorkspaceID   string                           `json:"workspace_id"`
-	WorkspaceRoot string                           `json:"workspace_root"`
-	State         string                           `json:"state"` // starting|running|completed|failed
-	StartedAt     time.Time                        `json:"started_at"`
-	CompletedAt   *time.Time                       `json:"completed_at,omitempty"`
-	Languages     map[string]IndexLanguageProgress `json:"languages,omitempty"`
-	UpdatedAt     time.Time                        `json:"updated_at"`
-	Error         string                           `json:"error,omitempty"`
+	JobID           string                           `json:"job_id"`
+	WorkspaceID     string                           `json:"workspace_id"`
+	WorkspaceRoot   string                           `json:"workspace_root"`
+	State           string                           `json:"state"`            // starting|running|completed|failed
+	GlobalPercent   int                              `json:"global_percent"`   // weighted across all languages
+	CurrentLanguage string                           `json:"current_language"` // language currently being indexed
+	StartedAt       time.Time                        `json:"started_at"`
+	CompletedAt     *time.Time                       `json:"completed_at,omitempty"`
+	Languages       map[string]IndexLanguageProgress `json:"languages,omitempty"`
+	UpdatedAt       time.Time                        `json:"updated_at"`
+	Error           string                           `json:"error,omitempty"`
+}
+
+// calcGlobalPercent computes GlobalPercent as sum(done) / sum(total) * 100
+// across all languages. Languages are pre-registered with accurate TotalFiles
+// before indexing begins (via preRegister), so this sum is monotonically
+// non-decreasing.
+// Must be called with s.mu held.
+func calcGlobalPercent(langs map[string]IndexLanguageProgress) int {
+	var totalDone, totalFiles int
+	for _, lp := range langs {
+		totalDone += lp.DoneFiles
+		totalFiles += lp.TotalFiles
+	}
+	if totalFiles == 0 {
+		return 0
+	}
+	pct := totalDone * 100 / totalFiles
+	if pct > 100 {
+		return 100
+	}
+	return pct
 }
 
 type progressStore struct {
-	mu   sync.Mutex
-	jobs map[string]*IndexProgress
+	mu      sync.Mutex
+	jobs    map[string]*IndexProgress
+	flushCh chan struct{} // debounced disk flush signal
+	done    chan struct{} // closed by stop() to shut down runFlusher
 }
 
 func newProgressStore() *progressStore {
-	return &progressStore{jobs: map[string]*IndexProgress{}}
+	ps := &progressStore{
+		jobs:    map[string]*IndexProgress{},
+		flushCh: make(chan struct{}, 1),
+		done:    make(chan struct{}),
+	}
+	go ps.runFlusher()
+	return ps
+}
+
+// stop shuts down the background flusher goroutine. Must be called when the
+// progressStore is no longer needed (e.g. in test cleanup or Engine.Close).
+func (s *progressStore) stop() {
+	select {
+	case <-s.done:
+		// already stopped
+	default:
+		close(s.done)
+	}
+}
+
+// runFlusher drains flushCh and persists all jobs debounced at 500ms.
+// It snapshots job data under the mutex (fast), then writes to disk outside
+// the lock so that update()/get() are not blocked during disk I/O.
+// It exits when stop() is called (done channel is closed).
+func (s *progressStore) runFlusher() {
+	for {
+		select {
+		case <-s.done:
+			return
+		case _, ok := <-s.flushCh:
+			if !ok {
+				return
+			}
+		}
+		// Debounce: wait 500ms then drain any extra signals.
+		select {
+		case <-s.done:
+			return
+		case <-time.After(500 * time.Millisecond):
+		}
+		for len(s.flushCh) > 0 {
+			<-s.flushCh
+		}
+		// Snapshot under the lock (fast copy), then release before disk I/O.
+		s.mu.Lock()
+		snapshots := make([]IndexProgress, 0, len(s.jobs))
+		for _, p := range s.jobs {
+			if p.WorkspaceRoot == "" {
+				continue
+			}
+			cp := *p
+			if p.Languages != nil {
+				cp.Languages = make(map[string]IndexLanguageProgress, len(p.Languages))
+				for k, v := range p.Languages {
+					cp.Languages[k] = v
+				}
+			}
+			if p.CompletedAt != nil {
+				t := *p.CompletedAt
+				cp.CompletedAt = &t
+			}
+			snapshots = append(snapshots, cp)
+		}
+		s.mu.Unlock()
+		// Write snapshots to disk without holding the lock.
+		for i := range snapshots {
+			cp := snapshots[i]
+			saveIndexStatus(cp.WorkspaceRoot, &cp)
+		}
+	}
+}
+
+// triggerFlush signals the flusher non-blockingly.
+func (s *progressStore) triggerFlush() {
+	select {
+	case s.flushCh <- struct{}{}:
+	default: // already pending — no need to queue another
+	}
+}
+
+// preRegister sets the expected TotalFiles for a language before indexing begins.
+// This ensures calcGlobalPercent has an accurate denominator from the start,
+// making GlobalPercent monotonically non-decreasing throughout indexing.
+// It is a no-op if the workspace job has not been started yet.
+func (s *progressStore) preRegister(workspaceID, lang string, totalFiles int, now time.Time) {
+	s.mu.Lock()
+
+	p, ok := s.jobs[workspaceID]
+	if !ok {
+		s.mu.Unlock()
+		return
+	}
+	if p.Languages == nil {
+		p.Languages = make(map[string]IndexLanguageProgress)
+	}
+	// Only pre-register if the language hasn't started processing yet.
+	if _, exists := p.Languages[lang]; !exists {
+		p.Languages[lang] = IndexLanguageProgress{
+			TotalFiles: totalFiles,
+			DoneFiles:  0,
+			Percent:    0,
+		}
+		p.GlobalPercent = calcGlobalPercent(p.Languages)
+	}
+	p.UpdatedAt = now
+	s.mu.Unlock()
+	// Flush so the updated totals are persisted promptly.
+	s.triggerFlush()
 }
 
 func (s *progressStore) get(workspaceID string, workspaceRoot string) *IndexProgress {
@@ -87,7 +219,6 @@ func (s *progressStore) get(workspaceID string, workspaceRoot string) *IndexProg
 
 func (s *progressStore) start(workspaceID, workspaceRoot, jobID string, now time.Time) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.jobs[workspaceID] = &IndexProgress{
 		JobID:         jobID,
 		WorkspaceID:   workspaceID,
@@ -97,11 +228,14 @@ func (s *progressStore) start(workspaceID, workspaceRoot, jobID string, now time
 		UpdatedAt:     now,
 		Languages:     map[string]IndexLanguageProgress{},
 	}
+	s.mu.Unlock()
+	// Flush immediately so index_status.json exists from the moment indexing starts.
+	// Without this, a crash before the first update() would leave no status file.
+	s.triggerFlush()
 }
 
 func (s *progressStore) update(workspaceID, lang string, done, total int, now time.Time) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	p, ok := s.jobs[workspaceID]
 	if !ok {
 		p = &IndexProgress{
@@ -132,7 +266,11 @@ func (s *progressStore) update(workspaceID, lang string, done, total int, now ti
 		Percent:    pct,
 		UpdatedAt:  now,
 	}
+	p.CurrentLanguage = lang
+	p.GlobalPercent = calcGlobalPercent(p.Languages)
 	p.UpdatedAt = now
+	s.mu.Unlock()
+	s.triggerFlush()
 }
 
 func (s *progressStore) complete(workspaceID, workspaceRoot string, now time.Time) {
@@ -143,9 +281,9 @@ func (s *progressStore) complete(workspaceID, workspaceRoot string, now time.Tim
 		return
 	}
 	p.State = "completed"
+	p.GlobalPercent = 100
 	p.UpdatedAt = now
 	p.CompletedAt = &now
-
 	cp := *p
 	if p.Languages != nil {
 		cp.Languages = make(map[string]IndexLanguageProgress, len(p.Languages))
@@ -158,8 +296,7 @@ func (s *progressStore) complete(workspaceID, workspaceRoot string, now time.Tim
 		cp.CompletedAt = &t
 	}
 	s.mu.Unlock()
-
-	// Persist to disk so index_age survives process restarts.
+	// complete() is a one-time event — write synchronously so it persists even if process exits.
 	saveIndexStatus(workspaceRoot, &cp)
 }
 
@@ -173,7 +310,6 @@ func (s *progressStore) fail(workspaceID, workspaceRoot string, now time.Time, e
 	p.State = "failed"
 	p.Error = errMsg
 	p.UpdatedAt = now
-
 	cp := *p
 	if p.Languages != nil {
 		cp.Languages = make(map[string]IndexLanguageProgress, len(p.Languages))
@@ -181,13 +317,8 @@ func (s *progressStore) fail(workspaceID, workspaceRoot string, now time.Time, e
 			cp.Languages[k] = v
 		}
 	}
-	if p.CompletedAt != nil {
-		t := *p.CompletedAt
-		cp.CompletedAt = &t
-	}
 	s.mu.Unlock()
-
-	// Persist failed state too so we know something went wrong.
+	// fail() is a one-time event — write synchronously.
 	saveIndexStatus(workspaceRoot, &cp)
 }
 

@@ -161,8 +161,11 @@ func Run(rcfg RunConfig) error {
 	tools.NewListSkillsTool(eng, cfg.Skills).Register(mcpServer)
 	tools.NewInstallSkillTool(eng, cfg.Skills).Register(mcpServer)
 	tools.NewEvaluateRagCodeTool(eng, cfg).Register(mcpServer)
-	tools.NewCheckUpdateTool(rcfg.Version, cfg).Register(mcpServer)
-	tools.NewApplyUpdateTool(rcfg.Version).Register(mcpServer)
+	if !cfg.AutoUpdate {
+		tools.NewCheckUpdateTool(rcfg.Version, cfg).Register(mcpServer)
+		tools.NewApplyUpdateTool(rcfg.Version).Register(mcpServer)
+		logger.Instance.Info("Update tools registered (auto_update=false)")
+	}
 
 	logger.Instance.Info("MCP RagCode Daemon initialized (version=%s)", rcfg.Version)
 
@@ -209,8 +212,12 @@ func Run(rcfg RunConfig) error {
 	// Middleware: extract X-Workspace-Hint header from adapter and inject into request context.
 	// This makes the IDE's CWD available to all tools via transport.GetWorkspaceHint(ctx).
 	mcpHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if hint := r.Header.Get("X-Workspace-Hint"); hint != "" {
+		hint := r.Header.Get("X-Workspace-Hint")
+		if hint != "" {
+			logger.Instance.Debug("[DAEMON] Request received with X-Workspace-Hint=%s", hint)
 			r = r.WithContext(transport.WithWorkspaceHint(r.Context(), hint))
+		} else {
+			logger.Instance.Debug("[DAEMON] Request received WITHOUT X-Workspace-Hint header")
 		}
 		mcpMux.ServeHTTP(w, r)
 	})

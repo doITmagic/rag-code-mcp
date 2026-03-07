@@ -21,7 +21,7 @@
 
 RagCode is a **Model Context Protocol (MCP) server** that instantly makes your project **AI-ready**. It enables AI assistants like **GitHub Copilot**, **Cursor**, **Windsurf**, and **Claude** to understand your entire codebase through **semantic vector search**, bridging the gap between your code and Large Language Models (LLMs).
 
-Built with the official [Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk), RagCode provides **11 powerful tools** to index, search, and analyze code — including **Markdown documentation search** — making it the ultimate solution for **AI-ready software development**.
+Built with the official [Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk), RagCode provides **9 powerful MCP tools** to index, search, and analyze code — including **Markdown documentation search** — making it the ultimate solution for **AI-ready software development**.
 
 ## ⚡ One-Command Installation
 
@@ -55,23 +55,20 @@ Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/lates
 
 ### 🔄 Keep Updated
 
-The auto-update feature is available starting with **v1.1.18**.
+**Auto-update is enabled by default.** The daemon checks for new versions on startup and applies them automatically. No action needed.
 
 **How to Upgrade:**
 
 1.  **If you are on an older version (< v1.1.18):**
-    Your version **does not know** the update command.
     You must **re-run the installation command** (the curl command above) one last time.
-    *(Don't worry, your indexes and configuration will be preserved).*
+    *(Don't worry, your indexes and configuration will be preserved.)*
 
 2.  **If you are on v1.1.18 or newer:**
-    Simply run:
-    ```bash
-    rag-code-mcp --update
-    ```
+    Updates happen automatically. You can also trigger a manual update:
+    - Ask your AI assistant to run `rag_check_update` (check) or `rag_apply_update` (install)
+    - Or re-run the installer: `rag-code-install --upgrade -y`
 
-**For new installations:**
-The update system is built-in. Use the installer once, then simply run `rag-code-mcp --update` anytime to get the latest features.
+**To disable auto-update:** Set `auto_update: false` in `~/.ragcode/bin/config.yaml`.
 
 📖 **[Full Installation Guide →](./QUICKSTART.md)** | **[Windows WSL Setup →](./QUICKSTART.md#windows-with-wsl-alternative)**
 
@@ -161,7 +158,7 @@ First query triggers background indexing. Subsequent queries are instant.
 
 ---
 
-## 🛠️ 11 Powerful MCP Tools
+## 🛠️ MCP Tools
 
 ### 🔍 Search & Navigation (Core)
 
@@ -186,8 +183,11 @@ First query triggers background indexing. Subsequent queries are instant.
 | Tool | Description | Use When |
 |------|-------------|----------|
 | `rag_evaluate` | AI-to-Developer feedback on RagCode performance | Provide feedback |
-| `rag_check_update` | Check for available RagCode updates | Staying current |
-| `rag_apply_update` | Download and install latest RagCode version | Upgrading |
+| `rag_check_update` | Check for available RagCode updates | Only when `auto_update: false` |
+| `rag_apply_update` | Download and install latest RagCode version | Only when `auto_update: false` |
+
+> [!NOTE]
+> Update tools are only registered when `auto_update: false` in config. By default, the daemon auto-updates on startup, so these tools are hidden to keep the AI context lean.
 
 > [!TIP]
 > **`rag_search` is all you need for most queries.** It automatically combines semantic and exact search, adapts output format based on confidence, and with `include_docs: true` also searches project documentation (README, guides, Markdown files).

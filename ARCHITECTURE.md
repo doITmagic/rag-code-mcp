@@ -218,3 +218,43 @@
 3. Adaugă metode în Engine pentru fiecare operație necesară tool-urilor
 4. Rescrie tool-urile să folosească Engine în loc de internal/memory + internal/workspace
 5. Compilare și teste
+
+---
+
+## Transport & Process Architecture — Daemon + Adapter
+
+### Overview
+
+Single binary (`rag-code-mcp`) with two modes:
+- **Default (adapter)**: Thin Stdio ↔ Unix socket bridge (~1MB RAM)
+- **`--daemon`**: Heavy backend with Qdrant, Ollama, Engine, MCP Server
+
+### Packages
+
+#### `internal/daemon/`
+- `pidfile.go` — PID file write/read/remove, process alive check
+- `health.go` — `/health` endpoint (version, uptime, PID)
+- `server.go` — `ListenAndServe()`: Unix socket + optional TCP HTTP listeners
+- `run.go` — Full daemon startup (config, health checks, LLM, Qdrant, Engine, MCP tools)
+
+#### `internal/adapter/`
+- `adapter.go` — `RunBridge()`: reads stdin JSON-RPC → POST /mcp via Unix socket → stdout
+- `lifecycle.go` — `IsDaemonRunning()`, `StartDaemon()`, `StopDaemon()`, `CleanupStaleFiles()`
+
+### Files
+- `~/.ragcode/daemon.sock` — Unix domain socket (primary channel)
+- `~/.ragcode/daemon.pid` — PID + version + start time
+- Port `:3000` — Optional HTTP for curl/external agents
+
+### Protocol
+- **JSON-RPC over HTTP/1.1** — no SSE, no sessions, no handshake
+- **Request**: `POST /mcp` with JSON body
+- **Response**: `200 OK` with JSON body
+- **Health**: `GET /health` → JSON status
+
+### Key Design Decisions
+- Daemon survives IDE restarts (not tied to any stdin)
+- Multiple adapters connect to single daemon concurrently
+- `X-Workspace-Hint` header carries CWD from IDE for workspace detection fallback
+- Version upgrade: adapter detects newer version → kill old daemon → restart
+- Stale socket/PID detection: connect fail → cleanup → restart daemon

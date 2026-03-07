@@ -127,6 +127,17 @@ func (e *Engine) GetIndexProgress(workspaceID, workspaceRoot string) *IndexProgr
 	return e.progress.get(workspaceID, workspaceRoot)
 }
 
+// ActiveIndexingJobs returns the IDs of workspaces currently being indexed.
+// Useful for health checks and debugging concurrent indexing scenarios.
+func (e *Engine) ActiveIndexingJobs() []string {
+	var ids []string
+	e.indexingJobs.Range(func(k, _ any) bool {
+		ids = append(ids, k.(string))
+		return true
+	})
+	return ids
+}
+
 // Config returns the engine configuration.
 func (e *Engine) Config() *config.Config {
 	return e.config
@@ -669,6 +680,14 @@ func (e *Engine) tryStartPendingIndex(root, workspaceID string) {
 func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recreate bool) {
 	if _, loaded := e.indexingJobs.LoadOrStore(id, time.Now()); loaded {
 		return // Already running
+	}
+
+	// Count active jobs after adding this one — warn if multiple workspaces are indexing
+	// simultaneously (they serialize against each other at Ollama level).
+	var activeCount int
+	e.indexingJobs.Range(func(_, _ any) bool { activeCount++; return true })
+	if activeCount > 1 {
+		logger.Instance.Warn("[IDX] ⚠️ %d workspaces indexing simultaneously — Ollama requests will serialize implicitly (ws=%s)", activeCount, filepath.Base(root))
 	}
 
 	jobID := fmt.Sprintf("%s-%d", id, time.Now().UnixNano())

@@ -13,6 +13,7 @@ import (
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
 	"github.com/doITmagic/rag-code-mcp/internal/service/search"
+	"github.com/doITmagic/rag-code-mcp/internal/transport"
 	"github.com/doITmagic/rag-code-mcp/internal/skills"
 	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
@@ -182,12 +183,24 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 	source := "explicit_file_path"
 
 	if strings.TrimSpace(path) == "" {
-		active, err := e.GetActiveWorkspace()
-		if err != nil || active == "" {
-			return nil, fmt.Errorf("❌ No workspace detected. Please provide the 'file_path' of the file you are currently working on to help detect the project context.")
+		// Tier 2: Try workspace hint from adapter (IDE's CWD injected via X-Workspace-Hint header)
+		if hint := transport.GetWorkspaceHint(ctx); hint != "" {
+			abs, err := filepath.Abs(hint)
+			if err == nil {
+				req.FilePath = abs
+				source = "hint_fallback"
+			}
 		}
-		req.WorkspaceRoot = active
-		source = "registry_fallback"
+
+		// Tier 3: Fall back to last active workspace from registry
+		if req.FilePath == "" {
+			active, err := e.GetActiveWorkspace()
+			if err != nil || active == "" {
+				return nil, fmt.Errorf("❌ No workspace detected. Please provide the 'file_path' of the file you are currently working on to help detect the project context.")
+			}
+			req.WorkspaceRoot = active
+			source = "registry_fallback"
+		}
 	} else {
 		abs, err := filepath.Abs(path)
 		if err != nil {

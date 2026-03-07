@@ -325,24 +325,8 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 	primaryColl := wctx.CollectionName(primaryLang)
 	t1 := time.Now()
 
-	indexerStatePath := filepath.Join(wctx.Root, ".ragcode", "state.json")
-	if idxState, sErr := indexer.LoadState(indexerStatePath); sErr == nil {
-		if idxState.LastPercent > 0 && idxState.LastPercent < 100 {
-			if _, ok := e.indexingJobs.Load(wctx.ID); !ok {
-				// Throttle auto-resume: only once per 5 minutes per workspace to avoid
-				// CPU/log churn when indexing keeps failing (e.g. Ollama is down).
-				const resumeCooldown = 5 * time.Minute
-				now := time.Now()
-				if last, loaded := e.resumeAttempts.Load(wctx.ID); !loaded || now.Sub(last.(time.Time)) > resumeCooldown {
-					e.resumeAttempts.Store(wctx.ID, now)
-					log.Printf("[INFO] Detectată indexare întreruptă (rămasă la %d%%). Se reia automat...", idxState.LastPercent)
-					e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
-				}
-			}
-			// În ambele cazuri continuăm — Qdrant are deja date parțiale, iar progresul este adăugat în răspuns la nivelul MCP tool-ului
-			log.Printf("[INFO] Indexing in progress (%d%%) — searching available results in Qdrant", idxState.LastPercent)
-		}
-	}
+	// TODO(Task4): auto-resume logic will read from index_status.json here
+
 
 	exists, err := e.search.CollectionExists(ctx, primaryColl)
 	log.Printf("[TIMER] SearchCode collection_exists_primary=%v (cached=%v)", time.Since(t1), time.Since(t1) < time.Millisecond)
@@ -487,24 +471,8 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 
 	collection := wctx.CollectionName(lang)
 
-	indexerStatePath := filepath.Join(wctx.Root, ".ragcode", "state.json")
-	if idxState, sErr := indexer.LoadState(indexerStatePath); sErr == nil {
-		if idxState.LastPercent > 0 && idxState.LastPercent < 100 {
-			if _, ok := e.indexingJobs.Load(wctx.ID); !ok {
-				// Throttle auto-resume: only once per 5 minutes per workspace to avoid
-				// CPU/log churn when indexing keeps failing (e.g. Ollama is down).
-				const resumeCooldown = 5 * time.Minute
-				now := time.Now()
-				if last, loaded := e.resumeAttempts.Load(wctx.ID); !loaded || now.Sub(last.(time.Time)) > resumeCooldown {
-					e.resumeAttempts.Store(wctx.ID, now)
-					log.Printf("[INFO] Detectată indexare întreruptă (rămasă la %d%%). Se reia automat...", idxState.LastPercent)
-					e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
-				}
-			}
-			// În ambele cazuri continuăm — Qdrant are deja date parțiale, iar progresul este adăugat în răspuns la nivelul MCP tool-ului
-			log.Printf("[INFO] Indexing in progress (%d%%) — searching available results in Qdrant", idxState.LastPercent)
-		}
-	}
+	// TODO(Task4): auto-resume logic will read from index_status.json here
+
 
 	exists, err := e.search.CollectionExists(ctx, collection)
 	if err != nil {
@@ -766,11 +734,7 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 		}
 	}
 
-	statePath := filepath.Join(wctx.Root, ".ragcode", "state.json")
-	if state, err := indexer.LoadState(statePath); err == nil {
-		state.SetLastPercent(1) // Marker for "indexer is globally running"
-		_ = state.Save(statePath)
-	}
+
 
 	// We'll iterate all supported languages.
 	languages := parser.SupportedLanguages()
@@ -795,10 +759,7 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 		}
 	}
 
-	if state, err := indexer.LoadState(statePath); err == nil {
-		state.SetLastPercent(100)
-		_ = state.Save(statePath)
-	}
+
 
 	if e.watchers != nil {
 		if err := e.watchers.Start(wctx.Root, e.handleWatchChange); err != nil {

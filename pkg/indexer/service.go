@@ -313,8 +313,6 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 					pct = n * 100 / totalFiles
 				}
 
-				state.SetLastPercent(pct) // <-- SALVARE PROGRES!
-
 				logger.Instance.Info("📄 [%d/%d] %s (%s, %d%%)", n, totalFiles, filepath.Base(path), opts.Language, pct)
 				if opts.Progress != nil {
 					opts.Progress(n, totalFiles)

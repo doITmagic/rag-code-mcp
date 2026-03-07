@@ -79,25 +79,28 @@ func main() {
 	execPath, _ := os.Executable()
 	sourceDir := filepath.Dir(execPath)
 
-	binaries := []string{"rag-code-mcp", "rag-code-install"}
-	resources := []string{"README.md", "llms.txt", "LICENSE", "config.yaml"}
+	// Required files: rag-code-mcp (binary) + config.yaml
+	// If either is missing from sourceDir, download the latest release.
+	// rag-code-install is the running binary — no need to check or copy itself.
+	requiredFiles := []string{"rag-code-mcp", "config.yaml"}
+	optionalResources := []string{"README.md", "llms.txt", "LICENSE"}
 
-	// Fast Check: Are files present?
-	missingFiles := false
-	for _, f := range append(binaries, resources...) {
+	// Check if required files are present
+	needsDownload := false
+	for _, f := range requiredFiles {
 		name := f
-		if runtime.GOOS == "windows" && (f == "rag-code-mcp" || f == "rag-code-install") {
+		if runtime.GOOS == "windows" && f == "rag-code-mcp" {
 			name += ".exe"
 		}
 		if _, err := os.Stat(filepath.Join(sourceDir, name)); os.IsNotExist(err) {
-			missingFiles = true
+			needsDownload = true
 			break
 		}
 	}
 
-	// If files are missing, we must download the latest release and use its contents as source
+	// Download only if rag-code-mcp or config.yaml is missing
 	tempDir := ""
-	if missingFiles {
+	if needsDownload {
 		log("Required files missing in current directory. Downloading latest release...")
 		var err error
 		tempDir, err = downloadAndExtractLatest()
@@ -111,9 +114,9 @@ func main() {
 		log("Copying files from: " + sourceDir)
 	}
 
-	// Copy Binaries to bin/
-	for _, b := range binaries {
-		srcName := b
+	// Install the main binary
+	{
+		srcName := "rag-code-mcp"
 		if runtime.GOOS == "windows" {
 			srcName += ".exe"
 		}
@@ -121,31 +124,33 @@ func main() {
 		dst := filepath.Join(binPath, srcName)
 
 		if err := copyFile(src, dst); err != nil {
-			warn(fmt.Sprintf("Skipping: %s not found in source directory", b))
-			continue
+			fail(fmt.Sprintf("Failed to install binary rag-code-mcp: %v", err))
 		}
 		if err := os.Chmod(dst, 0755); err != nil {
-			warn(fmt.Sprintf("Failed to set executable permissions for %s: %v", b, err))
+			warn(fmt.Sprintf("Failed to set executable permissions: %v", err))
 		}
-		success("Installed binary: " + b)
+		success("Installed binary: rag-code-mcp")
 	}
 
-	// Copy Resources to bin/
-	for _, r := range resources {
+	// Install config.yaml (preserve existing)
+	{
+		src := filepath.Join(sourceDir, "config.yaml")
+		dst := filepath.Join(binPath, "config.yaml")
+		if _, err := os.Stat(dst); err == nil {
+			log("config.yaml already exists - keeping existing configuration.")
+			checkConfigUpgrade(dst)
+		} else if err := copyFile(src, dst); err != nil {
+			warn("Could not install config.yaml: " + err.Error())
+		} else {
+			success("Installed resource: config.yaml")
+		}
+	}
+
+	// Copy optional resources (silently skip if missing)
+	for _, r := range optionalResources {
 		src := filepath.Join(sourceDir, r)
 		dst := filepath.Join(binPath, r)
-
-		if r == "config.yaml" {
-			if _, err := os.Stat(dst); err == nil {
-				log("config.yaml already exists - keeping existing configuration.")
-				checkConfigUpgrade(dst)
-				continue
-			}
-		}
-
-		if err := copyFile(src, dst); err != nil {
-			warn(fmt.Sprintf("Skipping: %s not found in source directory", r))
-		} else {
+		if err := copyFile(src, dst); err == nil {
 			success("Installed resource: " + r)
 		}
 	}

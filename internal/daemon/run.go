@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -92,7 +91,8 @@ func Run(rcfg RunConfig) error {
 		health := healthcheck.CheckAllWithModels(cfg.LLM.OllamaBaseURL, cfg.Storage.VectorDB.URL, models)
 		for _, h := range health {
 			if h.Status != "ok" {
-				log.Fatalf("Health check failed for %s: %s\n%s", h.Service, h.Message, healthcheck.GetRemediation(health, models))
+				remediation := healthcheck.GetRemediation(health, models)
+				return fmt.Errorf("health check failed for %s: %s\n%s", h.Service, h.Message, remediation)
 			}
 		}
 		logger.Instance.Info("Health checks passed")
@@ -103,7 +103,7 @@ func Run(rcfg RunConfig) error {
 	// ── LLM Provider ──
 	ollamaProvider, err := llm.NewOllamaLLMProvider(cfg.LLM)
 	if err != nil {
-		log.Fatalf("Failed to create Ollama provider: %v", err)
+		return fmt.Errorf("failed to create Ollama provider: %w", err)
 	}
 	provider := llm.NewRetryableProvider(ollamaProvider, 3, 30*time.Second)
 
@@ -116,7 +116,7 @@ func Run(rcfg RunConfig) error {
 	qdrantHost, qdrantPort := storage.ParseQdrantURL(cfg.Storage.VectorDB.URL)
 	vectorStore, err := storage.NewQdrantStore(qdrantHost, qdrantPort, false, cfg.Storage.VectorDB.APIKey)
 	if err != nil {
-		log.Fatalf("Failed to connect to Qdrant at %s:%d: %v", qdrantHost, qdrantPort, err)
+		return fmt.Errorf("failed to connect to Qdrant at %s:%d: %w", qdrantHost, qdrantPort, err)
 	}
 	logger.Instance.Info("Qdrant store ready: %s:%d", qdrantHost, qdrantPort)
 
@@ -170,11 +170,11 @@ func Run(rcfg RunConfig) error {
 	// ── Paths ──
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		log.Fatalf("Cannot determine home directory: %v", err)
+		return fmt.Errorf("cannot determine home directory: %w", err)
 	}
 	ragcodeDir := filepath.Join(homeDir, ".ragcode")
-	if err := os.MkdirAll(ragcodeDir, 0o755); err != nil {
-		log.Fatalf("Cannot create ~/.ragcode: %v", err)
+	if err := os.MkdirAll(ragcodeDir, 0o700); err != nil {
+		return fmt.Errorf("cannot create ~/.ragcode: %w", err)
 	}
 	socketPath := filepath.Join(ragcodeDir, "daemon.sock")
 	pidPath := filepath.Join(ragcodeDir, "daemon.pid")

@@ -232,7 +232,8 @@ daemon:
 
 ```yaml
 daemon:
-  socket_path: ""       # default: ~/.ragcode/daemon.sock
-  http_port: 3000       # 0 = dezactivat
-  idle_timeout: 0        # 0 = run forever
+  socket_path: ""             # default: ~/.ragcode/daemon.sock
+  http_host: 127.0.0.1        # bind only to loopback by default (secure local access)
+  http_port: 3000             # HTTP on http_host:port; 0 = dezactivat. Pentru expunere externă (ex. 0.0.0.0) e necesar hardening (auth, TLS) și opt-in explicit.
+  idle_timeout: 0             # 0 = run forever
 ```

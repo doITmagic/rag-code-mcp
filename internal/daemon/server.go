@@ -3,13 +3,14 @@ package daemon
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/doITmagic/rag-code-mcp/internal/logger"
 )
 
 // ListenConfig configures the daemon's network listeners and lifecycle.
@@ -27,11 +28,19 @@ type ListenConfig struct {
 //
 // It sets up two listeners:
 //  1. Unix domain socket at SocketPath (primary, for stdio adapters)
-//  2. TCP HTTP on HTTPPort (optional, for curl/debug/external agents)
+//  2. TCP HTTP on HTTPPort (optional, for curl/debug/external agents, localhost only)
 //
 // Both serve the same handler mux with /health and the provided MCP handler.
 func ListenAndServe(ctx context.Context, cfg ListenConfig) error {
 	startTime := time.Now()
+
+	// Validate required config
+	if cfg.SocketPath == "" {
+		return fmt.Errorf("ListenAndServe: SocketPath is required")
+	}
+	if cfg.PIDPath == "" {
+		return fmt.Errorf("ListenAndServe: PIDPath is required")
+	}
 
 	// Remove stale socket if it exists
 	os.Remove(cfg.SocketPath)
@@ -55,33 +64,30 @@ func ListenAndServe(ctx context.Context, cfg ListenConfig) error {
 		os.Remove(cfg.SocketPath)
 	}()
 
-	// Write PID file
+	// Write PID file (fatal on failure — adapters rely on it for discovery/version checks)
 	if err := WritePID(cfg.PIDPath, os.Getpid(), cfg.Version); err != nil {
-		slog.Warn("Failed to write PID file", "error", err)
+		unixListener.Close()
+		os.Remove(cfg.SocketPath)
+		return fmt.Errorf("failed to write PID file %s: %w", cfg.PIDPath, err)
 	}
 	defer func() { _ = RemovePID(cfg.PIDPath) }()
 
-	// --- Optional TCP HTTP listener ---
+	// --- Optional TCP HTTP listener (localhost only for security) ---
 	var tcpListener net.Listener
 	if cfg.HTTPPort > 0 {
-		tcpListener, err = net.Listen("tcp", fmt.Sprintf(":%d", cfg.HTTPPort))
+		tcpListener, err = net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", cfg.HTTPPort))
 		if err != nil {
-			slog.Warn("HTTP port unavailable (non-fatal, Unix socket is primary)",
-				"port", cfg.HTTPPort, "error", err)
+			logger.Instance.Warn("HTTP port unavailable (non-fatal, Unix socket is primary): port=%d err=%v",
+				cfg.HTTPPort, err)
 			// Non-fatal — Unix socket is the primary channel
 		}
-	}
-
-	// Signal readiness
-	if cfg.OnReady != nil {
-		cfg.OnReady()
 	}
 
 	// Start serving on Unix socket
 	unixServer := &http.Server{Handler: mux}
 	go func() {
 		if serveErr := unixServer.Serve(unixListener); serveErr != nil && serveErr != http.ErrServerClosed {
-			slog.Error("Unix socket server error", "error", serveErr)
+			logger.Instance.Error("Unix socket server error: %v", serveErr)
 		}
 	}()
 
@@ -91,31 +97,36 @@ func ListenAndServe(ctx context.Context, cfg ListenConfig) error {
 		tcpServer = &http.Server{Handler: mux}
 		go func() {
 			if serveErr := tcpServer.Serve(tcpListener); serveErr != nil && serveErr != http.ErrServerClosed {
-				slog.Error("TCP server error", "error", serveErr)
+				logger.Instance.Error("TCP server error: %v", serveErr)
 			}
 		}()
-		slog.Info("HTTP server listening", "port", cfg.HTTPPort)
+		logger.Instance.Info("HTTP server listening on 127.0.0.1:%d", cfg.HTTPPort)
 	}
 
-	slog.Info("Daemon ready", "socket", cfg.SocketPath, "version", cfg.Version, "pid", os.Getpid())
+	// Signal readiness AFTER servers are actually serving
+	if cfg.OnReady != nil {
+		cfg.OnReady()
+	}
+
+	logger.Instance.Info("Daemon ready — socket=%s version=%s pid=%d", cfg.SocketPath, cfg.Version, os.Getpid())
 
 	// Block until context cancellation or OS signal
 	sigCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	<-sigCtx.Done()
 
-	slog.Info("Daemon shutting down...")
+	logger.Instance.Info("Daemon shutting down...")
 
 	// Graceful shutdown with 5s deadline
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 
 	if shutdownErr := unixServer.Shutdown(shutdownCtx); shutdownErr != nil {
-		slog.Warn("Unix server shutdown error", "error", shutdownErr)
+		logger.Instance.Warn("Unix server shutdown error: %v", shutdownErr)
 	}
 	if tcpServer != nil {
 		if shutdownErr := tcpServer.Shutdown(shutdownCtx); shutdownErr != nil {
-			slog.Warn("TCP server shutdown error", "error", shutdownErr)
+			logger.Instance.Warn("TCP server shutdown error: %v", shutdownErr)
 		}
 	}
 

@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -98,6 +99,12 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 		limit = input.Limit
 	}
 
+	// When strict_docs mode is requested, automatically enable docs search
+	// so that the semantic engine actually fetches documentation results.
+	if input.Mode == "strict_docs" {
+		input.IncludeDocs = true
+	}
+
 	// Run both search strategies in parallel
 	type searchResult struct {
 		label   string
@@ -180,12 +187,13 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 	// Apply mode filtering
 	var filtered []mergedResult
 	for _, m := range merged {
-		// Strict code mode: ignore completely any markdown or documentation type
-		if input.Mode == "strict_code" && (m.symbolType == "documentation" || m.symbolType == "markdown" || m.symbolType == "code_block" || strings.HasSuffix(strings.ToLower(m.filePath), ".md") || strings.HasSuffix(strings.ToLower(m.filePath), ".html")) {
+		isDoc := isDocSymbolType(m.symbolType) || isDocExtension(m.filePath)
+		// Strict code mode: ignore completely any documentation type or doc file
+		if input.Mode == "strict_code" && isDoc {
 			continue
 		}
 		// Strict docs mode: ignore anything that isn't documentation
-		if input.Mode == "strict_docs" && !(m.symbolType == "documentation" || m.symbolType == "markdown" || m.symbolType == "code_block" || strings.HasSuffix(strings.ToLower(m.filePath), ".md") || strings.HasSuffix(strings.ToLower(m.filePath), ".html")) {
+		if input.Mode == "strict_docs" && !isDoc {
 			continue
 		}
 		filtered = append(filtered, m)
@@ -481,26 +489,56 @@ func (t *SmartSearchTool) handleSearchError(err error, workspaceRoot, workspaceI
 	return response.JSON()
 }
 
-// readLines reads a specific range of lines from a file.
-// Lines are 1-indexed.
+// isDocSymbolType returns true if the symbol type represents documentation content.
+func isDocSymbolType(symbolType string) bool {
+	return symbolType == "documentation" || symbolType == "code_block" || symbolType == "markdown"
+}
+
+// isDocExtension returns true if the file path has a documentation or structured text extension.
+func isDocExtension(filePath string) bool {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	switch ext {
+	case ".md", ".markdown", ".html", ".htm",
+		".yaml", ".yml", ".json", ".xml",
+		".toml", ".rst":
+		return true
+	}
+	return false
+}
+
+// readLines reads a specific range of lines from a file using a buffered scanner
+// to avoid loading the entire file into memory. Lines are 1-indexed.
 func readLines(filePath string, startLine, endLine int) (string, error) {
-	content, err := os.ReadFile(filePath)
+	if startLine < 1 || endLine < startLine {
+		return "", fmt.Errorf("invalid line range %d-%d", startLine, endLine)
+	}
+
+	f, err := os.Open(filePath)
 	if err != nil {
 		return "", err
 	}
-	
-	lines := strings.Split(string(content), "\n")
-	if startLine < 1 {
-		startLine = 1
+	defer f.Close()
+
+	var collected []string
+	scanner := bufio.NewScanner(f)
+	lineNum := 0
+	for scanner.Scan() {
+		lineNum++
+		if lineNum > endLine {
+			break
+		}
+		if lineNum >= startLine {
+			collected = append(collected, scanner.Text())
+		}
 	}
-	if endLine > len(lines) {
-		endLine = len(lines)
+	if err := scanner.Err(); err != nil {
+		return "", err
 	}
-	if startLine > endLine || startLine > len(lines) {
-		return "", fmt.Errorf("invalid line range")
+	if len(collected) == 0 {
+		return "", fmt.Errorf("invalid line range: file has %d lines, requested %d-%d", lineNum, startLine, endLine)
 	}
-	
-	return strings.Join(lines[startLine-1:endLine], "\n"), nil
+
+	return strings.Join(collected, "\n"), nil
 }
 
 // groupDocsByTree aggregates "documentation" and "code_block" chunks
@@ -512,39 +550,35 @@ func (t *SmartSearchTool) groupDocsByTree(results []mergedResult) []mergedResult
 	}
 
 	var out []mergedResult
-	
-	// Groups are keyed by: filePath_|_signature -> slice of mergedResult indices in groups slice
-	type docGroup struct {
+
+	type groupKey struct {
 		filePath  string
 		signature string
-		items     []*mergedResult
-		maxScore  float32
-		minLine   int
-		maxLine   int
-		source    string
 	}
-	
-	groupsMap := make(map[string]*docGroup)
-	var orderedGroups []string // keep track of the first time we see a group to maintain rough sorting
+
+	type docGroup struct {
+		key      groupKey
+		items    []*mergedResult
+		maxScore float32
+		minLine  int
+		maxLine  int
+		source   string
+	}
+
+	groupsMap := make(map[groupKey]*docGroup)
+	var orderedGroups []groupKey // keep track of the first time we see a group to maintain rough sorting
 
 	for i := range results {
 		res := &results[i]
-		
-		// Only group documentation types and files ending in .md or .html
-		ext := strings.ToLower(filepath.Ext(res.filePath))
-		isDocFile := ext == ".md" || ext == ".markdown" || ext == ".html" || ext == ".htm" || 
-			ext == ".yaml" || ext == ".yml" || ext == ".json" || ext == ".xml" || 
-			ext == ".toml" || ext == ".rst" || ext == ".css" || ext == ".scss" || ext == ".svelte" || ext == ".sql" || ext == ".sh"
-		
-		isDocType := res.symbolType == "documentation" || res.symbolType == "code_block" || res.symbolType == "markdown"
-		
-		if !isDocType || !isDocFile || res.signature == "" {
+
+		// Only group documentation types and documentation/structured text files
+		if !isDocSymbolType(res.symbolType) || !isDocExtension(res.filePath) || res.signature == "" {
 			// Pass-through code or items without signature
 			out = append(out, *res)
 			continue
 		}
-		
-		key := fmt.Sprintf("%s_|_%s", res.filePath, res.signature)
+
+		key := groupKey{filePath: res.filePath, signature: res.signature}
 		if g, exists := groupsMap[key]; exists {
 			g.items = append(g.items, res)
 			if res.score > g.maxScore {
@@ -569,13 +603,12 @@ func (t *SmartSearchTool) groupDocsByTree(results []mergedResult) []mergedResult
 				maxL = 1
 			}
 			groupsMap[key] = &docGroup{
-				filePath:  res.filePath,
-				signature: res.signature,
-				items:     []*mergedResult{res},
-				maxScore:  res.score,
-				minLine:   minL,
-				maxLine:   maxL,
-				source:    res.source,
+				key:      key,
+				items:    []*mergedResult{res},
+				maxScore: res.score,
+				minLine:  minL,
+				maxLine:  maxL,
+				source:   res.source,
 			}
 			orderedGroups = append(orderedGroups, key)
 		}
@@ -584,23 +617,23 @@ func (t *SmartSearchTool) groupDocsByTree(results []mergedResult) []mergedResult
 	// Reconstruct the grouped items
 	for _, key := range orderedGroups {
 		g := groupsMap[key]
-		
+
 		if len(g.items) == 1 {
 			// Nothing to merge, just append
 			out = append(out, *g.items[0])
 			continue
 		}
-		
+
 		// Multiple chunks in this group. Let's merge them!
 		// Attempt to read the full continuous block from the file
 		fullContent := ""
 		if g.minLine > 0 && g.maxLine >= g.minLine {
-			content, err := readLines(g.filePath, g.minLine, g.maxLine)
+			content, err := readLines(g.key.filePath, g.minLine, g.maxLine)
 			if err == nil {
 				fullContent = content
 			}
 		}
-		
+
 		// If reading from disk failed, append the contents manually with an ellipsis
 		if fullContent == "" {
 			var contents []string
@@ -620,10 +653,10 @@ func (t *SmartSearchTool) groupDocsByTree(results []mergedResult) []mergedResult
 		merged := mergedResult{
 			id:         fmt.Sprintf("merged_%s_%d_%d", baseItem.id, g.minLine, g.maxLine),
 			score:      g.maxScore,
-			filePath:   g.filePath,
+			filePath:   g.key.filePath,
 			name:       baseItem.name,
 			symbolType: "documentation_merged",
-			signature:  g.signature,
+			signature:  g.key.signature,
 			pkg:        baseItem.pkg,
 			docstring:  fmt.Sprintf("Merged %d chunks spanning %d lines.", len(g.items), g.maxLine-g.minLine+1),
 			content:    fullContent,

@@ -243,6 +243,43 @@ func (r *Registry) LookupByRoot(root string) (*Entry, bool) {
 	return r.entries[id], true
 }
 
+// FindParentWorkspace checks if the given path is a subdirectory of any
+// registered workspace. If multiple parents exist (nested registrations),
+// returns the most specific (deepest) parent root. Returns ("", false) if
+// no parent found.
+// This prevents nested git repos (submodules, vendored projects) from being
+// treated as independent workspaces when they live inside an already-indexed project.
+func (r *Registry) FindParentWorkspace(path string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	cleanPath := strings.ToLower(filepath.Clean(path))
+	if cleanPath == "" {
+		return "", false
+	}
+
+	var bestRoot string
+	var bestLen int
+
+	for _, entry := range r.entries {
+		entryRoot := strings.ToLower(filepath.Clean(entry.Root))
+		// The path must be strictly inside the entry root (not equal to it)
+		prefix := entryRoot + string(filepath.Separator)
+		if strings.HasPrefix(cleanPath, prefix) {
+			// Pick the deepest (most specific) parent
+			if len(entryRoot) > bestLen {
+				bestLen = len(entryRoot)
+				bestRoot = entry.Root // preserve original casing
+			}
+		}
+	}
+
+	if bestRoot == "" {
+		return "", false
+	}
+	return bestRoot, true
+}
+
 // LookupByName returns entries matching the provided name.
 func (r *Registry) LookupByName(name string) []*Entry {
 	r.mu.Lock()

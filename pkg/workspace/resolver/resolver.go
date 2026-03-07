@@ -21,6 +21,10 @@ type Registry interface {
 	PromoteCandidate(ctx context.Context, root, client string, executionSucceeded bool) error
 	RegisterWorkspace(root, name, client string) error
 	GetActiveWorkspace() (string, error)
+	// FindParentWorkspace checks if the given path is a subdirectory
+	// of any already-registered workspace. Returns the parent root
+	// and true if found, or ("", false) if no parent exists.
+	FindParentWorkspace(path string) (string, bool)
 }
 
 // RootValidator ensures resolved roots are within allowed boundaries.
@@ -162,6 +166,25 @@ func (r *Resolver) handleFilePath(ctx context.Context, path string) (*contract.R
 			Reason:  contract.ReasonInvalidPath,
 		}
 	}
+
+	// Guard: if the detected root is a subdirectory of an already-registered
+	// workspace, prefer the parent. This prevents nested git repos (submodules,
+	// vendored projects, monorepo sub-packages) from being treated as separate
+	// workspaces when they live inside a project that is already indexed.
+	if r.deps.Registry != nil {
+		if parentRoot, found := r.deps.Registry.FindParentWorkspace(result.Root); found {
+			r.log(ctx, "nested_workspace_override", map[string]any{
+				"detected_root": result.Root,
+				"parent_root":   parentRoot,
+				"reason":        "detected root is subdirectory of registered workspace",
+			})
+			result.Root = parentRoot
+			result.Reason = contract.ReasonFilePath
+			result.Source = "nested_workspace_override"
+			result.Confidence = 0.90 // slightly lower than direct detection
+		}
+	}
+
 	r.log(ctx, "file_path", map[string]any{"root": result.Root, "source": "file_path"})
 	if result.Source == "" {
 		result.Source = "file_path"

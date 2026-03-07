@@ -78,7 +78,7 @@ func (t *EvaluateRagCodeTool) Execute(ctx context.Context, args map[string]inter
 		health := healthcheck.CheckAllWithModels(t.cfg.LLM.OllamaBaseURL, t.cfg.Storage.VectorDB.URL, models)
 		for _, h := range health {
 			statusSymbol := "✅"
-			if h.Status != "OK" {
+			if strings.ToLower(h.Status) != "ok" {
 				statusSymbol = "❌"
 			}
 			healthStatus = append(healthStatus, fmt.Sprintf("%s %s: %s", statusSymbol, h.Service, h.Status))

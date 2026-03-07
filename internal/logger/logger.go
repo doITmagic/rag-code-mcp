@@ -71,6 +71,20 @@ func (l *SimpleLogger) Debug(format string, args ...interface{}) {
 	}
 }
 
+// SetLevel dynamically updates the logging level based on string input (e.g. from config).
+func (l *SimpleLogger) SetLevel(level string) {
+	switch strings.ToLower(level) {
+	case "debug":
+		l.level.Set(slog.LevelDebug)
+	case "warn":
+		l.level.Set(slog.LevelWarn)
+	case "error":
+		l.level.Set(slog.LevelError)
+	default:
+		l.level.Set(slog.LevelInfo)
+	}
+}
+
 // Info logs an informational message.
 func (l *SimpleLogger) Info(format string, args ...interface{}) {
 	if l.level.Level() <= slog.LevelInfo {

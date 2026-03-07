@@ -783,6 +783,21 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 	languages := parser.SupportedLanguages()
 
 	wsName := filepath.Base(wctx.Root)
+
+	// Pre-scan: count files for every language before starting indexing.
+	// This gives progressStore an accurate denominator from the start, so
+	// GlobalPercent increases monotonically instead of resetting per language.
+	var excludePatterns []string
+	if e.config != nil {
+		excludePatterns = e.config.Workspace.ExcludePatterns
+	}
+	if e.progress != nil {
+		for _, lang := range languages {
+			count := e.indexer.CountFiles(wctx.Root, lang, excludePatterns)
+			e.progress.preRegister(wctx.ID, lang, count, time.Now())
+		}
+	}
+
 	var indexErrors []string
 	for _, lang := range languages {
 		collection := wctx.CollectionName(lang)

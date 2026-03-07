@@ -12,8 +12,9 @@ import (
 func TestProgressStoreDeepCopy(t *testing.T) {
 	store := newProgressStore()
 	now := time.Now()
+	wsRoot := t.TempDir()
 
-	store.start("ws1", "/tmp/ws1", "job1", now)
+	store.start("ws1", wsRoot, "job1", now)
 	store.update("ws1", "go", 5, 10, now)
 
 	p := store.get("ws1", "")
@@ -73,10 +74,11 @@ func TestProgressStoreDiskRoundTrip(t *testing.T) {
 func TestProgressStoreGlobalPercent(t *testing.T) {
 	store := newProgressStore()
 	now := time.Now()
+	wsRoot := t.TempDir()
 
-	store.start("ws1", "/tmp/ws1", "job1", now)
-	store.update("ws1", "md", 120, 120, now)  // md: 100% (120/120)
-	store.update("ws1", "go", 234, 500, now)  // go: 46%  (234/500)
+	store.start("ws1", wsRoot, "job1", now)
+	store.update("ws1", "md", 120, 120, now) // md: 100% (120/120)
+	store.update("ws1", "go", 234, 500, now) // go: 46%  (234/500)
 
 	p := store.get("ws1", "")
 	if p == nil {
@@ -94,8 +96,9 @@ func TestProgressStoreGlobalPercent(t *testing.T) {
 func TestProgressStoreCurrentLanguage(t *testing.T) {
 	store := newProgressStore()
 	now := time.Now()
+	wsRoot := t.TempDir()
 
-	store.start("ws2", "/tmp/ws2", "job2", now)
+	store.start("ws2", wsRoot, "job2", now)
 	store.update("ws2", "md", 10, 100, now)
 
 	p := store.get("ws2", "")
@@ -117,14 +120,17 @@ func TestProgressStoreCurrentLanguage(t *testing.T) {
 func TestProgressStoreTwoWorkspacesIsolated(t *testing.T) {
 	store := newProgressStore()
 	now := time.Now()
+	rootA := t.TempDir()
+	rootB := t.TempDir()
 
-	// WsA: go 50/100, python 0/200 → global = 50/300 = 16%
-	store.start("wsA", "/tmp/wsA", "jobA", now)
+	// WsA: go 50/100, python 0/200 → global = (50+0)/(100+200)*100 = 16%
+	// python is in the denominator because totals are pre-registered
+	store.start("wsA", rootA, "jobA", now)
 	store.update("wsA", "go", 50, 100, now)
 	store.update("wsA", "python", 0, 200, now)
 
 	// WsB: go 200/200 → global = 200/200 = 100%
-	store.start("wsB", "/tmp/wsB", "jobB", now)
+	store.start("wsB", rootB, "jobB", now)
 	store.update("wsB", "go", 200, 200, now)
 
 	pA := store.get("wsA", "")
@@ -167,8 +173,8 @@ func TestProgressStoreTwoWorkspacesConcurrent(t *testing.T) {
 	store := newProgressStore()
 	now := time.Now()
 
-	store.start("cA", "/tmp/cA", "jA", now)
-	store.start("cB", "/tmp/cB", "jB", now)
+	store.start("cA", t.TempDir(), "jA", now)
+	store.start("cB", t.TempDir(), "jB", now)
 
 	const iters = 50
 	done := make(chan struct{}, 2)

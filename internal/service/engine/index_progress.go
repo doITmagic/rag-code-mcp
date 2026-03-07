@@ -23,17 +23,20 @@ type IndexProgress struct {
 	JobID           string                           `json:"job_id"`
 	WorkspaceID     string                           `json:"workspace_id"`
 	WorkspaceRoot   string                           `json:"workspace_root"`
-	State           string                           `json:"state"` // starting|running|completed|failed
-	GlobalPercent   int                              `json:"global_percent"`  // weighted across all languages
+	State           string                           `json:"state"`            // starting|running|completed|failed
+	GlobalPercent   int                              `json:"global_percent"`   // weighted across all languages
 	CurrentLanguage string                           `json:"current_language"` // language currently being indexed
 	StartedAt       time.Time                        `json:"started_at"`
 	CompletedAt     *time.Time                       `json:"completed_at,omitempty"`
-	Languages       map[string]IndexLanguageProgress  `json:"languages,omitempty"`
+	Languages       map[string]IndexLanguageProgress `json:"languages,omitempty"`
 	UpdatedAt       time.Time                        `json:"updated_at"`
 	Error           string                           `json:"error,omitempty"`
 }
 
-// calcGlobalPercent computes GlobalPercent as sum(done) / sum(total) * 100.
+// calcGlobalPercent computes GlobalPercent as sum(done) / sum(total) * 100
+// across all languages. Languages are pre-registered with accurate TotalFiles
+// before indexing begins (via preRegister), so this sum is monotonically
+// non-decreasing.
 // Must be called with s.mu held.
 func calcGlobalPercent(langs map[string]IndexLanguageProgress) int {
 	var totalDone, totalFiles int
@@ -67,6 +70,8 @@ func newProgressStore() *progressStore {
 }
 
 // runFlusher drains flushCh and persists all jobs debounced at 500ms.
+// It snapshots job data under the mutex (fast), then writes to disk outside
+// the lock so that update()/get() are not blocked during disk I/O.
 func (s *progressStore) runFlusher() {
 	for range s.flushCh {
 		time.Sleep(500 * time.Millisecond)
@@ -74,24 +79,32 @@ func (s *progressStore) runFlusher() {
 		for len(s.flushCh) > 0 {
 			<-s.flushCh
 		}
+		// Snapshot under the lock (fast copy), then release before disk I/O.
 		s.mu.Lock()
+		snapshots := make([]IndexProgress, 0, len(s.jobs))
 		for _, p := range s.jobs {
-			if p.WorkspaceRoot != "" {
-				cp := *p
-				if p.Languages != nil {
-					cp.Languages = make(map[string]IndexLanguageProgress, len(p.Languages))
-					for k, v := range p.Languages {
-						cp.Languages[k] = v
-					}
-				}
-				if p.CompletedAt != nil {
-					t := *p.CompletedAt
-					cp.CompletedAt = &t
-				}
-				saveIndexStatus(p.WorkspaceRoot, &cp)
+			if p.WorkspaceRoot == "" {
+				continue
 			}
+			cp := *p
+			if p.Languages != nil {
+				cp.Languages = make(map[string]IndexLanguageProgress, len(p.Languages))
+				for k, v := range p.Languages {
+					cp.Languages[k] = v
+				}
+			}
+			if p.CompletedAt != nil {
+				t := *p.CompletedAt
+				cp.CompletedAt = &t
+			}
+			snapshots = append(snapshots, cp)
 		}
 		s.mu.Unlock()
+		// Write snapshots to disk without holding the lock.
+		for i := range snapshots {
+			cp := snapshots[i]
+			saveIndexStatus(cp.WorkspaceRoot, &cp)
+		}
 	}
 }
 
@@ -101,6 +114,33 @@ func (s *progressStore) triggerFlush() {
 	case s.flushCh <- struct{}{}:
 	default: // already pending — no need to queue another
 	}
+}
+
+// preRegister sets the expected TotalFiles for a language before indexing begins.
+// This ensures calcGlobalPercent has an accurate denominator from the start,
+// making GlobalPercent monotonically non-decreasing throughout indexing.
+// It is a no-op if the workspace job has not been started yet.
+func (s *progressStore) preRegister(workspaceID, lang string, totalFiles int, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	p, ok := s.jobs[workspaceID]
+	if !ok {
+		return
+	}
+	if p.Languages == nil {
+		p.Languages = make(map[string]IndexLanguageProgress)
+	}
+	// Only pre-register if the language hasn't started processing yet.
+	if _, exists := p.Languages[lang]; !exists {
+		p.Languages[lang] = IndexLanguageProgress{
+			TotalFiles: totalFiles,
+			DoneFiles:  0,
+			Percent:    0,
+		}
+		p.GlobalPercent = calcGlobalPercent(p.Languages)
+	}
+	p.UpdatedAt = now
 }
 
 func (s *progressStore) get(workspaceID string, workspaceRoot string) *IndexProgress {

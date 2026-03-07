@@ -12,7 +12,7 @@ relations/
 test-*
 bin/
 tests/e2e/bin/
-rag-code-install
+/rag-code-install
 index-all
 rag-code-mcp
 

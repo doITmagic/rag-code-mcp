@@ -45,7 +45,7 @@ func RunBridge(ctx context.Context, socketPath string, stdin io.Reader, stdout i
 			continue
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
 		if workspaceHint != "" {
 			req.Header.Set("X-Workspace-Hint", workspaceHint)
 		}

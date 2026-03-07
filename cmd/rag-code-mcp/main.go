@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/doITmagic/rag-code-mcp/internal/adapter"
@@ -69,19 +70,43 @@ func main() {
 		// ADAPTER MODE (default) — thin Stdio ↔ Unix socket bridge
 		// Each IDE launches this mode; daemon is started automatically.
 		// ═══════════════════════════════════════════════════════════════
-		runAdapter(Version)
+
+		// Build daemon args from CLI flags so the adapter-started daemon
+		// uses the same configuration as the adapter process.
+		var daemonArgs []string
+		if *configPath != "config.yaml" {
+			daemonArgs = append(daemonArgs, "--config", *configPath)
+		}
+		if *httpPort != 3000 {
+			daemonArgs = append(daemonArgs, "--http-port", strconv.Itoa(*httpPort))
+		}
+		if *ollamaURLFlag != "" {
+			daemonArgs = append(daemonArgs, "--ollama-base-url", *ollamaURLFlag)
+		}
+		if *ollamaModel != "" {
+			daemonArgs = append(daemonArgs, "--ollama-model", *ollamaModel)
+		}
+		if *ollamaEmbed != "" {
+			daemonArgs = append(daemonArgs, "--ollama-embed", *ollamaEmbed)
+		}
+		if *qdrantURLFlag != "" {
+			daemonArgs = append(daemonArgs, "--qdrant-url", *qdrantURLFlag)
+		}
+
+		runAdapter(Version, daemonArgs)
 	}
 }
 
 // runAdapter is the thin stdio adapter that bridges IDE ↔ daemon.
 // It ensures the daemon is running, handles version upgrades, and bridges stdin/stdout.
-func runAdapter(version string) {
+// daemonArgs are extra CLI flags forwarded to the daemon process.
+func runAdapter(version string, daemonArgs []string) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		log.Fatalf("Cannot determine home directory: %v", err)
 	}
 	ragcodeDir := filepath.Join(homeDir, ".ragcode")
-	if err := os.MkdirAll(ragcodeDir, 0o755); err != nil {
+	if err := os.MkdirAll(ragcodeDir, 0o700); err != nil {
 		log.Fatalf("Cannot create ~/.ragcode: %v", err)
 	}
 
@@ -108,7 +133,7 @@ func runAdapter(version string) {
 		if err != nil {
 			log.Fatalf("Cannot determine binary path: %v", err)
 		}
-		if err := adapter.StartDaemon(binaryPath, sockPath); err != nil {
+		if err := adapter.StartDaemon(binaryPath, sockPath, daemonArgs...); err != nil {
 			log.Fatalf("Failed to start daemon: %v", err)
 		}
 		logger.Instance.Info("Daemon started successfully")

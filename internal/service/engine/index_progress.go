@@ -73,6 +73,8 @@ func newProgressStore() *progressStore {
 
 // stop shuts down the background flusher goroutine. Must be called when the
 // progressStore is no longer needed (e.g. in test cleanup or Engine.Close).
+//
+//nolint:unused // used by engine_searchcode_test.go
 func (s *progressStore) stop() {
 	select {
 	case <-s.done:

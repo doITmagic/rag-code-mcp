@@ -58,24 +58,50 @@ type progressStore struct {
 	mu      sync.Mutex
 	jobs    map[string]*IndexProgress
 	flushCh chan struct{} // debounced disk flush signal
+	done    chan struct{} // closed by stop() to shut down runFlusher
 }
 
 func newProgressStore() *progressStore {
 	ps := &progressStore{
 		jobs:    map[string]*IndexProgress{},
 		flushCh: make(chan struct{}, 1),
+		done:    make(chan struct{}),
 	}
 	go ps.runFlusher()
 	return ps
 }
 
+// stop shuts down the background flusher goroutine. Must be called when the
+// progressStore is no longer needed (e.g. in test cleanup or Engine.Close).
+func (s *progressStore) stop() {
+	select {
+	case <-s.done:
+		// already stopped
+	default:
+		close(s.done)
+	}
+}
+
 // runFlusher drains flushCh and persists all jobs debounced at 500ms.
 // It snapshots job data under the mutex (fast), then writes to disk outside
 // the lock so that update()/get() are not blocked during disk I/O.
+// It exits when stop() is called (done channel is closed).
 func (s *progressStore) runFlusher() {
-	for range s.flushCh {
-		time.Sleep(500 * time.Millisecond)
-		// Drain any extra signals accumulated during the sleep.
+	for {
+		select {
+		case <-s.done:
+			return
+		case _, ok := <-s.flushCh:
+			if !ok {
+				return
+			}
+		}
+		// Debounce: wait 500ms then drain any extra signals.
+		select {
+		case <-s.done:
+			return
+		case <-time.After(500 * time.Millisecond):
+		}
 		for len(s.flushCh) > 0 {
 			<-s.flushCh
 		}

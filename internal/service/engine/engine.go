@@ -814,7 +814,7 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 		err := e.indexer.IndexWorkspace(ctx, wctx.Root, collection, indexer.Options{
 			Language:        lang,
 			WorkspaceName:   wsName,
-			ExcludePatterns: e.config.Workspace.ExcludePatterns,
+			ExcludePatterns: excludePatterns,
 			Recreate:        recreate,
 			Progress:        progressCb,
 		})

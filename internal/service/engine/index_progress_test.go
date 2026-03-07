@@ -67,3 +67,45 @@ func TestProgressStoreDiskRoundTrip(t *testing.T) {
 		t.Error("deep copy failed for disk-loaded branch: mutation corrupted cached entry")
 	}
 }
+
+// TestProgressStoreGlobalPercent verifies that GlobalPercent is calculated correctly
+// as sum(done_all_langs) / sum(total_all_langs) * 100.
+func TestProgressStoreGlobalPercent(t *testing.T) {
+	store := newProgressStore()
+	now := time.Now()
+
+	store.start("ws1", "/tmp/ws1", "job1", now)
+	store.update("ws1", "md", 120, 120, now)  // md: 100% (120/120)
+	store.update("ws1", "go", 234, 500, now)  // go: 46%  (234/500)
+
+	p := store.get("ws1", "")
+	if p == nil {
+		t.Fatal("expected progress, got nil")
+	}
+
+	// global = (120 + 234) / (120 + 500) * 100 = 354/620*100 = 57%
+	want := 57
+	if p.GlobalPercent != want {
+		t.Errorf("expected GlobalPercent=%d, got %d", want, p.GlobalPercent)
+	}
+}
+
+// TestProgressStoreCurrentLanguage verifies that CurrentLanguage is updated on each update().
+func TestProgressStoreCurrentLanguage(t *testing.T) {
+	store := newProgressStore()
+	now := time.Now()
+
+	store.start("ws2", "/tmp/ws2", "job2", now)
+	store.update("ws2", "md", 10, 100, now)
+
+	p := store.get("ws2", "")
+	if p.CurrentLanguage != "md" {
+		t.Errorf("expected CurrentLanguage='md', got %q", p.CurrentLanguage)
+	}
+
+	store.update("ws2", "go", 5, 200, now)
+	p = store.get("ws2", "")
+	if p.CurrentLanguage != "go" {
+		t.Errorf("expected CurrentLanguage='go', got %q", p.CurrentLanguage)
+	}
+}

@@ -3,7 +3,6 @@ package engine
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -314,7 +313,7 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("[TIMER] SearchCode detect_context=%v", time.Since(t0))
+	logger.Instance.Debug("[TIMER] SearchCode detect_context=%v", time.Since(t0))
 
 	// Primary language from file extension
 	primaryLang := "go"
@@ -343,7 +342,7 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 		}
 	}
 	exists, err := e.search.CollectionExists(ctx, primaryColl)
-	log.Printf("[TIMER] SearchCode collection_exists_primary=%v (cached=%v)", time.Since(t1), time.Since(t1) < time.Millisecond)
+	logger.Instance.Debug("[TIMER] SearchCode collection_exists_primary=%v (cached=%v)", time.Since(t1), time.Since(t1) < time.Millisecond)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check collection: %w", err)
 	}
@@ -356,20 +355,20 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 	}
 
 	if wctx.ReindexRequired {
-		log.Printf("[INFO] Git state change detected (Head: %s), triggering background re-indexing for %s", wctx.HeadSHA, wctx.Root)
+		logger.Instance.Info("[IDX] Git state change detected (Head: %s), triggering background re-indexing for %s", wctx.HeadSHA, wctx.Root)
 		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 	}
 
 	// Embed ONCE, fan-out to all language collections in parallel
 	langs := parser.SupportedLanguages()
 	if len(langs) == 0 {
-		log.Printf("[WARN] No parsers registered — SupportedLanguages() returned empty. Skipping fan-out.")
+		logger.Instance.Warn("[IDX] No parsers registered — SupportedLanguages() returned empty. Skipping fan-out.")
 		return nil, fmt.Errorf("no language parsers registered")
 	}
 
 	t2 := time.Now()
 	vector, err := e.search.EmbedQuery(ctx, queryText)
-	log.Printf("[TIMER] SearchCode embed=%v", time.Since(t2))
+	logger.Instance.Debug("[TIMER] SearchCode embed=%v", time.Since(t2))
 	if err != nil {
 		return nil, fmt.Errorf("embedding failed: %w", err)
 	}
@@ -405,7 +404,7 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 			}
 			elapsed := time.Since(gt)
 			if sErr != nil {
-				log.Printf("[WARN] SearchCode: fan-out failed for %s: %v", c, sErr)
+				logger.Instance.Warn("[IDX] SearchCode: fan-out failed for %s: %v", c, sErr)
 				resultsChan <- langResult{lang: l, coll: c, err: sErr, elapsed: elapsed}
 				return
 			}
@@ -417,7 +416,7 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 
 	wg.Wait()
 	close(resultsChan)
-	log.Printf("[TIMER] SearchCode fanout_total=%v (langs=%d)", time.Since(t3), len(langs))
+	logger.Instance.Debug("[TIMER] SearchCode fanout_total=%v (langs=%d)", time.Since(t3), len(langs))
 
 	// Merge: primary lang results first, others appended; surface first error if no results
 	var primaryResults []storage.SearchResult
@@ -428,13 +427,13 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 
 	for lr := range resultsChan {
 		if lr.err != nil {
-			log.Printf("[TIMER] SearchCode lang=%s err elapsed=%v", lr.lang, lr.elapsed)
+			logger.Instance.Debug("[TIMER] SearchCode lang=%s err elapsed=%v", lr.lang, lr.elapsed)
 			if firstErr == nil {
 				firstErr = lr.err
 			}
 			continue
 		}
-		log.Printf("[TIMER] SearchCode lang=%s hits=%d elapsed=%v", lr.lang, len(lr.results), lr.elapsed)
+		logger.Instance.Debug("[TIMER] SearchCode lang=%s hits=%d elapsed=%v", lr.lang, len(lr.results), lr.elapsed)
 		if lr.coll == primaryColl {
 			primaryResults = lr.results
 		} else {
@@ -456,7 +455,7 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 		return nil, fmt.Errorf("search failed: %w", firstErr)
 	}
 
-	log.Printf("[TIMER] SearchCode TOTAL=%v (detect=%v embed=%v fanout=%v)",
+	logger.Instance.Debug("[TIMER] SearchCode TOTAL=%v (detect=%v embed=%v fanout=%v)",
 		time.Since(t0), t1.Sub(t0), t2.Sub(t1), time.Since(t3))
 
 	return &SearchCodeResult{
@@ -515,7 +514,7 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 	}
 
 	if wctx.ReindexRequired {
-		log.Printf("[INFO] Git state change detected, triggering background re-indexing...")
+		logger.Instance.Info("[IDX] Git state change detected, triggering background re-indexing for ws=%s", filepath.Base(wctx.Root))
 		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 	}
 
@@ -544,7 +543,7 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 func (e *Engine) ExactSearchPolyglot(ctx context.Context, wsID string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error) {
 	langs := parser.SupportedLanguages()
 	if len(langs) == 0 {
-		log.Printf("[WARN] No parsers registered — SupportedLanguages() returned empty. Skipping ExactSearch.")
+		logger.Instance.Warn("[IDX] No parsers registered — SupportedLanguages() returned empty. Skipping ExactSearch.")
 		return nil, &ErrNoCollectionsFound{WorkspaceID: wsID}
 	}
 
@@ -564,7 +563,7 @@ func (e *Engine) ExactSearchPolyglot(ctx context.Context, wsID string, filters m
 
 			exists, err := e.search.CollectionExists(ctx, coll)
 			if err != nil {
-				log.Printf("[WARN] ExactSearchPolyglot: cannot check collection %s: %v", coll, err)
+				logger.Instance.Warn("[IDX] ExactSearchPolyglot: cannot check collection %s: %v", coll, err)
 				return
 			}
 			if !exists {
@@ -574,7 +573,7 @@ func (e *Engine) ExactSearchPolyglot(ctx context.Context, wsID string, filters m
 
 			res, sErr := e.search.ExactSearch(ctx, coll, filters, limit)
 			if sErr != nil {
-				log.Printf("[WARN] ExactSearchPolyglot: search failed for %s: %v", coll, sErr)
+				logger.Instance.Warn("[IDX] ExactSearchPolyglot: search failed for %s: %v", coll, sErr)
 				return
 			}
 			resultsChan <- trial{results: res}
@@ -655,7 +654,7 @@ func (e *Engine) popPendingIndex(workspaceID string) (files []string, overflow b
 func (e *Engine) tryStartPendingIndex(root, workspaceID string) {
 	files, overflow := e.popPendingIndex(workspaceID)
 	if overflow {
-		log.Printf("[INFO] ♻️ Pending changes exceeded limit for %s - triggering full scan incremental indexing", root)
+		logger.Instance.Info("[IDX] ♻️ Pending changes exceeded limit for ws=%s — triggering full scan", filepath.Base(root))
 		e.StartIndexingAsync(root, workspaceID, nil, false)
 		return
 	}
@@ -688,20 +687,20 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 		var err error
 
 		if len(changedFiles) > 0 {
-			log.Printf("[INFO] ♻️ Starting incremental indexing for %d files in: %s", len(changedFiles), root)
+			logger.Instance.Info("[IDX] ♻️ ws=%s Starting incremental indexing for %d files", filepath.Base(root), len(changedFiles))
 			err = e.IndexFiles(ctx, root, changedFiles)
 		} else {
-			log.Printf("[INFO] 🚀 Starting background indexing for: %s (recreate=%v)", root, recreate)
+			logger.Instance.Info("[IDX] 🚀 ws=%s Starting background indexing (recreate=%v)", filepath.Base(root), recreate)
 			err = e.IndexWorkspace(ctx, root, recreate)
 		}
 
 		if err != nil {
-			log.Printf("[ERROR] Background indexing failed for %s: %v", root, err)
+			logger.Instance.Error("[IDX] ws=%s Background indexing failed: %v", filepath.Base(root), err)
 			if e.progress != nil {
 				e.progress.fail(id, root, time.Now(), err.Error())
 			}
 		} else {
-			log.Printf("[INFO] ✅ Background indexing completed for: %s", root)
+			logger.Instance.Info("[IDX] ✅ ws=%s Background indexing completed", filepath.Base(root))
 			if e.progress != nil {
 				e.progress.complete(id, root, time.Now())
 			}
@@ -734,7 +733,7 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) er
 
 	for _, p := range files {
 		if _, indexErr := e.indexer.IndexFile(ctx, collection, p, state); indexErr != nil {
-			log.Printf("[ERROR] Failed to index %s: %v", p, indexErr)
+			logger.Instance.Warn("[IDX] Failed to index %s: %v", filepath.Base(p), indexErr)
 		}
 	}
 
@@ -756,7 +755,7 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 	if e.config != nil && e.config.Workspace.AutoInstallSSESkill {
 		if !skills.IsSkillInstalled("ragcode-sse", wctx.Root) {
 			if err := skills.InstallSkill("ragcode-sse", wctx.Root, "agent", e.config.Skills); err != nil {
-				log.Printf("[WARN] Failed to install ragcode-sse skill for %s: %v", wctx.Root, err)
+				logger.Instance.Warn("[IDX] Failed to install ragcode-sse skill for ws=%s: %v", wctx.Root, err)
 			}
 		}
 	}
@@ -791,7 +790,7 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 
 	if e.watchers != nil {
 		if err := e.watchers.Start(wctx.Root, e.handleWatchChange); err != nil {
-			log.Printf("[WARN] Failed to start watcher for %s: %v", wctx.Root, err)
+			logger.Instance.Warn("[IDX] Failed to start watcher for ws=%s: %v", filepath.Base(wctx.Root), err)
 		}
 	}
 

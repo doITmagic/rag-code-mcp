@@ -88,6 +88,12 @@ func Run(rcfg RunConfig) error {
 		logger.InitLoggerFromEnv()
 	}
 
+	// Update the logging level dynamically based on the configuration file
+	if cfg.Logging.Level != "" {
+		logger.Instance.SetLevel(cfg.Logging.Level)
+		logger.Instance.Debug("Logger level set dynamically from config to: %s", cfg.Logging.Level)
+	}
+
 	// ── Health Checks ──
 	if cfg.HealthCheck.EnableOnStartup {
 		models := []string{cfg.LLM.OllamaEmbed}

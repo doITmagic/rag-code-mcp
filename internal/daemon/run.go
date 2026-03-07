@@ -15,6 +15,7 @@ import (
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
 	"github.com/doITmagic/rag-code-mcp/internal/service/search"
 	"github.com/doITmagic/rag-code-mcp/internal/service/tools"
+	"github.com/doITmagic/rag-code-mcp/internal/transport"
 	"github.com/doITmagic/rag-code-mcp/internal/utils"
 	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
 	"github.com/doITmagic/rag-code-mcp/pkg/llm"
@@ -161,11 +162,21 @@ func Run(rcfg RunConfig) error {
 	streamableHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		return mcpServer
 	}, &mcp.StreamableHTTPOptions{
-		Stateless: true,
+		Stateless:    true,
+		JSONResponse: true,
 	})
 
 	mcpMux := http.NewServeMux()
 	mcpMux.Handle("/mcp", streamableHandler)
+
+	// Middleware: extract X-Workspace-Hint header from adapter and inject into request context.
+	// This makes the IDE's CWD available to all tools via transport.GetWorkspaceHint(ctx).
+	mcpHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if hint := r.Header.Get("X-Workspace-Hint"); hint != "" {
+			r = r.WithContext(transport.WithWorkspaceHint(r.Context(), hint))
+		}
+		mcpMux.ServeHTTP(w, r)
+	})
 
 	// ── Paths ──
 	homeDir, err := os.UserHomeDir()
@@ -187,7 +198,7 @@ func Run(rcfg RunConfig) error {
 		PIDPath:    pidPath,
 		Version:    rcfg.Version,
 		HTTPPort:   rcfg.HTTPPort,
-		Handler:    mcpMux,
+		Handler:    mcpHandler,
 		OnReady: func() {
 			logger.Instance.Info("Daemon ready — socket=%s, http_port=%d", socketPath, rcfg.HTTPPort)
 		},

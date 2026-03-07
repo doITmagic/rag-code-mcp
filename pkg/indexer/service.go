@@ -22,7 +22,6 @@ import (
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 )
 
-
 const (
 	deleteCollectionTimeout = 10 * time.Second
 	deleteCollectionMaxWait = 500 * time.Millisecond
@@ -585,4 +584,36 @@ func (s *Service) symbolToMap(sym parser.Symbol) map[string]interface{} {
 		}
 	}
 	return res
+}
+
+// CountFiles returns the number of files in root that match the given language,
+// applying the same directory exclusion rules as IndexWorkspace.
+// It does NOT load state or call the embedder — it is a fast pre-scan used to
+// establish accurate global progress totals before indexing begins.
+func (s *Service) CountFiles(root, lang string, excludePatterns []string) int {
+	count := 0
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" {
+				return filepath.SkipDir
+			}
+			for _, p := range excludePatterns {
+				if name == p {
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		a := parser.GetByFile(path)
+		if a == nil || (lang != "" && a.Name() != lang) {
+			return nil
+		}
+		count++
+		return nil
+	})
+	return count
 }

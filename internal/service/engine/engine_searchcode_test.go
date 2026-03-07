@@ -276,7 +276,6 @@ func TestSearchCodeResumeInterruptedIndexing(t *testing.T) {
 
 	// Mock resolver configures a fake detector returning a tmp root
 	rootDir := t.TempDir()
-	_ = rootDir // used for workspace root context
 	eng.SetResolver(resolver.New(resolver.Dependencies{Detector: &mockDirDetector{root: rootDir}}))
 
 	// Get workspace ID early

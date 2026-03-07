@@ -49,8 +49,9 @@ func CleanupStaleFiles(pidPath, socketPath string) {
 // StartDaemon launches the daemon as a detached background process.
 // Uses a lock file to prevent multiple concurrent adapters from racing
 // to start multiple daemons simultaneously.
+// extraArgs are additional CLI flags (e.g. --config, --http-port) forwarded to the daemon.
 // Waits up to 10 seconds for the daemon to become healthy on the socket.
-func StartDaemon(binaryPath, socketPath string) error {
+func StartDaemon(binaryPath, socketPath string, extraArgs ...string) error {
 	// Acquire lock to prevent concurrent duplicate starts
 	lockPath := filepath.Join(filepath.Dir(socketPath), "daemon.lock")
 	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
@@ -66,7 +67,8 @@ func StartDaemon(binaryPath, socketPath string) error {
 		os.Remove(lockPath)
 	}()
 
-	cmd := exec.Command(binaryPath, "--daemon")
+	args := append([]string{"--daemon"}, extraArgs...)
+	cmd := exec.Command(binaryPath, args...)
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	cmd.Stderr = nil

@@ -99,11 +99,12 @@ func TestListenAndServe_PIDFileWritten(t *testing.T) {
 
 	// Cancel and wait for cleanup
 	cancel()
-	time.Sleep(200 * time.Millisecond)
 
-	// Verify socket file was cleaned up
-	_, err = os.Stat(sockPath)
-	assert.True(t, os.IsNotExist(err), "socket file should be removed after shutdown")
+	// Verify socket file was cleaned up (poll instead of fixed sleep)
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(sockPath)
+		return os.IsNotExist(err)
+	}, 3*time.Second, 50*time.Millisecond, "socket file should be removed after shutdown")
 }
 
 func TestListenAndServe_MCPHandler(t *testing.T) {

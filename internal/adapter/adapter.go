@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // RunBridge reads JSON-RPC messages from stdin, forwards each as an HTTP POST
@@ -19,9 +20,10 @@ import (
 // Returns nil on stdin EOF (normal IDE shutdown).
 func RunBridge(ctx context.Context, socketPath string, stdin io.Reader, stdout io.Writer, workspaceHint string) error {
 	client := &http.Client{
+		Timeout: 5 * time.Minute, // prevent indefinite hangs on stalled daemon
 		Transport: &http.Transport{
 			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
-				return net.Dial("unix", socketPath)
+				return net.DialTimeout("unix", socketPath, 10*time.Second)
 			},
 		},
 	}

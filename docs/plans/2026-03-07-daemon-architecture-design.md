@@ -1,32 +1,32 @@
 # Daemon Architecture Design — RagCode MCP
 
-**Data:** 2026-03-07
-**Status:** Aprobat
+**Date:** 2026-03-07
+**Status:** Approved
 **Branch:** TBD
 
-## Problema
+## Problem
 
-Arhitectura curentă leagă procesul MASTER (Qdrant, Ollama, indexer) de stdin-ul primului IDE care l-a lansat.
+The current architecture ties the MASTER process (Qdrant, Ollama, indexer) to the stdin of the first IDE that launched it.
 
-- IDE1 pornește `rag-code-mcp` → devine MASTER (Stdio + HTTP :3000)
-- IDE2 pornește `rag-code-mcp` → detect port 3000 ocupat → intră în PROXY (Stdio→HTTP cu SSE parsing)
-- IDE1 se închide → stdin se închide → **context canceled → TOTUL moare**
+- IDE1 starts `rag-code-mcp` → becomes MASTER (Stdio + HTTP :3000)
+- IDE2 starts `rag-code-mcp` → detects port 3000 occupied → enters PROXY mode (Stdio→HTTP with SSE parsing)
+- IDE1 closes → stdin closes → **context canceled → EVERYTHING dies**
 
-Probleme suplimentare:
-- SSE parsing complex și fragil (extractSSEPayload, sessionid, handshake)
-- Port conflicts pe :3000
-- Indexare se oprește la închiderea IDE-ului
-- Index progress invizibil între instanțe
+Additional problems:
+- Complex and fragile SSE parsing (`extractSSEPayload`, sessionid, handshake)
+- Port conflicts on :3000
+- Indexing stops when IDE closes
+- Index progress invisible between instances
 
-## Soluția: Daemon + Unix Socket + Adaptorii Thin
+## Solution: Daemon + Unix Socket + Thin Adapters
 
-### Principiu
+### Principle
 
-Un singur binary (`rag-code-mcp`) cu două moduri:
-- **Fără flag** (default) → Adapter Stdio: verifică/pornește daemon, bridge stdin↔socket
-- **`--daemon`** → Daemon: proces persistent cu Qdrant, Ollama, Engine, MCP Server
+A single binary (`rag-code-mcp`) with two modes:
+- **No flag** (default) → Stdio Adapter: checks/starts daemon, bridges stdin↔socket
+- **`--daemon`** → Daemon: persistent process with Qdrant, Ollama, Engine, MCP Server
 
-### Diagrama proceselor
+### Process Diagram
 
 ```
 ┌──────────┐   ┌──────────┐   ┌──────────┐
@@ -47,45 +47,45 @@ Un singur binary (`rag-code-mcp`) cu două moduri:
      │   DAEMON (1 inst) │
      │                   │         ┌────────────────┐
      │  MCP Server       │◄────────│ curl / Python  │
-     │  Engine           │  HTTP   │ (opțional)     │
+     │  Engine           │  HTTP   │ (optional)     │
      │  Ollama (1 conn)  │ :3000   └────────────────┘
      │  Qdrant (1 conn)  │
      └───────────────────┘
 ```
 
-## Secțiunea 1: Arhitectura Generală
+## Section 1: General Architecture
 
-### Fișierele daemon-ului
+### Daemon Files
 
-| Fișier | Scop |
-|--------|------|
+| File | Purpose |
+|------|---------|
 | `~/.ragcode/daemon.sock` | Unix domain socket |
-| `~/.ragcode/daemon.pid` | PID + versiunea procesului daemon |
-| `~/.ragcode/daemon.lock` | File lock pentru race condition la startup |
-| `~/.ragcode/logs/ragcode.log` | Log-uri daemon |
+| `~/.ragcode/daemon.pid` | PID + daemon process version |
+| `~/.ragcode/daemon.lock` | File lock for startup race condition |
+| `~/.ragcode/logs/ragcode.log` | Daemon logs |
 | `~/.ragcode/registry.json` | Workspace registry |
 
-### Fluxul de pornire Adapter
+### Adapter Startup Flow
 
-1. Verifică `~/.ragcode/daemon.pid` → PID există?
-2. PID viu? (`kill -0 PID`)
+1. Check `~/.ragcode/daemon.pid` → PID exists?
+2. PID alive? (`kill -0 PID`)
 3. Socket connect (`dial unix daemon.sock`)?
 4. `GET /health` → 200 OK?
-5. Versiune == a noastră?
-6. Oricare eșuează → cleanup + `StartDaemon()`
-7. Toate OK → intră în bridge mode
+5. Version == ours?
+6. Any step fails → cleanup + `StartDaemon()`
+7. All OK → enter bridge mode
 
-### Ce se elimină complet
+### What Gets Removed Entirely
 
 - `extractSSEPayload()` — SSE parsing
 - `PortIsOccupied()` — port scanning
-- `KillProcessOnPort()` — kill pe port
+- `KillProcessOnPort()` — kill on port
 - `QueryMasterVersion()` via JSON-RPC initialize
-- Skill `ragcode-sse` → rescris ca `ragcode-http`
+- Skill `ragcode-sse` → rewritten as `ragcode-http`
 
-## Secțiunea 2: Protocol & Lifecycle
+## Section 2: Protocol & Lifecycle
 
-### Comunicare: HTTP/1.1 peste Unix socket, JSON pur
+### Communication: HTTP/1.1 over Unix socket, pure JSON
 
 **Request (Adapter → Daemon):**
 ```http
@@ -123,7 +123,7 @@ GET /health → 200 OK
 
 ### X-Workspace-Hint Header
 
-Fiecare adapter captează CWD (Current Working Directory = workspace-ul IDE-ului) la pornire și-l trimite ca header `X-Workspace-Hint` cu fiecare request. Daemon-ul îl folosește ca fallback când tool-ul nu primește `file_path`.
+Each adapter captures CWD (Current Working Directory = IDE workspace) at startup and sends it as the `X-Workspace-Hint` header with every request. The daemon uses it as a fallback when the tool doesn't receive `file_path`.
 
 ### PID File Format
 
@@ -137,103 +137,103 @@ SOCKET=~/.ragcode/daemon.sock
 ### Daemon Lifecycle
 
 - **Start:** Health checks → Init Engine → Listen socket + HTTP → Write PID → Signal ready
-- **Running:** Servește cereri MCP concurent, indexare background, watchers
-- **Shutdown (SIGTERM):** Stop watchers → Finalizează in-flight (5s grace) → Close listeners → Remove socket + PID
-- **Crash (kill -9):** Socket + PID rămân pe disc → stale detection la următorul adapter
+- **Running:** Serves MCP requests concurrently, background indexing, watchers
+- **Shutdown (SIGTERM):** Stop watchers → Finalize in-flight requests (5s grace) → Close listeners → Remove socket + PID
+- **Crash (kill -9):** Socket + PID remain on disk → stale detection on next adapter startup
 
-### Idle Timeout (opțional)
+### Idle Timeout (optional)
 
 ```yaml
 daemon:
   idle_timeout: 0  # 0 = run forever (default)
 ```
 
-## Secțiunea 3: Restructurarea Codului
+## Section 3: Code Restructuring
 
-### Fișiere noi
+### New Files
 
-| Fișier | Linii ~est. | Rol |
-|--------|------------|-----|
-| `internal/daemon/daemon.go` | ~120 | Procesul greu — extras din main.go |
+| File | Est. Lines | Role |
+|------|-----------|------|
+| `internal/daemon/daemon.go` | ~120 | Heavy process — extracted from main.go |
 | `internal/daemon/health.go` | ~40 | Health endpoint JSON |
 | `internal/daemon/pidfile.go` | ~60 | Write/Read/Remove PID, stale detection |
-| `internal/adapter/adapter.go` | ~50 | Bridge stdin ↔ Unix socket (JSON pur) |
+| `internal/adapter/adapter.go` | ~50 | Bridge stdin ↔ Unix socket (pure JSON) |
 | `internal/adapter/lifecycle.go` | ~80 | EnsureDaemon, StartDaemon, StopDaemon |
 
-### Fișiere modificate
+### Modified Files
 
-| Fișier | Schimbare |
-|--------|-----------|
-| `cmd/rag-code-mcp/main.go` | Simplificat: 365→~60 linii, doar decide mod |
-| `.agent/skills/ragcode-sse/` | Rescris ca ragcode-http |
-| `ARCHITECTURE.md` | Actualizat |
+| File | Change |
+|------|--------|
+| `cmd/rag-code-mcp/main.go` | Simplified: 365→~60 lines, only decides mode |
+| `.agent/skills/ragcode-sse/` | Rewritten as ragcode-http |
+| `ARCHITECTURE.md` | Updated |
 
-### Fișiere șterse
+### Deleted Files
 
-| Fișier | Motiv |
-|--------|-------|
-| `internal/proxy/portutil.go` | Înlocuit de adapter/lifecycle.go |
-| `internal/proxy/proxy.go` | Înlocuit de adapter/adapter.go |
-| `internal/proxy/proxy_test.go` | Teste pentru cod șters |
+| File | Reason |
+|------|--------|
+| `internal/proxy/portutil.go` | Replaced by adapter/lifecycle.go |
+| `internal/proxy/proxy.go` | Replaced by adapter/adapter.go |
+| `internal/proxy/proxy_test.go` | Tests for deleted code |
 
-### Ce NU se schimbă
+### What Does NOT Change
 
-- `internal/service/engine/` — zero schimbări
-- `internal/service/tools/` — zero schimbări
-- `internal/service/search/` — zero schimbări
-- `pkg/indexer/` — zero schimbări
-- `pkg/parser/*` — zero schimbări
-- `pkg/storage/` — zero schimbări
-- `pkg/workspace/` — zero schimbări
-- `internal/config/`, `internal/logger/`, `internal/healthcheck/` — zero schimbări
+- `internal/service/engine/` — zero changes
+- `internal/service/tools/` — zero changes
+- `internal/service/search/` — zero changes
+- `pkg/indexer/` — zero changes
+- `pkg/parser/*` — zero changes
+- `pkg/storage/` — zero changes
+- `pkg/workspace/` — zero changes
+- `internal/config/`, `internal/logger/`, `internal/healthcheck/` — zero changes
 
-### Impact net: ~-50 linii (mai puțin cod total)
+### Net impact: ~-50 lines (less total code)
 
-## Secțiunea 4: Error Handling, Testing & Migrare
+## Section 4: Error Handling, Testing & Migration
 
-### Scenarii de eroare
+### Error Scenarios
 
-| Scenariul | Recovery |
-|-----------|----------|
+| Scenario | Recovery |
+|----------|---------|
 | Daemon crash | Stale detection → cleanup → restart |
-| Ollama down | Circuit breaker existent funcționează |
-| Qdrant down | Eroare JSON-RPC → IDE vede eroarea |
-| Socket file șters | Connect fail → kill PID → restart |
-| 2 adaptori pornesc simultan | flock() pe daemon.lock |
+| Ollama down | Existing circuit breaker works |
+| Qdrant down | JSON-RPC error → IDE sees the error |
+| Socket file deleted | Connect fail → kill PID → restart |
+| 2 adapters start simultaneously | flock() on daemon.lock |
 | Upgrade (adapter v2, daemon v1) | Kill daemon v1 → start v2 |
 
-### Race condition protection
+### Race Condition Protection
 
-`daemon.lock` cu `syscall.Flock(LOCK_EX)` — doar un adapter verifică/pornește daemon-ul.
+`daemon.lock` with `syscall.Flock(LOCK_EX)` — only one adapter checks/starts the daemon.
 
 ### Testing
 
-**Teste unitare noi:**
+**New unit tests:**
 - `internal/daemon/pidfile_test.go`
 - `internal/daemon/health_test.go`
 - `internal/adapter/adapter_test.go`
 - `internal/adapter/lifecycle_test.go`
 
-**Teste de integrare:**
+**Integration tests:**
 - `TestDaemonStartAndBridge`
 - `TestMultipleAdapters`
 - `TestDaemonSurvivesAdapterDeath`
 - `TestDaemonUpgrade`
 - `TestStaleDaemonCleanup`
 
-### Migrare
+### Migration
 
-1. Implementare pe feature branch
-2. Merge pe dev — zero breaking changes (implicit backward compatible)
+1. Implementation on feature branch
+2. Merge to dev — zero breaking changes (implicitly backward compatible)
 3. Update skills
-4. Cleanup final
+4. Final cleanup
 
-### Configurare nouă (config.yaml)
+### New Configuration (config.yaml)
 
 ```yaml
 daemon:
   socket_path: ""             # default: ~/.ragcode/daemon.sock
   http_host: 127.0.0.1        # bind only to loopback by default (secure local access)
-  http_port: 3000             # HTTP on http_host:port; 0 = dezactivat. Pentru expunere externă (ex. 0.0.0.0) e necesar hardening (auth, TLS) și opt-in explicit.
+  http_port: 3000             # HTTP on http_host:port; 0 = disabled. For external exposure (e.g. 0.0.0.0) hardening (auth, TLS) is required and must be explicitly opted in.
   idle_timeout: 0             # 0 = run forever
 ```

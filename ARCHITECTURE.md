@@ -244,7 +244,7 @@ Single binary (`rag-code-mcp`) with two modes:
 ### Files
 - `~/.ragcode/daemon.sock` — Unix domain socket (primary channel)
 - `~/.ragcode/daemon.pid` — PID + version + start time
-- Port `:3000` — Optional HTTP for curl/external agents (127.0.0.1 only, no network exposure)
+- Port `:3000` — Optional debug-only HTTP listener for curl/external agents (binds to `127.0.0.1`; disabled unless explicitly enabled via config; treat as privileged interface — requires auth if used in multi-user environments)
 
 ### Protocol
 - **JSON-RPC over HTTP/1.1** — no SSE, no sessions, no handshake

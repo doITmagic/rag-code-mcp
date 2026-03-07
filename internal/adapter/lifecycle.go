@@ -52,16 +52,33 @@ func CleanupStaleFiles(pidPath, socketPath string) {
 // extraArgs are additional CLI flags (e.g. --config, --http-port) forwarded to the daemon.
 // Waits up to 10 seconds for the daemon to become healthy on the socket.
 func StartDaemon(binaryPath, socketPath string, extraArgs ...string) error {
-	// Acquire lock to prevent concurrent duplicate starts
+	// Acquire lock to prevent concurrent duplicate starts.
+	// Uses O_EXCL for atomicity, with stale-lock recovery: if the lock file
+	// exists but is older than 30s, it's treated as stale (crashed adapter)
+	// and removed before retrying.
 	lockPath := filepath.Join(filepath.Dir(socketPath), "daemon.lock")
 	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		if os.IsExist(err) {
-			// Another adapter is starting the daemon — wait for it
+			// Check if the lock is stale (older than 30s = crashed adapter)
+			if info, statErr := os.Stat(lockPath); statErr == nil {
+				if time.Since(info.ModTime()) > 30*time.Second {
+					os.Remove(lockPath)
+					// Retry lock acquisition after stale cleanup
+					lockFile, err = os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+					if err != nil {
+						return fmt.Errorf("failed to acquire daemon lock after stale cleanup: %w", err)
+					}
+					// Fall through to normal startup below
+					goto acquired
+				}
+			}
+			// Lock is fresh — another adapter is starting the daemon, wait for it
 			return waitForDaemon(socketPath)
 		}
 		return fmt.Errorf("failed to acquire daemon lock: %w", err)
 	}
+acquired:
 	defer func() {
 		lockFile.Close()
 		os.Remove(lockPath)

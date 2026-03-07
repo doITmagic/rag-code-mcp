@@ -7,7 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
+
+	"github.com/doITmagic/rag-code-mcp/internal/updater"
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
 	"github.com/doITmagic/rag-code-mcp/internal/healthcheck"
@@ -157,6 +160,57 @@ func Run(rcfg RunConfig) error {
 	tools.NewApplyUpdateTool(rcfg.Version).Register(mcpServer)
 
 	logger.Instance.Info("MCP RagCode Daemon initialized (version=%s)", rcfg.Version)
+
+	if cfg.AutoUpdate {
+		go func() {
+			// Give the daemon a few seconds to start up completely
+			time.Sleep(10 * time.Second)
+
+			logger.Instance.Info("AutoUpdate: check starting in background...")
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+
+			info, err := updater.CheckForUpdates(ctx, rcfg.Version, false)
+			if err != nil {
+				logger.Instance.Warn("AutoUpdate check failed: %v", err)
+				return
+			}
+			if info == nil {
+				logger.Instance.Info("AutoUpdate: No new updates available.")
+				return
+			}
+
+			logger.Instance.Info("AutoUpdate: New version %s found! Downloading and applying...", info.LatestVersion)
+			err = func() error {
+				ext := ".tar.gz"
+				if strings.HasSuffix(info.AssetURL, ".zip") {
+					ext = ".zip"
+				}
+
+				tempFile, err := os.CreateTemp("", "ragcode_update_*"+ext)
+				if err != nil {
+					return err
+				}
+				tempPath := tempFile.Name()
+				tempFile.Close()
+				defer os.Remove(tempPath)
+
+				if err := info.DownloadAndVerify(ctx, tempPath); err != nil {
+					return err
+				}
+
+				// Trigger the handoff. This will spawn the new installer AND exit(0) the current daemon.
+				if err := updater.ApplyUpdate(tempPath); err != nil {
+					return err
+				}
+				return nil
+			}()
+
+			if err != nil {
+				logger.Instance.Error("AutoUpdate apply failed: %v", err)
+			}
+		}()
+	}
 
 	// ── Streamable HTTP handler for MCP ──
 	streamableHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {

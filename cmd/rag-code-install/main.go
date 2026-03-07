@@ -6,13 +6,19 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
+    "context"
 
+    "github.com/doITmagic/rag-code-mcp/internal/updater"
+    "github.com/codeclysm/extract/v3"
 	"github.com/doITmagic/rag-code-mcp/internal/config"
 	"github.com/doITmagic/rag-code-mcp/internal/healthcheck"
 	"github.com/doITmagic/rag-code-mcp/internal/uninstall"
@@ -70,24 +76,41 @@ func main() {
 		fail(fmt.Sprintf("Failed to create directories: %v", err))
 	}
 
-	// 2. Determine current location
+	// 2. Determine current location strictly
 	execPath, _ := os.Executable()
 	sourceDir := filepath.Dir(execPath)
-	resourceDir := sourceDir
 
-	// If we are running from bin/, resources might be in the parent dir
-	if _, err := os.Stat(filepath.Join(resourceDir, "README.md")); os.IsNotExist(err) {
-		parentDir := filepath.Dir(resourceDir)
-		if _, err := os.Stat(filepath.Join(parentDir, "README.md")); err == nil {
-			resourceDir = parentDir
-		}
-	}
-
-	// 3. Define files to install
 	binaries := []string{"rag-code-mcp", "rag-code-install"}
 	resources := []string{"README.md", "llms.txt", "LICENSE", "config.yaml"}
 
-	log("Copying files from: " + sourceDir)
+	// Fast Check: Are files present?
+	missingFiles := false
+	for _, f := range append(binaries, resources...) {
+		name := f
+		if runtime.GOOS == "windows" && (f == "rag-code-mcp" || f == "rag-code-install") {
+			name += ".exe"
+		}
+		if _, err := os.Stat(filepath.Join(sourceDir, name)); os.IsNotExist(err) {
+			missingFiles = true
+			break
+		}
+	}
+
+	// If files are missing, we must download the latest release and use its contents as source
+	tempDir := ""
+	if missingFiles {
+		log("Required files missing in current directory. Downloading latest release...")
+		var err error
+		tempDir, err = downloadAndExtractLatest()
+		if err != nil {
+			fail(fmt.Sprintf("Failed to download and extract release: %v", err))
+		}
+		defer os.RemoveAll(tempDir)
+		sourceDir = tempDir
+		log("Files extracted successfully from release.")
+	} else {
+		log("Copying files from: " + sourceDir)
+	}
 
 	// Copy Binaries to bin/
 	for _, b := range binaries {
@@ -110,7 +133,7 @@ func main() {
 
 	// Copy Resources to bin/
 	for _, r := range resources {
-		src := filepath.Join(resourceDir, r)
+		src := filepath.Join(sourceDir, r)
 		dst := filepath.Join(binPath, r)
 
 		if r == "config.yaml" {
@@ -373,29 +396,65 @@ func stopRunningProcess(binPath string) {
 		return
 	}
 
-	log("Stopping existing process running: " + binPath)
+	log("Stopping existing process gracefully: " + binPath)
 
-	if runtime.GOOS == "windows" {
-		_ = exec.Command("taskkill", "/F", "/IM", filepath.Base(binPath)).Run()
-		time.Sleep(500 * time.Millisecond)
-		return
-	}
+	// Attempt Graceful Shutdown using PID file
+	home, err := os.UserHomeDir()
+	if err == nil {
+		pidPath := filepath.Join(home, ".ragcode", "daemon.pid")
+		if data, err := os.ReadFile(pidPath); err == nil {
+			pidStr := strings.TrimSpace(string(data))
+			if pid, err := strconv.Atoi(pidStr); err == nil {
+				log(fmt.Sprintf("Found daemon PID: %d. Sending termination signal...", pid))
 
-	// 1. Precise kill using full path
-	_ = exec.Command("pkill", "-f", binPath).Run()
+				// For Windows
+				if runtime.GOOS == "windows" {
+					_ = exec.Command("taskkill", "/PID", pidStr).Run()
+					time.Sleep(2 * time.Second)
+					_ = exec.Command("taskkill", "/F", "/PID", pidStr).Run()
+					return
+				}
 
-	// 2. Fallback using lsof to find PIDs mapping this binary
-	if _, err := exec.LookPath("lsof"); err == nil {
-		cmd := exec.Command("lsof", "-t", binPath)
-		if output, err := cmd.Output(); err == nil {
-			pids := strings.Fields(string(output))
-			for _, pid := range pids {
-				_ = exec.Command("kill", "-9", pid).Run()
+				// For Unix
+				process, err := os.FindProcess(pid)
+				if err == nil {
+					// Send SIGTERM
+					_ = process.Signal(syscall.SIGTERM)
+
+					// Wait up to 5 seconds for it to exit gracefully
+					for i := 0; i < 50; i++ {
+						if err := process.Signal(syscall.Signal(0)); err != nil {
+							// Process is gone
+							break
+						}
+						time.Sleep(100 * time.Millisecond)
+					}
+
+					// Send SIGKILL just in case it's still alive
+					_ = process.Signal(syscall.SIGKILL)
+					time.Sleep(200 * time.Millisecond)
+					return
+				}
 			}
 		}
 	}
 
-	// Give it a moment to release file handles
+	log("PID file not found or process untrackable. Using fallback termination...")
+
+	if runtime.GOOS == "windows" {
+		_ = exec.Command("taskkill", "/IM", filepath.Base(binPath)).Run()
+		time.Sleep(1 * time.Second)
+		_ = exec.Command("taskkill", "/F", "/IM", filepath.Base(binPath)).Run()
+		return
+	}
+
+	// 1. Soft kill (SIGTERM)
+	_ = exec.Command("pkill", "-15", "-f", binPath).Run()
+	time.Sleep(1 * time.Second)
+
+	// 2. Hard kill (SIGKILL) fallback
+	_ = exec.Command("pkill", "-9", "-f", binPath).Run()
+
 	time.Sleep(500 * time.Millisecond)
 }
 
@@ -808,6 +867,67 @@ func updateZedConfig(displayName, path, binPath, transport string, ssePort int) 
 		}
 	}
 	return false
+}
+
+func downloadAndExtractLatest() (string, error) {
+	// Pass "v0.0.0" to force a network check to get the absolute latest if we're a naked installer
+	ctx := context.Background()
+	info, err := updater.CheckForUpdates(ctx, "v0.0.0", true)
+	if err != nil {
+		return "", fmt.Errorf("failed to check for updates: %w", err)
+	}
+	if info == nil || info.AssetURL == "" {
+		return "", fmt.Errorf("no update asset found")
+	}
+
+	tempDir, err := os.MkdirTemp("", "ragcode-install-*")
+	if err != nil {
+		return "", err
+	}
+
+	archivePath := filepath.Join(tempDir, "release-archive")
+	log("Downloading " + info.AssetURL)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", info.AssetURL, nil)
+	if err != nil {
+		return "", err
+	}
+	client := &http.Client{Timeout: 5 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to download: status %d", resp.StatusCode)
+	}
+
+	out, err := os.Create(archivePath)
+	if err != nil {
+		return "", err
+	}
+	_, copyErr := io.Copy(out, resp.Body)
+	out.Close()
+	if copyErr != nil {
+		return "", copyErr
+	}
+
+	log("Extracting archive...")
+	f, err := os.Open(archivePath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	extractDir := filepath.Join(tempDir, "extracted")
+	os.MkdirAll(extractDir, 0755)
+
+	if err := extract.Archive(ctx, f, extractDir, nil); err != nil {
+		return "", err
+	}
+
+	return extractDir, nil
 }
 
 // buildMCPServerEntry builds the stdio (binary) MCP server entry.

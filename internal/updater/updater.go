@@ -329,7 +329,7 @@ func (info *UpdateInfo) DownloadAndVerify(ctx context.Context, destPath string) 
 	return nil
 }
 
-// ApplyUpdate extracts the binary from the archive and replaces the current executable.
+// ApplyUpdate extracts the binary from the archive, spawns the installer, and exits.
 func ApplyUpdate(archivePath string) error {
 	self, err := os.Executable()
 	if err != nil {
@@ -346,56 +346,42 @@ func ApplyUpdate(archivePath string) error {
 	if err != nil {
 		return fmt.Errorf("could not create temp dir: %w", err)
 	}
-	defer os.RemoveAll(tempDir)
 
-	binaryName := filepath.Base(self)
-
-	// Extraction logic
+	// Extract the archive completely
 	if err := extractArchive(archivePath, tempDir); err != nil {
+		os.RemoveAll(tempDir)
 		return fmt.Errorf("failed to extract archive: %w", err)
 	}
 
-	newBinPath := filepath.Join(tempDir, binaryName)
-	if _, err := os.Stat(newBinPath); err != nil {
-		return fmt.Errorf("binary %s not found in archive", binaryName)
+	// Find the new installer
+	installerName := "rag-code-install"
+	if runtime.GOOS == "windows" {
+		installerName += ".exe"
+	}
+	installerPath := filepath.Join(tempDir, installerName)
+
+	if _, err := os.Stat(installerPath); os.IsNotExist(err) {
+		return fmt.Errorf("updater archive is missing the installer tool (%s) at %s", installerName, installerPath)
 	}
 
-	// Swap logic
-	// On Linux/macOS we can rename the new binary over the old one
-	// but it's safer to move the old one to a .old suffix and move the new one in.
-	oldBinPath := self + ".old"
-	if err := os.Rename(self, oldBinPath); err != nil {
-		if runtime.GOOS == "windows" {
-			// Fallback: write as .new and tell user
-			newBinPermanent := self + ".new"
-			if err := moveFile(newBinPath, newBinPermanent); err != nil {
-				return fmt.Errorf("failed to write new binary: %w", err)
-			}
-			return fmt.Errorf("could not replace running binary on Windows: %w. New version saved to %s. Please close the server and rename it manually.", err, filepath.Base(newBinPermanent))
-		}
-		return fmt.Errorf("failed to move current binary to %s: %w", oldBinPath, err)
+	if err := os.Chmod(installerPath, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to chmod installer: %v\n", err)
 	}
 
-	if err := moveFile(newBinPath, self); err != nil {
-		// Rollback if possible
-		_ = os.Rename(oldBinPath, self)
-		return fmt.Errorf("failed to replace binary: %w", err)
+	// Spawn the installer
+	cmd := exec.Command(installerPath, "--upgrade", "-y")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Dir = tempDir // Essential: the installer will see the extracted files!
+
+	// Ensure it runs independently
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start new installer: %w", err)
 	}
 
-	if err := os.Chmod(self, 0755); err != nil {
-		return fmt.Errorf("failed to set executable permissions: %w", err)
-	}
-
-	// Clean up old binary (might fail if still in use on some OSs, but that's fine)
-	_ = os.Remove(oldBinPath)
-
-	// Oprirea fortata a proceselor existente pentru a permite restartul
-	// Adaugam un delay pentru a permite MCP-ului sa trimita raspunsul de succes inapoi catre client
-	go func() {
-		time.Sleep(1 * time.Second)
-		StopRunningProcess(self)
-		os.Exit(0)
-	}()
+	// Exit gracefully and let the installer take over
+	fmt.Printf("Update handed off to new installer (PID %d). Shutting down...\n", cmd.Process.Pid)
+	os.Exit(0)
 
 	return nil
 }
@@ -521,33 +507,4 @@ func extractArchive(src, dest string) error {
 	}
 	defer f.Close()
 	return extract.Archive(context.Background(), f, dest, nil)
-}
-
-// StopRunningProcess attempts to forcefully close any existing processes using the provided binary path.
-func StopRunningProcess(binPath string) {
-	if _, err := os.Stat(binPath); os.IsNotExist(err) {
-		return
-	}
-
-	if runtime.GOOS == "windows" {
-		_ = exec.Command("taskkill", "/F", "/IM", filepath.Base(binPath)).Run()
-		time.Sleep(500 * time.Millisecond)
-		return
-	}
-
-	// 1. Precise kill using full path
-	_ = exec.Command("pkill", "-f", binPath).Run()
-
-	// 2. Fallback using lsof to find PIDs mapping this binary
-	if _, err := exec.LookPath("lsof"); err == nil {
-		cmd := exec.Command("lsof", "-t", binPath)
-		if output, err := cmd.Output(); err == nil {
-			pids := strings.Fields(string(output))
-			for _, pid := range pids {
-				_ = exec.Command("kill", "-9", pid).Run()
-			}
-		}
-	}
-
-	time.Sleep(500 * time.Millisecond)
 }

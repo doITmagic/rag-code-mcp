@@ -263,8 +263,9 @@ func (r *Registry) FindParentWorkspace(path string) (string, bool) {
 
 	for _, entry := range r.entries {
 		entryRoot := strings.ToLower(filepath.Clean(entry.Root))
-		// The path must be strictly inside the entry root (not equal to it)
-		prefix := entryRoot + string(filepath.Separator)
+		// The path must be strictly inside the entry root (not equal to it).
+		// TrimRight avoids double separator when entryRoot is "/" or "C:\".
+		prefix := strings.TrimRight(entryRoot, string(filepath.Separator)) + string(filepath.Separator)
 		if strings.HasPrefix(cleanPath, prefix) {
 			// Pick the deepest (most specific) parent
 			if len(entryRoot) > bestLen {

@@ -4,37 +4,15 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
-	"runtime"
-	"strings"
-	"syscall"
-	"time"
 
 	"github.com/Masterminds/semver/v3"
-	"github.com/doITmagic/rag-code-mcp/internal/config"
-	"github.com/doITmagic/rag-code-mcp/internal/healthcheck"
+	"github.com/doITmagic/rag-code-mcp/internal/adapter"
+	"github.com/doITmagic/rag-code-mcp/internal/daemon"
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
-	"github.com/doITmagic/rag-code-mcp/internal/proxy"
-	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
-	"github.com/doITmagic/rag-code-mcp/internal/service/search"
-	"github.com/doITmagic/rag-code-mcp/internal/service/tools"
 	"github.com/doITmagic/rag-code-mcp/internal/uninstall"
-	"github.com/doITmagic/rag-code-mcp/internal/updater"
-	"github.com/doITmagic/rag-code-mcp/internal/utils"
-	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
-	"github.com/doITmagic/rag-code-mcp/pkg/llm"
-	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/docs"
-	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/go"
-	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/html"
-	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/php"
-	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/python"
-	"github.com/doITmagic/rag-code-mcp/pkg/storage"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 var (
@@ -45,12 +23,13 @@ var (
 
 func main() {
 	// Flags
+	daemonFlag := flag.Bool("daemon", false, "Run as background daemon (internal use)")
 	configPath := flag.String("config", "config.yaml", "Path to configuration file")
 	ollamaURLFlag := flag.String("ollama-base-url", "", "Ollama base URL override")
 	ollamaModel := flag.String("ollama-model", "", "Ollama chat model override")
 	ollamaEmbed := flag.String("ollama-embed", "", "Ollama embedding model override")
 	qdrantURLFlag := flag.String("qdrant-url", "", "Qdrant URL override")
-	httpPort := flag.Int("http-port", 3000, "Port for SSE server (default 3000, set -1 to disable)")
+	httpPort := flag.Int("http-port", 3000, "Port for optional HTTP server (default 3000, set -1 to disable)")
 	versionFlag := flag.Bool("version", false, "Print version and exit")
 	uninstallFlag := flag.Bool("uninstall", false, "Uninstall RagCode MCP from this system")
 	flag.Parse()
@@ -60,305 +39,97 @@ func main() {
 		os.Exit(0)
 	}
 
-	logger.InitLoggerFromEnv()
-
-	// Limit Go scheduler threads to 75% of CPUs — leaves headroom for the OS,
-	// IDE, and other processes. Prevents freezes when indexing multiple workspaces.
-	maxProcs := runtime.NumCPU() * 3 / 4
-	if maxProcs < 2 {
-		maxProcs = 2
-	}
-	runtime.GOMAXPROCS(maxProcs)
-	logger.Instance.Info("GOMAXPROCS set to %d (NumCPU=%d)", maxProcs, runtime.NumCPU())
-
 	if *versionFlag {
 		fmt.Printf("RagCode MCP  version=%s  commit=%s  date=%s\n", Version, Commit, Date)
 		os.Exit(0)
 	}
 
-	// ── Single-instance enforcement ──────────────────────────────────────
-	// If the HTTP port is already occupied by another rag-code-mcp instance,
-	// we decide our role based on version comparison:
-	//   • Our version is newer  → kill the old master, become the new master.
-	//   • Our version is same/older → enter lightweight proxy mode (Stdio↔HTTP).
-	//
-	// This ensures only ONE heavy process (Qdrant, Ollama, indexer) runs at
-	// any time, while multiple IDEs can still use Stdio transport seamlessly.
-	if *httpPort > 0 && proxy.PortIsOccupied(*httpPort) {
-		masterVersion := proxy.QueryMasterVersion(*httpPort)
-		if masterVersion != "" {
-			logger.Instance.Info("Detected existing master on port %d (version=%s, our version=%s)", *httpPort, masterVersion, Version)
-		} else {
-			log.Fatalf("Port %d is occupied but could not verify it corresponds to a rag-code-mcp master. Failing fast to avoid proxying to an unknown service.", *httpPort)
+	logger.InitLoggerFromEnv()
+
+	if *daemonFlag {
+		// ═══════════════════════════════════════════════════════════════
+		// DAEMON MODE — the heavy process: Qdrant, Ollama, Engine, MCP
+		// Listens on Unix socket + optional HTTP
+		// ═══════════════════════════════════════════════════════════════
+		if err := daemon.Run(daemon.RunConfig{
+			Version:       Version,
+			Commit:        Commit,
+			Date:          Date,
+			ConfigPath:    *configPath,
+			HTTPPort:      *httpPort,
+			OllamaBaseURL: *ollamaURLFlag,
+			OllamaModel:   *ollamaModel,
+			OllamaEmbed:   *ollamaEmbed,
+			QdrantURL:     *qdrantURLFlag,
+		}); err != nil {
+			log.Fatalf("Daemon error: %v", err)
 		}
-
-		// Compare versions using semver: take over only if strictly newer.
-		takeOver := false
-		current, errC := semver.NewVersion(Version)
-		master, errM := semver.NewVersion(masterVersion)
-		if errC == nil && errM == nil && current.GreaterThan(master) {
-			takeOver = true
-		}
-
-		if takeOver {
-			logger.Instance.Info("Our version %s > master %s → taking over as new master", Version, masterVersion)
-			proxy.KillProcessOnPort(*httpPort)
-			// Verify the port is actually free before proceeding as master.
-			// If kill failed (missing lsof, permissions, stubborn process), the HTTP
-			// server would fail to bind silently. Instead, fall back to proxy mode.
-			if proxy.PortIsOccupied(*httpPort) {
-				logger.Instance.Warn("Port %d still occupied after kill attempt — falling back to proxy mode", *httpPort)
-				proxy.RunProxyMode(*httpPort)
-				return
-			}
-			// Fall through to normal master startup below.
-		} else {
-			// Enter proxy mode — no heavy initialization.
-			logger.Instance.Info("Entering proxy mode (master version=%s, our version=%s)", masterVersion, Version)
-			proxy.RunProxyMode(*httpPort)
-			return
-		}
-	}
-
-	// Config — resolve bare filenames (e.g. "config.yaml") relative to the
-	// executable's directory, not CWD.  IDEs launch the binary with arbitrary
-	// working directories, so a relative path would miss the installed config.
-	cfgPath := *configPath
-	if filepath.Base(cfgPath) == cfgPath { // bare filename, no dir separators
-		if exePath, err := os.Executable(); err == nil {
-			cfgPath = filepath.Join(filepath.Dir(exePath), cfgPath)
-		}
-	}
-	if err := config.EnsureConfigExists(cfgPath); err != nil {
-		logger.Instance.Warn("Could not create default config: %v", err)
-	}
-
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		logger.Instance.Warn("Failed to load config %s, using defaults: %v", cfgPath, err)
-		cfg = config.DefaultConfig()
-	}
-
-	// Apply CLI overrides
-	config.ApplyCLIOverrides(cfg, *ollamaURLFlag, *ollamaModel, *ollamaEmbed, *qdrantURLFlag)
-
-	// Apply config-driven path overrides so all modules (logger, skills cache,
-	// updater cache, registry) use the paths from config.yaml instead of defaults.
-	utils.ApplyPathOverrides(
-		cfg.Paths.LogsDir,
-		cfg.Paths.Registry,
-		cfg.Paths.SkillsCache,
-		cfg.Paths.UpdateCache,
-	)
-
-	// Re-initialize logger if config specifies a custom log directory,
-	// since initial logger was created before config was loaded.
-	if cfg.Paths.LogsDir != "" {
-		logger.InitLoggerFromEnv()
-	}
-
-	// Auto-update: check for new version and apply on startup
-	if cfg.AutoUpdate {
-		runAutoUpdate()
-	}
-
-	// Health checks (only embedding model is strictly required for core RAG)
-	if cfg.HealthCheck.EnableOnStartup {
-		models := []string{cfg.LLM.OllamaEmbed}
-
-		health := healthcheck.CheckAllWithModels(cfg.LLM.OllamaBaseURL, cfg.Storage.VectorDB.URL, models)
-		for _, h := range health {
-			if h.Status != "ok" {
-				log.Fatalf("Health check failed for %s: %s\n%s", h.Service, h.Message, healthcheck.GetRemediation(health, models))
-			}
-		}
-		logger.Instance.Info("Health checks passed")
 	} else {
-		logger.Instance.Warn("Health checks skipped (health_check.enable_on_startup=false)")
-	}
-
-	// LLM Provider — wrap with retry+timeout for resilience against Ollama hangs
-	ollamaProvider, err := llm.NewOllamaLLMProvider(cfg.LLM)
-	if err != nil {
-		log.Fatalf("Failed to create Ollama provider: %v", err)
-	}
-	// RetryableProvider: 3 retries with 30s timeout per embed/generate call.
-	// Prevents permanent deadlocks when Ollama becomes temporarily unresponsive.
-	provider := llm.NewRetryableProvider(ollamaProvider, 3, 30*time.Second)
-
-	// Warmup: pre-load the embedding model into Ollama's memory.
-	// This avoids cold-start timeouts during the first indexing batch.
-	// Non-fatal: if warmup fails, we log a warning and continue (embed retries will handle it).
-	if err := ollamaProvider.Warmup(context.Background()); err != nil {
-		logger.Instance.Warn("Ollama warmup failed (model may cold-start on first embed): %v", err)
-	}
-
-	logger.Instance.Info("LLM provider ready: embed=%s (retries=3, timeout=30s, keep_alive=30m)", cfg.LLM.OllamaEmbed)
-
-	// Vector Store
-	qdrantHost, qdrantPort := storage.ParseQdrantURL(cfg.Storage.VectorDB.URL)
-	vectorStore, err := storage.NewQdrantStore(qdrantHost, qdrantPort, false, cfg.Storage.VectorDB.APIKey)
-	if err != nil {
-		log.Fatalf("Failed to connect to Qdrant at %s:%d: %v", qdrantHost, qdrantPort, err)
-	}
-	logger.Instance.Info("Qdrant store ready: %s:%d", qdrantHost, qdrantPort)
-
-	// Services
-	indexerSvc := indexer.NewService(provider, vectorStore)
-	searchSvc := search.NewService(provider, vectorStore)
-
-	// Registry
-	registryPath := utils.GetRegistryPath()
-	if err := os.MkdirAll(filepath.Dir(registryPath), 0o755); err != nil {
-		logger.Instance.Warn("Failed to create registry dir: %v", err)
-	}
-
-	eng := engine.NewEngine(indexerSvc, searchSvc, registryPath, cfg)
-	logger.Instance.Info("Engine initialized, registry=%s", registryPath)
-
-	tools.SetServerBuildInfo(Version, Commit, Date)
-
-	// MCP Server
-	server := mcp.NewServer(&mcp.Implementation{
-		Name:    "ragcode",
-		Version: Version,
-	}, &mcp.ServerOptions{
-		Instructions: "RagCode MCP: always pass the absolute file_path of the current file to help detect the workspace.",
-	})
-
-	// Register Tools
-	tools.NewSmartSearchTool(eng).Register(server)
-	tools.NewFindUsagesTool(eng).Register(server)
-	tools.NewListPackageExportsTool(eng).Register(server)
-	tools.NewCallHierarchyTool(eng).Register(server)
-	tools.NewReadFileContextTool(eng).Register(server)
-	tools.NewIndexWorkspaceTool(eng).Register(server)
-	tools.NewListSkillsTool(eng, cfg.Skills).Register(server)
-	tools.NewInstallSkillTool(eng, cfg.Skills).Register(server)
-	tools.NewEvaluateRagCodeTool(eng, cfg).Register(server)
-	tools.NewCheckUpdateTool(Version, cfg).Register(server)
-	tools.NewApplyUpdateTool(Version).Register(server)
-
-	logger.Instance.Info("MCP RagCode Server initialized")
-
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-
-	// Streamable HTTP Server (stateless) — transport modern MCP.
-	// Agenții AI și IDE-urile trimit POST /mcp direct, fără sesiuni sau sessionid.
-	var httpServer *http.Server
-	if *httpPort > 0 {
-		streamableHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
-			return server
-		}, &mcp.StreamableHTTPOptions{
-			Stateless: true,
-		})
-
-		mux := http.NewServeMux()
-		mux.Handle("/mcp", streamableHandler)
-
-		httpServer = &http.Server{
-			Addr:    fmt.Sprintf(":%d", *httpPort),
-			Handler: mux,
-		}
-
-		go func() {
-			logger.Instance.Info("Starting HTTP server on http://localhost:%d/mcp (Streamable HTTP, stateless)", *httpPort)
-			if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				logger.Instance.Error("HTTP server failed to start (port probably in use): %v", err)
-				// Do not call cancel() here, Stdio server should continue to function!
-			}
-		}()
-	}
-
-	// Stdio Server (always runs, in parallel with HTTP if http-port is set)
-	logger.Instance.Info("Starting Stdio server")
-	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil {
-		// EOF on stdin = MCP protocol normal shutdown (client closes stdin to signal disconnect).
-		// This is NOT a crash — always log it but never exit(1) for EOF.
-		isEOF := err == io.EOF || strings.Contains(err.Error(), "EOF")
-		isCtxDone := ctx.Err() != nil
-
-		if isEOF || isCtxDone {
-			// Normal shutdown path — always log so it appears in diagnostics.
-			logger.Instance.Info("Stdio transport closed (reason: EOF=%v, ctx_cancelled=%v): %v", isEOF, isCtxDone, err)
-		} else {
-			// Unexpected error with context still active — real failure.
-			logger.Instance.Error("Stdio server error (unexpected, context still active): %v", err)
-			os.Exit(1)
-		}
-	}
-
-	// Cleanup
-	logger.Instance.Info("Shutting down...")
-	eng.StopWatchers()
-	if httpServer != nil {
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer shutdownCancel()
-		if err := httpServer.Shutdown(shutdownCtx); err != nil {
-			logger.Instance.Error("HTTP shutdown error: %v", err)
-		}
+		// ═══════════════════════════════════════════════════════════════
+		// ADAPTER MODE (default) — thin Stdio ↔ Unix socket bridge
+		// Each IDE launches this mode; daemon is started automatically.
+		// ═══════════════════════════════════════════════════════════════
+		runAdapter(Version)
 	}
 }
 
-// runAutoUpdate checks for a newer version on GitHub and applies it automatically.
-// Uses the same 24h cache as rag_check_update to avoid hitting GitHub on every restart.
-// Non-fatal: if anything fails, logs a warning and continues normal startup.
-func runAutoUpdate() {
-	logger.Instance.Info("Auto-update: checking for new version...")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	info, err := updater.CheckForUpdates(ctx, Version, false) // false = use cache
+// runAdapter is the thin stdio adapter that bridges IDE ↔ daemon.
+// It ensures the daemon is running, handles version upgrades, and bridges stdin/stdout.
+func runAdapter(version string) {
+	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		logger.Instance.Warn("Auto-update check failed: %v", err)
-		return
+		log.Fatalf("Cannot determine home directory: %v", err)
 	}
-	if info == nil {
-		logger.Instance.Info("Auto-update: already on latest version (%s)", Version)
-		return
-	}
-
-	// Compare versions to be sure
-	current, errCur := semver.NewVersion(Version)
-	latest, errLat := semver.NewVersion(info.LatestVersion)
-	if errCur != nil || errLat != nil {
-		logger.Instance.Warn("Auto-update: cannot parse versions (current=%s, latest=%s)", Version, info.LatestVersion)
-		return
-	}
-	if !latest.GreaterThan(current) {
-		logger.Instance.Info("Auto-update: current version %s is up to date", Version)
-		return
+	ragcodeDir := filepath.Join(homeDir, ".ragcode")
+	if err := os.MkdirAll(ragcodeDir, 0o755); err != nil {
+		log.Fatalf("Cannot create ~/.ragcode: %v", err)
 	}
 
-	logger.Instance.Info("Auto-update: new version available %s → %s, downloading...", Version, info.LatestVersion)
+	pidPath := filepath.Join(ragcodeDir, "daemon.pid")
+	sockPath := filepath.Join(ragcodeDir, "daemon.sock")
 
-	// Download to temp file
-	tmpDir, err := os.MkdirTemp("", "ragcode-autoupdate-*")
-	if err != nil {
-		logger.Instance.Warn("Auto-update: cannot create temp dir: %v", err)
-		return
-	}
-	defer os.RemoveAll(tmpDir)
+	// Check if daemon is already running
+	running, existingVersion := adapter.IsDaemonRunning(pidPath, sockPath)
 
-	archivePath := filepath.Join(tmpDir, "update.tar.gz")
-	if err := info.DownloadAndVerify(ctx, archivePath); err != nil {
-		logger.Instance.Warn("Auto-update: download/verify failed: %v", err)
-		return
-	}
-
-	logger.Instance.Info("Auto-update: applying update %s...", info.LatestVersion)
-
-	// ApplyUpdate swaps the binary and calls os.Exit(0) via a goroutine.
-	// The process manager (IDE/systemd/etc.) will restart with the new version.
-	if err := updater.ApplyUpdate(archivePath); err != nil {
-		logger.Instance.Warn("Auto-update: apply failed: %v", err)
-		return
+	// Version upgrade check: if daemon is running an older version, restart it
+	if running && needsUpgrade(existingVersion, version) {
+		logger.Instance.Info("Daemon upgrade needed (%s → %s), restarting...", existingVersion, version)
+		if err := adapter.StopDaemon(pidPath); err != nil {
+			logger.Instance.Warn("Failed to stop old daemon: %v", err)
+		}
+		adapter.CleanupStaleFiles(pidPath, sockPath)
+		running = false
 	}
 
-	// If we reach here, ApplyUpdate scheduled an os.Exit(0) in ~1s.
-	// Wait for it to take effect.
-	logger.Instance.Info("Auto-update: successfully updated to %s, restarting...", info.LatestVersion)
-	time.Sleep(2 * time.Second)
+	// Start daemon if not running
+	if !running {
+		logger.Instance.Info("Starting daemon...")
+		binaryPath, err := os.Executable()
+		if err != nil {
+			log.Fatalf("Cannot determine binary path: %v", err)
+		}
+		if err := adapter.StartDaemon(binaryPath, sockPath); err != nil {
+			log.Fatalf("Failed to start daemon: %v", err)
+		}
+		logger.Instance.Info("Daemon started successfully")
+	}
+
+	// Bridge stdin ↔ daemon via Unix socket
+	workspaceHint, _ := os.Getwd()
+	logger.Instance.Info("Adapter bridging stdin ↔ daemon (workspace_hint=%s)", workspaceHint)
+
+	if err := adapter.RunBridge(context.Background(), sockPath, os.Stdin, os.Stdout, workspaceHint); err != nil {
+		logger.Instance.Error("Adapter bridge error: %v", err)
+		os.Exit(1)
+	}
+}
+
+// needsUpgrade checks if the current version is newer than the daemon's version.
+func needsUpgrade(daemonVersion, currentVersion string) bool {
+	current, errC := semver.NewVersion(currentVersion)
+	existing, errD := semver.NewVersion(daemonVersion)
+	if errC != nil || errD != nil {
+		return false // can't compare, don't upgrade
+	}
+	return current.GreaterThan(existing)
 }

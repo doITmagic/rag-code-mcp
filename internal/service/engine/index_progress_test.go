@@ -146,11 +146,11 @@ func TestProgressStoreTwoWorkspacesIsolated(t *testing.T) {
 		t.Errorf("wsB: expected GlobalPercent=%d, got %d", wantB, pB.GlobalPercent)
 	}
 
-	// WsA should NOT have python data from wsB and vice versa
-	if _, ok := pA.Languages["python"]; !ok {
-		// python was explicitly added to wsA with 0/200
+	// WsA should have python (was added with 0/200), wsB should not
+	if _, exists := pA.Languages["python"]; !exists {
+		t.Error("wsA should have python language entry (added with 0/200)")
 	}
-	if _, ok := pB.Languages["python"]; ok {
+	if _, exists := pB.Languages["python"]; exists {
 		t.Error("wsB should not have python language (was only set on wsA)")
 	}
 

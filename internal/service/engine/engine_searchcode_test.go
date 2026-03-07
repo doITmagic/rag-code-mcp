@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -294,30 +293,12 @@ func TestSearchCodeResumeInterruptedIndexing(t *testing.T) {
 	}
 	eng.SetSearchService(search.NewService(llmProvider, store))
 
-	// Creăm state.json cu LastPercent = 55%
-	state := indexer.NewState()
-	state.SetLastPercent(55)
-	statePath := filepath.Join(rootDir, ".ragcode", "state.json")
-	if err := state.Save(statePath); err != nil {
-		t.Fatalf("Failed to save fake state.json: %v", err)
-	}
-
-	// Cu noua logică: search-ul NU mai blochează când LastPercent e între 1-99.
-	// Indexarea întreruptă e reluată automat în background, iar search-ul continuă în Qdrant.
+	// Verify SearchCode succeeds (returns results) when collection exists.
+	// Auto-resume behavior is tested separately in TestSearchCodeAutoResumesInterruptedIndexing.
 	_, err := eng.SearchCode(context.Background(), "dummy.go", "test", 10, false)
 	if err != nil {
-		t.Fatalf("Expected no error, search should continue, got: %v", err)
+		t.Fatalf("Expected no error when collection exists, got: %v", err)
 	}
-
-	// Așteptăm ca job-ul din background să se termine și să iasă din indexingJobs.
-	// (Previne eroarea de t.TempDir() "directory not empty"). Limităm la max 5 secunde.
-	for i := 0; i < 100; i++ {
-		if _, ok := eng.indexingJobs.Load(wctx.ID); !ok {
-			return // Success: job started and cleanly finished
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	t.Errorf("Expected background indexing to finish within 5s, but job is still active")
 }
 
 // mockDirDetector is like mockDetector but allows specifying the root dir
@@ -330,4 +311,84 @@ func (m *mockDirDetector) DetectFromFilePath(_ context.Context, path string) (*c
 		Root:       m.root,
 		Confidence: 1.0,
 	}, nil
+}
+
+// TestSearchCodeAutoResumesInterruptedIndexing verifies that SearchCode triggers
+// a background re-index when index_status.json shows an interrupted indexing
+// session (state="running", 1 <= GlobalPercent <= 99).
+// It also verifies the 5-minute cooldown prevents repeated resume triggers.
+func TestSearchCodeAutoResumesInterruptedIndexing(t *testing.T) {
+	llmProvider := &countingLLM{}
+	eng := newEngineCountingLLM(&testStore{existing: map[string]bool{}}, llmProvider)
+
+	wsRoot := t.TempDir()
+	eng.SetResolver(resolver.New(resolver.Dependencies{Detector: &mockDirDetector{root: wsRoot}}))
+
+	// Detect context to learn the workspace ID (needed for index_status.json)
+	wctx, err := eng.DetectContext(context.Background(), "dummy.go")
+	if err != nil || wctx == nil {
+		t.Fatal("Failed to detect workspace context")
+	}
+
+	// Write index_status.json that simulates an interrupted indexing session at 50%
+	now := time.Now()
+	status := IndexProgress{
+		JobID:         "interrupted-test-job",
+		WorkspaceID:   wctx.ID,
+		WorkspaceRoot: wsRoot,
+		State:         "running",
+		GlobalPercent: 50,
+		StartedAt:     now.Add(-10 * time.Minute),
+		UpdatedAt:     now,
+		Languages:     map[string]IndexLanguageProgress{},
+	}
+	saveIndexStatus(wsRoot, &status)
+
+	// Make the go collection exist so SearchCode gets past the fast-fail check
+	goColl := CollectionNameFor(wctx.ID, "go")
+	store := &multiLangStore{
+		testStore: testStore{
+			existing: map[string]bool{goColl: true},
+		},
+	}
+	eng.SetSearchService(search.NewService(llmProvider, store))
+
+	// First call — auto-resume should fire
+	_, _ = eng.SearchCode(context.Background(), "dummy.go", "test", 10, false)
+
+	// resumeAttempts is updated synchronously before the goroutine starts,
+	// so it is readable immediately after SearchCode returns.
+	if _, ok := eng.resumeAttempts.Load(wctx.ID); !ok {
+		t.Error("expected auto-resume to be triggered: resumeAttempts has no entry for workspace")
+	}
+
+	// Second call within cooldown — should NOT trigger another resume attempt.
+	// We verify this by checking that resumeAttempts still holds the same timestamp.
+	first, _ := eng.resumeAttempts.Load(wctx.ID)
+	_, _ = eng.SearchCode(context.Background(), "dummy.go", "test", 10, false)
+	second, _ := eng.resumeAttempts.Load(wctx.ID)
+	if first.(time.Time) != second.(time.Time) {
+		t.Error("cooldown violated: auto-resume was triggered again within the 5-minute window")
+	}
+
+	// Stop the progress flusher goroutine before the test returns.
+	// Without this the goroutine can still write to wsRoot/.ragcode/ while
+	// t.TempDir() cleanup removes the directory, triggering a race under -race.
+	t.Cleanup(func() {
+		if eng.progress != nil {
+			eng.progress.stop()
+		}
+	})
+
+	// Wait for the background indexing goroutine to drain before test returns.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(eng.ActiveIndexingJobs()) == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if jobs := eng.ActiveIndexingJobs(); len(jobs) != 0 {
+		t.Fatalf("background indexing jobs still active after 5s wait: %v", jobs)
+	}
 }

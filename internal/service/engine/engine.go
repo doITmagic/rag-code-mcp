@@ -3,7 +3,6 @@ package engine
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -13,9 +12,10 @@ import (
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
+	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/doITmagic/rag-code-mcp/internal/service/search"
-	"github.com/doITmagic/rag-code-mcp/internal/transport"
 	"github.com/doITmagic/rag-code-mcp/internal/skills"
+	"github.com/doITmagic/rag-code-mcp/internal/transport"
 	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
@@ -125,6 +125,17 @@ func (e *Engine) GetIndexProgress(workspaceID, workspaceRoot string) *IndexProgr
 		return nil
 	}
 	return e.progress.get(workspaceID, workspaceRoot)
+}
+
+// ActiveIndexingJobs returns the IDs of workspaces currently being indexed.
+// Useful for health checks and debugging concurrent indexing scenarios.
+func (e *Engine) ActiveIndexingJobs() []string {
+	var ids []string
+	e.indexingJobs.Range(func(k, _ any) bool {
+		ids = append(ids, k.(string))
+		return true
+	})
+	return ids
 }
 
 // Config returns the engine configuration.
@@ -313,7 +324,7 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("[TIMER] SearchCode detect_context=%v", time.Since(t0))
+	logger.Instance.Debug("[TIMER] SearchCode detect_context=%v", time.Since(t0))
 
 	// Primary language from file extension
 	primaryLang := "go"
@@ -325,27 +336,24 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 	primaryColl := wctx.CollectionName(primaryLang)
 	t1 := time.Now()
 
-	indexerStatePath := filepath.Join(wctx.Root, ".ragcode", "state.json")
-	if idxState, sErr := indexer.LoadState(indexerStatePath); sErr == nil {
-		if idxState.LastPercent > 0 && idxState.LastPercent < 100 {
+	// Auto-resume: if GlobalPercent is between 1-99 and state is "running",
+	// the indexer was interrupted — trigger a background re-index.
+	if idxStatus := loadIndexStatus(wctx.Root); idxStatus != nil {
+		if idxStatus.WorkspaceID == wctx.ID && idxStatus.GlobalPercent > 0 && idxStatus.GlobalPercent < 100 && idxStatus.State == "running" {
 			if _, ok := e.indexingJobs.Load(wctx.ID); !ok {
-				// Throttle auto-resume: only once per 5 minutes per workspace to avoid
-				// CPU/log churn when indexing keeps failing (e.g. Ollama is down).
 				const resumeCooldown = 5 * time.Minute
 				now := time.Now()
 				if last, loaded := e.resumeAttempts.Load(wctx.ID); !loaded || now.Sub(last.(time.Time)) > resumeCooldown {
 					e.resumeAttempts.Store(wctx.ID, now)
-					log.Printf("[INFO] Detectată indexare întreruptă (rămasă la %d%%). Se reia automat...", idxState.LastPercent)
+					logger.Instance.Info("[IDX] ws=%s Indexing interrupted at %d%% — auto-resuming", filepath.Base(wctx.Root), idxStatus.GlobalPercent)
 					e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 				}
 			}
-			// În ambele cazuri continuăm — Qdrant are deja date parțiale, iar progresul este adăugat în răspuns la nivelul MCP tool-ului
-			log.Printf("[INFO] Indexing in progress (%d%%) — searching available results in Qdrant", idxState.LastPercent)
+			logger.Instance.Info("[IDX] ws=%s Indexing in progress (%d%%) — searching available results", filepath.Base(wctx.Root), idxStatus.GlobalPercent)
 		}
 	}
-
 	exists, err := e.search.CollectionExists(ctx, primaryColl)
-	log.Printf("[TIMER] SearchCode collection_exists_primary=%v (cached=%v)", time.Since(t1), time.Since(t1) < time.Millisecond)
+	logger.Instance.Debug("[TIMER] SearchCode collection_exists_primary=%v (cached=%v)", time.Since(t1), time.Since(t1) < time.Millisecond)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check collection: %w", err)
 	}
@@ -358,20 +366,20 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 	}
 
 	if wctx.ReindexRequired {
-		log.Printf("[INFO] Git state change detected (Head: %s), triggering background re-indexing for %s", wctx.HeadSHA, wctx.Root)
+		logger.Instance.Info("[IDX] Git state change detected (Head: %s), triggering background re-indexing for %s", wctx.HeadSHA, wctx.Root)
 		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 	}
 
 	// Embed ONCE, fan-out to all language collections in parallel
 	langs := parser.SupportedLanguages()
 	if len(langs) == 0 {
-		log.Printf("[WARN] No parsers registered — SupportedLanguages() returned empty. Skipping fan-out.")
+		logger.Instance.Warn("[IDX] No parsers registered — SupportedLanguages() returned empty. Skipping fan-out.")
 		return nil, fmt.Errorf("no language parsers registered")
 	}
 
 	t2 := time.Now()
 	vector, err := e.search.EmbedQuery(ctx, queryText)
-	log.Printf("[TIMER] SearchCode embed=%v", time.Since(t2))
+	logger.Instance.Debug("[TIMER] SearchCode embed=%v", time.Since(t2))
 	if err != nil {
 		return nil, fmt.Errorf("embedding failed: %w", err)
 	}
@@ -407,7 +415,7 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 			}
 			elapsed := time.Since(gt)
 			if sErr != nil {
-				log.Printf("[WARN] SearchCode: fan-out failed for %s: %v", c, sErr)
+				logger.Instance.Warn("[IDX] SearchCode: fan-out failed for %s: %v", c, sErr)
 				resultsChan <- langResult{lang: l, coll: c, err: sErr, elapsed: elapsed}
 				return
 			}
@@ -419,7 +427,7 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 
 	wg.Wait()
 	close(resultsChan)
-	log.Printf("[TIMER] SearchCode fanout_total=%v (langs=%d)", time.Since(t3), len(langs))
+	logger.Instance.Debug("[TIMER] SearchCode fanout_total=%v (langs=%d)", time.Since(t3), len(langs))
 
 	// Merge: primary lang results first, others appended; surface first error if no results
 	var primaryResults []storage.SearchResult
@@ -430,13 +438,13 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 
 	for lr := range resultsChan {
 		if lr.err != nil {
-			log.Printf("[TIMER] SearchCode lang=%s err elapsed=%v", lr.lang, lr.elapsed)
+			logger.Instance.Debug("[TIMER] SearchCode lang=%s err elapsed=%v", lr.lang, lr.elapsed)
 			if firstErr == nil {
 				firstErr = lr.err
 			}
 			continue
 		}
-		log.Printf("[TIMER] SearchCode lang=%s hits=%d elapsed=%v", lr.lang, len(lr.results), lr.elapsed)
+		logger.Instance.Debug("[TIMER] SearchCode lang=%s hits=%d elapsed=%v", lr.lang, len(lr.results), lr.elapsed)
 		if lr.coll == primaryColl {
 			primaryResults = lr.results
 		} else {
@@ -458,7 +466,7 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 		return nil, fmt.Errorf("search failed: %w", firstErr)
 	}
 
-	log.Printf("[TIMER] SearchCode TOTAL=%v (detect=%v embed=%v fanout=%v)",
+	logger.Instance.Debug("[TIMER] SearchCode TOTAL=%v (detect=%v embed=%v fanout=%v)",
 		time.Since(t0), t1.Sub(t0), t2.Sub(t1), time.Since(t3))
 
 	return &SearchCodeResult{
@@ -487,22 +495,19 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 
 	collection := wctx.CollectionName(lang)
 
-	indexerStatePath := filepath.Join(wctx.Root, ".ragcode", "state.json")
-	if idxState, sErr := indexer.LoadState(indexerStatePath); sErr == nil {
-		if idxState.LastPercent > 0 && idxState.LastPercent < 100 {
+	// Auto-resume from index_status.json (Task4): if indexing was interrupted, resume it.
+	if idxStatus := loadIndexStatus(wctx.Root); idxStatus != nil {
+		if idxStatus.WorkspaceID == wctx.ID && idxStatus.GlobalPercent > 0 && idxStatus.GlobalPercent < 100 && idxStatus.State == "running" {
 			if _, ok := e.indexingJobs.Load(wctx.ID); !ok {
-				// Throttle auto-resume: only once per 5 minutes per workspace to avoid
-				// CPU/log churn when indexing keeps failing (e.g. Ollama is down).
 				const resumeCooldown = 5 * time.Minute
 				now := time.Now()
 				if last, loaded := e.resumeAttempts.Load(wctx.ID); !loaded || now.Sub(last.(time.Time)) > resumeCooldown {
 					e.resumeAttempts.Store(wctx.ID, now)
-					log.Printf("[INFO] Detectată indexare întreruptă (rămasă la %d%%). Se reia automat...", idxState.LastPercent)
+					logger.Instance.Info("[IDX] ws=%s Indexing interrupted at %d%% — auto-resuming", filepath.Base(wctx.Root), idxStatus.GlobalPercent)
 					e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 				}
 			}
-			// În ambele cazuri continuăm — Qdrant are deja date parțiale, iar progresul este adăugat în răspuns la nivelul MCP tool-ului
-			log.Printf("[INFO] Indexing in progress (%d%%) — searching available results in Qdrant", idxState.LastPercent)
+			logger.Instance.Info("[IDX] ws=%s Indexing in progress (%d%%) — searching available results", filepath.Base(wctx.Root), idxStatus.GlobalPercent)
 		}
 	}
 
@@ -520,7 +525,7 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 	}
 
 	if wctx.ReindexRequired {
-		log.Printf("[INFO] Git state change detected, triggering background re-indexing...")
+		logger.Instance.Info("[IDX] Git state change detected, triggering background re-indexing for ws=%s", filepath.Base(wctx.Root))
 		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 	}
 
@@ -549,7 +554,7 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 func (e *Engine) ExactSearchPolyglot(ctx context.Context, wsID string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error) {
 	langs := parser.SupportedLanguages()
 	if len(langs) == 0 {
-		log.Printf("[WARN] No parsers registered — SupportedLanguages() returned empty. Skipping ExactSearch.")
+		logger.Instance.Warn("[IDX] No parsers registered — SupportedLanguages() returned empty. Skipping ExactSearch.")
 		return nil, &ErrNoCollectionsFound{WorkspaceID: wsID}
 	}
 
@@ -569,7 +574,7 @@ func (e *Engine) ExactSearchPolyglot(ctx context.Context, wsID string, filters m
 
 			exists, err := e.search.CollectionExists(ctx, coll)
 			if err != nil {
-				log.Printf("[WARN] ExactSearchPolyglot: cannot check collection %s: %v", coll, err)
+				logger.Instance.Warn("[IDX] ExactSearchPolyglot: cannot check collection %s: %v", coll, err)
 				return
 			}
 			if !exists {
@@ -579,7 +584,7 @@ func (e *Engine) ExactSearchPolyglot(ctx context.Context, wsID string, filters m
 
 			res, sErr := e.search.ExactSearch(ctx, coll, filters, limit)
 			if sErr != nil {
-				log.Printf("[WARN] ExactSearchPolyglot: search failed for %s: %v", coll, sErr)
+				logger.Instance.Warn("[IDX] ExactSearchPolyglot: search failed for %s: %v", coll, sErr)
 				return
 			}
 			resultsChan <- trial{results: res}
@@ -660,7 +665,7 @@ func (e *Engine) popPendingIndex(workspaceID string) (files []string, overflow b
 func (e *Engine) tryStartPendingIndex(root, workspaceID string) {
 	files, overflow := e.popPendingIndex(workspaceID)
 	if overflow {
-		log.Printf("[INFO] ♻️ Pending changes exceeded limit for %s - triggering full scan incremental indexing", root)
+		logger.Instance.Info("[IDX] ♻️ Pending changes exceeded limit for ws=%s — triggering full scan", filepath.Base(root))
 		e.StartIndexingAsync(root, workspaceID, nil, false)
 		return
 	}
@@ -675,6 +680,14 @@ func (e *Engine) tryStartPendingIndex(root, workspaceID string) {
 func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recreate bool) {
 	if _, loaded := e.indexingJobs.LoadOrStore(id, time.Now()); loaded {
 		return // Already running
+	}
+
+	// Count active jobs after adding this one — warn if multiple workspaces are indexing
+	// simultaneously (they serialize against each other at Ollama level).
+	var activeCount int
+	e.indexingJobs.Range(func(_, _ any) bool { activeCount++; return true })
+	if activeCount > 1 {
+		logger.Instance.Warn("[IDX] ⚠️ %d workspaces indexing simultaneously — Ollama requests will serialize implicitly (ws=%s)", activeCount, filepath.Base(root))
 	}
 
 	jobID := fmt.Sprintf("%s-%d", id, time.Now().UnixNano())
@@ -693,20 +706,20 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 		var err error
 
 		if len(changedFiles) > 0 {
-			log.Printf("[INFO] ♻️ Starting incremental indexing for %d files in: %s", len(changedFiles), root)
+			logger.Instance.Info("[IDX] ♻️ ws=%s Starting incremental indexing for %d files", filepath.Base(root), len(changedFiles))
 			err = e.IndexFiles(ctx, root, changedFiles)
 		} else {
-			log.Printf("[INFO] 🚀 Starting background indexing for: %s (recreate=%v)", root, recreate)
+			logger.Instance.Info("[IDX] 🚀 ws=%s Starting background indexing (recreate=%v)", filepath.Base(root), recreate)
 			err = e.IndexWorkspace(ctx, root, recreate)
 		}
 
 		if err != nil {
-			log.Printf("[ERROR] Background indexing failed for %s: %v", root, err)
+			logger.Instance.Error("[IDX] ws=%s Background indexing failed: %v", filepath.Base(root), err)
 			if e.progress != nil {
 				e.progress.fail(id, root, time.Now(), err.Error())
 			}
 		} else {
-			log.Printf("[INFO] ✅ Background indexing completed for: %s", root)
+			logger.Instance.Info("[IDX] ✅ ws=%s Background indexing completed", filepath.Base(root))
 			if e.progress != nil {
 				e.progress.complete(id, root, time.Now())
 			}
@@ -739,7 +752,7 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) er
 
 	for _, p := range files {
 		if _, indexErr := e.indexer.IndexFile(ctx, collection, p, state); indexErr != nil {
-			log.Printf("[ERROR] Failed to index %s: %v", p, indexErr)
+			logger.Instance.Warn("[IDX] Failed to index %s: %v", filepath.Base(p), indexErr)
 		}
 	}
 
@@ -761,19 +774,33 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 	if e.config != nil && e.config.Workspace.AutoInstallSSESkill {
 		if !skills.IsSkillInstalled("ragcode-sse", wctx.Root) {
 			if err := skills.InstallSkill("ragcode-sse", wctx.Root, "agent", e.config.Skills); err != nil {
-				log.Printf("[WARN] Failed to install ragcode-sse skill for %s: %v", wctx.Root, err)
+				logger.Instance.Warn("[IDX] Failed to install ragcode-sse skill for ws=%s: %v", wctx.Root, err)
 			}
 		}
 	}
 
-	statePath := filepath.Join(wctx.Root, ".ragcode", "state.json")
-	if state, err := indexer.LoadState(statePath); err == nil {
-		state.SetLastPercent(1) // Marker for "indexer is globally running"
-		_ = state.Save(statePath)
-	}
-
 	// We'll iterate all supported languages.
 	languages := parser.SupportedLanguages()
+
+	wsName := filepath.Base(wctx.Root)
+
+	// Pre-scan: count files for every language before starting indexing.
+	// This gives progressStore an accurate denominator from the start, so
+	// GlobalPercent increases monotonically instead of resetting per language.
+	var excludePatterns []string
+	if e.config != nil {
+		excludePatterns = e.config.Workspace.ExcludePatterns
+	}
+	// Pre-scan: single WalkDir counting files per language before indexing begins.
+	// This gives progressStore an accurate denominator from the start, so
+	// GlobalPercent increases monotonically. One combined walk avoids
+	// O(languages x files) traversals that per-language scans would incur.
+	if e.progress != nil {
+		fileCounts := e.indexer.CountAllFiles(wctx.Root, excludePatterns)
+		for _, lang := range languages {
+			e.progress.preRegister(wctx.ID, lang, fileCounts[lang], time.Now())
+		}
+	}
 
 	var indexErrors []string
 	for _, lang := range languages {
@@ -783,26 +810,25 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 				e.progress.update(wctx.ID, lang, doneFiles, totalFiles, time.Now())
 			}
 		}
+		logger.Instance.Info("[IDX] ws=%s lang=%s ▶ starting", wsName, lang)
 		err := e.indexer.IndexWorkspace(ctx, wctx.Root, collection, indexer.Options{
 			Language:        lang,
-			ExcludePatterns: e.config.Workspace.ExcludePatterns,
+			WorkspaceName:   wsName,
+			ExcludePatterns: excludePatterns,
 			Recreate:        recreate,
 			Progress:        progressCb,
 		})
 		if err != nil {
-			log.Printf("[ERROR] Indexing failed for %s: %v", lang, err)
+			logger.Instance.Error("[IDX] ws=%s lang=%s ❌ failed: %v", wsName, lang, err)
 			indexErrors = append(indexErrors, fmt.Sprintf("%s: %v", lang, err))
+		} else {
+			logger.Instance.Info("[IDX] ws=%s lang=%s ✓ done", wsName, lang)
 		}
-	}
-
-	if state, err := indexer.LoadState(statePath); err == nil {
-		state.SetLastPercent(100)
-		_ = state.Save(statePath)
 	}
 
 	if e.watchers != nil {
 		if err := e.watchers.Start(wctx.Root, e.handleWatchChange); err != nil {
-			log.Printf("[WARN] Failed to start watcher for %s: %v", wctx.Root, err)
+			logger.Instance.Warn("[IDX] Failed to start watcher for ws=%s: %v", filepath.Base(wctx.Root), err)
 		}
 	}
 

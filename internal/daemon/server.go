@@ -57,6 +57,10 @@ func ListenAndServe(ctx context.Context, cfg ListenConfig) error {
 	if err != nil {
 		return fmt.Errorf("failed to listen on unix socket %s: %w", cfg.SocketPath, err)
 	}
+	// Restrict socket access to owner only (security: prevents other local users from connecting)
+	if chmodErr := os.Chmod(cfg.SocketPath, 0o600); chmodErr != nil {
+		logger.Instance.Warn("Failed to chmod socket to 0600: %v", chmodErr)
+	}
 
 	// Ensure cleanup of socket file on exit
 	defer func() {

@@ -336,8 +336,8 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 	primaryColl := wctx.CollectionName(primaryLang)
 	t1 := time.Now()
 
-	// TODO(Task4): auto-resume logic — read GlobalPercent from index_status.json.
-	// If GlobalPercent is between 1-99 and state is "running", the indexer was interrupted.
+	// Auto-resume: if GlobalPercent is between 1-99 and state is "running",
+	// the indexer was interrupted — trigger a background re-index.
 	if idxStatus := loadIndexStatus(wctx.Root); idxStatus != nil {
 		if idxStatus.WorkspaceID == wctx.ID && idxStatus.GlobalPercent > 0 && idxStatus.GlobalPercent < 100 && idxStatus.State == "running" {
 			if _, ok := e.indexingJobs.Load(wctx.ID); !ok {

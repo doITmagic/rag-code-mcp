@@ -586,12 +586,12 @@ func (s *Service) symbolToMap(sym parser.Symbol) map[string]interface{} {
 	return res
 }
 
-// CountFiles returns the number of files in root that match the given language,
+// CountAllFiles counts files per language in root using a single WalkDir pass,
 // applying the same directory exclusion rules as IndexWorkspace.
-// It does NOT load state or call the embedder — it is a fast pre-scan used to
-// establish accurate global progress totals before indexing begins.
-func (s *Service) CountFiles(root, lang string, excludePatterns []string) int {
-	count := 0
+// It returns a map[langName]count that can be used to pre-populate progress
+// totals before indexing begins, avoiding O(languages × files) traversals.
+func (s *Service) CountAllFiles(root string, excludePatterns []string) map[string]int {
+	counts := make(map[string]int)
 	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -609,11 +609,11 @@ func (s *Service) CountFiles(root, lang string, excludePatterns []string) int {
 			return nil
 		}
 		a := parser.GetByFile(path)
-		if a == nil || (lang != "" && a.Name() != lang) {
+		if a == nil {
 			return nil
 		}
-		count++
+		counts[a.Name()]++
 		return nil
 	})
-	return count
+	return counts
 }

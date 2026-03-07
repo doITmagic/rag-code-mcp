@@ -293,9 +293,8 @@ func TestSearchCodeResumeInterruptedIndexing(t *testing.T) {
 	}
 	eng.SetSearchService(search.NewService(llmProvider, store))
 
-	// NOTE: LastPercent removed from state.json — progress now tracked in index_status.json.
-	// Auto-resume via index_status.json will be tested in Task 4.
-	// This test verifies SearchCode succeeds when collection exists.
+	// Verify SearchCode succeeds (returns results) when collection exists.
+	// Auto-resume behavior is tested separately in TestSearchCodeAutoResumesInterruptedIndexing.
 	_, err := eng.SearchCode(context.Background(), "dummy.go", "test", 10, false)
 	if err != nil {
 		t.Fatalf("Expected no error when collection exists, got: %v", err)

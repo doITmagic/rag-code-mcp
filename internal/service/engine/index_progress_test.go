@@ -124,7 +124,7 @@ func TestProgressStoreTwoWorkspacesIsolated(t *testing.T) {
 	rootB := t.TempDir()
 
 	// WsA: go 50/100, python 0/200 → global = (50+0)/(100+200)*100 = 16%
-	// python is in the denominator because totals are pre-registered
+	// python is in the denominator because it was added via update() with 0 processed/200 total
 	store.start("wsA", rootA, "jobA", now)
 	store.update("wsA", "go", 50, 100, now)
 	store.update("wsA", "python", 0, 200, now)

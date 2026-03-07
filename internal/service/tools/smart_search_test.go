@@ -17,7 +17,9 @@ func TestGroupDocsByTree(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		lines[i] = "Line " + string(rune('A'+i)) // Line A, Line B, etc.
 	}
-	os.WriteFile(tempFilePath, []byte(strings.Join(lines, "\n")), 0644)
+	if err := os.WriteFile(tempFilePath, []byte(strings.Join(lines, "\n")), 0644); err != nil {
+		t.Fatalf("failed to create test file %s: %v", tempFilePath, err)
+	}
 
 	// Create tool instance (we only need the groupDocsByTree method)
 	tool := &SmartSearchTool{}
@@ -57,7 +59,7 @@ func TestGroupDocsByTree(t *testing.T) {
 					id: "chunk_3", filePath: tempFilePath, symbolType: "documentation", signature: "### Setup",
 					startLine: 8, endLine: 10, score: 0.5,
 				},
-				// This one is code, ignore grouping
+				// code_block is also a doc type, so it gets grouped under "### Intro"
 				{
 					id: "chunk_4", filePath: tempFilePath, symbolType: "code_block", signature: "### Intro",
 					startLine: 7, endLine: 7, score: 0.85,

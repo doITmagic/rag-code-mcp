@@ -13,9 +13,10 @@ import (
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
+	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/doITmagic/rag-code-mcp/internal/service/search"
-	"github.com/doITmagic/rag-code-mcp/internal/transport"
 	"github.com/doITmagic/rag-code-mcp/internal/skills"
+	"github.com/doITmagic/rag-code-mcp/internal/transport"
 	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
@@ -325,9 +326,22 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 	primaryColl := wctx.CollectionName(primaryLang)
 	t1 := time.Now()
 
-	// TODO(Task4): auto-resume logic will read from index_status.json here
-
-
+	// TODO(Task4): auto-resume logic — read GlobalPercent from index_status.json.
+	// If GlobalPercent is between 1-99 and state is "running", the indexer was interrupted.
+	if idxStatus := loadIndexStatus(wctx.Root); idxStatus != nil {
+		if idxStatus.WorkspaceID == wctx.ID && idxStatus.GlobalPercent > 0 && idxStatus.GlobalPercent < 100 && idxStatus.State == "running" {
+			if _, ok := e.indexingJobs.Load(wctx.ID); !ok {
+				const resumeCooldown = 5 * time.Minute
+				now := time.Now()
+				if last, loaded := e.resumeAttempts.Load(wctx.ID); !loaded || now.Sub(last.(time.Time)) > resumeCooldown {
+					e.resumeAttempts.Store(wctx.ID, now)
+					logger.Instance.Info("[IDX] ws=%s Indexing interrupted at %d%% — auto-resuming", filepath.Base(wctx.Root), idxStatus.GlobalPercent)
+					e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+				}
+			}
+			logger.Instance.Info("[IDX] ws=%s Indexing in progress (%d%%) — searching available results", filepath.Base(wctx.Root), idxStatus.GlobalPercent)
+		}
+	}
 	exists, err := e.search.CollectionExists(ctx, primaryColl)
 	log.Printf("[TIMER] SearchCode collection_exists_primary=%v (cached=%v)", time.Since(t1), time.Since(t1) < time.Millisecond)
 	if err != nil {
@@ -471,8 +485,21 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 
 	collection := wctx.CollectionName(lang)
 
-	// TODO(Task4): auto-resume logic will read from index_status.json here
-
+	// Auto-resume from index_status.json (Task4): if indexing was interrupted, resume it.
+	if idxStatus := loadIndexStatus(wctx.Root); idxStatus != nil {
+		if idxStatus.WorkspaceID == wctx.ID && idxStatus.GlobalPercent > 0 && idxStatus.GlobalPercent < 100 && idxStatus.State == "running" {
+			if _, ok := e.indexingJobs.Load(wctx.ID); !ok {
+				const resumeCooldown = 5 * time.Minute
+				now := time.Now()
+				if last, loaded := e.resumeAttempts.Load(wctx.ID); !loaded || now.Sub(last.(time.Time)) > resumeCooldown {
+					e.resumeAttempts.Store(wctx.ID, now)
+					logger.Instance.Info("[IDX] ws=%s Indexing interrupted at %d%% — auto-resuming", filepath.Base(wctx.Root), idxStatus.GlobalPercent)
+					e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+				}
+			}
+			logger.Instance.Info("[IDX] ws=%s Indexing in progress (%d%%) — searching available results", filepath.Base(wctx.Root), idxStatus.GlobalPercent)
+		}
+	}
 
 	exists, err := e.search.CollectionExists(ctx, collection)
 	if err != nil {
@@ -734,11 +761,10 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 		}
 	}
 
-
-
 	// We'll iterate all supported languages.
 	languages := parser.SupportedLanguages()
 
+	wsName := filepath.Base(wctx.Root)
 	var indexErrors []string
 	for _, lang := range languages {
 		collection := wctx.CollectionName(lang)
@@ -747,19 +773,21 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 				e.progress.update(wctx.ID, lang, doneFiles, totalFiles, time.Now())
 			}
 		}
+		logger.Instance.Info("[IDX] ws=%s lang=%s ▶ starting", wsName, lang)
 		err := e.indexer.IndexWorkspace(ctx, wctx.Root, collection, indexer.Options{
 			Language:        lang,
+			WorkspaceName:   wsName,
 			ExcludePatterns: e.config.Workspace.ExcludePatterns,
 			Recreate:        recreate,
 			Progress:        progressCb,
 		})
 		if err != nil {
-			log.Printf("[ERROR] Indexing failed for %s: %v", lang, err)
+			logger.Instance.Error("[IDX] ws=%s lang=%s ❌ failed: %v", wsName, lang, err)
 			indexErrors = append(indexErrors, fmt.Sprintf("%s: %v", lang, err))
+		} else {
+			logger.Instance.Info("[IDX] ws=%s lang=%s ✓ done", wsName, lang)
 		}
 	}
-
-
 
 	if e.watchers != nil {
 		if err := e.watchers.Start(wctx.Root, e.handleWatchChange); err != nil {

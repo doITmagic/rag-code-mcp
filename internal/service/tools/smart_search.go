@@ -1,10 +1,12 @@
 package tools
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -42,7 +44,10 @@ func (t *SmartSearchTool) Description() string {
 		"high-confidence matches return full source code, exploratory results return compact summaries. " +
 		"No need to choose a search mode. Provide 'file_path' for faster workspace detection, or omit it for Auto-Discovery. " +
 		"Set 'include_full_content' to true to force full source code in all results, overriding compact mode. " +
-		"Set 'include_docs' to true to also search project documentation (README, guides, Markdown files) alongside code."
+		"Set 'include_docs' to true to also search project documentation (README, guides, Markdown files) alongside code. " +
+		"Use 'mode'=\"strict_code\" when you ONLY want to see implementation logic exactly (Go, Python, etc) and strictly ignore documentation. " +
+		"Use 'mode'=\"strict_docs\" when searching for architectural plans or summaries. " +
+		"Use 'mode'=\"all\" or omit for broad scans."
 }
 
 type SmartSearchInput struct {
@@ -51,6 +56,7 @@ type SmartSearchInput struct {
 	Limit              int    `json:"limit,omitempty"`
 	IncludeFullContent bool   `json:"include_full_content,omitempty"`
 	IncludeDocs        bool   `json:"include_docs,omitempty"`
+	Mode               string `json:"mode,omitempty"`
 }
 
 // highConfidenceThreshold: if top result score exceeds this, return full content.
@@ -91,6 +97,12 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 	limit := t.searchLimit
 	if input.Limit > 0 {
 		limit = input.Limit
+	}
+
+	// When strict_docs mode is requested, automatically enable docs search
+	// so that the semantic engine actually fetches documentation results.
+	if input.Mode == "strict_docs" {
+		input.IncludeDocs = true
 	}
 
 	// Run both search strategies in parallel
@@ -171,6 +183,25 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 
 	// Merge and deduplicate results from both strategies
 	merged := t.mergeResults(semanticRes, hybridRes, limit)
+
+	// Apply mode filtering
+	var filtered []mergedResult
+	for _, m := range merged {
+		isDoc := isDocSymbolType(m.symbolType) || isDocExtension(m.filePath)
+		// Strict code mode: ignore completely any documentation type or doc file
+		if input.Mode == "strict_code" && isDoc {
+			continue
+		}
+		// Strict docs mode: ignore anything that isn't documentation
+		if input.Mode == "strict_docs" && !isDoc {
+			continue
+		}
+		filtered = append(filtered, m)
+	}
+	merged = filtered
+
+	// Apply tree-based grouping for documentation chunks
+	merged = t.groupDocsByTree(merged)
 
 	if len(merged) == 0 {
 		response := ToolResponse{
@@ -457,3 +488,190 @@ func (t *SmartSearchTool) handleSearchError(err error, workspaceRoot, workspaceI
 	response.Error = fmt.Sprintf("search failed: %v", err)
 	return response.JSON()
 }
+
+// isDocSymbolType returns true if the symbol type represents documentation content.
+func isDocSymbolType(symbolType string) bool {
+	return symbolType == "documentation" || symbolType == "code_block" || symbolType == "markdown"
+}
+
+// isDocExtension returns true if the file path has a documentation or structured text extension.
+func isDocExtension(filePath string) bool {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	switch ext {
+	case ".md", ".markdown", ".html", ".htm",
+		".yaml", ".yml", ".json", ".xml",
+		".toml", ".rst":
+		return true
+	}
+	return false
+}
+
+// readLines reads a specific range of lines from a file using a buffered scanner
+// to avoid loading the entire file into memory. Lines are 1-indexed.
+func readLines(filePath string, startLine, endLine int) (string, error) {
+	if startLine < 1 || endLine < startLine {
+		return "", fmt.Errorf("invalid line range %d-%d", startLine, endLine)
+	}
+
+	f, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	var collected []string
+	scanner := bufio.NewScanner(f)
+	lineNum := 0
+	for scanner.Scan() {
+		lineNum++
+		if lineNum > endLine {
+			break
+		}
+		if lineNum >= startLine {
+			collected = append(collected, scanner.Text())
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	if len(collected) == 0 {
+		return "", fmt.Errorf("invalid line range: file has %d lines, requested %d-%d", lineNum, startLine, endLine)
+	}
+
+	return strings.Join(collected, "\n"), nil
+}
+
+// groupDocsByTree aggregates "documentation" and "code_block" chunks
+// from the same file and AST Signature (Markdown heading) into single unified blocks,
+// fetching the continuous text from disk to prevent Frankenstein gaps.
+func (t *SmartSearchTool) groupDocsByTree(results []mergedResult) []mergedResult {
+	if len(results) == 0 {
+		return results
+	}
+
+	var out []mergedResult
+
+	type groupKey struct {
+		filePath  string
+		signature string
+	}
+
+	type docGroup struct {
+		key      groupKey
+		items    []*mergedResult
+		maxScore float32
+		minLine  int
+		maxLine  int
+		source   string
+	}
+
+	groupsMap := make(map[groupKey]*docGroup)
+	var orderedGroups []groupKey // keep track of the first time we see a group to maintain rough sorting
+
+	for i := range results {
+		res := &results[i]
+
+		// Only group documentation types and documentation/structured text files
+		if !isDocSymbolType(res.symbolType) || !isDocExtension(res.filePath) || res.signature == "" {
+			// Pass-through code or items without signature
+			out = append(out, *res)
+			continue
+		}
+
+		key := groupKey{filePath: res.filePath, signature: res.signature}
+		if g, exists := groupsMap[key]; exists {
+			g.items = append(g.items, res)
+			if res.score > g.maxScore {
+				g.maxScore = res.score
+			}
+			if res.startLine > 0 && (g.minLine == 0 || res.startLine < g.minLine) {
+				g.minLine = res.startLine
+			}
+			if res.endLine > 0 && res.endLine > g.maxLine {
+				g.maxLine = res.endLine
+			}
+			if g.source != "both" && g.source != res.source {
+				g.source = "both"
+			}
+		} else {
+			minL := res.startLine
+			if minL == 0 {
+				minL = 1
+			}
+			maxL := res.endLine
+			if maxL == 0 {
+				maxL = 1
+			}
+			groupsMap[key] = &docGroup{
+				key:      key,
+				items:    []*mergedResult{res},
+				maxScore: res.score,
+				minLine:  minL,
+				maxLine:  maxL,
+				source:   res.source,
+			}
+			orderedGroups = append(orderedGroups, key)
+		}
+	}
+
+	// Reconstruct the grouped items
+	for _, key := range orderedGroups {
+		g := groupsMap[key]
+
+		if len(g.items) == 1 {
+			// Nothing to merge, just append
+			out = append(out, *g.items[0])
+			continue
+		}
+
+		// Multiple chunks in this group. Let's merge them!
+		// Attempt to read the full continuous block from the file
+		fullContent := ""
+		if g.minLine > 0 && g.maxLine >= g.minLine {
+			content, err := readLines(g.key.filePath, g.minLine, g.maxLine)
+			if err == nil {
+				fullContent = content
+			}
+		}
+
+		// If reading from disk failed, append the contents manually with an ellipsis
+		if fullContent == "" {
+			var contents []string
+			// Sort items by line number
+			sortedItems := make([]*mergedResult, len(g.items))
+			copy(sortedItems, g.items)
+			sort.Slice(sortedItems, func(i, j int) bool {
+				return sortedItems[i].startLine < sortedItems[j].startLine
+			})
+			for _, item := range sortedItems {
+				contents = append(contents, strings.TrimSpace(item.content))
+			}
+			fullContent = strings.Join(contents, "\n\n[...]\n\n")
+		}
+
+		baseItem := g.items[0] // take the first item as a prototype
+		merged := mergedResult{
+			id:         fmt.Sprintf("merged_%s_%d_%d", baseItem.id, g.minLine, g.maxLine),
+			score:      g.maxScore,
+			filePath:   g.key.filePath,
+			name:       baseItem.name,
+			symbolType: "documentation_merged",
+			signature:  g.key.signature,
+			pkg:        baseItem.pkg,
+			docstring:  fmt.Sprintf("Merged %d chunks spanning %d lines.", len(g.items), g.maxLine-g.minLine+1),
+			content:    fullContent,
+			startLine:  g.minLine,
+			endLine:    g.maxLine,
+			source:     g.source,
+		}
+		out = append(out, merged)
+	}
+
+	// After mixing merged chunks and original unmerged items, we should re-sort by score
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].score > out[j].score
+	})
+
+	return out
+}
+

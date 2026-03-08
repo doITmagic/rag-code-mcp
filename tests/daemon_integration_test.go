@@ -181,17 +181,17 @@ func TestIntegration_HealthEndpointReturnsVersion(t *testing.T) {
 	assert.GreaterOrEqual(t, health.UptimeSeconds, 0)
 }
 
-func TestIntegration_WorkspaceHintPassedThrough(t *testing.T) {
+func TestIntegration_IDEHintNotForwarded(t *testing.T) {
 	dir := t.TempDir()
 	sockPath := filepath.Join(dir, "test.sock")
 
-	var receivedHint string
 	listener, err := net.Listen("unix", sockPath)
 	require.NoError(t, err)
 	defer listener.Close()
 
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedHint = r.Header.Get("X-Workspace-Hint")
+		// IDE hint should never be forwarded as a header
+		assert.Empty(t, r.Header.Get("X-Workspace-Hint"), "IDE hint must not be forwarded")
 		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": nil})
 	})}
 	go func() { _ = srv.Serve(listener) }()
@@ -201,6 +201,4 @@ func TestIntegration_WorkspaceHintPassedThrough(t *testing.T) {
 	err = adapter.RunBridge(context.Background(), sockPath,
 		strings.NewReader(input), io.Discard, "/home/user/my-project")
 	require.NoError(t, err)
-
-	assert.Equal(t, "/home/user/my-project", receivedHint)
 }

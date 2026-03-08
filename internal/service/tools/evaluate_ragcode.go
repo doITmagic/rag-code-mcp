@@ -126,11 +126,7 @@ func (t *EvaluateRagCodeTool) Execute(ctx context.Context, args map[string]inter
 		}
 	}
 
-	var wctxID, wctxRoot string
-	if wctx != nil {
-		wctxID = wctx.ID
-		wctxRoot = wctx.Root
-	}
+
 
 	response := ToolResponse{
 		Status:  "success",
@@ -139,7 +135,7 @@ func (t *EvaluateRagCodeTool) Execute(ctx context.Context, args map[string]inter
 		Context: ContextMetadata{
 			WorkspaceRoot:    workspaceRoot,
 			DetectionSource:  source,
-			IndexingProgress: BuildIndexingProgress(t.engine, wctxID, wctxRoot),
+			IndexingStatus: nil,
 		},
 	}
 

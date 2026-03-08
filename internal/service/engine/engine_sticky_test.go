@@ -88,9 +88,7 @@ func TestCheckAndReindexOnConnect_TriggersReindex(t *testing.T) {
 
 	// Register cleanup immediately — before any Fatal that could skip it.
 	t.Cleanup(func() {
-		if eng.progress != nil {
-			eng.progress.stop()
-		}
+
 		deadline := time.Now().Add(5 * time.Second)
 		for time.Now().Before(deadline) {
 			if len(eng.ActiveIndexingJobs()) == 0 {

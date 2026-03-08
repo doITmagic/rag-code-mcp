@@ -84,7 +84,7 @@ func (t *ListSkillsTool) Execute(ctx context.Context, args map[string]interface{
 		Context: ContextMetadata{
 			WorkspaceRoot:    workspaceRoot,
 			DetectionSource:  source,
-			IndexingProgress: BuildIndexingProgress(t.engine, wctx.ID, wctx.Root),
+			IndexingStatus: nil,
 		},
 	}
 	response.SetFallbackWarning(source == "registry_fallback")
@@ -215,7 +215,7 @@ func (t *InstallSkillTool) Execute(ctx context.Context, args map[string]interfac
 		Context: ContextMetadata{
 			WorkspaceRoot:    workspaceRoot,
 			DetectionSource:  source,
-			IndexingProgress: BuildIndexingProgress(t.engine, wctx.ID, wctx.Root),
+			IndexingStatus: nil,
 		},
 	}
 	response.SetFallbackWarning(source != "explicit_file_path")

@@ -90,7 +90,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 		"relations[].target_name": symbolName,
 	}
 
-	idx := t.engine.GetIndexProgress(wctx.ID, wctx.Root)
+	idx := t.engine.GetIndexStatus(wctx.Root)
 	allResults, err := t.engine.ExactSearchPolyglot(ctx, wctx.ID, filter, 100)
 	if err != nil {
 		var noCollections *engine.ErrNoCollectionsFound
@@ -98,7 +98,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 			resp := ToolResponse{
 				Status:  "indexing_required",
 				Message: fmt.Sprintf("⏳ Workspace '%s' is not indexed yet. Indexing is required for complete results.", wctx.Root),
-				Context: ContextFromWorkspaceWithProgress(wctx, t.engine),
+				Context: ContextFromWorkspaceWithStatus(wctx, t.engine),
 			}
 			if idx != nil {
 				resp.Status = "indexing_in_progress"
@@ -113,7 +113,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 		resp := ToolResponse{
 			Status:  "success",
 			Message: fmt.Sprintf("No usages found for symbol '%s' based on Code Graph relations.", symbolName),
-			Context: ContextFromWorkspaceWithProgress(wctx, t.engine),
+			Context: ContextFromWorkspaceWithStatus(wctx, t.engine),
 		}
 		return resp.JSON()
 	}
@@ -198,7 +198,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 		resp := ToolResponse{
 			Status:  "success",
 			Message: fmt.Sprintf("No explicit usages found for symbol '%s'", symbolName),
-			Context: ContextFromWorkspaceWithProgress(wctx, t.engine),
+			Context: ContextFromWorkspaceWithStatus(wctx, t.engine),
 		}
 		return resp.JSON()
 	}
@@ -256,7 +256,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 			WorkspaceRoot:    wctx.Root,
 			DetectionSource:  wctx.DetectionSource,
 			Telemetry:        telemetry.CalculateSavings(baselineBytes, actualBytes),
-			IndexingProgress: BuildIndexingProgress(t.engine, wctx.ID, wctx.Root),
+			IndexingStatus: nil,
 		},
 	}
 	return resp.JSON()

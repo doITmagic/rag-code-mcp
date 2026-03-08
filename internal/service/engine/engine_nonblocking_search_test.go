@@ -78,9 +78,7 @@ func TestSearchCodeReturnsResultsFromOtherLangsWhenPrimaryMissing(t *testing.T) 
 
 	// Cleanup: stop progress flusher
 	t.Cleanup(func() {
-		if eng2.progress != nil {
-			eng2.progress.stop()
-		}
+
 	})
 }
 
@@ -129,9 +127,7 @@ func TestSearchCodeBlocksWhenZeroCollectionsExist(t *testing.T) {
 
 	// Cleanup
 	t.Cleanup(func() {
-		if eng2.progress != nil {
-			eng2.progress.stop()
-		}
+
 		// Wait for bg indexing to drain
 		for i := 0; i < 100; i++ {
 			if len(eng2.ActiveIndexingJobs()) == 0 {
@@ -183,9 +179,7 @@ func TestSearchCodeIndexingInProgressStillSearches(t *testing.T) {
 	// Cleanup the fake job
 	eng2.indexingJobs.Delete(wctx.ID)
 	t.Cleanup(func() {
-		if eng2.progress != nil {
-			eng2.progress.stop()
-		}
+
 	})
 }
 
@@ -234,9 +228,7 @@ func TestHybridSearchCodeReturnsNilWhenCollectionMissing(t *testing.T) {
 
 	// Cleanup
 	t.Cleanup(func() {
-		if eng2.progress != nil {
-			eng2.progress.stop()
-		}
+
 		// Wait for bg indexing to drain
 		for i := 0; i < 100; i++ {
 			if len(eng2.ActiveIndexingJobs()) == 0 {
@@ -289,9 +281,7 @@ func TestHybridSearchCodeStillWorksWhenCollectionExists(t *testing.T) {
 	}
 
 	t.Cleanup(func() {
-		if eng2.progress != nil {
-			eng2.progress.stop()
-		}
+
 	})
 }
 

@@ -2,6 +2,7 @@ package resolver
 
 import (
 	context "context"
+	"strings"
 	testing "testing"
 
 	"github.com/doITmagic/rag-code-mcp/pkg/workspace/contract"
@@ -318,4 +319,80 @@ func (f *fakeAnnotator) Annotate(ctx context.Context, root string, resp *contrac
 	resp.WorktreeID = f.worktreeID
 	resp.MismatchRisk = f.mismatchRisk
 	return nil
+}
+
+// --- New tests: registry fallback when detector fails ---
+
+func TestResolveFilePathRegistryFallback(t *testing.T) {
+	// Detector fails (file doesn't exist) but registry knows the parent workspace
+	detector := &fakeDetector{err: &contract.ResolveWorkspaceError{
+		Code:    contract.ErrorInvalidPath,
+		Message: "stat path: no such file or directory",
+		Reason:  contract.ReasonInvalidPath,
+	}}
+	reg := &fakeRegistry{parentRoot: "/home/user/project"}
+	r := New(Dependencies{Detector: detector, Registry: reg})
+	req := contract.ResolveWorkspaceRequest{FilePath: "/home/user/project/main.go"}
+
+	resp, err := r.Resolve(context.Background(), req)
+	if err != nil {
+		t.Fatalf("expected registry fallback to succeed, got error: %v", err)
+	}
+	if resp.ResolvedRoot != "/home/user/project" {
+		t.Fatalf("expected root /home/user/project, got %s", resp.ResolvedRoot)
+	}
+	if resp.PathResolutionSource != "registry_fallback" {
+		t.Fatalf("expected source registry_fallback, got %s", resp.PathResolutionSource)
+	}
+	if resp.PathResolutionConfidence > 0.90 {
+		t.Fatalf("expected reduced confidence (<=0.90), got %f", resp.PathResolutionConfidence)
+	}
+}
+
+func TestResolveFilePathNoRegistryDescriptiveError(t *testing.T) {
+	// Detector fails and no registry configured — should get descriptive hint
+	detector := &fakeDetector{err: &contract.ResolveWorkspaceError{
+		Code:    contract.ErrorInvalidPath,
+		Message: "stat path: no such file or directory",
+		Reason:  contract.ReasonInvalidPath,
+	}}
+	r := New(Dependencies{Detector: detector})
+	req := contract.ResolveWorkspaceRequest{FilePath: "/fake/project/main.go"}
+
+	resp, err := r.Resolve(context.Background(), req)
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if resp != nil {
+		t.Fatalf("expected nil response")
+	}
+	if !strings.Contains(err.Message, "Hint:") {
+		t.Fatalf("expected AI-friendly hint in error message, got: %s", err.Message)
+	}
+	if !strings.Contains(err.Message, "workspace detection") {
+		t.Fatalf("expected 'workspace detection' explanation in error, got: %s", err.Message)
+	}
+}
+
+func TestResolveFilePathRegistryMissDescriptiveError(t *testing.T) {
+	// Detector fails and registry doesn't know this path either
+	detector := &fakeDetector{err: &contract.ResolveWorkspaceError{
+		Code:    contract.ErrorInvalidPath,
+		Message: "stat path: no such file or directory",
+		Reason:  contract.ReasonInvalidPath,
+	}}
+	reg := &fakeRegistry{} // parentRoot is empty => FindParentWorkspace returns false
+	r := New(Dependencies{Detector: detector, Registry: reg})
+	req := contract.ResolveWorkspaceRequest{FilePath: "/unknown/path/file.go"}
+
+	resp, err := r.Resolve(context.Background(), req)
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if resp != nil {
+		t.Fatalf("expected nil response")
+	}
+	if !strings.Contains(err.Message, "Hint:") {
+		t.Fatalf("expected AI hint in error, got: %s", err.Message)
+	}
 }

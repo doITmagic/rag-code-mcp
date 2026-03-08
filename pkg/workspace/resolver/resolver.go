@@ -2,6 +2,7 @@ package resolver
 
 import (
 	context "context"
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -155,9 +156,36 @@ func (r *Resolver) handleFilePath(ctx context.Context, path string) (*contract.R
 			Reason:  contract.ReasonRootsUnavailable,
 		}
 	}
-	result, err := r.deps.Detector.DetectFromFilePath(ctx, path)
-	if err != nil {
-		return nil, err
+	result, detectorErr := r.deps.Detector.DetectFromFilePath(ctx, path)
+	if detectorErr != nil {
+		// Detection failed (e.g. file_path does not exist on disk).
+		// Before giving up, try the registry — if the path is inside an
+		// already-registered workspace we can resolve it without stat.
+		if r.deps.Registry != nil {
+			parentDir := filepath.Dir(path)
+			if parentRoot, found := r.deps.Registry.FindParentWorkspace(parentDir); found {
+				r.log(ctx, "registry_fallback", map[string]any{
+					"original_path":  path,
+					"parent_root":    parentRoot,
+					"detector_error": detectorErr.Message,
+					"reason":         "file_path does not exist, resolved via registry",
+				})
+				result = &contract.WorkspaceCandidate{
+					Root:       parentRoot,
+					Reason:     contract.ReasonFilePath,
+					Source:     "registry_fallback",
+					Confidence: 0.85,
+				}
+			}
+		}
+		// If registry didn't help, return a descriptive error with AI hint.
+		if result == nil {
+			return nil, &contract.ResolveWorkspaceError{
+				Code:    detectorErr.Code,
+				Message: fmt.Sprintf("%s. Hint: file_path is used only for workspace detection and must point to an existing file on disk. Pass any file currently open in the IDE (e.g. from the active editor tab)", detectorErr.Message),
+				Reason:  detectorErr.Reason,
+			}
+		}
 	}
 	if result == nil || strings.TrimSpace(result.Root) == "" {
 		return nil, &contract.ResolveWorkspaceError{
@@ -171,7 +199,8 @@ func (r *Resolver) handleFilePath(ctx context.Context, path string) (*contract.R
 	// workspace, prefer the parent. This prevents nested git repos (submodules,
 	// vendored projects, monorepo sub-packages) from being treated as separate
 	// workspaces when they live inside a project that is already indexed.
-	if r.deps.Registry != nil {
+	// Skip this check when we already resolved via registry_fallback.
+	if r.deps.Registry != nil && result.Source != "registry_fallback" {
 		if parentRoot, found := r.deps.Registry.FindParentWorkspace(result.Root); found {
 			r.log(ctx, "nested_workspace_override", map[string]any{
 				"detected_root": result.Root,

@@ -292,11 +292,13 @@ func (e *Engine) GetActiveWorkspace() (string, error) {
 }
 
 // CheckAndReindexOnConnect resolves a workspace from the adapter's first hint
-// and triggers background re-indexing if branch state changed (e.g. after git pull).
+// CheckAndReindexOnConnect resolves a workspace from a hint path and triggers
+// background re-indexing if branch state changed (e.g. after git pull).
 // Returns the resolved workspace root, or "" if resolution fails.
 //
-// This is called once per adapter session (on first X-Workspace-Hint), not on
-// every request — subsequent requests use the sticky X-Workspace-Root header.
+// Not called from daemon middleware directly — kept as a utility for
+// programmatic use and testing. The adapter's sticky workspace mechanism
+// relies on DetectContext + X-Resolved-Workspace header instead.
 func (e *Engine) CheckAndReindexOnConnect(hint string) string {
 	ctx := context.Background()
 	wctx, err := e.DetectContext(ctx, hint)
@@ -308,12 +310,11 @@ func (e *Engine) CheckAndReindexOnConnect(hint string) string {
 	logger.Instance.Info("[STICKY] Workspace resolved on connect: root=%s, id=%s, branch=%s, reindex=%v",
 		wctx.Root, wctx.ID, wctx.Branch, wctx.ReindexRequired)
 
-	// Trigger background re-indexing if branch state changed
+	// Trigger background re-indexing if branch state changed.
+	// StartIndexingAsync handles de-dup internally via LoadOrStore.
 	if wctx.ReindexRequired {
-		if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); !alreadyRunning {
-			logger.Instance.Info("[STICKY] Branch state changed — triggering background re-index for %s", filepath.Base(wctx.Root))
-			e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
-		}
+		logger.Instance.Info("[STICKY] Branch state changed — triggering background re-index for %s", filepath.Base(wctx.Root))
+		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 	}
 
 	return wctx.Root

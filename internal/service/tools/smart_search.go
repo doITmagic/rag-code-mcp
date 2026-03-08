@@ -47,16 +47,19 @@ func (t *SmartSearchTool) Description() string {
 		"Set 'include_docs' to true to also search project documentation (README, guides, Markdown files) alongside code. " +
 		"Use 'mode'=\"strict_code\" when you ONLY want to see implementation logic exactly (Go, Python, etc) and strictly ignore documentation. " +
 		"Use 'mode'=\"strict_docs\" when searching for architectural plans or summaries. " +
-		"Use 'mode'=\"all\" or omit for broad scans."
+		"Use 'mode'=\"all\" or omit for broad scans. " +
+		"Set 'min_score' (0.0-1.0) to filter out low-relevance results. When omitted, an automatic threshold is applied: " +
+		"if the top result scores above 0.70, results below 40% of the top score are automatically pruned."
 }
 
 type SmartSearchInput struct {
-	Query              string `json:"query"`
-	FilePath           string `json:"file_path,omitempty"`
-	Limit              int    `json:"limit,omitempty"`
-	IncludeFullContent bool   `json:"include_full_content,omitempty"`
-	IncludeDocs        bool   `json:"include_docs,omitempty"`
-	Mode               string `json:"mode,omitempty"`
+	Query              string  `json:"query"`
+	FilePath           string  `json:"file_path,omitempty"`
+	Limit              int     `json:"limit,omitempty"`
+	MinScore           float32 `json:"min_score,omitempty"`
+	IncludeFullContent bool    `json:"include_full_content,omitempty"`
+	IncludeDocs        bool    `json:"include_docs,omitempty"`
+	Mode               string  `json:"mode,omitempty"`
 }
 
 // highConfidenceThreshold: if top result score exceeds this, return full content.
@@ -64,6 +67,12 @@ const highConfidenceThreshold = 0.85
 
 // compactResultCap: max results above which we always go compact.
 const compactResultCap = 4
+
+// autoScoreThresholdTrigger: if top score exceeds this, apply auto-filtering.
+const autoScoreThresholdTrigger = 0.70
+
+// autoScoreThresholdRatio: results below topScore * ratio are pruned.
+const autoScoreThresholdRatio = 0.40
 
 func (t *SmartSearchTool) Register(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
@@ -199,6 +208,30 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 		filtered = append(filtered, m)
 	}
 	merged = filtered
+
+	// Score filtering 
+	// If min_score is specified, use it directly. Otherwise, apply auto-threshold:
+	// when top score > 0.70, prune results below 40% of top score.
+	if len(merged) > 0 {
+		effectiveMinScore := input.MinScore
+		if effectiveMinScore <= 0 && merged[0].score > autoScoreThresholdTrigger {
+			effectiveMinScore = merged[0].score * autoScoreThresholdRatio
+		}
+
+		if effectiveMinScore > 0 {
+			var scoreFiltered []mergedResult
+			for _, m := range merged {
+				if m.score >= effectiveMinScore {
+					scoreFiltered = append(scoreFiltered, m)
+				}
+			}
+			nDropped := len(merged) - len(scoreFiltered)
+			if nDropped > 0 {
+				logger.Instance.Debug("rag_search: filtered %d results below min_score=%.2f (effective)", nDropped, effectiveMinScore)
+			}
+			merged = scoreFiltered
+		}
+	}
 
 	// Apply tree-based grouping for documentation chunks
 	merged = t.groupDocsByTree(merged)

@@ -1,6 +1,6 @@
 # SmartSearch Execute() Refactor Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> Implementation should proceed task-by-task according to this plan.
 
 **Goal:** Break the 309-line `Execute()` monolith into small, testable, single-responsibility functions following Go community standards (Uber Guide, Effective Go). Extract shared scoring logic into `pkg/scoring`.
 

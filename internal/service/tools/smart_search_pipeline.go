@@ -132,11 +132,11 @@ type filterConfig struct {
 }
 
 // applyFilters runs the full post-processing pipeline on merged results:
-// mode filtering → score threshold → path scoping → doc grouping.
+// mode filtering → path scoping → score threshold → doc grouping.
 func (t *SmartSearchTool) applyFilters(merged []mergedResult, cfg filterConfig) []mergedResult {
 	merged = applyModeFilter(merged, cfg.Mode)
-	merged = applyScoreFilter(merged, cfg.MinScore)
 	merged = applyPathScoping(merged, scoring.ScopeDir(cfg.FilePath))
+	merged = applyScoreFilter(merged, cfg.MinScore)
 	merged = t.groupDocsByTree(merged)
 	return merged
 }
@@ -193,7 +193,7 @@ func applyScoreFilter(merged []mergedResult, minScore float32) []mergedResult {
 
 // buildResponseMeta constructs the ToolResponse shell with metadata, warnings,
 // and messaging based on whether results are from fallback or vector search.
-func (t *SmartSearchTool) buildResponseMeta(meta searchMetadata, useCompact bool) ToolResponse {
+func (t *SmartSearchTool) buildResponseMeta(meta searchMetadata) ToolResponse {
 	isFallback := meta.collection == "fallback"
 
 	idxProgress := BuildIndexingProgress(t.engine, meta.workspaceID, meta.workspaceRoot)
@@ -212,7 +212,6 @@ func (t *SmartSearchTool) buildResponseMeta(meta searchMetadata, useCompact bool
 			Language:         meta.language,
 			Collection:       meta.collection,
 			IndexingProgress: idxProgress,
-			SessionMetrics:   telemetry.ReadAggregatedMetrics(meta.workspaceRoot),
 		},
 	}
 

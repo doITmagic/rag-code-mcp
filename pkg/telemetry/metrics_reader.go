@@ -57,6 +57,10 @@ func ReadAggregatedMetrics(workspaceRoot string) *AggregatedMetrics {
 		msSum += m.ResponseMs
 	}
 
+	if err := scanner.Err(); err != nil {
+		return nil
+	}
+
 	if agg.TotalSearches == 0 {
 		return nil
 	}

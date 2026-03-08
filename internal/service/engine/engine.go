@@ -454,9 +454,7 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 				resultsChan <- langResult{lang: l, coll: c, err: sErr, elapsed: elapsed}
 				return
 			}
-			if len(res) > 0 {
-				resultsChan <- langResult{lang: l, coll: c, results: res, elapsed: elapsed}
-			}
+			resultsChan <- langResult{lang: l, coll: c, results: res, elapsed: elapsed}
 		}(lang, coll)
 	}
 

@@ -128,7 +128,7 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 	}
 
 	isFallback := sr.meta.collection == "fallback"
-	response := t.buildResponseMeta(sr.meta, useCompact)
+	response := t.buildResponseMeta(sr.meta)
 	serializeResults(&response, merged, useCompact, isFallback, query, input.IncludeReasons)
 
 	// Record metric asynchronously to avoid blocking response

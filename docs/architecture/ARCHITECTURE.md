@@ -15,7 +15,7 @@ IDEs cannot afford external MCP servers consuming gigabytes of RAM or causing bl
 
 ### Micro-Features & Engineering Highlights:
 - **Zero-Downtime Auto-Respawn**: If the Adapter detects it is a newer binary version than the currently running Daemon, it gracefully sends a kill signal and respawns the Daemon. 
-- **Persistency Against IDE Restarts**: The Unix Socket (`~/.ragcode/daemon.sock`) outlives the IDE window. Multiple instances of Cursor/Windsurf can connect to the same Daemon concurrently without duplicating vector environments.
+- **Persistence Against IDE Restarts**: The Unix Socket (`~/.ragcode/daemon.sock`) outlives the IDE window. Multiple instances of Cursor/Windsurf can connect to the same Daemon concurrently without duplicating vector environments.
 
 ---
 

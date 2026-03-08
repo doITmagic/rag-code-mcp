@@ -259,6 +259,14 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 		HeadSHA:         resp.HeadSHA,
 	}
 
+	// If the resolver applied a more specific override (e.g. nested_workspace_override),
+	// surface it so the agent can see exactly what happened in the response.
+	if resp.PathResolutionSource != "" && resp.PathResolutionSource != source {
+		wctx.DetectionSource = resp.PathResolutionSource
+		logger.Instance.Info("[WS-DETECT] ◀ Resolver override: source changed %s → %s (root: %s)",
+			source, resp.PathResolutionSource, wctx.Root)
+	}
+
 	logger.Instance.Info("[WS-DETECT] ◀ Resolved: root=%s, id=%s, branch=%s, source=%s, risk=%s",
 		wctx.Root, wctx.ID, wctx.Branch, source, wctx.MismatchRisk)
 
@@ -352,7 +360,6 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 		primaryLang = a.Name()
 	}
 
-	// Ensure at least the primary collection exists before embedding (fast fail + indexing trigger)
 	primaryColl := wctx.CollectionName(primaryLang)
 	t1 := time.Now()
 
@@ -369,25 +376,33 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 					e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 				}
 			}
-			logger.Instance.Info("[IDX] ws=%s Indexing in progress (%d%%) — searching available results", filepath.Base(wctx.Root), idxStatus.GlobalPercent)
+			logger.Instance.Info("[IDX] ws=%s Indexing in progress (%d%%) — will search available collections", filepath.Base(wctx.Root), idxStatus.GlobalPercent)
 		}
 	}
-	exists, err := e.search.CollectionExists(ctx, primaryColl)
+
+	// Check if the primary collection exists.
+	// If not, trigger background indexing but do NOT block — the fan-out below
+	// will search any other language collections that do exist.
+	primaryExists, err := e.search.CollectionExists(ctx, primaryColl)
 	logger.Instance.Debug("[TIMER] SearchCode collection_exists_primary=%v (cached=%v)", time.Since(t1), time.Since(t1) < time.Millisecond)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check collection: %w", err)
 	}
-	if !exists {
-		if _, ok := e.indexingJobs.Load(wctx.ID); ok {
-			return nil, &ErrIndexingInProgress{WorkspaceRoot: wctx.Root, WorkspaceID: wctx.ID}
-		}
-		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
-		return nil, &ErrIndexingStarted{WorkspaceRoot: wctx.Root, WorkspaceID: wctx.ID}
+
+	needsTriggerIndexing := false
+	if !primaryExists {
+		needsTriggerIndexing = true
 	}
 
 	if wctx.ReindexRequired {
 		logger.Instance.Info("[IDX] Git state change detected (Head: %s), triggering background re-indexing for %s", wctx.HeadSHA, wctx.Root)
-		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+		needsTriggerIndexing = true
+	}
+
+	if needsTriggerIndexing {
+		if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); !alreadyRunning {
+			e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+		}
 	}
 
 	// Embed ONCE, fan-out to all language collections in parallel
@@ -439,9 +454,7 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 				resultsChan <- langResult{lang: l, coll: c, err: sErr, elapsed: elapsed}
 				return
 			}
-			if len(res) > 0 {
-				resultsChan <- langResult{lang: l, coll: c, results: res, elapsed: elapsed}
-			}
+			resultsChan <- langResult{lang: l, coll: c, results: res, elapsed: elapsed}
 		}(lang, coll)
 	}
 
@@ -453,6 +466,7 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 	var primaryResults []storage.SearchResult
 	var otherResults []storage.SearchResult
 	var firstErr error
+	var existingCollections int
 	reportLang := primaryLang
 	reportColl := primaryColl
 
@@ -464,6 +478,7 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 			}
 			continue
 		}
+		existingCollections++
 		logger.Instance.Debug("[TIMER] SearchCode lang=%s hits=%d elapsed=%v", lr.lang, len(lr.results), lr.elapsed)
 		if lr.coll == primaryColl {
 			primaryResults = lr.results
@@ -474,6 +489,43 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 
 	all := append(primaryResults, otherResults...)
 
+	// If no collections exist at all, the workspace is truly not indexed.
+	// Before returning an error, try a direct AST-based fallback search.
+	if existingCollections == 0 && len(all) == 0 {
+		// Ensure background indexing is triggered
+		if needsTriggerIndexing {
+			if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); !alreadyRunning {
+				e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+			}
+		}
+
+		// Fallback: direct AST search on filesystem — no Qdrant needed
+		fallbackResults := e.FallbackDirectSearch(ctx, wctx.Root, queryText, limit)
+		if len(fallbackResults) > 0 {
+			return &SearchCodeResult{
+				Results:         fallbackResults,
+				WorkspaceRoot:   wctx.Root,
+				WorkspaceID:     wctx.ID,
+				Collection:      "fallback",
+				Language:        primaryLang,
+				MismatchRisk:    wctx.MismatchRisk,
+				DetectionSource: wctx.DetectionSource,
+			}, nil
+		}
+
+		// Fallback also empty — report indexing status
+		if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); alreadyRunning {
+			return nil, &ErrIndexingInProgress{WorkspaceRoot: wctx.Root, WorkspaceID: wctx.ID}
+		}
+		if needsTriggerIndexing {
+			return nil, &ErrIndexingStarted{WorkspaceRoot: wctx.Root, WorkspaceID: wctx.ID}
+		}
+		if firstErr != nil {
+			return nil, fmt.Errorf("search failed: %w", firstErr)
+		}
+		return nil, &ErrNotIndexed{WorkspaceRoot: wctx.Root, Collection: primaryColl, Language: primaryLang}
+	}
+
 	// Global sort by score descending across all language results, then cap to limit.
 	// Without this, primary-language results always win regardless of score.
 	sort.Slice(all, func(i, j int) bool { return all[i].Score > all[j].Score })
@@ -481,9 +533,14 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 		all = all[:limit]
 	}
 
-	// If nothing was found and there were errors, surface the error
-	if len(all) == 0 && firstErr != nil {
-		return nil, fmt.Errorf("search failed: %w", firstErr)
+	// If vector search returned nothing but collections exist, supplement with fallback
+	if len(all) == 0 {
+		fallbackResults := e.FallbackDirectSearch(ctx, wctx.Root, queryText, limit)
+		if len(fallbackResults) > 0 {
+			all = fallbackResults
+		} else if firstErr != nil {
+			return nil, fmt.Errorf("search failed: %w", firstErr)
+		}
 	}
 
 	logger.Instance.Debug("[TIMER] SearchCode TOTAL=%v (detect=%v embed=%v fanout=%v)",
@@ -515,7 +572,7 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 
 	collection := wctx.CollectionName(lang)
 
-	// Auto-resume from index_status.json (Task4): if indexing was interrupted, resume it.
+	// Auto-resume from index_status.json: if indexing was interrupted, resume it.
 	if idxStatus := loadIndexStatus(wctx.Root); idxStatus != nil {
 		if idxStatus.WorkspaceID == wctx.ID && idxStatus.GlobalPercent > 0 && idxStatus.GlobalPercent < 100 && idxStatus.State == "running" {
 			if _, ok := e.indexingJobs.Load(wctx.ID); !ok {
@@ -527,7 +584,7 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 					e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 				}
 			}
-			logger.Instance.Info("[IDX] ws=%s Indexing in progress (%d%%) — searching available results", filepath.Base(wctx.Root), idxStatus.GlobalPercent)
+			logger.Instance.Info("[IDX] ws=%s Indexing in progress (%d%%) — will search available collections", filepath.Base(wctx.Root), idxStatus.GlobalPercent)
 		}
 	}
 
@@ -537,16 +594,21 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 	}
 
 	if !exists {
-		if _, ok := e.indexingJobs.Load(wctx.ID); ok {
-			return nil, &ErrIndexingInProgress{WorkspaceRoot: wctx.Root, WorkspaceID: wctx.ID}
+		// Trigger background indexing but do NOT block — SmartSearch runs
+		// SearchCode (with fan-out) in parallel and will provide results
+		// from any available language collections.
+		if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); !alreadyRunning {
+			e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 		}
-		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
-		return nil, &ErrIndexingStarted{WorkspaceRoot: wctx.Root, WorkspaceID: wctx.ID}
+		logger.Instance.Info("[IDX] ws=%s HybridSearch: collection %s not found — returning empty (indexing in background)", filepath.Base(wctx.Root), collection)
+		return nil, nil
 	}
 
 	if wctx.ReindexRequired {
 		logger.Instance.Info("[IDX] Git state change detected, triggering background re-indexing for ws=%s", filepath.Base(wctx.Root))
-		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+		if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); !alreadyRunning {
+			e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+		}
 	}
 
 	results, err := e.search.HybridSearch(ctx, collection, queryText, limit)
@@ -879,4 +941,73 @@ func (e *Engine) handleWatchChange(ctx context.Context, root string, changedFile
 	}
 	e.StartIndexingAsync(wctx.Root, wctx.ID, changedFiles, false)
 	return nil
+}
+
+// ─── Stale File Cleanup ──────────────────────────────────────────────────────
+
+// staleCooldown prevents repeatedly deleting the same file from the DB
+// across consecutive search queries. Entries expire after 10 minutes.
+const staleCooldown = 10 * time.Minute
+
+// staleCleanupCache tracks recently cleaned file paths to avoid repeated deletes.
+// Key: "wsID:filePath", Value: time.Time of last cleanup.
+var staleCleanupCache sync.Map
+
+// CleanupStaleFiles removes vectors for deleted files from ALL language collections
+// of a workspace. It runs asynchronously and deduplicates to avoid hammering Qdrant.
+func (e *Engine) CleanupStaleFiles(wsID string, staleFiles []string) {
+	if len(staleFiles) == 0 {
+		return
+	}
+
+	// Deduplicate: skip files cleaned recently
+	now := time.Now()
+	var toClean []string
+	for _, f := range staleFiles {
+		cacheKey := wsID + ":" + f
+		if last, ok := staleCleanupCache.Load(cacheKey); ok {
+			if now.Sub(last.(time.Time)) < staleCooldown {
+				continue
+			}
+		}
+		staleCleanupCache.Store(cacheKey, now)
+		toClean = append(toClean, f)
+	}
+
+	if len(toClean) == 0 {
+		return
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		langs := parser.SupportedLanguages()
+		var totalDeleted int
+
+		for _, filePath := range toClean {
+			for _, lang := range langs {
+				collection := CollectionNameFor(wsID, lang)
+
+				// Check collection exists before attempting delete
+				exists, err := e.search.CollectionExists(ctx, collection)
+				if err != nil || !exists {
+					continue
+				}
+
+				if err := e.search.DeleteByFilter(ctx, collection, "file_path", filePath); err != nil {
+					logger.Instance.Warn("[STALE] Failed to delete vectors for %s from %s: %v", filePath, collection, err)
+					// Remove from cache so retry is possible next query
+					staleCleanupCache.Delete(wsID + ":" + filePath)
+				} else {
+					totalDeleted++
+				}
+			}
+		}
+
+		if totalDeleted > 0 {
+			logger.Instance.Info("[STALE] 🧹 Cleaned %d stale file(s) (%d delete ops) for ws=%s",
+				len(toClean), totalDeleted, wsID)
+		}
+	}()
 }

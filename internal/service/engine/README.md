@@ -85,3 +85,4 @@ engine := engine.NewEngine(
 - `IndexWorkspace(ctx, root, recreate)`: Triggers full/incremental indexing.
 - `SearchCode(ctx, path, query, limit)`: Performs semantic vector search.
 - `StartIndexingAsync(root, id, files, recreate)`: Runs indexing in background.
+- `CleanupStaleFiles(wsID, staleFiles)`: Async deletion of vectors for files that no longer exist on disk, across all language collections. Includes 10-minute dedup cooldown to prevent repeated deletes.

@@ -130,9 +130,15 @@ var _ = Describe("Health Metrics & Index Status", func() {
 			var resp tools.ToolResponse
 			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
 			Expect(resp.Status).To(Equal("success"))
-			Expect(resp.Warning).To(ContainSubstring("stale index"))
+			Expect(resp.Warning).To(ContainSubstring("stale file(s) detected"))
 			Expect(resp.Warning).To(ContainSubstring(missingPath))
-			Expect(resp.Warning).To(ContainSubstring("Consider re-indexing"))
+			Expect(resp.Warning).To(ContainSubstring("Auto-cleanup triggered"))
+
+			// Stale results should be FILTERED OUT from data
+			if resp.Data != nil {
+				data := resp.Data.([]interface{})
+				Expect(data).To(HaveLen(0))
+			}
 		})
 
 		It("does NOT add stale warning when all indexed files exist on disk", func() {
@@ -195,7 +201,7 @@ var _ = Describe("Health Metrics & Index Status", func() {
 
 			var resp tools.ToolResponse
 			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
-			Expect(resp.Warning).To(ContainSubstring("2 indexed file(s)"))
+			Expect(resp.Warning).To(ContainSubstring("2 stale file(s)"))
 		})
 	})
 

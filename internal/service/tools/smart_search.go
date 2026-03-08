@@ -9,13 +9,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
-	"github.com/doITmagic/rag-code-mcp/pkg/telemetry"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -47,16 +45,23 @@ func (t *SmartSearchTool) Description() string {
 		"Set 'include_docs' to true to also search project documentation (README, guides, Markdown files) alongside code. " +
 		"Use 'mode'=\"strict_code\" when you ONLY want to see implementation logic exactly (Go, Python, etc) and strictly ignore documentation. " +
 		"Use 'mode'=\"strict_docs\" when searching for architectural plans or summaries. " +
-		"Use 'mode'=\"all\" or omit for broad scans."
+		"Use 'mode'=\"all\" or omit for broad scans. " +
+		"Set 'min_score' (0.0-1.0) to filter out low-relevance results. Note: final scores may slightly exceed 1.0 after path-proximity boosting. " +
+		"When omitted, an automatic threshold is applied: " +
+		"if the top result scores above 0.70, results below 40% of the top score are automatically pruned. " +
+		"Set 'include_reasons' to true to include a 'match_reasons' field in each result, explaining which fields " +
+		"(symbol_name, signature, content, docstring) contributed to the match — useful for understanding result relevance."
 }
 
 type SmartSearchInput struct {
-	Query              string `json:"query"`
-	FilePath           string `json:"file_path,omitempty"`
-	Limit              int    `json:"limit,omitempty"`
-	IncludeFullContent bool   `json:"include_full_content,omitempty"`
-	IncludeDocs        bool   `json:"include_docs,omitempty"`
-	Mode               string `json:"mode,omitempty"`
+	Query              string  `json:"query"`
+	FilePath           string  `json:"file_path,omitempty"`
+	Limit              int     `json:"limit,omitempty"`
+	MinScore           float32 `json:"min_score,omitempty"`
+	IncludeFullContent bool    `json:"include_full_content,omitempty"`
+	IncludeDocs        bool    `json:"include_docs,omitempty"`
+	IncludeReasons     bool    `json:"include_reasons,omitempty"`
+	Mode               string  `json:"mode,omitempty"`
 }
 
 // highConfidenceThreshold: if top result score exceeds this, return full content.
@@ -64,6 +69,12 @@ const highConfidenceThreshold = 0.85
 
 // compactResultCap: max results above which we always go compact.
 const compactResultCap = 4
+
+// autoScoreThresholdTrigger: if top score exceeds this, apply auto-filtering.
+const autoScoreThresholdTrigger = 0.70
+
+// autoScoreThresholdRatio: results below topScore * ratio are pruned.
+const autoScoreThresholdRatio = 0.40
 
 func (t *SmartSearchTool) Register(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
@@ -89,250 +100,46 @@ func (t *SmartSearchTool) Register(server *mcp.Server) {
 }
 
 func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (string, error) {
-	query := strings.TrimSpace(input.Query)
-	if query == "" {
-		return "", fmt.Errorf("query parameter is required")
+	t0 := time.Now()
+	query, limit, input, err := normalizeInput(input, t.searchLimit)
+	if err != nil {
+		return "", err
 	}
 
-	limit := t.searchLimit
-	if input.Limit > 0 {
-		limit = input.Limit
+	sr := t.runParallelSearch(ctx, input.FilePath, query, limit, input.IncludeDocs)
+	if sr.semantic == nil && sr.hybrid == nil {
+		return t.handleSearchError(sr.err, sr.meta.workspaceRoot, sr.meta.workspaceID)
 	}
 
-	// When strict_docs mode is requested, automatically enable docs search
-	// so that the semantic engine actually fetches documentation results.
-	if input.Mode == "strict_docs" {
-		input.IncludeDocs = true
-	}
-
-	// Run both search strategies in parallel
-	type searchResult struct {
-		label   string
-		result  *engine.SearchCodeResult
-		err     error
-		elapsed time.Duration
-	}
-
-	results := make(chan searchResult, 2)
-	var wg sync.WaitGroup
-
-	// Goroutine 1: Semantic (discovery) search
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		t0 := time.Now()
-		res, err := t.engine.SearchCode(ctx, input.FilePath, query, limit, input.IncludeDocs)
-		results <- searchResult{label: "semantic", result: res, err: err, elapsed: time.Since(t0)}
-	}()
-
-	// Goroutine 2: Hybrid (exact) search
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		t0 := time.Now()
-		res, err := t.engine.HybridSearchCode(ctx, input.FilePath, query, limit)
-		results <- searchResult{label: "hybrid", result: res, err: err, elapsed: time.Since(t0)}
-	}()
-
-	go func() { wg.Wait(); close(results) }()
-
-	// Collect results from both strategies
-	var semanticRes, hybridRes *engine.SearchCodeResult
-	var firstErr error
-	var workspaceRoot, workspaceID, collection, language, detectionSource, mismatchRisk string
-
-	for sr := range results {
-		logger.Instance.Debug("rag_search %s: elapsed=%v err=%v results=%d",
-			sr.label, sr.elapsed, sr.err,
-			func() int {
-				if sr.result != nil {
-					return len(sr.result.Results)
-				}
-				return 0
-			}())
-
-		if sr.err != nil {
-			if firstErr == nil {
-				firstErr = sr.err
-			}
-			continue
-		}
-
-		// Capture workspace metadata from the first successful result
-		if workspaceRoot == "" && sr.result != nil {
-			workspaceRoot = sr.result.WorkspaceRoot
-			workspaceID = sr.result.WorkspaceID
-			collection = sr.result.Collection
-			language = sr.result.Language
-			detectionSource = sr.result.DetectionSource
-			mismatchRisk = sr.result.MismatchRisk
-		}
-
-		switch sr.label {
-		case "semantic":
-			semanticRes = sr.result
-		case "hybrid":
-			hybridRes = sr.result
-		}
-	}
-
-	// Handle error cases (same as existing tool)
-	if semanticRes == nil && hybridRes == nil {
-		return t.handleSearchError(firstErr, workspaceRoot, workspaceID)
-	}
-
-	// Merge and deduplicate results from both strategies
-	merged := t.mergeResults(semanticRes, hybridRes, limit)
-
-	// Apply mode filtering
-	var filtered []mergedResult
-	for _, m := range merged {
-		isDoc := isDocSymbolType(m.symbolType) || isDocExtension(m.filePath)
-		// Strict code mode: ignore completely any documentation type or doc file
-		if input.Mode == "strict_code" && isDoc {
-			continue
-		}
-		// Strict docs mode: ignore anything that isn't documentation
-		if input.Mode == "strict_docs" && !isDoc {
-			continue
-		}
-		filtered = append(filtered, m)
-	}
-	merged = filtered
-
-	// Apply tree-based grouping for documentation chunks
-	merged = t.groupDocsByTree(merged)
+	merged := t.mergeResults(sr.semantic, sr.hybrid, limit)
+	merged = t.applyFilters(merged, filterConfig{
+		Mode:     input.Mode,
+		MinScore: input.MinScore,
+		FilePath: input.FilePath,
+	})
 
 	if len(merged) == 0 {
-		response := ToolResponse{
-			Status:  "no_results",
-			Message: fmt.Sprintf("🔍 No code results found for query: '%s'", query),
-			Context: ContextMetadata{
-				WorkspaceRoot:   workspaceRoot,
-				DetectionSource: detectionSource,
-				Language:        language,
-				Collection:      collection,
-			},
-		}
-		return response.JSON()
+		return noResultsResponse(query, sr.meta)
 	}
 
-	// Determine response mode based on result confidence
-	topScore := merged[0].score
-	useCompact := len(merged) > compactResultCap || topScore < highConfidenceThreshold
-
-	// Override: when the agent explicitly requests full content, skip compact mode
+	// Determine response mode
+	useCompact := len(merged) > compactResultCap || merged[0].score < highConfidenceThreshold
 	if input.IncludeFullContent {
 		useCompact = false
 	}
 
-	// Build response
-	response := ToolResponse{
-		Status: "success",
-		Context: ContextMetadata{
-			WorkspaceRoot:    workspaceRoot,
-			DetectionSource:  detectionSource,
-			Language:         language,
-			Collection:       collection,
-			IndexingProgress: BuildIndexingProgress(t.engine, workspaceID, workspaceRoot),
-		},
+	isFallback := sr.meta.collection == "fallback"
+	response := t.buildResponseMeta(sr.meta)
+	staleFiles := serializeResults(&response, merged, useCompact, isFallback, query, input.IncludeReasons)
+
+	// Trigger async cleanup of stale files from all collections
+	if len(staleFiles) > 0 && sr.meta.workspaceID != "" {
+		t.engine.CleanupStaleFiles(sr.meta.workspaceID, staleFiles)
 	}
 
-	if mismatchRisk != "" && mismatchRisk != "low" {
-		response.Warning = fmt.Sprintf("Branch mismatch risk: %s — results may be from a different branch.", mismatchRisk)
-	}
+	// Record metric asynchronously to avoid blocking response
+	go recordSearchMetric(sr.meta, query, merged, isFallback, response.Context.Telemetry, t0)
 
-	// Calculate telemetry
-	baselineBytes := int64(0)
-	actualBytes := int64(0)
-	seenFiles := make(map[string]bool)
-	var staleFiles []string // files referenced in index but no longer on disk
-
-	if useCompact {
-		// COMPACT MODE: return only metadata, no source code
-		response.Message = fmt.Sprintf("📋 Found %d results (compact view). Use rag_read_file_context to get full source for specific results.", len(merged))
-		compactData := make([]map[string]any, 0, len(merged))
-		for _, m := range merged {
-			item := map[string]any{
-				"score":      m.score,
-				"file_path":  m.filePath,
-				"name":       m.name,
-				"type":       m.symbolType,
-				"signature":  m.signature,
-				"package":    m.pkg,
-				"start_line": m.startLine,
-				"end_line":   m.endLine,
-			}
-			if m.docstring != "" {
-				item["docstring"] = m.docstring
-			}
-			if m.source != "" {
-				item["_source"] = m.source // "semantic", "hybrid", or "both"
-			}
-			compactData = append(compactData, item)
-
-			// Telemetry: count full file sizes but 0 actual bytes sent
-			if !seenFiles[m.filePath] {
-				seenFiles[m.filePath] = true
-				if info, err := os.Stat(m.filePath); err == nil {
-					baselineBytes += info.Size()
-				} else if os.IsNotExist(err) {
-					staleFiles = append(staleFiles, m.filePath)
-				}
-			}
-		}
-		response.Data = compactData
-	} else {
-		// FULL MODE: return complete content (high confidence, few results)
-		response.Message = fmt.Sprintf("🎯 Found %d high-confidence results with full source code.", len(merged))
-		fullData := make([]map[string]any, 0, len(merged))
-		for _, m := range merged {
-			item := map[string]any{
-				"score":      m.score,
-				"file_path":  m.filePath,
-				"name":       m.name,
-				"type":       m.symbolType,
-				"signature":  m.signature,
-				"package":    m.pkg,
-				"start_line": m.startLine,
-				"end_line":   m.endLine,
-				"content":    m.content,
-			}
-			if m.docstring != "" {
-				item["docstring"] = m.docstring
-			}
-			if m.source != "" {
-				item["_source"] = m.source
-			}
-			fullData = append(fullData, item)
-
-			actualBytes += int64(len(m.content))
-			if !seenFiles[m.filePath] {
-				seenFiles[m.filePath] = true
-				if info, err := os.Stat(m.filePath); err == nil {
-					baselineBytes += info.Size()
-				} else if os.IsNotExist(err) {
-					staleFiles = append(staleFiles, m.filePath)
-				}
-			}
-		}
-		response.Data = fullData
-	}
-
-	// Proactive stale index warning
-	if len(staleFiles) > 0 {
-		staleWarning := fmt.Sprintf(
-			"⚠️ %d indexed file(s) no longer exist on disk (stale index). Consider re-indexing. Missing: %s",
-			len(staleFiles), strings.Join(staleFiles, ", "),
-		)
-		if response.Warning != "" {
-			response.Warning += " | " + staleWarning
-		} else {
-			response.Warning = staleWarning
-		}
-	}
-
-	response.Context.Telemetry = telemetry.CalculateSavings(baselineBytes, actualBytes)
 	return response.JSON()
 }
 

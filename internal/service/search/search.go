@@ -12,6 +12,7 @@ import (
 
 	"github.com/doITmagic/rag-code-mcp/internal/service/internalutil"
 	"github.com/doITmagic/rag-code-mcp/pkg/llm"
+	"github.com/doITmagic/rag-code-mcp/pkg/scoring"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 )
 
@@ -158,7 +159,7 @@ func (s *Service) HybridSearch(ctx context.Context, collection string, queryText
 
 	// 2. Lexical scoring
 	lowerQuery := strings.ToLower(queryText)
-	tokens := filterTokens(strings.Fields(lowerQuery))
+	tokens := scoring.FilterTokens(strings.Fields(lowerQuery))
 
 	type scoredResult struct {
 		res     storage.SearchResult
@@ -176,7 +177,7 @@ func (s *Service) HybridSearch(ctx context.Context, collection string, queryText
 			content = strings.ToLower(txt)
 		}
 
-		lScore := lexicalMatchScore(content, tokens)
+		lScore := scoring.LexicalMatchScore(content, tokens)
 		if lScore > maxLexical {
 			maxLexical = lScore
 		}
@@ -211,24 +212,10 @@ func (s *Service) HybridSearch(ctx context.Context, collection string, queryText
 	return results, nil
 }
 
-func filterTokens(tokens []string) []string {
-	filtered := make([]string, 0, len(tokens))
-	for _, tok := range tokens {
-		tok = strings.TrimSpace(tok)
-		if len(tok) > 2 { // Skip very short tokens
-			filtered = append(filtered, tok)
-		}
-	}
-	return filtered
+// DeleteByFilter removes all points matching a metadata filter from a collection.
+// Used by the stale file cleanup system to remove vectors for deleted files.
+func (s *Service) DeleteByFilter(ctx context.Context, collection, key string, value interface{}) error {
+	return s.store.DeleteByFilter(ctx, collection, key, value)
 }
 
-func lexicalMatchScore(content string, tokens []string) float64 {
-	if len(tokens) == 0 {
-		return 0
-	}
-	score := 0.0
-	for _, token := range tokens {
-		score += float64(strings.Count(content, token))
-	}
-	return score
-}
+// filterTokens and lexicalMatchScore are now in pkg/scoring.

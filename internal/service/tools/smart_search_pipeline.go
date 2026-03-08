@@ -220,6 +220,19 @@ func (t *SmartSearchTool) buildResponseMeta(meta searchMetadata, useCompact bool
 		response.Warning = fmt.Sprintf("Branch mismatch risk: %s — results may be from a different branch.", meta.mismatchRisk)
 	}
 
+	if meta.detectionSource == "nested_workspace_override" {
+		overrideNote := fmt.Sprintf(
+			"ℹ️ Nested workspace detected: your file_path resolved to a subdirectory of an already-registered workspace. "+
+				"Using parent workspace root '%s' instead. Results are from the parent project index.",
+			meta.workspaceRoot,
+		)
+		if response.Warning != "" {
+			response.Warning += " | " + overrideNote
+		} else {
+			response.Warning = overrideNote
+		}
+	}
+
 	if isFallback {
 		fallbackNote := buildFallbackNote(idxProgress)
 		if response.Warning != "" {

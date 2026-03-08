@@ -5,7 +5,7 @@
 <div align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Go Version](https://img.shields.io/badge/Go-1.25%2B-blue)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-1.24.4%2B-blue)](https://go.dev/)
 [![MCP](https://img.shields.io/badge/MCP-Compatible-green)](https://modelcontextprotocol.io)
 ![AI Ready](https://img.shields.io/badge/Codebase-AI%20Ready-blueviolet)
 

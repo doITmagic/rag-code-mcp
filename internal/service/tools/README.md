@@ -17,10 +17,10 @@ Implementation of the MCP tools exposed by the RagCode AI assistants server.
 | `rag_read_file_context` | `read_file_context.go` | [doc_read_file_context.md](/docs/tools/doc_read_file_context.md) |
 | `rag_index_workspace` | `index_workspace.go` | [doc_index_workspace.md](/docs/tools/doc_index_workspace.md) |
 | `rag_evaluate` | `evaluate_ragcode.go` | [doc_evaluate_ragcode.md](/docs/tools/doc_evaluate_ragcode.md) |
-| `rag_check_update` | `update_tools.go` | [doc_updates.md](/docs/tools/doc_updates.md) |
-| `rag_apply_update` | `update_tools.go` | [doc_updates.md](/docs/tools/doc_updates.md) |
-| `rag_list_skills` | `agent_skills.go` | (none) |
-| `rag_install_skill` | `agent_skills.go` | (none) |
+| `rag_check_update` | `updates.go` | [doc_updates.md](/docs/tools/doc_updates.md) |
+| `rag_apply_update` | `updates.go` | [doc_updates.md](/docs/tools/doc_updates.md) |
+| `rag_list_skills` | `skills.go` | (none) |
+| `rag_install_skill` | `skills.go` | (none) |
 
 ---
 
@@ -39,8 +39,8 @@ internal/service/tools/
 ├── read_file_context.go
 ├── index_workspace.go
 ├── evaluate_ragcode.go
-├── update_tools.go                 # Check and apply updates tools
-├── agent_skills.go                 # List and install skills tools
+├── updates.go                      # Check and apply updates tools
+├── skills.go                       # List and install skills tools
 ├── healthcheck.go
 ├── response.go                     # ToolResponse, ContextMetadata, JSON helpers
 └── README.md

@@ -22,8 +22,8 @@ if err != nil {
     // Handle error
 }
 
-if info != nil && info.UpdateAvailable {
-    // Perform update and verification
+if info != nil {
+    // Non-nil info means an update is available
     err := updater.DownloadVerifyAndApply(ctx, info)
     if err != nil {
         // Handle error
@@ -33,5 +33,5 @@ if info != nil && info.UpdateAvailable {
 
 ## Safety Considerations
 
-- **Verification**: Updates are cryptographically verified using `sha256sums.txt` included in releases.
+- **Verification**: Updates are cryptographically verified using `checksums.txt` included in releases.
 - **Rollback**: Updates happen via binary replacement; if the process fails mid-way, the original executable is restored from a temporary backup.

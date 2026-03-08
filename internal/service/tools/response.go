@@ -38,12 +38,13 @@ type LangProgressItem struct {
 
 // ContextMetadata provides info about which workspace and sources were used.
 type ContextMetadata struct {
-	WorkspaceRoot    string                   `json:"workspace_root,omitempty"`
-	DetectionSource  string                   `json:"detection_source,omitempty"` // "explicit_file_path", "registry_fallback", "cwd_detection"
-	Language         string                   `json:"language,omitempty"`
-	Collection       string                   `json:"collection,omitempty"`
-	Telemetry        *telemetry.Savings       `json:"telemetry,omitempty"`
-	IndexingProgress *IndexingProgressSummary `json:"indexing_progress,omitempty"` // present when indexing is in progress or just completed
+	WorkspaceRoot    string                        `json:"workspace_root,omitempty"`
+	DetectionSource  string                        `json:"detection_source,omitempty"` // "explicit_file_path", "registry_fallback", "cwd_detection"
+	Language         string                        `json:"language,omitempty"`
+	Collection       string                        `json:"collection,omitempty"`
+	Telemetry        *telemetry.Savings            `json:"telemetry,omitempty"`
+	IndexingProgress *IndexingProgressSummary      `json:"indexing_progress,omitempty"` // present when indexing is in progress or just completed
+	SessionMetrics   *telemetry.AggregatedMetrics  `json:"session_metrics,omitempty"`   // cumulative search stats from .ragcode/search_metrics.jsonl
 }
 
 // BuildIndexingProgress reads the live progress for a workspace and returns a summary.

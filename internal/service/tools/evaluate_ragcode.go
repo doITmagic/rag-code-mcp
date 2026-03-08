@@ -74,7 +74,7 @@ func (t *EvaluateRagCodeTool) Execute(ctx context.Context, args map[string]inter
 
 	var healthStatus []string
 	if t.cfg != nil {
-		models := []string{t.cfg.LLM.OllamaModel, t.cfg.LLM.OllamaEmbed}
+		models := []string{t.cfg.LLM.OllamaEmbed}
 		health := healthcheck.CheckAllWithModels(t.cfg.LLM.OllamaBaseURL, t.cfg.Storage.VectorDB.URL, models)
 		for _, h := range health {
 			statusSymbol := "✅"

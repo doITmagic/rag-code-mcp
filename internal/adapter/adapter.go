@@ -19,6 +19,13 @@ import (
 // The adapter reads/writes single JSON payloads (no SSE framing).
 // Accept header includes text/event-stream for StreamableHTTPHandler compatibility,
 // but JSONResponse=true on the server forces pure JSON responses.
+//
+// Sticky workspace: after the first successful tool response, the daemon sets
+// X-Resolved-Workspace in the response header. The adapter caches this value
+// and sends X-Workspace-Root on all subsequent requests, eliminating repeated
+// workspace detection on the daemon side. The workspaceHint parameter from
+// the IDE is intentionally ignored — only the daemon-resolved root is trusted.
+//
 // Returns nil on stdin EOF (normal IDE shutdown).
 func RunBridge(ctx context.Context, socketPath string, stdin io.Reader, stdout io.Writer, workspaceHint string) error {
 	client := &http.Client{
@@ -34,6 +41,11 @@ func RunBridge(ctx context.Context, socketPath string, stdin io.Reader, stdout i
 	// Allow up to 10MB per line (large MCP responses)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 
+	// Sticky workspace: learned from the daemon's X-Resolved-Workspace
+	// response header. Once set, sent as X-Workspace-Root on every
+	// subsequent request.
+	var resolvedWorkspace string
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.TrimSpace(line) == "" {
@@ -48,8 +60,10 @@ func RunBridge(ctx context.Context, socketPath string, stdin io.Reader, stdout i
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Accept", "application/json, text/event-stream")
-		if workspaceHint != "" {
-			req.Header.Set("X-Workspace-Hint", workspaceHint)
+
+		// Send confirmed workspace root if we already learned it
+		if resolvedWorkspace != "" {
+			req.Header.Set("X-Workspace-Root", resolvedWorkspace)
 		}
 
 		resp, err := client.Do(req)
@@ -63,6 +77,11 @@ func RunBridge(ctx context.Context, socketPath string, stdin io.Reader, stdout i
 			resp.Body.Close()
 			writeJSONRPCError(stdout, line, fmt.Errorf("daemon returned HTTP %d", resp.StatusCode))
 			continue
+		}
+
+		// Learn resolved workspace from daemon response header (first successful resolve)
+		if rw := resp.Header.Get("X-Resolved-Workspace"); rw != "" && resolvedWorkspace == "" {
+			resolvedWorkspace = rw
 		}
 
 		const maxResponseSize = 10 * 1024 * 1024 // 10MB

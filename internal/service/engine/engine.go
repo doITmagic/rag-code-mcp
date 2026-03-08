@@ -270,6 +270,11 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 	logger.Instance.Info("[WS-DETECT] ◀ Resolved: root=%s, id=%s, branch=%s, source=%s, risk=%s",
 		wctx.Root, wctx.ID, wctx.Branch, source, wctx.MismatchRisk)
 
+	// Inform the adapter of the resolved workspace root via response header.
+	// The adapter reads this header once and caches it as sticky X-Workspace-Root
+	// for all subsequent requests — eliminating repeated resolver cascades.
+	transport.SetResponseHeader(ctx, "X-Resolved-Workspace", wctx.Root)
+
 	// Don't cache entries that require reindex or are high-risk — let next call re-evaluate
 	if !wctx.ReindexRequired && wctx.MismatchRisk != "high" {
 		e.detectionCache.Store(cacheKey, &detectionCacheEntry{
@@ -284,6 +289,35 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 // GetActiveWorkspace returns the last confirmed workspace root from the resolver.
 func (e *Engine) GetActiveWorkspace() (string, error) {
 	return e.resolver.GetActiveWorkspace()
+}
+
+// CheckAndReindexOnConnect resolves a workspace from the adapter's first hint
+// CheckAndReindexOnConnect resolves a workspace from a hint path and triggers
+// background re-indexing if branch state changed (e.g. after git pull).
+// Returns the resolved workspace root, or "" if resolution fails.
+//
+// Not called from daemon middleware directly — kept as a utility for
+// programmatic use and testing. The adapter's sticky workspace mechanism
+// relies on DetectContext + X-Resolved-Workspace header instead.
+func (e *Engine) CheckAndReindexOnConnect(hint string) string {
+	ctx := context.Background()
+	wctx, err := e.DetectContext(ctx, hint)
+	if err != nil {
+		logger.Instance.Warn("[STICKY] CheckAndReindexOnConnect: failed to resolve hint=%q: %v", hint, err)
+		return ""
+	}
+
+	logger.Instance.Info("[STICKY] Workspace resolved on connect: root=%s, id=%s, branch=%s, reindex=%v",
+		wctx.Root, wctx.ID, wctx.Branch, wctx.ReindexRequired)
+
+	// Trigger background re-indexing if branch state changed.
+	// StartIndexingAsync handles de-dup internally via LoadOrStore.
+	if wctx.ReindexRequired {
+		logger.Instance.Info("[STICKY] Branch state changed — triggering background re-index for %s", filepath.Base(wctx.Root))
+		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+	}
+
+	return wctx.Root
 }
 
 // SearchCodeResult wraps search results with workspace context.

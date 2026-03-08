@@ -42,19 +42,16 @@ func TestBridge_ForwardsRequestAndResponse(t *testing.T) {
 	assert.NotNil(t, resp["result"])
 }
 
-func TestBridge_SendsWorkspaceHintHeader(t *testing.T) {
-	var receivedHint string
-
+func TestBridge_IDEHintNotForwarded(t *testing.T) {
 	sockPath := startFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		receivedHint = r.Header.Get("X-Workspace-Hint")
+		// IDE hint should never be forwarded as a header
+		assert.Empty(t, r.Header.Get("X-Workspace-Hint"), "IDE hint must not be forwarded")
 		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": nil})
 	})
 
 	input := `{"jsonrpc":"2.0","id":1,"method":"ping"}` + "\n"
 	err := RunBridge(context.Background(), sockPath, strings.NewReader(input), io.Discard, "/home/user/project")
 	require.NoError(t, err)
-
-	assert.Equal(t, "/home/user/project", receivedHint)
 }
 
 func TestBridge_SkipsEmptyLines(t *testing.T) {

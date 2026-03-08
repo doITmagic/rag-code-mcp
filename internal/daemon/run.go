@@ -209,16 +209,22 @@ func Run(rcfg RunConfig) error {
 	mcpMux := http.NewServeMux()
 	mcpMux.Handle("/mcp", streamableHandler)
 
-	// Middleware: extract X-Workspace-Hint header from adapter and inject into request context.
-	// This makes the IDE's CWD available to all tools via transport.GetWorkspaceHint(ctx).
+	// Middleware: sticky workspace + response writer injection.
+	//
+	// 1. X-Workspace-Root (sticky): adapter learned workspace from a previous
+	//    response header. Inject into context so tools skip resolver cascade.
+	// 2. ResponseWriter: always injected into context so DetectContext can set
+	//    X-Resolved-Workspace header in the response — the adapter reads it
+	//    and caches it for subsequent requests.
 	mcpHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hint := r.Header.Get("X-Workspace-Hint")
-		if hint != "" {
-			logger.Instance.Debug("[DAEMON] Request received with X-Workspace-Hint=%s", hint)
-			r = r.WithContext(transport.WithWorkspaceHint(r.Context(), hint))
+		ctx := transport.WithResponseWriter(r.Context(), w)
+		if wsRoot := r.Header.Get("X-Workspace-Root"); wsRoot != "" {
+			logger.Instance.Debug("[DAEMON] Request with sticky X-Workspace-Root=%s", wsRoot)
+			ctx = transport.WithWorkspaceHint(ctx, wsRoot)
 		} else {
-			logger.Instance.Debug("[DAEMON] Request received WITHOUT X-Workspace-Hint header")
+			logger.Instance.Debug("[DAEMON] Request without X-Workspace-Root (first request or no workspace resolved yet)")
 		}
+		r = r.WithContext(ctx)
 		mcpMux.ServeHTTP(w, r)
 	})
 

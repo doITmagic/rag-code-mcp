@@ -86,31 +86,7 @@ func TestCheckAndReindexOnConnect_TriggersReindex(t *testing.T) {
 		Detector: &mockDirDetector{root: rootDir},
 	}))
 
-	// First call: forces branchstate to mark as first-seen (no branch_state.json),
-	// which sets ReindexRequired=true.
-	result := eng.CheckAndReindexOnConnect("some/path.go")
-	if result == "" {
-		t.Fatal("expected non-empty root")
-	}
-
-	// Give goroutine a moment to register the job
-	time.Sleep(50 * time.Millisecond)
-
-	// Detect context again to get the workspace ID
-	wctx, _ := eng.DetectContext(context.Background(), "some/path.go")
-	if wctx == nil {
-		t.Fatal("DetectContext returned nil")
-	}
-
-	// Check if an indexing job was started (it will exist briefly before completing/failing)
-	// The job may have already completed since there's nothing to index — but the
-	// fact that resumeAttempts or indexingJobs was accessed is sufficient.
-	// We verify by checking that the function returned the resolved root successfully.
-	if result != rootDir {
-		t.Errorf("expected root=%q, got %q", rootDir, result)
-	}
-
-	// Cleanup: wait for any background goroutines
+	// Register cleanup immediately — before any Fatal that could skip it.
 	t.Cleanup(func() {
 		if eng.progress != nil {
 			eng.progress.stop()
@@ -123,4 +99,43 @@ func TestCheckAndReindexOnConnect_TriggersReindex(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 		}
 	})
+
+	// First call: forces branchstate to mark as first-seen (no branch_state.json),
+	// which sets ReindexRequired=true.
+	result := eng.CheckAndReindexOnConnect("some/path.go")
+	if result == "" {
+		t.Fatal("expected non-empty root")
+	}
+	if result != rootDir {
+		t.Fatalf("expected root=%q, got %q", rootDir, result)
+	}
+
+	// Detect context to get the workspace ID for assertion
+	wctx, err := eng.DetectContext(context.Background(), "some/path.go")
+	if err != nil || wctx == nil {
+		t.Fatalf("DetectContext failed: %v", err)
+	}
+
+	// Deterministic assertion: poll ActiveIndexingJobs until the job appears
+	// or timeout. The job may complete very fast (empty workspace), so we
+	// also accept if it already ran and finished.
+	deadline := time.Now().Add(500 * time.Millisecond)
+	found := false
+	for time.Now().Before(deadline) && !found {
+		for _, id := range eng.ActiveIndexingJobs() {
+			if id == wctx.ID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	// Note: the job may have already completed (empty workspace = instant finish),
+	// so we check that the function returned the correct root as minimum assertion.
+	// A more robust test would use a blocking indexer stub.
+	if !found {
+		t.Logf("indexing job for %s completed before we could observe it (expected for empty workspace)", wctx.ID)
+	}
 }

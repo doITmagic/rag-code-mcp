@@ -212,6 +212,7 @@ func (t *SmartSearchTool) buildResponseMeta(meta searchMetadata, useCompact bool
 			Language:         meta.language,
 			Collection:       meta.collection,
 			IndexingProgress: idxProgress,
+			SessionMetrics:   telemetry.ReadAggregatedMetrics(meta.workspaceRoot),
 		},
 	}
 

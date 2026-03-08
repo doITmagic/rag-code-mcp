@@ -33,7 +33,7 @@ Dumping entire files into an AI's context window destroys its ability to think, 
 
 ---
 
-## 🚀 Quick Install (1 Command)
+## Quick Install (1 Command)
 
 Get started instantly in 5 minutes with our automated installer.
 
@@ -54,34 +54,34 @@ Expand-Archive ragcode.zip -DestinationPath . -Force
 .\rag-code-install.exe -ollama=docker -qdrant=docker
 ```
 
-👉 **[Read the Full QUICKSTART Guide for your first AI Prompt](./QUICKSTART.md)**
+**[Read the Full QUICKSTART Guide for your first AI Prompt](./QUICKSTART.md)**
 
 ---
 
-## 🗺️ Navigate the Documentation
+## Navigate the Documentation
 
 RagCode has evolved into a massively powerful engine. Choose your path:
 
-- 🏃 **[The Vibe Coder Path (Quickstart)](./QUICKSTART.md)** - I just want it to work in my IDE right now.
-- 💻 **[The Developer Path (Contributing)](./CONTRIBUTING.md)** - I want to build RagCode locally or contribute code.
-- 🤖 **[The AI Agent Path (Headless/HTTP)](./docs/headless-usage.md)** - I am an AI or script trying to query the workspace directly without an IDE.
-- 🧠 **[The Architect Path (Docs)](./docs/)** - How RagCode Lite, AST Fallback, and Scoring actually work.
+- **[The Vibe Coder Path (Quickstart)](./QUICKSTART.md)** - I just want it to work in my IDE right now.
+- **[The Developer Path (Contributing)](./CONTRIBUTING.md)** - I want to build RagCode locally or contribute code.
+- **[The AI Agent Path (Headless/HTTP)](./docs/headless-usage.md)** - I am an AI or script trying to query the workspace directly without an IDE.
+- **[The Architect Path (Docs)](./docs/)** - How RagCode Lite, AST Fallback, and Scoring actually work.
 
 ---
 
-## ✨ Cutting-Edge V2 Features
+## Cutting-Edge V2 Features
 
 RagCode V2 isn't just a vector database wrapper. It features deep language understanding:
 
-* ⚡ **Zero-Wait Fallback AST Search**: If your codebase is still indexing, RagCode falls back to lexical/AST structural search so you never wait to get work done.
-* 🎯 **Path-Scoped Boosts**: The engine automatically detects what file your AI is currently editing and boosts search results from the same folder or related logic.
-* 📦 **Nested Workspace Detection**: Monorepos and deeply nested git submodules are handled safely through a unified detection registry.
-* 📊 **Telemetry & JSONL Insights**: RagCode analyzes exactly how much context your AI saves and records precise match reasons for why a snippet was chosen.
-* 🚀 **Skill Ecosystem (`rag_list_skills`)**: Enhance your codebase on-the-fly. Agents can install custom behavioral skills into `.ragcode/skills` to expand their own capabilities dynamically.
+* **Zero-Wait Fallback AST Search**: If your codebase is still indexing, RagCode falls back to lexical/AST structural search so you never wait to get work done.
+* **Path-Scoped Boosts**: The engine automatically detects what file your AI is currently editing and boosts search results from the same folder or related logic.
+* **Nested Workspace Detection**: Monorepos and deeply nested git submodules are handled safely through a unified detection registry.
+* **Telemetry & JSONL Insights**: RagCode analyzes exactly how much context your AI saves and records precise match reasons for why a snippet was chosen.
+* **Skill Ecosystem (`rag_list_skills`)**: Enhance your codebase on-the-fly. Agents can install custom behavioral skills into `.ragcode/skills` to expand their own capabilities dynamically.
 
 ---
 
-## 🛠 Supported Languages
+## Supported Languages
 
 - **Go**: Complete native AST support
 - **PHP**: Vanilla PHP, Laravel, WordPress (Hooks, Widgets, WooCommerce, Oxygen Builder)
@@ -94,8 +94,8 @@ RagCode V2 isn't just a vector database wrapper. It features deep language under
 
 <div align="center">
 
-**Built with ❤️ for developers who want smarter AI code assistants**
+**Built for developers who want smarter AI code assistants**
 
-⭐ **[Star us on GitHub](https://github.com/doITmagic/rag-code-mcp)** if RagCode speeds up your workflow!
+**[Star us on GitHub](https://github.com/doITmagic/rag-code-mcp)** if RagCode speeds up your workflow!
 
 </div>

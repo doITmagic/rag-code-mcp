@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"encoding/json"
+	"os"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -50,7 +51,16 @@ var _ = Describe("SmartSearchTool (rag_search)", func() {
 		})
 
 		Context("Successful Search", func() {
+			var tmpFile *os.File
+
 			BeforeEach(func() {
+				// Create a real temp file so stale detection doesn't filter it out
+				var err error
+				tmpFile, err = os.CreateTemp("", "ragcode_test_search_*.go")
+				Expect(err).NotTo(HaveOccurred())
+				_, _ = tmpFile.WriteString("package main\nfunc MyFunc() {}\n")
+				tmpFile.Close()
+
 				mockStore.SearchCodeOnlyFunc = func(ctx context.Context, col string, q storage.SearchQuery) ([]storage.SearchResult, error) {
 					return []storage.SearchResult{
 						{
@@ -60,7 +70,7 @@ var _ = Describe("SmartSearchTool (rag_search)", func() {
 								Payload: map[string]interface{}{
 									"name":       "MyFunc",
 									"content":    "func MyFunc() {}",
-									"file_path":  "/mock/file.go",
+									"file_path":  tmpFile.Name(),
 									"type":       "function",
 									"signature":  "func MyFunc()",
 									"package":    "main",
@@ -70,6 +80,12 @@ var _ = Describe("SmartSearchTool (rag_search)", func() {
 							},
 						},
 					}, nil
+				}
+			})
+
+			AfterEach(func() {
+				if tmpFile != nil {
+					os.Remove(tmpFile.Name())
 				}
 			})
 

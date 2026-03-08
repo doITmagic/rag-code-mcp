@@ -336,38 +336,55 @@ func buildResultsMessage(count int, useCompact, isFallback bool) string {
 
 // serializeResults populates the ToolResponse with either compact or full result data,
 // calculates telemetry savings, and detects stale indexed files.
+// Stale results (files that no longer exist on disk) are EXCLUDED from the response data.
+// Returns the list of stale file paths for async cleanup by the caller.
 // query and includeReasons control the optional match_reasons annotation per result.
-func serializeResults(response *ToolResponse, merged []mergedResult, useCompact, isFallback bool, query string, includeReasons bool) {
-	data := make([]map[string]any, 0, len(merged))
+func serializeResults(response *ToolResponse, merged []mergedResult, useCompact, isFallback bool, query string, includeReasons bool) []string {
+	var validResults []map[string]any
 	var baselineBytes, actualBytes int64
 	seenFiles := make(map[string]bool)
 	var staleFiles []string
 
 	for _, m := range merged {
-		data = append(data, resultToMap(m, !useCompact, query, includeReasons))
+		// Stale file tracking: check if file still exists on disk
+		if !seenFiles[m.filePath] {
+			seenFiles[m.filePath] = true
+			if _, err := os.Stat(m.filePath); os.IsNotExist(err) {
+				staleFiles = append(staleFiles, m.filePath)
+			}
+		}
+
+		// Skip results from stale files — don't include in response
+		isStale := false
+		for _, sf := range staleFiles {
+			if m.filePath == sf {
+				isStale = true
+				break
+			}
+		}
+		if isStale {
+			continue
+		}
+
+		validResults = append(validResults, resultToMap(m, !useCompact, query, includeReasons))
 
 		if !useCompact {
 			actualBytes += int64(len(m.content))
 		}
 
-		// Telemetry + stale file tracking
-		if !seenFiles[m.filePath] {
-			seenFiles[m.filePath] = true
-			if info, err := os.Stat(m.filePath); err == nil {
-				baselineBytes += info.Size()
-			} else if os.IsNotExist(err) {
-				staleFiles = append(staleFiles, m.filePath)
-			}
+		// Telemetry: only count existing files
+		if info, err := os.Stat(m.filePath); err == nil {
+			baselineBytes += info.Size()
 		}
 	}
 
-	response.Message = buildResultsMessage(len(merged), useCompact, isFallback)
-	response.Data = data
+	response.Message = buildResultsMessage(len(validResults), useCompact, isFallback)
+	response.Data = validResults
 
-	// Proactive stale index warning
+	// Proactive stale index warning (now with auto-cleanup note)
 	if len(staleFiles) > 0 {
 		staleWarning := fmt.Sprintf(
-			"⚠️ %d indexed file(s) no longer exist on disk (stale index). Consider re-indexing. Missing: %s",
+			"🧹 %d stale file(s) detected and filtered out (no longer on disk). Auto-cleanup triggered. Files: %s",
 			len(staleFiles), strings.Join(staleFiles, ", "),
 		)
 		if response.Warning != "" {
@@ -378,6 +395,7 @@ func serializeResults(response *ToolResponse, merged []mergedResult, useCompact,
 	}
 
 	response.Context.Telemetry = telemetry.CalculateSavings(baselineBytes, actualBytes)
+	return staleFiles
 }
 
 // noResultsResponse returns a "no results" JSON response.

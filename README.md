@@ -65,7 +65,7 @@ RagCode has evolved into a massively powerful engine. Choose your path:
 - **[The Vibe Coder Path (Quickstart)](./QUICKSTART.md)** - I just want it to work in my IDE right now.
 - **[The Developer Path (Contributing)](./CONTRIBUTING.md)** - I want to build RagCode locally or contribute code.
 - **[The AI Agent Path (Headless/HTTP)](./docs/headless-usage.md)** - I am an AI or script trying to query the workspace directly without an IDE.
-- **[The Architect Path (Docs)](./docs/architecture/ARCHITECTURE.md)** - Daemon/Adapter IPC, Workspace Isolation, AST Parsing, Hybrid 60/40 Scoring, and Stale Index Detection.
+- **[The Architect Path (Docs)](./docs/architecture/ARCHITECTURE.md)** - Daemon/Adapter IPC, Workspace Isolation, AST Parsing, Hybrid 60/40 Scoring, and Lazy Stale Cleanup.
 
 ---
 

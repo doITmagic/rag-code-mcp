@@ -60,13 +60,26 @@ The `internal/service/tools/smart_search.go` pipeline is designed to eliminate A
 
 ---
 
-## 5. Index Health & Stale Chunk Detection
+## 5. Index Health & Lazy Stale Cleanup
 
-LLMs suffer from extreme hallucinations when fed outdated search indexes (e.g., deleted functions). RagCode includes an active health-check matrix directly in the query output.
+LLMs suffer from extreme hallucinations when fed outdated search indexes (e.g., deleted functions). RagCode includes an active health-check matrix directly in the query output and a self-healing cleanup mechanism.
 
 ### Micro-Features & Engineering Highlights:
-- **Pre-flight Disk Verification**: Before returning a vector match, RagCode verifies if the underlying file chunk still exists on disk.
-- **Active Warning Injection**: If stale code is detected, the Engine automatically injects warnings directly into the JSON response for the AI: `⚠️ 2 indexed file(s) no longer exist on disk (stale index).`
+- **Pre-flight Disk Verification**: Before returning a vector match, RagCode verifies if the underlying file chunk still exists on disk via `os.Stat()`. Results from deleted files are **silently filtered out** — they never reach the AI agent.
+- **Lazy Stale Cleanup (Auto-Purge)**: When a stale file is discovered during a search, the engine doesn't just warn — it triggers an **asynchronous deletion** of all vectors for that file from every language collection in the workspace (Go, Python, PHP, docs). This is a zero-cost self-healing mechanism:
+
+```mermaid
+flowchart LR
+    A[Query Result] --> B{os.Stat}
+    B -->|exists| C[Include in response]
+    B -->|not found| D[Filter from response]
+    D --> E["go CleanupStaleFiles()"]
+    E --> F["DeleteByFilter × ALL collections"]
+    F --> G[Qdrant cleaned]
+```
+
+- **Deduplication Cooldown (10min TTL)**: A `sync.Map` cache prevents the same stale file from being deleted repeatedly across consecutive queries. Entries expire after 10 minutes, allowing retries if a previous cleanup failed.
+- **Warning Injection with Auto-Cleanup Note**: The response includes a `🧹 N stale file(s) detected and filtered out. Auto-cleanup triggered.` message, giving the AI full observability into what happened.
 - **Chronological Awareness**: The response schema appends `index_age` (e.g., `"3 minutes ago"`) and real-time state (`indexing_progress`) so the AI makes decisions based strictly on cache validity.
 
 ---

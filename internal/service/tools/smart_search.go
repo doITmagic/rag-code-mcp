@@ -47,7 +47,9 @@ func (t *SmartSearchTool) Description() string {
 		"Use 'mode'=\"strict_docs\" when searching for architectural plans or summaries. " +
 		"Use 'mode'=\"all\" or omit for broad scans. " +
 		"Set 'min_score' (0.0-1.0) to filter out low-relevance results. When omitted, an automatic threshold is applied: " +
-		"if the top result scores above 0.70, results below 40% of the top score are automatically pruned."
+		"if the top result scores above 0.70, results below 40% of the top score are automatically pruned. " +
+		"Set 'include_reasons' to true to include a 'match_reasons' field in each result, explaining which fields " +
+		"(symbol_name, signature, content, docstring) contributed to the match — useful for understanding result relevance."
 }
 
 type SmartSearchInput struct {
@@ -57,6 +59,7 @@ type SmartSearchInput struct {
 	MinScore           float32 `json:"min_score,omitempty"`
 	IncludeFullContent bool    `json:"include_full_content,omitempty"`
 	IncludeDocs        bool    `json:"include_docs,omitempty"`
+	IncludeReasons     bool    `json:"include_reasons,omitempty"`
 	Mode               string  `json:"mode,omitempty"`
 }
 
@@ -125,7 +128,7 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 
 	isFallback := sr.meta.collection == "fallback"
 	response := t.buildResponseMeta(sr.meta, useCompact)
-	serializeResults(&response, merged, useCompact, isFallback)
+	serializeResults(&response, merged, useCompact, isFallback, query, input.IncludeReasons)
 
 	return response.JSON()
 }

@@ -237,7 +237,9 @@ func (t *SmartSearchTool) buildResponseMeta(meta searchMetadata, useCompact bool
 
 // resultToMap converts a mergedResult to the output map format.
 // includeContent controls whether the full source code is included.
-func resultToMap(m mergedResult, includeContent bool) map[string]any {
+// When includeReasons is true, a match_reasons field is added explaining
+// which payload fields (symbol_name, signature, content, docstring) matched the query.
+func resultToMap(m mergedResult, includeContent bool, query string, includeReasons bool) map[string]any {
 	item := map[string]any{
 		"score":      m.score,
 		"file_path":  m.filePath,
@@ -256,6 +258,9 @@ func resultToMap(m mergedResult, includeContent bool) map[string]any {
 	}
 	if m.source != "" {
 		item["_source"] = m.source
+	}
+	if includeReasons && query != "" {
+		item["match_reasons"] = scoring.DetectMatchReasons(query, m.name, m.signature, m.content, m.docstring)
 	}
 	return item
 }
@@ -276,14 +281,15 @@ func buildResultsMessage(count int, useCompact, isFallback bool) string {
 
 // serializeResults populates the ToolResponse with either compact or full result data,
 // calculates telemetry savings, and detects stale indexed files.
-func serializeResults(response *ToolResponse, merged []mergedResult, useCompact, isFallback bool) {
+// query and includeReasons control the optional match_reasons annotation per result.
+func serializeResults(response *ToolResponse, merged []mergedResult, useCompact, isFallback bool, query string, includeReasons bool) {
 	data := make([]map[string]any, 0, len(merged))
 	var baselineBytes, actualBytes int64
 	seenFiles := make(map[string]bool)
 	var staleFiles []string
 
 	for _, m := range merged {
-		data = append(data, resultToMap(m, !useCompact))
+		data = append(data, resultToMap(m, !useCompact, query, includeReasons))
 
 		if !useCompact {
 			actualBytes += int64(len(m.content))

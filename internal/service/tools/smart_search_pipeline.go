@@ -349,27 +349,29 @@ func buildResultsMessage(count int, useCompact, isFallback bool) string {
 func serializeResults(response *ToolResponse, merged []mergedResult, useCompact, isFallback bool, query string, includeReasons bool) []string {
 	var validResults []map[string]any
 	var baselineBytes, actualBytes int64
+	// seenFiles tracks file paths we've already stat'd:
+	// value true = file exists, false = stale (doesn't exist on disk)
 	seenFiles := make(map[string]bool)
+	// fileSizes caches file sizes for baseline telemetry deduplication
+	fileSizes := make(map[string]int64)
 	var staleFiles []string
 
 	for _, m := range merged {
-		// Stale file tracking: check if file still exists on disk
-		if !seenFiles[m.filePath] {
-			seenFiles[m.filePath] = true
-			if _, err := os.Stat(m.filePath); os.IsNotExist(err) {
+		// Stale file tracking: check if file still exists on disk (once per path)
+		if _, checked := seenFiles[m.filePath]; !checked {
+			if info, err := os.Stat(m.filePath); os.IsNotExist(err) {
+				seenFiles[m.filePath] = false
 				staleFiles = append(staleFiles, m.filePath)
+			} else if err == nil {
+				seenFiles[m.filePath] = true
+				fileSizes[m.filePath] = info.Size()
+			} else {
+				seenFiles[m.filePath] = true // stat error but file might exist
 			}
 		}
 
 		// Skip results from stale files — don't include in response
-		isStale := false
-		for _, sf := range staleFiles {
-			if m.filePath == sf {
-				isStale = true
-				break
-			}
-		}
-		if isStale {
+		if !seenFiles[m.filePath] {
 			continue
 		}
 
@@ -378,11 +380,11 @@ func serializeResults(response *ToolResponse, merged []mergedResult, useCompact,
 		if !useCompact {
 			actualBytes += int64(len(m.content))
 		}
+	}
 
-		// Telemetry: only count existing files
-		if info, err := os.Stat(m.filePath); err == nil {
-			baselineBytes += info.Size()
-		}
+	// Telemetry: baseline = sum of unique file sizes (deduplicated)
+	for _, size := range fileSizes {
+		baselineBytes += size
 	}
 
 	response.Message = buildResultsMessage(len(validResults), useCompact, isFallback)

@@ -1,6 +1,6 @@
 # Documentation Rebuild Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> Note: Execute this plan task-by-task, completing and validating each step before moving on to the next.
 
 **Goal:** Completely rebuild the RagCode MCP documentation from the source code truth, removing outdated references, translating Romanian to English, and highlighting the ~70% new features.
 

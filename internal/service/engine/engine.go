@@ -55,6 +55,10 @@ type Engine struct {
 	// Key: workspace ID, Value: time.Time of last resume attempt.
 	// Prevents CPU/log churn when indexing keeps failing (e.g. Ollama down).
 	resumeAttempts sync.Map
+
+	// connectTriggered tracks whether background indexing was automatically
+	// triggered for a workspace ID upon initial daemon resolution.
+	connectTriggered sync.Map
 }
 
 // detectionCacheEntry wraps a cached WorkspaceContext with an expiry.
@@ -263,17 +267,29 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 	// surface it so the agent can see exactly what happened in the response.
 	if resp.PathResolutionSource != "" && resp.PathResolutionSource != source {
 		wctx.DetectionSource = resp.PathResolutionSource
-		logger.Instance.Info("[WS-DETECT] ◀ Resolver override: source changed %s → %s (root: %s)",
+		logger.Instance.Info("[DAEMON] [WS-DETECT] ◀ Resolver override: source changed %s → %s (root: %s)",
 			source, resp.PathResolutionSource, wctx.Root)
 	}
 
-	logger.Instance.Info("[WS-DETECT] ◀ Resolved: root=%s, id=%s, branch=%s, source=%s, risk=%s",
+	logger.Instance.Info("[DAEMON] [WS-DETECT] ◀ Resolved: root=%s, id=%s, branch=%s, source=%s, risk=%s",
 		wctx.Root, wctx.ID, wctx.Branch, source, wctx.MismatchRisk)
 
 	// Inform the adapter of the resolved workspace root via response header.
 	// The adapter reads this header once and caches it as sticky X-Workspace-Root
 	// for all subsequent requests — eliminating repeated resolver cascades.
 	transport.SetResponseHeader(ctx, "X-Resolved-Workspace", wctx.Root)
+
+	// Auto-trigger background indexing for the resolved workspace so the
+	// knowledge base is warmed up or synced with disk immediately.
+	// We use connectTriggered to ensure this only happens ONCE per WorkspaceID
+	// per daemon lifetime, preventing full index scans on every cache miss.
+	if _, triggered := e.connectTriggered.LoadOrStore(wctx.ID, true); !triggered {
+		// StartIndexingAsync is internally guarded against duplicate concurrent runs.
+		if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); !alreadyRunning {
+			logger.Instance.Info("[DAEMON] [WS-DETECT] Auto-triggering background index for resolved workspace: %s", wctx.Root)
+			go e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+		}
+	}
 
 	// Don't cache entries that require reindex or are high-risk — let next call re-evaluate
 	if !wctx.ReindexRequired && wctx.MismatchRisk != "high" {

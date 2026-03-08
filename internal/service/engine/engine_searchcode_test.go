@@ -327,6 +327,11 @@ func TestSearchCodeAutoResumesInterruptedIndexing(t *testing.T) {
 	wsRoot := t.TempDir()
 	eng.SetResolver(resolver.New(resolver.Dependencies{Detector: &mockDirDetector{root: wsRoot}}))
 
+	// Pre-fill the connect trigger so we test the search-based auto-resume,
+	// not the daemon's on-connect auto-warmup.
+	wsID := contract.DeriveWorkspaceID(wsRoot, "", "")
+	eng.connectTriggered.Store(wsID, true)
+
 	// Detect context to learn the workspace ID (needed for index_status.json)
 	wctx, err := eng.DetectContext(context.Background(), "dummy.go")
 	if err != nil || wctx == nil {
@@ -346,6 +351,11 @@ func TestSearchCodeAutoResumesInterruptedIndexing(t *testing.T) {
 		Languages:     map[string]IndexLanguageProgress{},
 	}
 	saveIndexStatus(wsRoot, &status)
+
+	// Pre-emptively set connectTriggered so that DetectContext doesn't
+	// automatically kick off indexing directly when it is called entirely
+	// bypassing the auto-resume retry mechanism we're trying to test here.
+	eng.connectTriggered.Store(wctx.ID, true)
 
 	// Make the go collection exist so SearchCode gets past the fast-fail check
 	goColl := CollectionNameFor(wctx.ID, "go")
@@ -367,11 +377,16 @@ func TestSearchCodeAutoResumesInterruptedIndexing(t *testing.T) {
 
 	// Second call within cooldown — should NOT trigger another resume attempt.
 	// We verify this by checking that resumeAttempts still holds the same timestamp.
-	first, _ := eng.resumeAttempts.Load(wctx.ID)
+	first, okFirst := eng.resumeAttempts.Load(wctx.ID)
 	_, _ = eng.SearchCode(context.Background(), "dummy.go", "test", 10, false)
-	second, _ := eng.resumeAttempts.Load(wctx.ID)
-	if first.(time.Time) != second.(time.Time) {
-		t.Error("cooldown violated: auto-resume was triggered again within the 5-minute window")
+	second, okSecond := eng.resumeAttempts.Load(wctx.ID)
+	
+	if okFirst && okSecond {
+		if first.(time.Time) != second.(time.Time) {
+			t.Error("cooldown violated: auto-resume was triggered again within the 5-minute window")
+		}
+	} else {
+		t.Error("expected resumeAttempts to be populated for both calls")
 	}
 
 	// Stop the progress flusher goroutine before the test returns.

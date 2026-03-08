@@ -67,3 +67,7 @@ build-binaries.sh
 # Debug logs
 startup_debug.txt
 windsurf_debug_log.txt
+
+# Worktrees
+.worktrees/
+worktrees/

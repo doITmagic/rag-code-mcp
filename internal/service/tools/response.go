@@ -3,10 +3,9 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
-	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
+	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
 	"github.com/doITmagic/rag-code-mcp/pkg/telemetry"
 )
 
@@ -20,85 +19,15 @@ type ToolResponse struct {
 	Data    interface{}     `json:"data,omitempty"`    // Tool-specific output data
 }
 
-// IndexingProgressSummary is a compact view of the current indexing job.
-type IndexingProgressSummary struct {
-	State     string                      `json:"state"`               // starting|running|completed|failed
-	Elapsed   string                      `json:"elapsed"`             // e.g. "1m23s"
-	IndexAge  string                      `json:"index_age,omitempty"` // e.g. "3 minutes ago" — populated when indexing is completed
-	Error     string                      `json:"error,omitempty"`     // user-facing error message when state="failed"
-	Languages map[string]LangProgressItem `json:"languages,omitempty"` // per-language stats
-}
-
-// LangProgressItem holds progress stats for a single language.
-type LangProgressItem struct {
-	DoneFiles  int `json:"done_files"`
-	TotalFiles int `json:"total_files"`
-	Percent    int `json:"percent"`
-}
-
 // ContextMetadata provides info about which workspace and sources were used.
 type ContextMetadata struct {
-	WorkspaceRoot    string                        `json:"workspace_root,omitempty"`
-	DetectionSource  string                        `json:"detection_source,omitempty"` // "explicit_file_path", "registry_fallback", "cwd_detection"
-	Language         string                        `json:"language,omitempty"`
-	Collection       string                        `json:"collection,omitempty"`
-	Telemetry        *telemetry.Savings            `json:"telemetry,omitempty"`
-	IndexingProgress *IndexingProgressSummary      `json:"indexing_progress,omitempty"` // present when indexing is in progress or just completed
-	SessionMetrics   *telemetry.AggregatedMetrics  `json:"session_metrics,omitempty"`   // cumulative search stats from .ragcode/search_metrics.jsonl
-}
-
-// BuildIndexingProgress reads the live progress for a workspace and returns a summary.
-// workspaceRoot is used to load persisted status from disc when not in memory (e.g. after restart).
-// Returns nil if no indexing job has been tracked for this workspace.
-func BuildIndexingProgress(eng *engine.Engine, workspaceID, workspaceRoot string) *IndexingProgressSummary {
-	if eng == nil {
-		return nil
-	}
-	prog := eng.GetIndexProgress(workspaceID, workspaceRoot)
-	if prog == nil {
-		return nil
-	}
-	elapsed := time.Since(prog.StartedAt).Round(time.Second).String()
-	var indexAge string
-	if prog.CompletedAt != nil {
-		elapsed = prog.CompletedAt.Sub(prog.StartedAt).Round(time.Second).String()
-		indexAge = formatAge(time.Since(*prog.CompletedAt))
-	}
-	langs := make(map[string]LangProgressItem, len(prog.Languages))
-	for lang, lp := range prog.Languages {
-		langs[lang] = LangProgressItem{
-			DoneFiles:  lp.DoneFiles,
-			TotalFiles: lp.TotalFiles,
-			Percent:    lp.Percent,
-		}
-	}
-	summary := &IndexingProgressSummary{
-		State:     prog.State,
-		Elapsed:   elapsed,
-		IndexAge:  indexAge,
-		Languages: langs,
-	}
-
-	// Surface the error message so users know WHY indexing failed
-	if prog.State == "failed" && prog.Error != "" {
-		summary.Error = prog.Error
-	}
-
-	return summary
-}
-
-// formatAge returns a human-readable string like "just now", "5 minutes ago", "2 hours ago".
-func formatAge(d time.Duration) string {
-	switch {
-	case d < 2*time.Minute:
-		return "just now"
-	case d < time.Hour:
-		return fmt.Sprintf("%d minutes ago", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%d hours ago", int(d.Hours()))
-	default:
-		return fmt.Sprintf("%d days ago", int(d.Hours()/24))
-	}
+	WorkspaceRoot   string                       `json:"workspace_root,omitempty"`
+	DetectionSource string                       `json:"detection_source,omitempty"` // "explicit_file_path", "registry_fallback", "cwd_detection"
+	Language        string                       `json:"language,omitempty"`
+	Collection      string                       `json:"collection,omitempty"`
+	Telemetry       *telemetry.Savings           `json:"telemetry,omitempty"`
+	IndexingStatus  *indexer.IndexStatus         `json:"indexing_progress,omitempty"` // present when indexing is in progress or just completed
+	SessionMetrics  *telemetry.AggregatedMetrics `json:"session_metrics,omitempty"`   // cumulative search stats from .ragcode/search_metrics.jsonl
 }
 
 // JSON returns the marshaled JSON string of the response.
@@ -117,28 +46,6 @@ func (r *ToolResponse) SetFallbackWarning(inferred bool) {
 	}
 }
 
-// buildIndexingMessage constructs a rich message for indexing-in-progress or indexing-started
-// scenarios that includes progress info and explicit retry guidance for agents.
-func buildIndexingMessage(emoji, workspace string, progress *IndexingProgressSummary) string {
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("%s Workspace '%s' is currently being indexed.", emoji, workspace))
-
-	if progress != nil {
-		if progress.Elapsed != "" {
-			sb.WriteString(fmt.Sprintf(" Elapsed: %s.", progress.Elapsed))
-		}
-		// Summarize per-language progress
-		for lang, lp := range progress.Languages {
-			if lp.TotalFiles > 0 {
-				sb.WriteString(fmt.Sprintf(" [%s: %d/%d files (%d%%)]", lang, lp.DoneFiles, lp.TotalFiles, lp.Percent))
-			}
-		}
-	}
-
-	sb.WriteString(" Please wait a moment and try your search again.")
-	return sb.String()
-}
-
 // ContextFromWorkspace builds a ContextMetadata from a resolved WorkspaceContext.
 func ContextFromWorkspace(wctx *engine.WorkspaceContext) ContextMetadata {
 	if wctx == nil {
@@ -150,9 +57,11 @@ func ContextFromWorkspace(wctx *engine.WorkspaceContext) ContextMetadata {
 	}
 }
 
-// ContextFromWorkspaceWithProgress builds ContextMetadata and attaches live indexing progress.
-func ContextFromWorkspaceWithProgress(wctx *engine.WorkspaceContext, eng *engine.Engine) ContextMetadata {
+// ContextFromWorkspaceWithStatus builds ContextMetadata and attaches indexing status from disk.
+func ContextFromWorkspaceWithStatus(wctx *engine.WorkspaceContext, eng *engine.Engine) ContextMetadata {
 	ctx := ContextFromWorkspace(wctx)
-	ctx.IndexingProgress = BuildIndexingProgress(eng, wctx.ID, wctx.Root)
+	if eng != nil {
+		ctx.IndexingStatus = eng.GetIndexStatus(wctx.Root)
+	}
 	return ctx
 }

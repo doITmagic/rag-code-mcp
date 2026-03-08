@@ -314,7 +314,7 @@ func (t *ReadFileContextTool) buildResponse(wctx *engine.WorkspaceContext, res C
 		resp.Context = ContextMetadata{
 			WorkspaceRoot:    wctx.Root,
 			DetectionSource:  wctx.DetectionSource,
-			IndexingProgress: BuildIndexingProgress(t.engine, wctx.ID, wctx.Root),
+			IndexingStatus: nil,
 		}
 	}
 

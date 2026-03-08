@@ -95,9 +95,7 @@ func ValidateEmail(email string) bool {
 	eng.SetResolver(resolver.New(resolver.Dependencies{Detector: &mockDirDetector{root: root}}))
 
 	t.Cleanup(func() {
-		if eng.progress != nil {
-			eng.progress.stop()
-		}
+
 	})
 
 	return root, eng

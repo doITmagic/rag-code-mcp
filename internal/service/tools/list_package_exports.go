@@ -98,7 +98,7 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 		"package": packageName,
 	}
 
-	idx := t.engine.GetIndexProgress(wctx.ID, wctx.Root)
+
 	allResults, err := t.engine.ExactSearchPolyglot(ctx, wctx.ID, filter, 1000)
 	if err != nil {
 		var noCollections *engine.ErrNoCollectionsFound
@@ -106,11 +106,7 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 			resp := ToolResponse{
 				Status:  "indexing_required",
 				Message: fmt.Sprintf("⏳ Workspace '%s' is not indexed yet. Indexing is required for complete results.", wctx.Root),
-				Context: ContextFromWorkspaceWithProgress(wctx, t.engine),
-			}
-			if idx != nil {
-				resp.Status = "indexing_in_progress"
-				resp.Data = map[string]any{"indexing": idx}
+				Context: ContextFromWorkspaceWithStatus(wctx, t.engine),
 			}
 			return resp.JSON()
 		}
@@ -123,7 +119,7 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 		resp := ToolResponse{
 			Status:  "success",
 			Message: fmt.Sprintf("No exported symbols found in package '%s'", packageName),
-			Context: ContextFromWorkspaceWithProgress(wctx, t.engine),
+			Context: ContextFromWorkspaceWithStatus(wctx, t.engine),
 		}
 		return resp.JSON()
 	}
@@ -203,7 +199,7 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 		resp := ToolResponse{
 			Status:  "success",
 			Message: fmt.Sprintf("No exported symbols found in package '%s' (after filtering)", packageName),
-			Context: ContextFromWorkspaceWithProgress(wctx, t.engine),
+			Context: ContextFromWorkspaceWithStatus(wctx, t.engine),
 		}
 		return resp.JSON()
 	}
@@ -255,11 +251,7 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 			WorkspaceRoot:    wctx.Root,
 			DetectionSource:  wctx.DetectionSource,
 			Telemetry:        telemetry.CalculateSavings(baselineBytes, actualBytes),
-			IndexingProgress: BuildIndexingProgress(t.engine, wctx.ID, wctx.Root),
 		},
-	}
-	if idx != nil && (idx.State == "starting" || idx.State == "running") {
-		resp.Data = map[string]any{"exports": exports, "indexing": idx}
 	}
 
 	return resp.JSON()

@@ -107,7 +107,7 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 		return resp.JSON()
 	}
 
-	idx := t.engine.GetIndexProgress(wctx.ID, wctx.Root)
+	idx := t.engine.GetIndexStatus(wctx.Root)
 
 	visited := make(map[string]bool)
 
@@ -128,7 +128,7 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 			resp := ToolResponse{
 				Status:  "indexing_required",
 				Message: fmt.Sprintf("⏳ Workspace '%s' is not indexed yet. Indexing is required for complete call hierarchy results.", wctx.Root),
-				Context: ContextFromWorkspaceWithProgress(wctx, t.engine),
+				Context: ContextFromWorkspaceWithStatus(wctx, t.engine),
 			}
 			if idx != nil {
 				resp.Status = "indexing_in_progress"
@@ -168,7 +168,7 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 			WorkspaceRoot:    wctx.Root,
 			DetectionSource:  wctx.DetectionSource,
 			Telemetry:        telemetry.CalculateSavings(baselineBytes, actualBytes),
-			IndexingProgress: BuildIndexingProgress(t.engine, wctx.ID, wctx.Root),
+			IndexingStatus: nil,
 		},
 	}
 	return resp.JSON()

@@ -10,6 +10,7 @@ import (
 
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
+	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
 	"github.com/doITmagic/rag-code-mcp/pkg/scoring"
 	"github.com/doITmagic/rag-code-mcp/pkg/telemetry"
 )
@@ -202,12 +203,9 @@ func applyScoreFilter(merged []mergedResult, minScore float32) []mergedResult {
 func (t *SmartSearchTool) buildResponseMeta(meta searchMetadata) ToolResponse {
 	isFallback := meta.collection == "fallback"
 
-	idxProgress := BuildIndexingProgress(t.engine, meta.workspaceID, meta.workspaceRoot)
-	if isFallback && idxProgress == nil {
-		idxProgress = &IndexingProgressSummary{
-			State:   "starting",
-			Elapsed: "0s",
-		}
+	var idxStatus *indexer.IndexStatus
+	if meta.workspaceRoot != "" {
+			idxStatus = indexer.LoadIndexStatus(meta.workspaceRoot)
 	}
 
 	response := ToolResponse{
@@ -217,7 +215,7 @@ func (t *SmartSearchTool) buildResponseMeta(meta searchMetadata) ToolResponse {
 			DetectionSource:  meta.detectionSource,
 			Language:         meta.language,
 			Collection:       meta.collection,
-			IndexingProgress: idxProgress,
+			IndexingStatus: idxStatus,
 			SessionMetrics:   telemetry.ReadAggregatedMetrics(meta.workspaceRoot),
 		},
 	}
@@ -240,7 +238,7 @@ func (t *SmartSearchTool) buildResponseMeta(meta searchMetadata) ToolResponse {
 	}
 
 	if isFallback {
-		fallbackNote := buildFallbackNote(idxProgress)
+		fallbackNote := "⚡ Fallback results (AST/lexical, not vector). Indexing in background — retry shortly for semantic vector results. Current results may miss semantically related code."
 		if response.Warning != "" {
 			response.Warning += " | " + fallbackNote
 		} else {
@@ -251,49 +249,7 @@ func (t *SmartSearchTool) buildResponseMeta(meta searchMetadata) ToolResponse {
 	return response
 }
 
-// buildFallbackNote constructs a dynamic fallback warning that includes
-// live indexing progress data (per-language %, elapsed, ready languages).
-func buildFallbackNote(progress *IndexingProgressSummary) string {
-	var sb strings.Builder
-	sb.WriteString("⚡ Fallback results (AST/lexical, not vector). ")
 
-	if progress != nil && progress.Elapsed != "" && progress.Elapsed != "0s" {
-		sb.WriteString(fmt.Sprintf("Indexing elapsed: %s. ", progress.Elapsed))
-	}
-
-	// Report per-language progress and collect fully-indexed langs
-	var readyLangs []string
-	if progress != nil && len(progress.Languages) > 0 {
-		var langParts []string
-		for lang, lp := range progress.Languages {
-			if lp.TotalFiles == 0 {
-				continue
-			}
-			entry := fmt.Sprintf("%s %d%%", lang, lp.Percent)
-			if lp.Percent == 100 {
-				entry += " ✓"
-				readyLangs = append(readyLangs, lang)
-			}
-			langParts = append(langParts, entry)
-		}
-		if len(langParts) > 0 {
-			sb.WriteString("Progress: ")
-			sb.WriteString(strings.Join(langParts, " · "))
-			sb.WriteString(". ")
-		}
-	}
-
-	// Actionable hint: tell agent which langs can use vector search now
-	if len(readyLangs) > 0 {
-		sb.WriteString(fmt.Sprintf("Vector search ready for: %s — retry for higher-quality results on those files. ",
-			strings.Join(readyLangs, ", ")))
-	} else {
-		sb.WriteString("Indexing in background — retry shortly for semantic vector results. ")
-	}
-
-	sb.WriteString("Current results may miss semantically related code.")
-	return sb.String()
-}
 
 // ─── Result Serialization ────────────────────────────────────────────────────
 

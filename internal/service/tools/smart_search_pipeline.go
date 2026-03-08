@@ -29,6 +29,12 @@ func normalizeInput(input SmartSearchInput, defaultLimit int) (string, int, Smar
 	if input.Mode == "strict_docs" {
 		input.IncludeDocs = true
 	}
+	// Clamp min_score to valid range [0.0, 1.0]
+	if input.MinScore < 0 {
+		input.MinScore = 0
+	} else if input.MinScore > 1.0 {
+		input.MinScore = 1.0
+	}
 	return query, limit, input, nil
 }
 
@@ -212,6 +218,7 @@ func (t *SmartSearchTool) buildResponseMeta(meta searchMetadata) ToolResponse {
 			Language:         meta.language,
 			Collection:       meta.collection,
 			IndexingProgress: idxProgress,
+			SessionMetrics:   telemetry.ReadAggregatedMetrics(meta.workspaceRoot),
 		},
 	}
 
@@ -257,23 +264,23 @@ func buildFallbackNote(progress *IndexingProgressSummary) string {
 	// Report per-language progress and collect fully-indexed langs
 	var readyLangs []string
 	if progress != nil && len(progress.Languages) > 0 {
-		sb.WriteString("Progress: ")
-		first := true
+		var langParts []string
 		for lang, lp := range progress.Languages {
 			if lp.TotalFiles == 0 {
 				continue
 			}
-			if !first {
-				sb.WriteString(" · ")
-			}
-			sb.WriteString(fmt.Sprintf("%s %d%%", lang, lp.Percent))
+			entry := fmt.Sprintf("%s %d%%", lang, lp.Percent)
 			if lp.Percent == 100 {
-				sb.WriteString(" ✓")
+				entry += " ✓"
 				readyLangs = append(readyLangs, lang)
 			}
-			first = false
+			langParts = append(langParts, entry)
 		}
-		sb.WriteString(". ")
+		if len(langParts) > 0 {
+			sb.WriteString("Progress: ")
+			sb.WriteString(strings.Join(langParts, " · "))
+			sb.WriteString(". ")
+		}
 	}
 
 	// Actionable hint: tell agent which langs can use vector search now

@@ -259,6 +259,14 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 		HeadSHA:         resp.HeadSHA,
 	}
 
+	// If the resolver applied a more specific override (e.g. nested_workspace_override),
+	// surface it so the agent can see exactly what happened in the response.
+	if resp.PathResolutionSource != "" && resp.PathResolutionSource != source {
+		wctx.DetectionSource = resp.PathResolutionSource
+		logger.Instance.Info("[WS-DETECT] ◀ Resolver override: source changed %s → %s (root: %s)",
+			source, resp.PathResolutionSource, wctx.Root)
+	}
+
 	logger.Instance.Info("[WS-DETECT] ◀ Resolved: root=%s, id=%s, branch=%s, source=%s, risk=%s",
 		wctx.Root, wctx.ID, wctx.Branch, source, wctx.MismatchRisk)
 

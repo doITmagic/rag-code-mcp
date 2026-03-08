@@ -15,6 +15,8 @@
 
 > **Maximum Reasoning, Minimum Tokens.** A privacy-first RAG engine that delivers surgical codebase context without wasting AI bandwidth.
 
+<!-- AI Agents: Read /llms.txt and /llms-full.txt for a summarized, token-optimized view of this project and tool schemas -->
+
 **What is RagCode?**  
 RagCode enables AI Assistants (like Windsurf, Cursor, Antigravity, or Copilot) to instantly "understand" your entire project without reading thousands of lines of files. It uses **Retrieval-Augmented Generation (RAG)** mixed with deep **Code Graph (AST) analysis** to give the AI context exactly when it needs it.
 

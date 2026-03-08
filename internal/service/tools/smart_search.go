@@ -226,7 +226,21 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 		useCompact = false
 	}
 
+	// Detect if results came from fallback AST search
+	isFallback := collection == "fallback"
+
 	// Build response
+	idxProgress := BuildIndexingProgress(t.engine, workspaceID, workspaceRoot)
+
+	// If we're serving fallback results and indexing just started (no progress tracked yet),
+	// synthesize a minimal progress indicator so the agent knows indexing is happening.
+	if isFallback && idxProgress == nil {
+		idxProgress = &IndexingProgressSummary{
+			State:   "starting",
+			Elapsed: "0s",
+		}
+	}
+
 	response := ToolResponse{
 		Status: "success",
 		Context: ContextMetadata{
@@ -234,12 +248,24 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 			DetectionSource:  detectionSource,
 			Language:         language,
 			Collection:       collection,
-			IndexingProgress: BuildIndexingProgress(t.engine, workspaceID, workspaceRoot),
+			IndexingProgress: idxProgress,
 		},
 	}
 
 	if mismatchRisk != "" && mismatchRisk != "low" {
 		response.Warning = fmt.Sprintf("Branch mismatch risk: %s — results may be from a different branch.", mismatchRisk)
+	}
+
+	// Explicit fallback notice for AI agents
+	if isFallback {
+		fallbackNote := "⚡ NOTE: These results are from a fast AST-based fallback search (no vector index available yet). " +
+			"Indexing is running in the background — subsequent searches will use semantic vector matching for better accuracy. " +
+			"Current results are based on lexical/structural matching and may miss semantically related code."
+		if response.Warning != "" {
+			response.Warning += " | " + fallbackNote
+		} else {
+			response.Warning = fallbackNote
+		}
 	}
 
 	// Calculate telemetry
@@ -250,7 +276,11 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 
 	if useCompact {
 		// COMPACT MODE: return only metadata, no source code
-		response.Message = fmt.Sprintf("📋 Found %d results (compact view). Use rag_read_file_context to get full source for specific results.", len(merged))
+		if isFallback {
+			response.Message = fmt.Sprintf("⚡ Found %d results via AST fallback (compact view). Indexing in progress — results will improve. Use rag_read_file_context for full source.", len(merged))
+		} else {
+			response.Message = fmt.Sprintf("📋 Found %d results (compact view). Use rag_read_file_context to get full source for specific results.", len(merged))
+		}
 		compactData := make([]map[string]any, 0, len(merged))
 		for _, m := range merged {
 			item := map[string]any{
@@ -284,7 +314,11 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 		response.Data = compactData
 	} else {
 		// FULL MODE: return complete content (high confidence, few results)
-		response.Message = fmt.Sprintf("🎯 Found %d high-confidence results with full source code.", len(merged))
+		if isFallback {
+			response.Message = fmt.Sprintf("⚡ Found %d results via AST fallback with full source code. Indexing in progress — results will improve.", len(merged))
+		} else {
+			response.Message = fmt.Sprintf("🎯 Found %d high-confidence results with full source code.", len(merged))
+		}
 		fullData := make([]map[string]any, 0, len(merged))
 		for _, m := range merged {
 			item := map[string]any{

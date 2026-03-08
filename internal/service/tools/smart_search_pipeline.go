@@ -220,9 +220,7 @@ func (t *SmartSearchTool) buildResponseMeta(meta searchMetadata, useCompact bool
 	}
 
 	if isFallback {
-		fallbackNote := "⚡ NOTE: These results are from a fast AST-based fallback search (no vector index available yet). " +
-			"Indexing is running in the background — subsequent searches will use semantic vector matching for better accuracy. " +
-			"Current results are based on lexical/structural matching and may miss semantically related code."
+		fallbackNote := buildFallbackNote(idxProgress)
 		if response.Warning != "" {
 			response.Warning += " | " + fallbackNote
 		} else {
@@ -231,6 +229,50 @@ func (t *SmartSearchTool) buildResponseMeta(meta searchMetadata, useCompact bool
 	}
 
 	return response
+}
+
+// buildFallbackNote constructs a dynamic fallback warning that includes
+// live indexing progress data (per-language %, elapsed, ready languages).
+func buildFallbackNote(progress *IndexingProgressSummary) string {
+	var sb strings.Builder
+	sb.WriteString("⚡ Fallback results (AST/lexical, not vector). ")
+
+	if progress != nil && progress.Elapsed != "" && progress.Elapsed != "0s" {
+		sb.WriteString(fmt.Sprintf("Indexing elapsed: %s. ", progress.Elapsed))
+	}
+
+	// Report per-language progress and collect fully-indexed langs
+	var readyLangs []string
+	if progress != nil && len(progress.Languages) > 0 {
+		sb.WriteString("Progress: ")
+		first := true
+		for lang, lp := range progress.Languages {
+			if lp.TotalFiles == 0 {
+				continue
+			}
+			if !first {
+				sb.WriteString(" · ")
+			}
+			sb.WriteString(fmt.Sprintf("%s %d%%", lang, lp.Percent))
+			if lp.Percent == 100 {
+				sb.WriteString(" ✓")
+				readyLangs = append(readyLangs, lang)
+			}
+			first = false
+		}
+		sb.WriteString(". ")
+	}
+
+	// Actionable hint: tell agent which langs can use vector search now
+	if len(readyLangs) > 0 {
+		sb.WriteString(fmt.Sprintf("Vector search ready for: %s — retry for higher-quality results on those files. ",
+			strings.Join(readyLangs, ", ")))
+	} else {
+		sb.WriteString("Indexing in background — retry shortly for semantic vector results. ")
+	}
+
+	sb.WriteString("Current results may miss semantically related code.")
+	return sb.String()
 }
 
 // ─── Result Serialization ────────────────────────────────────────────────────

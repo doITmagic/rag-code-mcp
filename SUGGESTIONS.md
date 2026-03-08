@@ -40,13 +40,14 @@ Based on rigorous real-world Agent usage, the following core features have been 
    - **Compact Mode**: If >4 results are found, returns only the signatures, paths, and scores (costs ~500 tokens).
    - **Full Source**: Returns raw source code *only* for highly-confident, tight matches.
 
-### 7. ✅ IMPLEMENTED — Indexing Status & Health Metrics
+### 7. ✅ IMPLEMENTED — Indexing Status & Health Metrics + Lazy Stale Cleanup
 **Status:** Deployed across all `internal/service/tools/` endpoints.
 
 **Challenge:** Agents would search and hallucinate code that had actually been deleted by the user simply because the Qdrant index was stale.
 **Solution:**
 - **Pre-flight Disk Verification**: `rag_search` verifies `os.Stat` before returning matches.
-- **Active Warning Injection**: If a matched file no longer exists, the Engine injects a `warning` into the JSON payload instructing the AI to request a re-index.
+- **Lazy Stale Cleanup**: Stale results are **filtered out** from the response (they never reach the AI). Additionally, the engine triggers an **async deletion** of all vectors for the stale file from every language collection in the workspace — a self-healing mechanism with a 10-minute dedup cooldown.
+- **Auto-Cleanup Warning**: The response includes a `🧹 N stale file(s) detected and filtered out. Auto-cleanup triggered.` warning giving the AI full observability.
 - **Chronological Awareness**: The response schema appends `index_age` (e.g., `"3 minutes ago"`) and `indexing_progress` strictly to maintain absolute validity.
 
 ### 8. 🔄 PROPOSED — Migrate from `langchaingo` to Native Ollama Client

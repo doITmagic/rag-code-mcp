@@ -212,4 +212,10 @@ func (s *Service) HybridSearch(ctx context.Context, collection string, queryText
 	return results, nil
 }
 
+// DeleteByFilter removes all points matching a metadata filter from a collection.
+// Used by the stale file cleanup system to remove vectors for deleted files.
+func (s *Service) DeleteByFilter(ctx context.Context, collection, key string, value interface{}) error {
+	return s.store.DeleteByFilter(ctx, collection, key, value)
+}
+
 // filterTokens and lexicalMatchScore are now in pkg/scoring.

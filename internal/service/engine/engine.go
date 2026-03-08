@@ -942,3 +942,72 @@ func (e *Engine) handleWatchChange(ctx context.Context, root string, changedFile
 	e.StartIndexingAsync(wctx.Root, wctx.ID, changedFiles, false)
 	return nil
 }
+
+// ─── Stale File Cleanup ──────────────────────────────────────────────────────
+
+// staleCooldown prevents repeatedly deleting the same file from the DB
+// across consecutive search queries. Entries expire after 10 minutes.
+const staleCooldown = 10 * time.Minute
+
+// staleCleanupCache tracks recently cleaned file paths to avoid repeated deletes.
+// Key: "wsID:filePath", Value: time.Time of last cleanup.
+var staleCleanupCache sync.Map
+
+// CleanupStaleFiles removes vectors for deleted files from ALL language collections
+// of a workspace. It runs asynchronously and deduplicates to avoid hammering Qdrant.
+func (e *Engine) CleanupStaleFiles(wsID string, staleFiles []string) {
+	if len(staleFiles) == 0 {
+		return
+	}
+
+	// Deduplicate: skip files cleaned recently
+	now := time.Now()
+	var toClean []string
+	for _, f := range staleFiles {
+		cacheKey := wsID + ":" + f
+		if last, ok := staleCleanupCache.Load(cacheKey); ok {
+			if now.Sub(last.(time.Time)) < staleCooldown {
+				continue
+			}
+		}
+		staleCleanupCache.Store(cacheKey, now)
+		toClean = append(toClean, f)
+	}
+
+	if len(toClean) == 0 {
+		return
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		langs := parser.SupportedLanguages()
+		var totalDeleted int
+
+		for _, filePath := range toClean {
+			for _, lang := range langs {
+				collection := CollectionNameFor(wsID, lang)
+
+				// Check collection exists before attempting delete
+				exists, err := e.search.CollectionExists(ctx, collection)
+				if err != nil || !exists {
+					continue
+				}
+
+				if err := e.search.DeleteByFilter(ctx, collection, "file_path", filePath); err != nil {
+					logger.Instance.Warn("[STALE] Failed to delete vectors for %s from %s: %v", filePath, collection, err)
+					// Remove from cache so retry is possible next query
+					staleCleanupCache.Delete(wsID + ":" + filePath)
+				} else {
+					totalDeleted++
+				}
+			}
+		}
+
+		if totalDeleted > 0 {
+			logger.Instance.Info("[STALE] 🧹 Cleaned %d stale file(s) from %d collection(s) for ws=%s",
+				len(toClean), totalDeleted, filepath.Base(wsID))
+		}
+	}()
+}

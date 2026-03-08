@@ -129,7 +129,12 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 
 	isFallback := sr.meta.collection == "fallback"
 	response := t.buildResponseMeta(sr.meta)
-	serializeResults(&response, merged, useCompact, isFallback, query, input.IncludeReasons)
+	staleFiles := serializeResults(&response, merged, useCompact, isFallback, query, input.IncludeReasons)
+
+	// Trigger async cleanup of stale files from all collections
+	if len(staleFiles) > 0 && sr.meta.workspaceID != "" {
+		t.engine.CleanupStaleFiles(sr.meta.workspaceID, staleFiles)
+	}
 
 	// Record metric asynchronously to avoid blocking response
 	go recordSearchMetric(sr.meta, query, merged, isFallback, response.Context.Telemetry, t0)

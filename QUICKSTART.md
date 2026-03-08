@@ -1,46 +1,61 @@
-# 🚀 RagCode MCP - Quick Start
+# RagCode MCP: The Vibe Coder Path
 
 **Get semantic code search in your IDE in under 5 minutes.**
 
-RagCode is an MCP server that enables AI assistants (Copilot, Cursor, Windsurf, Claude) to understand your codebase through semantic search. Runs 100% locally.
+RagCode is an MCP server that enables autonomous AI assistants (Copilot, Cursor, Windsurf, Claude) to understand your codebase deeply through semantic search. This guide skips the technical details and gets you running immediately.
 
 ---
 
-## 📦 Install
+## 1. Verify Prerequisites
+Ensure you have Docker installed and running on your machine. Everything else will be downloaded automatically.
 
-### Linux
+## 2. Run the Installer
+Run the 1-command installer for your OS. It will download the binary, configure your IDEs, pull the embedding models, and start the local vector database.
+
+**Linux (amd64):**
 ```bash
 curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./rag-code-install -ollama=docker -qdrant=docker
 ```
 
-### macOS (Apple Silicon)
+**macOS (Apple Silicon):**
 ```bash
 curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_arm64.tar.gz | tar xz && ./rag-code-install -ollama=docker -qdrant=docker
 ```
 
-### macOS (Intel)
+**macOS (Intel):**
 ```bash
 curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_amd64.tar.gz | tar xz && ./rag-code-install -ollama=docker -qdrant=docker
 ```
 
-### Windows (PowerShell)
+**Windows (PowerShell):**
 ```powershell
 Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_windows_amd64.zip" -OutFile "ragcode.zip"
 Expand-Archive ragcode.zip -DestinationPath . -Force
 .\rag-code-install.exe -ollama=docker -qdrant=docker
 ```
+> Note: Windows requires Docker Desktop installed and running.
 
-### Windows with WSL (alternative)
+---
 
-If you run Docker via WSL and have IDEs on Windows:
+## 3. Your First Query (Zero Config)
 
-```bash
-# Inside WSL terminal
-curl -fsSL https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz && ./rag-code-install -ollama=docker -qdrant=docker
-```
+RagCode is now available in your IDE (Windsurf, Cursor, Antigravity, Claude Desktop). 
 
-Then configure your Windows IDE manually (e.g., Windsurf at `%USERPROFILE%\.codeium\windsurf\mcp_config.json`):
+1. **Open your project folder** in your AI IDE.
+2. **Open the AI Chat** and type your first prompt:
+   ```
+   Please use RagCode to find all authentication functions in this codebase.
+   ```
+3. **Wait 2 seconds**. The AI will automatically call `rag_search`. If the codebase has never been indexed before, RagCode will use its **Fallback AST Search** instantly while Qdrant indexes your files in the background.
 
+There is no step 4. You are done!
+
+---
+
+## Common Variations
+
+**Using WSL on Windows**
+If you run Docker via WSL, run the Linux command inside WSL. Then configure your Windows IDE manually (e.g., Windsurf at `%USERPROFILE%\.codeium\windsurf\mcp_config.json`):
 ```json
 {
   "mcpServers": {
@@ -51,84 +66,20 @@ Then configure your Windows IDE manually (e.g., Windsurf at `%USERPROFILE%\.code
         "OLLAMA_BASE_URL": "http://localhost:11434",
         "OLLAMA_EMBED": "qwen3-embedding:0.6b",
         "QDRANT_URL": "http://localhost:6333"
-      },
-      "disabled": false
+       }
     }
   }
 }
 ```
 
-> **Prerequisite:** Docker must be installed and running.
-
----
-
-## ✅ Verify Installation
-
+**Using Local Ollama instead of Docker**
+If you already run Ollama on macOS or Linux natively:
 ```bash
-# Check binary
-~/.local/share/ragcode/bin/rag-code-mcp --version
-
-# Check services
-docker ps | grep ragcode
-```
-
----
-
-## 🎯 Start Using
-
-1. **Open your project** in Windsurf, Cursor, or VS Code
-2. **Ask your AI assistant:**
-   ```
-   Find all authentication functions in this codebase
-   ```
-3. **RagCode automatically indexes** your project on the first query. You don't need to do anything!
-   - Searching starts immediately.
-   - Results improve as the background indexing progresses.
-
----
-
-## 💡 Manual Indexing (Optional)
-
-If you have a very large project and want to ensure everything is indexed before your first search:
-```
-Please use the 'rag_index_workspace' tool on this project.
-```
-
----
-
-## 🔧 Common Options
-
-```bash
-# Use local Ollama instead of Docker
 ./rag-code-install -ollama=local -qdrant=docker
-
-# Enable GPU acceleration
-./rag-code-install -ollama=docker -qdrant=docker -gpu
-
-# Re-configure IDEs without rebuilding
-./rag-code-install -skip-build
 ```
 
 ---
 
-## 📚 Next Steps
-
-- **[README.md](./README.md)** - Full documentation, all features, configuration
-- **[docs/vscode-copilot-integration.md](./docs/vscode-copilot-integration.md)** - VS Code + Copilot setup
-- **[docs/architecture.md](./docs/architecture.md)** - Technical details
-
----
-
-## 🐛 Quick Troubleshooting
-
-| Problem | Solution |
-|---------|----------|
-| "Could not connect to Qdrant" | Run `docker start ragcode-qdrant` |
-| "Ollama model not found" | Run `ollama pull qwen3-embedding:0.6b` |
-| IDE doesn't see RagCode | Re-run `./rag-code-install -skip-build` |
-
-For more help, see the [README](./README.md) or open an [Issue](https://github.com/doITmagic/rag-code-mcp/issues).
-
----
-
-**Questions?** Open an Issue on [GitHub](https://github.com/doITmagic/rag-code-mcp/issues) 🚀
+## What's Next?
+* Need to use RagCode algorithmically from a script? Read [Headless API Usage](./docs/headless-usage.md).
+* Want to contribute or build from source? Read the [Developer Path](./CONTRIBUTING.md).

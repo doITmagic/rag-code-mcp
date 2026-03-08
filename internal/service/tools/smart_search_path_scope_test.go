@@ -1,17 +1,20 @@
 package tools
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 // TestApplyPathScopingReorders verifies that the adapter correctly uses
 // pkg/scoring.PathProximity to reorder mergedResults.
 func TestApplyPathScopingReorders(t *testing.T) {
 	merged := []mergedResult{
-		{filePath: "/project/vendor/external/deep/nested/file.go", score: 0.90, name: "VendorFunc"},
-		{filePath: "/project/src/agents/handler.go", score: 0.85, name: "AgentFunc"},
-		{filePath: "/project/src/agents/utils.go", score: 0.80, name: "AgentUtil"},
+		{filePath: filepath.FromSlash("/project/vendor/external/deep/nested/file.go"), score: 0.90, name: "VendorFunc"},
+		{filePath: filepath.FromSlash("/project/src/agents/handler.go"), score: 0.85, name: "AgentFunc"},
+		{filePath: filepath.FromSlash("/project/src/agents/utils.go"), score: 0.80, name: "AgentUtil"},
 	}
 
-	scope := "/project/src/agents"
+	scope := filepath.FromSlash("/project/src/agents")
 	result := applyPathScoping(merged, scope)
 
 	if result[0].name != "AgentFunc" && result[0].name != "AgentUtil" {

@@ -11,7 +11,7 @@ The master orchestrator. It manages workspace detection, background indexing job
 Handles semantic and hybrid search logic. It combines embedding generation with vector similarity queries and lexical re-ranking algorithms.
 
 ### [`tools`](./tools)
-Implements the MCP Tool interface. Each file in this directory typically corresponds to one tool exposed to the AI (e.g., `rag_search_code`, `rag_hybrid_search`, `rag_index_workspace`).
+Implements the MCP Tool interface. Each file in this directory typically corresponds to one tool exposed to the AI (e.g., `rag_search`, `rag_find_usages`, `rag_index_workspace`).
 
 ### [`internalutil`](./internalutil)
 Small shared utilities used specifically within the service layer, such as data conversion helpers.

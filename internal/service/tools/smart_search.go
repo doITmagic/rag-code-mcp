@@ -233,6 +233,10 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 		}
 	}
 
+	// Path-scoped re-ranking — Proposal #1
+	// Boost results near the agent's file_path, penalize distant subtrees.
+	merged = applyPathScoping(merged, scopeDir(input.FilePath))
+
 	// Apply tree-based grouping for documentation chunks
 	merged = t.groupDocsByTree(merged)
 

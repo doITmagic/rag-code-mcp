@@ -209,33 +209,22 @@ func Run(rcfg RunConfig) error {
 	mcpMux := http.NewServeMux()
 	mcpMux.Handle("/mcp", streamableHandler)
 
-	// Middleware: workspace resolution and auto-reindex on connect.
+	// Middleware: sticky workspace + response writer injection.
 	//
-	// Priority order:
-	//   1. X-Workspace-Root — adapter already knows the confirmed workspace (sticky).
-	//      Inject directly into context; skip resolver cascade entirely.
-	//   2. X-Workspace-Hint — first request from adapter; resolve via engine and
-	//      trigger auto-reindex if branch state changed. Respond with
-	//      X-Resolved-Workspace so the adapter can cache it.
+	// 1. X-Workspace-Root (sticky): adapter learned workspace from a previous
+	//    response header. Inject into context so tools skip resolver cascade.
+	// 2. ResponseWriter: always injected into context so DetectContext can set
+	//    X-Resolved-Workspace header in the response — the adapter reads it
+	//    and caches it for subsequent requests.
 	mcpHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := transport.WithResponseWriter(r.Context(), w)
 		if wsRoot := r.Header.Get("X-Workspace-Root"); wsRoot != "" {
-			// Sticky path: adapter already confirmed the workspace root.
 			logger.Instance.Debug("[DAEMON] Request with sticky X-Workspace-Root=%s", wsRoot)
-			r = r.WithContext(transport.WithWorkspaceHint(r.Context(), wsRoot))
-		} else if hint := r.Header.Get("X-Workspace-Hint"); hint != "" {
-			// First contact: resolve workspace from hint and auto-reindex if needed.
-			logger.Instance.Debug("[DAEMON] First request with X-Workspace-Hint=%s", hint)
-			resolvedRoot := eng.CheckAndReindexOnConnect(hint)
-			if resolvedRoot != "" {
-				w.Header().Set("X-Resolved-Workspace", resolvedRoot)
-				r = r.WithContext(transport.WithWorkspaceHint(r.Context(), resolvedRoot))
-			} else {
-				// Fallback: use the raw hint even if resolution failed
-				r = r.WithContext(transport.WithWorkspaceHint(r.Context(), hint))
-			}
+			ctx = transport.WithWorkspaceHint(ctx, wsRoot)
 		} else {
-			logger.Instance.Debug("[DAEMON] Request received WITHOUT workspace header")
+			logger.Instance.Debug("[DAEMON] Request without X-Workspace-Root (first request or no workspace resolved yet)")
 		}
+		r = r.WithContext(ctx)
 		mcpMux.ServeHTTP(w, r)
 	})
 

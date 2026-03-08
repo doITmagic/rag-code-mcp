@@ -270,6 +270,11 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 	logger.Instance.Info("[WS-DETECT] ◀ Resolved: root=%s, id=%s, branch=%s, source=%s, risk=%s",
 		wctx.Root, wctx.ID, wctx.Branch, source, wctx.MismatchRisk)
 
+	// Inform the adapter of the resolved workspace root via response header.
+	// The adapter reads this header once and caches it as sticky X-Workspace-Root
+	// for all subsequent requests — eliminating repeated resolver cascades.
+	transport.SetResponseHeader(ctx, "X-Resolved-Workspace", wctx.Root)
+
 	// Don't cache entries that require reindex or are high-risk — let next call re-evaluate
 	if !wctx.ReindexRequired && wctx.MismatchRisk != "high" {
 		e.detectionCache.Store(cacheKey, &detectionCacheEntry{

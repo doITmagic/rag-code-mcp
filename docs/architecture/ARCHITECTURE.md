@@ -1,6 +1,6 @@
 # RagCode MCP: System Architecture
 
-RagCode is not a naive text-chunking RAG wrapper. It is a highly optimized, branch-aware, AST-driven semantic navigation engine designed specifically for Senior AI Agents constrainted by context windows (Cursor, Windsurf, Copilot). 
+RagCode is not a naive text-chunking RAG wrapper. It is a highly optimized, branch-aware, AST-driven semantic navigation engine designed specifically for Senior AI Agents constrained by context windows (Cursor, Windsurf, Copilot). 
 
 This document serves as the definitive reference for core developers, tracking the complex interactions between IPC transport, memory-efficient AST parsing, and hybrid vector heuristics.
 

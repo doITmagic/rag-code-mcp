@@ -1006,8 +1006,8 @@ func (e *Engine) CleanupStaleFiles(wsID string, staleFiles []string) {
 		}
 
 		if totalDeleted > 0 {
-			logger.Instance.Info("[STALE] 🧹 Cleaned %d stale file(s) from %d collection(s) for ws=%s",
-				len(toClean), totalDeleted, filepath.Base(wsID))
+			logger.Instance.Info("[STALE] 🧹 Cleaned %d stale file(s) (%d delete ops) for ws=%s",
+				len(toClean), totalDeleted, wsID)
 		}
 	}()
 }

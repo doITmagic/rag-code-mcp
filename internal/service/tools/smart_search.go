@@ -46,7 +46,8 @@ func (t *SmartSearchTool) Description() string {
 		"Use 'mode'=\"strict_code\" when you ONLY want to see implementation logic exactly (Go, Python, etc) and strictly ignore documentation. " +
 		"Use 'mode'=\"strict_docs\" when searching for architectural plans or summaries. " +
 		"Use 'mode'=\"all\" or omit for broad scans. " +
-		"Set 'min_score' (0.0-1.0) to filter out low-relevance results. When omitted, an automatic threshold is applied: " +
+		"Set 'min_score' (0.0-1.0) to filter out low-relevance results. Note: final scores may slightly exceed 1.0 after path-proximity boosting. " +
+		"When omitted, an automatic threshold is applied: " +
 		"if the top result scores above 0.70, results below 40% of the top score are automatically pruned. " +
 		"Set 'include_reasons' to true to include a 'match_reasons' field in each result, explaining which fields " +
 		"(symbol_name, signature, content, docstring) contributed to the match — useful for understanding result relevance."

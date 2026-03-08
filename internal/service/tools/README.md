@@ -1,83 +1,62 @@
-# RAG Code MCP - Tools Package
+# internal/service/tools
 
-This package implements the core capabilities exposed by the RagCode MCP server to the AI assistant. Each tool is designed to be highly deterministic, context-aware, and built on top of our **Code Graph AST** and Semantic Search engine. 
+Implementarea tool-urilor MCP expuse de serverul RagCode AI assistants.
 
-Below is a detailed engineering overview of each major tool, its query mechanisms, and how it operates under the hood.
-
----
-
-## 1. `rag_search_code` (Search Local Index)
-**File**: `search_local_index.go`
-
-This is the flagship tool of the MCP server, replacing standard fuzzy searches with a highly precise engine.
-
-### Query Mechanisms
-- **Discovery Mode (`mode="discovery"`)**: Performs a purely **Semantic Vector Search**. The user's query is converted to an embedding (e.g. 1024-dim vector) and compared against the code chunks in Qdrant using Cosine Similarity.
-- **Exact Mode (`mode="exact"`)**: Performs a **Hybrid Search**. It combines a Semantic Vector Search (60% weight) with Lexical/BM25 scoring (40% weight). It filters candidates by exact keyword matching on the tokens inside the `content` payload.
-
-### How it Works & Important Points
-- **The Magic of Code Graph**: Regardless of the mode chosen, after Qdrant returns the best matching code chunk, the tool inspects its `Relations` metadata (extracted during indexing via AST). 
-- **Auto-Fetching Context**: If the matching symbol depends on other files, interfaces, or structs, `rag_search_code` automatically executes background queries to retrieve their code and injects it into the final response as `_graph_expansion`.
-- **Why it matters**: The AI receives not just the function it searched for, but also the interfaces it implements and the structs it consumes, completely eliminating the need for follow-up "pin-ball" queries.
+> **Documentație completă**: [`docs/tools/`](/docs/tools/)
 
 ---
 
-## 2. `rag_find_usages` (Find Usages)
-**File**: `find_usages.go`
+## Tool-uri disponibile
 
-A deterministic replacement for the legacy `find_implementations` tool. Instead of relying on fuzzy string searching, this tool leverages AST relationships natively stored in the database.
-
-### Query Mechanism
-- **Exact DB Match**: It completely bypasses the LLM Embedder. It uses the `ExactSearch` capability to query Qdrant directly using a strict filter on the `Relations` array:
-  ```json
-  { "relations[].target_name": "SymbolName" }
-  ```
-
-### How it Works & Important Points
-- **100% Deterministic**: Because the indexer parses the AST and maps out exactly what function calls what, this tool queries those explicit edges.
-- **Zero Hallucination**: You get exactly the files and line numbers where `SymbolName` is invoked, instantiated, or implemented.
-- **Telemetry**: Calculates the exact bytes of the snippet returned versus the full file sizes to demonstrate the RAG context savings.
+| Tool | Fișier | Documentație |
+|------|--------|-------------|
+| `rag_search` | `smart_search.go` | [doc_search_local_index.md](/docs/tools/doc_search_local_index.md) |
+| `rag_find_usages` | `find_usages.go` | [doc_find_usages.md](/docs/tools/doc_find_usages.md) |
+| `rag_call_hierarchy` | `call_hierarchy.go` | [doc_call_hierarchy.md](/docs/tools/doc_call_hierarchy.md) |
+| `rag_list_package_exports` | `list_package_exports.go` | [doc_list_package_exports.md](/docs/tools/doc_list_package_exports.md) |
+| `rag_read_file_context` | `read_file_context.go` | [doc_read_file_context.md](/docs/tools/doc_read_file_context.md) |
+| `rag_index_workspace` | `index_workspace.go` | [doc_index_workspace.md](/docs/tools/doc_index_workspace.md) |
+| `rag_evaluate` | `evaluate_ragcode.go` | [doc_evaluate_ragcode.md](/docs/tools/doc_evaluate_ragcode.md) |
 
 ---
 
-## 3. `rag_list_package_exports` (List Package Exports)
-**File**: `list_package_exports.go`
+## Structura pachetului
 
-Provides a complete, structured list of all public functions, classes, and types inside a specified package or module.
+```
+internal/service/tools/
+├── smart_search.go                 # Execute() orchestrator + Register + types
+├── smart_search_pipeline.go        # Pipeline stages: normalizeInput, runParallelSearch,
+│                                   #   applyFilters, buildResponseMeta, serializeResults
+├── smart_search_path_scope.go      # Thin adapter → pkg/scoring.PathProximity
+├── smart_search_path_scope_test.go
+├── find_usages.go
+├── call_hierarchy.go
+├── list_package_exports.go
+├── read_file_context.go
+├── index_workspace.go
+├── evaluate_ragcode.go
+├── healthcheck.go
+├── response.go                     # ToolResponse, ContextMetadata, JSON helpers
+└── README.md
+```
 
-### Query Mechanism
-- **Exact DB Match**: Similar to `rag_find_usages`, this tool bypasses semantic embeddings. It queries the vector database using a strict filter on the `package` payload field:
-  ```json
-  { "package": "packageName" }
-  ```
+### Pachete externe utilizate
 
-### How it Works & Important Points
-- **Data Structuring**: It pulls all indexed chunks for that package, filters out unexported (private) symbols automatically based on language rules (e.g. uppercase in Go), and groups the results by `Type` (function, class, struct).
-- **Polyglot Fallback**: It searches across all known language collections (`go`, `php`, `python`, `javascript`) to find the requested module.
-- **AI-Friendly Output**: It returns both a deeply structured JSON data object for the AI's internal state, and a well-formatted Markdown string for immediate reading.
+| Pachet | Scop |
+|--------|------|
+| `pkg/scoring` | Funcții pure de scoring: token filtering, lexical match, path proximity |
+| `pkg/telemetry` | Calculul economiei de context (bytes avoided / tokens saved) |
+| `pkg/storage` | Tipuri SearchResult, Point |
+| `internal/service/engine` | SearchCode, HybridSearchCode, DetectContext |
 
 ---
 
-## 4. `rag_read_file_context` (Read File Context)
-**File**: `read_file_context.go`
+## Pattern de implementare
 
-Instead of dumping an entire 2000-line file into the AI's context window, this tool extracts specific node chunks (classes, methods) using exact line numbers.
+Orice tool nou trebuie să respecte:
 
-### Query Mechanism
-- **File & Line Intersection**: It reads from the local disk, but it also interacts with the index. When you request a specific block of lines, it looks for the closest index chunks that encompass those lines to provide semantic meaning.
-
-### How it Works & Important Points
-- **Telemetry Savings**: This tool is the prime example of context saving. It calculates the `baselineBytes` (size of the full file) against `actualBytes` (the size of the requested chunk) and attaches the savings percentage to the `Context.Telemetry` response.
-- **Smart Expansion**: If you ask for lines 10-20, but the AST detected that a function spans lines 10-50, the tool is smart enough to serve the complete, unbroken functional chunk.
-
----
-
-## Standard Implementation Pattern
-
-Every new tool added to this package MUST adhere to the following lifecycle:
-
-1. **Implement Tool Interface**: Register its name, description, and input schema securely.
-2. **Prefer `file_path`**: Prefer requesting a `file_path` or `workspace_root` from the AI to ensure multi-root or polyglot workspaces resolve to the correct index collection (`ragcode-<ws_id>-<lang>`). If omitted, the server MAY fall back to the last active workspace when it can safely resolve it, but this can be less reliable and slower.
-3. **Resolve Engine Context**: Call `t.engine.DetectContext(ctx, filePath)` to guarantee the tool executes within the boundaries of the correct Git branch and repository.
-4. **Use `ExactSearch` vs `Search`**: If you are looking for specific metadata (like a package name or an AST relation), use `searchSvc.ExactSearch`. If you are looking for conceptual ideas ("how do I authenticate"), use `searchSvc.Search`.
-5. **Standardized Response**: All tools MUST return their data wrapped in a JSON `ToolResponse`. This includes the core message, structured `Data`, and `ContextMetadata` (including `Telemetry` and `DetectionSource`).
+1. **Implement tool interface**: `Register(server)` + `Execute(ctx, input) (string, error)`
+2. **Prefer `file_path`**: necesar pentru rezolvarea corectă a workspace-ului în environmente multi-root
+3. **Resolve context**: `t.engine.DetectContext(ctx, filePath)` pentru izolare per branch/repo
+4. **ExactSearch vs Search**: exact pentru metadata AST, semantic pentru concepte
+5. **Standardized response**: toate tool-urile returnează `ToolResponse` cu `Data`, `ContextMetadata`, `Telemetry`

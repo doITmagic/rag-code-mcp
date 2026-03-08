@@ -13,6 +13,7 @@ import (
 
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
+	"github.com/doITmagic/rag-code-mcp/pkg/scoring"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 )
 
@@ -57,7 +58,7 @@ func (e *Engine) FallbackDirectSearch(ctx context.Context, workspaceRoot, query 
 
 	// Tokenize query for scoring
 	lowerQuery := strings.ToLower(query)
-	tokens := fallbackFilterTokens(strings.Fields(lowerQuery))
+	tokens := scoring.FilterTokens(strings.Fields(lowerQuery))
 	if len(tokens) == 0 {
 		return nil
 	}
@@ -188,11 +189,11 @@ func fallbackScoreSymbol(sym parser.Symbol, lowerQuery string, tokens []string) 
 		nameScore = 0.6
 	} else {
 		// Token-based: how many query tokens appear in the name
-		nameScore = fallbackTokenMatchRatio(lowerName, tokens) * 0.5
+		nameScore = scoring.TokenMatchRatio(lowerName, tokens) * 0.5
 	}
 
 	// 2. Signature scoring
-	sigScore := fallbackTokenMatchRatio(lowerSig, tokens) * 0.8
+	sigScore := scoring.TokenMatchRatio(lowerSig, tokens) * 0.8
 	// Bonus: full query substring match in signature
 	if strings.Contains(lowerSig, lowerQuery) {
 		sigScore = math.Max(sigScore, 0.9)
@@ -201,7 +202,7 @@ func fallbackScoreSymbol(sym parser.Symbol, lowerQuery string, tokens []string) 
 	// 3. Content/body lexical scoring
 	contentScore := 0.0
 	if len(lowerContent) > 0 {
-		rawScore := fallbackLexicalScore(lowerContent, tokens)
+		rawScore := scoring.LexicalMatchScore(lowerContent, tokens)
 		// Normalize: log-scale to handle long files vs short functions
 		contentScore = math.Min(rawScore/math.Max(1, float64(len(tokens))*2), 1.0)
 	}
@@ -209,7 +210,7 @@ func fallbackScoreSymbol(sym parser.Symbol, lowerQuery string, tokens []string) 
 	// 4. Docstring scoring
 	docScore := 0.0
 	if len(lowerDoc) > 0 {
-		docScore = fallbackTokenMatchRatio(lowerDoc, tokens) * 0.9
+		docScore = scoring.TokenMatchRatio(lowerDoc, tokens) * 0.9
 		if strings.Contains(lowerDoc, lowerQuery) {
 			docScore = math.Max(docScore, 0.95)
 		}
@@ -221,40 +222,8 @@ func fallbackScoreSymbol(sym parser.Symbol, lowerQuery string, tokens []string) 
 	return combined
 }
 
-// fallbackTokenMatchRatio returns the fraction of tokens found in text [0, 1].
-func fallbackTokenMatchRatio(text string, tokens []string) float64 {
-	if len(tokens) == 0 {
-		return 0
-	}
-	matched := 0
-	for _, tok := range tokens {
-		if strings.Contains(text, tok) {
-			matched++
-		}
-	}
-	return float64(matched) / float64(len(tokens))
-}
-
-// fallbackLexicalScore counts total token occurrences (frequency-weighted).
-func fallbackLexicalScore(text string, tokens []string) float64 {
-	score := 0.0
-	for _, tok := range tokens {
-		score += float64(strings.Count(text, tok))
-	}
-	return score
-}
-
-// fallbackFilterTokens removes very short tokens (≤2 chars) from a token list.
-func fallbackFilterTokens(tokens []string) []string {
-	filtered := make([]string, 0, len(tokens))
-	for _, tok := range tokens {
-		tok = strings.TrimSpace(tok)
-		if len(tok) > 2 {
-			filtered = append(filtered, tok)
-		}
-	}
-	return filtered
-}
+// fallbackTokenMatchRatio, fallbackLexicalScore, fallbackFilterTokens
+// are now consolidated in pkg/scoring.
 
 // ─── Conversion ──────────────────────────────────────────────────────────────
 

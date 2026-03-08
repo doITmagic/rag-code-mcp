@@ -381,3 +381,33 @@ func noResultsResponse(query string, meta searchMetadata) (string, error) {
 	}
 	return response.JSON()
 }
+
+// recordSearchMetric maps pipeline data to a telemetry.SearchMetric and appends to JSONL.
+func recordSearchMetric(meta searchMetadata, query string, merged []mergedResult, isFallback bool, savings *telemetry.Savings, start time.Time) {
+	source := "vector"
+	if isFallback {
+		source = "fallback"
+	}
+
+	var topScore float32
+	if len(merged) > 0 {
+		topScore = merged[0].score
+	}
+
+	var bytesSaved, tokensSaved int64
+	if savings != nil {
+		bytesSaved = savings.BytesAvoided
+		tokensSaved = savings.TokensSaved
+	}
+
+	telemetry.AppendSearchMetric(meta.workspaceRoot, telemetry.SearchMetric{
+		Tool:        "rag_search",
+		Query:       query,
+		ResultCount: len(merged),
+		TopScore:    topScore,
+		Source:      source,
+		BytesSaved:  bytesSaved,
+		TokensSaved: tokensSaved,
+		ResponseMs:  time.Since(start).Milliseconds(),
+	})
+}

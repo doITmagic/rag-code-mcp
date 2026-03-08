@@ -99,6 +99,7 @@ func (t *SmartSearchTool) Register(server *mcp.Server) {
 }
 
 func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (string, error) {
+	t0 := time.Now()
 	query, limit, input, err := normalizeInput(input, t.searchLimit)
 	if err != nil {
 		return "", err
@@ -129,6 +130,9 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 	isFallback := sr.meta.collection == "fallback"
 	response := t.buildResponseMeta(sr.meta, useCompact)
 	serializeResults(&response, merged, useCompact, isFallback, query, input.IncludeReasons)
+
+	// Record metric asynchronously to avoid blocking response
+	go recordSearchMetric(sr.meta, query, merged, isFallback, response.Context.Telemetry, t0)
 
 	return response.JSON()
 }

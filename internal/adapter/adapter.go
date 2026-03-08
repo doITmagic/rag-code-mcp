@@ -34,6 +34,11 @@ func RunBridge(ctx context.Context, socketPath string, stdin io.Reader, stdout i
 	// Allow up to 10MB per line (large MCP responses)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 
+	// Sticky workspace: once the daemon resolves the workspace root from the
+	// first successful request, we cache it here and send X-Workspace-Root
+	// on all subsequent requests — eliminating repeated resolver cascades.
+	var resolvedWorkspace string
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.TrimSpace(line) == "" {
@@ -48,7 +53,11 @@ func RunBridge(ctx context.Context, socketPath string, stdin io.Reader, stdout i
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Accept", "application/json, text/event-stream")
-		if workspaceHint != "" {
+
+		// Send confirmed workspace root if available, otherwise send hint
+		if resolvedWorkspace != "" {
+			req.Header.Set("X-Workspace-Root", resolvedWorkspace)
+		} else if workspaceHint != "" {
 			req.Header.Set("X-Workspace-Hint", workspaceHint)
 		}
 
@@ -63,6 +72,11 @@ func RunBridge(ctx context.Context, socketPath string, stdin io.Reader, stdout i
 			resp.Body.Close()
 			writeJSONRPCError(stdout, line, fmt.Errorf("daemon returned HTTP %d", resp.StatusCode))
 			continue
+		}
+
+		// Learn resolved workspace from daemon response (first successful resolve)
+		if rw := resp.Header.Get("X-Resolved-Workspace"); rw != "" && resolvedWorkspace == "" {
+			resolvedWorkspace = rw
 		}
 
 		const maxResponseSize = 10 * 1024 * 1024 // 10MB

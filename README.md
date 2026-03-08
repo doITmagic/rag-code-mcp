@@ -11,14 +11,23 @@
 
 </div>
 
-# RagCode: The Autonomous Agent-Ready RAG Engine
+# RagCode MCP: High-Precision Code Search & Context Optimization
 
-> **Beyond MCP.** A privacy-first, protocol-agnostic RAG engine that transforms any repository into an AI-ready codebase.
+> **Maximum Reasoning, Minimum Tokens.** A privacy-first RAG engine that delivers surgical codebase context without wasting AI bandwidth.
 
 **What is RagCode?**  
 RagCode enables AI Assistants (like Windsurf, Cursor, Antigravity, or Copilot) to instantly "understand" your entire project without reading thousands of lines of files. It uses **Retrieval-Augmented Generation (RAG)** mixed with deep **Code Graph (AST) analysis** to give the AI context exactly when it needs it.
 
 **Zero Cloud.** Everything runs 100% locally on your machine using Qdrant and Ollama. Your proprietary code never leaves your laptop.
+
+### The Context vs. Reasoning Dilemma
+
+Dumping entire files into an AI's context window destroys its ability to think, whether you use **Cloud models** (Anthropic, OpenAI, Gemini) or **Local models** (Ollama, LM Studio, vLLM).
+
+**RagCode acts as a surgical filter:** Instead of forcing the AI to read 15,000 lines of code, RagCode delivers only the precise 200-token AST chunks it needs.
+
+- **Local Models:** Reclaim limited context windows for pure *reasoning*. Level the playing field and perform enterprise-grade codebase analysis with zero costs and 100% privacy.
+- **Cloud Models:** Slash API costs by 95%, reduce input latency, and drastically minimize hallucinations.
 
 ---
 

@@ -290,6 +290,9 @@ func TestSearchCodeResumeInterruptedIndexing(t *testing.T) {
 		testStore: testStore{
 			existing: map[string]bool{goColl: true},
 		},
+		resultsByLang: map[string][]storage.SearchResult{
+			"go": {{Score: 0.5, Point: storage.Point{ID: "resume-hit", Payload: map[string]interface{}{"name": "Fn"}}}},
+		},
 	}
 	eng.SetSearchService(search.NewService(llmProvider, store))
 

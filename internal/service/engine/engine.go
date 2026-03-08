@@ -352,7 +352,6 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 		primaryLang = a.Name()
 	}
 
-	// Ensure at least the primary collection exists before embedding (fast fail + indexing trigger)
 	primaryColl := wctx.CollectionName(primaryLang)
 	t1 := time.Now()
 
@@ -369,25 +368,33 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 					e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 				}
 			}
-			logger.Instance.Info("[IDX] ws=%s Indexing in progress (%d%%) — searching available results", filepath.Base(wctx.Root), idxStatus.GlobalPercent)
+			logger.Instance.Info("[IDX] ws=%s Indexing in progress (%d%%) — will search available collections", filepath.Base(wctx.Root), idxStatus.GlobalPercent)
 		}
 	}
-	exists, err := e.search.CollectionExists(ctx, primaryColl)
+
+	// Check if the primary collection exists.
+	// If not, trigger background indexing but do NOT block — the fan-out below
+	// will search any other language collections that do exist.
+	primaryExists, err := e.search.CollectionExists(ctx, primaryColl)
 	logger.Instance.Debug("[TIMER] SearchCode collection_exists_primary=%v (cached=%v)", time.Since(t1), time.Since(t1) < time.Millisecond)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check collection: %w", err)
 	}
-	if !exists {
-		if _, ok := e.indexingJobs.Load(wctx.ID); ok {
-			return nil, &ErrIndexingInProgress{WorkspaceRoot: wctx.Root, WorkspaceID: wctx.ID}
-		}
-		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
-		return nil, &ErrIndexingStarted{WorkspaceRoot: wctx.Root, WorkspaceID: wctx.ID}
+
+	needsTriggerIndexing := false
+	if !primaryExists {
+		needsTriggerIndexing = true
 	}
 
 	if wctx.ReindexRequired {
 		logger.Instance.Info("[IDX] Git state change detected (Head: %s), triggering background re-indexing for %s", wctx.HeadSHA, wctx.Root)
-		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+		needsTriggerIndexing = true
+	}
+
+	if needsTriggerIndexing {
+		if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); !alreadyRunning {
+			e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+		}
 	}
 
 	// Embed ONCE, fan-out to all language collections in parallel
@@ -453,6 +460,7 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 	var primaryResults []storage.SearchResult
 	var otherResults []storage.SearchResult
 	var firstErr error
+	var existingCollections int
 	reportLang := primaryLang
 	reportColl := primaryColl
 
@@ -464,6 +472,7 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 			}
 			continue
 		}
+		existingCollections++
 		logger.Instance.Debug("[TIMER] SearchCode lang=%s hits=%d elapsed=%v", lr.lang, len(lr.results), lr.elapsed)
 		if lr.coll == primaryColl {
 			primaryResults = lr.results
@@ -474,6 +483,43 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 
 	all := append(primaryResults, otherResults...)
 
+	// If no collections exist at all, the workspace is truly not indexed.
+	// Before returning an error, try a direct AST-based fallback search.
+	if existingCollections == 0 && len(all) == 0 {
+		// Ensure background indexing is triggered
+		if needsTriggerIndexing {
+			if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); !alreadyRunning {
+				e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+			}
+		}
+
+		// Fallback: direct AST search on filesystem — no Qdrant needed
+		fallbackResults := e.FallbackDirectSearch(ctx, wctx.Root, queryText, limit)
+		if len(fallbackResults) > 0 {
+			return &SearchCodeResult{
+				Results:         fallbackResults,
+				WorkspaceRoot:   wctx.Root,
+				WorkspaceID:     wctx.ID,
+				Collection:      "fallback",
+				Language:        primaryLang,
+				MismatchRisk:    wctx.MismatchRisk,
+				DetectionSource: wctx.DetectionSource,
+			}, nil
+		}
+
+		// Fallback also empty — report indexing status
+		if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); alreadyRunning {
+			return nil, &ErrIndexingInProgress{WorkspaceRoot: wctx.Root, WorkspaceID: wctx.ID}
+		}
+		if needsTriggerIndexing {
+			return nil, &ErrIndexingStarted{WorkspaceRoot: wctx.Root, WorkspaceID: wctx.ID}
+		}
+		if firstErr != nil {
+			return nil, fmt.Errorf("search failed: %w", firstErr)
+		}
+		return nil, &ErrNotIndexed{WorkspaceRoot: wctx.Root, Collection: primaryColl, Language: primaryLang}
+	}
+
 	// Global sort by score descending across all language results, then cap to limit.
 	// Without this, primary-language results always win regardless of score.
 	sort.Slice(all, func(i, j int) bool { return all[i].Score > all[j].Score })
@@ -481,9 +527,14 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 		all = all[:limit]
 	}
 
-	// If nothing was found and there were errors, surface the error
-	if len(all) == 0 && firstErr != nil {
-		return nil, fmt.Errorf("search failed: %w", firstErr)
+	// If vector search returned nothing but collections exist, supplement with fallback
+	if len(all) == 0 {
+		fallbackResults := e.FallbackDirectSearch(ctx, wctx.Root, queryText, limit)
+		if len(fallbackResults) > 0 {
+			all = fallbackResults
+		} else if firstErr != nil {
+			return nil, fmt.Errorf("search failed: %w", firstErr)
+		}
 	}
 
 	logger.Instance.Debug("[TIMER] SearchCode TOTAL=%v (detect=%v embed=%v fanout=%v)",
@@ -515,7 +566,7 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 
 	collection := wctx.CollectionName(lang)
 
-	// Auto-resume from index_status.json (Task4): if indexing was interrupted, resume it.
+	// Auto-resume from index_status.json: if indexing was interrupted, resume it.
 	if idxStatus := loadIndexStatus(wctx.Root); idxStatus != nil {
 		if idxStatus.WorkspaceID == wctx.ID && idxStatus.GlobalPercent > 0 && idxStatus.GlobalPercent < 100 && idxStatus.State == "running" {
 			if _, ok := e.indexingJobs.Load(wctx.ID); !ok {
@@ -527,7 +578,7 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 					e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 				}
 			}
-			logger.Instance.Info("[IDX] ws=%s Indexing in progress (%d%%) — searching available results", filepath.Base(wctx.Root), idxStatus.GlobalPercent)
+			logger.Instance.Info("[IDX] ws=%s Indexing in progress (%d%%) — will search available collections", filepath.Base(wctx.Root), idxStatus.GlobalPercent)
 		}
 	}
 
@@ -537,16 +588,21 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 	}
 
 	if !exists {
-		if _, ok := e.indexingJobs.Load(wctx.ID); ok {
-			return nil, &ErrIndexingInProgress{WorkspaceRoot: wctx.Root, WorkspaceID: wctx.ID}
+		// Trigger background indexing but do NOT block — SmartSearch runs
+		// SearchCode (with fan-out) in parallel and will provide results
+		// from any available language collections.
+		if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); !alreadyRunning {
+			e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 		}
-		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
-		return nil, &ErrIndexingStarted{WorkspaceRoot: wctx.Root, WorkspaceID: wctx.ID}
+		logger.Instance.Info("[IDX] ws=%s HybridSearch: collection %s not found — returning empty (indexing in background)", filepath.Base(wctx.Root), collection)
+		return nil, nil
 	}
 
 	if wctx.ReindexRequired {
 		logger.Instance.Info("[IDX] Git state change detected, triggering background re-indexing for ws=%s", filepath.Base(wctx.Root))
-		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+		if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); !alreadyRunning {
+			e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+		}
 	}
 
 	results, err := e.search.HybridSearch(ctx, collection, queryText, limit)

@@ -888,10 +888,33 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 		excludePatterns = e.config.Workspace.ExcludePatterns
 	}
 
+	// Pre-count total files per language with a single WalkDir pass.
+	// This gives us the real on_disk totals for accurate progress reporting,
+	// instead of using len(changedFiles) which only reflects modified files.
+	fileCounts := e.indexer.CountAllFiles(wctx.Root, excludePatterns)
+	logger.Instance.Info("[IDX] ws=%s file counts: %v", wsName, fileCounts)
+
+	// Pre-populate index_status.json with the real disk totals so that
+	// even languages with 0 changed files still show correct on_disk counts.
+	{
+		s := indexer.LoadIndexStatus(wctx.Root)
+		if s == nil {
+			s = &indexer.IndexStatus{State: "starting", StartedAt: time.Now().UTC().Format(time.RFC3339)}
+		}
+		if s.Languages == nil {
+			s.Languages = make(map[string]indexer.LangStatus)
+		}
+		for _, lang := range languages {
+			s.Languages[lang] = indexer.LangStatus{OnDisk: fileCounts[lang]}
+		}
+		indexer.SaveIndexStatus(wctx.Root, s)
+	}
+
 	var indexErrors []string
 	for _, lang := range languages {
+		diskTotal := fileCounts[lang]
 		collection := wctx.CollectionName(lang)
-		logger.Instance.Info("[IDX] ws=%s lang=%s ▶ starting", wsName, lang)
+		logger.Instance.Info("[IDX] ws=%s lang=%s ▶ starting (on_disk=%d)", wsName, lang, diskTotal)
 		err := e.indexer.IndexWorkspace(ctx, wctx.Root, collection, indexer.Options{
 			Language:        lang,
 			WorkspaceName:   wsName,
@@ -904,8 +927,8 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 						s.Languages = make(map[string]indexer.LangStatus)
 					}
 					ls := s.Languages[lang]
-					ls.OnDisk = totalFiles
-					ls.Changed = totalFiles
+					ls.OnDisk = diskTotal   // real total files on disk for this language
+					ls.Changed = totalFiles // files that needed re-indexing (changedFiles)
 					ls.Processed = doneFiles
 					s.Languages[lang] = ls
 					indexer.SaveIndexStatus(wctx.Root, s)

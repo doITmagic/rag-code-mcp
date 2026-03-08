@@ -347,6 +347,9 @@ func TestResolveFilePathRegistryFallback(t *testing.T) {
 	if resp.PathResolutionConfidence > 0.90 {
 		t.Fatalf("expected reduced confidence (<=0.90), got %f", resp.PathResolutionConfidence)
 	}
+	if !resp.UsedFallback {
+		t.Fatalf("expected UsedFallback=true for registry_fallback source")
+	}
 }
 
 func TestResolveFilePathNoRegistryDescriptiveError(t *testing.T) {
@@ -394,5 +397,33 @@ func TestResolveFilePathRegistryMissDescriptiveError(t *testing.T) {
 	}
 	if !strings.Contains(err.Message, "Hint:") {
 		t.Fatalf("expected AI hint in error, got: %s", err.Message)
+	}
+}
+
+func TestResolveFilePathNonInvalidPathErrorPassthrough(t *testing.T) {
+	// Detector fails with OUTSIDE_ALLOWED_ROOTS — should NOT trigger
+	// registry fallback and should propagate the original error as-is.
+	detector := &fakeDetector{err: &contract.ResolveWorkspaceError{
+		Code:    contract.ErrorOutsideAllowedRoots,
+		Message: "path /outside is outside allowed workspace roots",
+		Reason:  contract.ReasonOutsideAllowedRoots,
+	}}
+	reg := &fakeRegistry{parentRoot: "/home/user/project"} // registry WOULD match
+	r := New(Dependencies{Detector: detector, Registry: reg})
+	req := contract.ResolveWorkspaceRequest{FilePath: "/outside/main.go"}
+
+	resp, err := r.Resolve(context.Background(), req)
+	if err == nil {
+		t.Fatalf("expected error to propagate, got nil")
+	}
+	if resp != nil {
+		t.Fatalf("expected nil response")
+	}
+	// Error should be the original one, not wrapped with a hint
+	if err.Code != contract.ErrorOutsideAllowedRoots {
+		t.Fatalf("expected ErrorOutsideAllowedRoots, got %s", err.Code)
+	}
+	if strings.Contains(err.Message, "Hint:") {
+		t.Fatalf("non-invalid-path errors should not get hint appended, got: %s", err.Message)
 	}
 }

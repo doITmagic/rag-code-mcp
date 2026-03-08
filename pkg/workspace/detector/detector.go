@@ -105,6 +105,12 @@ func (d *Detector) DetectFromFilePath(ctx context.Context, filePath string) (*co
 	startDir := abs
 	info, err := os.Stat(abs)
 	if err != nil {
+		// Only fall back to parent directory when the file genuinely doesn't exist.
+		// Other stat errors (permission denied, I/O errors) should propagate
+		// to preserve their meaning.
+		if !os.IsNotExist(err) {
+			return nil, wrapPathErr("stat path", err)
+		}
 		// File does not exist — try the parent directory as fallback.
 		// This handles the common case where an AI agent passes a non-existent
 		// file path (e.g. "main.go") but the project directory is valid.
@@ -112,7 +118,7 @@ func (d *Detector) DetectFromFilePath(ctx context.Context, filePath string) (*co
 		if _, parentErr := os.Stat(parentDir); parentErr != nil {
 			return nil, &contract.ResolveWorkspaceError{
 				Code:    contract.ErrorInvalidPath,
-				Message: fmt.Sprintf("file_path %q does not exist and parent directory %q is also invalid. The file_path parameter is only used for workspace detection — pass any existing file from the target project, or omit file_path entirely for auto-discovery", abs, parentDir),
+				Message: fmt.Sprintf("file_path %q does not exist and parent directory %q is also invalid. The file_path parameter is only used for workspace detection — pass any existing file from the target project", abs, parentDir),
 				Reason:  contract.ReasonInvalidPath,
 			}
 		}

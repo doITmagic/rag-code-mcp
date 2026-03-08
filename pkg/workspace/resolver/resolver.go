@@ -158,33 +158,48 @@ func (r *Resolver) handleFilePath(ctx context.Context, path string) (*contract.R
 	}
 	result, detectorErr := r.deps.Detector.DetectFromFilePath(ctx, path)
 	if detectorErr != nil {
-		// Detection failed (e.g. file_path does not exist on disk).
-		// Before giving up, try the registry — if the path is inside an
-		// already-registered workspace we can resolve it without stat.
-		if r.deps.Registry != nil {
-			parentDir := filepath.Dir(path)
-			if parentRoot, found := r.deps.Registry.FindParentWorkspace(parentDir); found {
-				r.log(ctx, "registry_fallback", map[string]any{
-					"original_path":  path,
-					"parent_root":    parentRoot,
-					"detector_error": detectorErr.Message,
-					"reason":         "file_path does not exist, resolved via registry",
-				})
-				result = &contract.WorkspaceCandidate{
-					Root:       parentRoot,
-					Reason:     contract.ReasonFilePath,
-					Source:     "registry_fallback",
-					Confidence: 0.85,
+		// Only attempt registry fallback for invalid-path / missing-file errors.
+		// Other errors (OUTSIDE_ALLOWED_ROOTS, exclusions, permission denied)
+		// should propagate as-is to preserve their semantics.
+		if detectorErr.Code == contract.ErrorInvalidPath && detectorErr.Reason == contract.ReasonInvalidPath {
+			if r.deps.Registry != nil {
+				// Normalize to absolute path before registry lookup — the
+				// registry stores normalized roots, so relative or '..' paths
+				// would miss otherwise.
+				normalizedPath, absErr := filepath.Abs(path)
+				if absErr != nil {
+					normalizedPath = filepath.Clean(path)
+				}
+				parentDir := filepath.Dir(normalizedPath)
+				if parentRoot, found := r.deps.Registry.FindParentWorkspace(parentDir); found {
+					r.log(ctx, "registry_fallback", map[string]any{
+						"original_path":  path,
+						"parent_root":    parentRoot,
+						"detector_error": detectorErr.Message,
+						"reason":         "file_path does not exist, resolved via registry",
+					})
+					result = &contract.WorkspaceCandidate{
+						Root:       parentRoot,
+						Reason:     contract.ReasonRegistryFallback,
+						Source:     "registry_fallback",
+						Confidence: 0.85,
+					}
 				}
 			}
 		}
-		// If registry didn't help, return a descriptive error with AI hint.
+		// If registry didn't help (or we skipped it for non-invalid-path errors),
+		// return a descriptive error.
 		if result == nil {
-			return nil, &contract.ResolveWorkspaceError{
-				Code:    detectorErr.Code,
-				Message: fmt.Sprintf("%s. Hint: file_path is used only for workspace detection and must point to an existing file on disk. Pass any file currently open in the IDE (e.g. from the active editor tab)", detectorErr.Message),
-				Reason:  detectorErr.Reason,
+			// Only add the "existing file" hint for invalid-path style errors.
+			if detectorErr.Reason == contract.ReasonInvalidPath {
+				return nil, &contract.ResolveWorkspaceError{
+					Code:    detectorErr.Code,
+					Message: fmt.Sprintf("%s. Hint: file_path is used only for workspace detection and must point to an existing file on disk. Pass any file currently open in the IDE (e.g. from the active editor tab)", detectorErr.Message),
+					Reason:  detectorErr.Reason,
+				}
 			}
+			// For all other detector errors, propagate as-is to preserve context.
+			return nil, detectorErr
 		}
 	}
 	if result == nil || strings.TrimSpace(result.Root) == "" {
@@ -429,7 +444,7 @@ func defaultConfidence(source string) float64 {
 
 func isFallbackSource(source string) bool {
 	switch strings.ToLower(strings.TrimSpace(source)) {
-	case "roots", "registry", "metadata", "resolver":
+	case "roots", "registry", "registry_fallback", "metadata", "resolver":
 		return true
 	default:
 		return false

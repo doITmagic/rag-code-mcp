@@ -283,10 +283,10 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 	// knowledge base is warmed up or synced with disk immediately.
 	// We use connectTriggered to ensure this only happens ONCE per WorkspaceID
 	// per daemon lifetime, preventing full index scans on every cache miss.
+	// recreate=false ensures incremental indexing — only new/changed files are processed.
 	if _, triggered := e.connectTriggered.LoadOrStore(wctx.ID, true); !triggered {
-		// StartIndexingAsync is internally guarded against duplicate concurrent runs.
 		if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); !alreadyRunning {
-			logger.Instance.Info("[DAEMON] [WS-DETECT] Auto-triggering background index for resolved workspace: %s", wctx.Root)
+			logger.Instance.Info("[DAEMON] [WS-DETECT] Auto-triggering incremental index for workspace: %s", wctx.Root)
 			go e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 		}
 	}

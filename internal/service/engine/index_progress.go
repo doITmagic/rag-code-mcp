@@ -159,15 +159,26 @@ func (s *progressStore) preRegister(workspaceID, lang string, totalFiles int, no
 	if p.Languages == nil {
 		p.Languages = make(map[string]IndexLanguageProgress)
 	}
-	// Only pre-register if the language hasn't started processing yet.
-	if _, exists := p.Languages[lang]; !exists {
+	// Update TotalFiles for this language. If carried over from a previous
+	// completed run, preserve DoneFiles so progress is cumulative.
+	if existing, ok := p.Languages[lang]; ok {
+		existing.TotalFiles = totalFiles
+		// Clamp DoneFiles to new total (files may have been deleted)
+		if existing.DoneFiles > totalFiles {
+			existing.DoneFiles = totalFiles
+		}
+		if totalFiles > 0 {
+			existing.Percent = existing.DoneFiles * 100 / totalFiles
+		}
+		p.Languages[lang] = existing
+	} else {
 		p.Languages[lang] = IndexLanguageProgress{
 			TotalFiles: totalFiles,
 			DoneFiles:  0,
 			Percent:    0,
 		}
-		p.GlobalPercent = calcGlobalPercent(p.Languages)
 	}
+	p.GlobalPercent = calcGlobalPercent(p.Languages)
 	p.UpdatedAt = now
 	s.mu.Unlock()
 	// Flush so the updated totals are persisted promptly.
@@ -221,7 +232,19 @@ func (s *progressStore) get(workspaceID string, workspaceRoot string) *IndexProg
 
 func (s *progressStore) start(workspaceID, workspaceRoot, jobID string, now time.Time) {
 	s.mu.Lock()
-	s.jobs[workspaceID] = &IndexProgress{
+
+	// Carry over language progress from a previously completed job so that
+	// incremental runs start at ~97% (228/233) instead of 0% (0/233).
+	// Without this, every incremental index resets the visible progress to 0.
+	var prevLangs map[string]IndexLanguageProgress
+	if prev, ok := s.jobs[workspaceID]; ok && prev.State == "completed" && len(prev.Languages) > 0 {
+		prevLangs = make(map[string]IndexLanguageProgress, len(prev.Languages))
+		for k, v := range prev.Languages {
+			prevLangs[k] = v
+		}
+	}
+
+	p := &IndexProgress{
 		JobID:         jobID,
 		WorkspaceID:   workspaceID,
 		WorkspaceRoot: workspaceRoot,
@@ -230,6 +253,14 @@ func (s *progressStore) start(workspaceID, workspaceRoot, jobID string, now time
 		UpdatedAt:     now,
 		Languages:     map[string]IndexLanguageProgress{},
 	}
+
+	// Restore previous done counts so progress is cumulative.
+	if prevLangs != nil {
+		p.Languages = prevLangs
+		p.GlobalPercent = calcGlobalPercent(p.Languages)
+	}
+
+	s.jobs[workspaceID] = p
 	s.mu.Unlock()
 	// Flush immediately so index_status.json exists from the moment indexing starts.
 	// Without this, a crash before the first update() would leave no status file.

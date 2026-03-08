@@ -210,3 +210,64 @@ func TestProgressStoreTwoWorkspacesConcurrent(t *testing.T) {
 		t.Errorf("wsB python: expected done=%d, got %d", iters-1, pB.Languages["python"].DoneFiles)
 	}
 }
+
+// TestProgressStoreIncrementalPreservesProgress verifies that when a completed
+// workspace is re-indexed incrementally, the progress carries over from the
+// previous run instead of resetting to 0%.
+//
+// Scenario: Go had 228/228 (100%). New run starts, preRegister sets total=233.
+// Expected: progress shows 228/233 ≈ 97%, NOT 0/233 = 0%.
+func TestProgressStoreIncrementalPreservesProgress(t *testing.T) {
+	store := newProgressStore()
+	now := time.Now()
+	wsRoot := t.TempDir()
+
+	// Phase 1: complete a full indexing run
+	store.start("ws1", wsRoot, "job1", now)
+	store.update("ws1", "go", 228, 228, now)
+	store.update("ws1", "docs", 809, 809, now)
+	store.complete("ws1", wsRoot, now)
+
+	p := store.get("ws1", "")
+	if p == nil || p.State != "completed" || p.GlobalPercent != 100 {
+		t.Fatalf("expected completed at 100%%, got state=%q pct=%d", p.State, p.GlobalPercent)
+	}
+
+	// Phase 2: start a new incremental indexing run (e.g., auto-trigger on connect)
+	store.start("ws1", wsRoot, "job2", now)
+
+	// preRegister with updated totals (5 new Go files appeared after git pull)
+	store.preRegister("ws1", "go", 233, now)
+	store.preRegister("ws1", "docs", 809, now)
+
+	p2 := store.get("ws1", "")
+	if p2 == nil {
+		t.Fatal("expected progress after restart, got nil")
+	}
+
+	// Go: 228 done out of 233 total = 97%
+	goLang := p2.Languages["go"]
+	if goLang.DoneFiles != 228 {
+		t.Errorf("go: expected DoneFiles=228 (carried over), got %d", goLang.DoneFiles)
+	}
+	if goLang.TotalFiles != 233 {
+		t.Errorf("go: expected TotalFiles=233 (from preRegister), got %d", goLang.TotalFiles)
+	}
+
+	// Docs: 809/809 unchanged
+	docsLang := p2.Languages["docs"]
+	if docsLang.DoneFiles != 809 {
+		t.Errorf("docs: expected DoneFiles=809 (carried over), got %d", docsLang.DoneFiles)
+	}
+
+	// GlobalPercent = (228+809) / (233+809) * 100 = 1037/1042*100 = 99%
+	wantGlobal := 99
+	if p2.GlobalPercent != wantGlobal {
+		t.Errorf("expected GlobalPercent=%d, got %d", wantGlobal, p2.GlobalPercent)
+	}
+
+	// Verify state is "starting", not "completed"
+	if p2.State != "starting" {
+		t.Errorf("expected state='starting', got %q", p2.State)
+	}
+}

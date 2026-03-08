@@ -286,6 +286,34 @@ func (e *Engine) GetActiveWorkspace() (string, error) {
 	return e.resolver.GetActiveWorkspace()
 }
 
+// CheckAndReindexOnConnect resolves a workspace from the adapter's first hint
+// and triggers background re-indexing if branch state changed (e.g. after git pull).
+// Returns the resolved workspace root, or "" if resolution fails.
+//
+// This is called once per adapter session (on first X-Workspace-Hint), not on
+// every request — subsequent requests use the sticky X-Workspace-Root header.
+func (e *Engine) CheckAndReindexOnConnect(hint string) string {
+	ctx := context.Background()
+	wctx, err := e.DetectContext(ctx, hint)
+	if err != nil {
+		logger.Instance.Warn("[STICKY] CheckAndReindexOnConnect: failed to resolve hint=%q: %v", hint, err)
+		return ""
+	}
+
+	logger.Instance.Info("[STICKY] Workspace resolved on connect: root=%s, id=%s, branch=%s, reindex=%v",
+		wctx.Root, wctx.ID, wctx.Branch, wctx.ReindexRequired)
+
+	// Trigger background re-indexing if branch state changed
+	if wctx.ReindexRequired {
+		if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); !alreadyRunning {
+			logger.Instance.Info("[STICKY] Branch state changed — triggering background re-index for %s", filepath.Base(wctx.Root))
+			e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+		}
+	}
+
+	return wctx.Root
+}
+
 // SearchCodeResult wraps search results with workspace context.
 type SearchCodeResult struct {
 	Results         []storage.SearchResult

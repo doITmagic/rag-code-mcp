@@ -13,7 +13,6 @@ func TestIndexStatusRoundTrip(t *testing.T) {
 	}
 
 	status := &IndexStatus{
-		State:     "running",
 		StartedAt: "2025-01-01T00:00:00Z",
 		Elapsed:   "5s",
 		Languages: map[string]LangStatus{
@@ -26,9 +25,6 @@ func TestIndexStatusRoundTrip(t *testing.T) {
 	loaded := LoadIndexStatus(wsRoot)
 	if loaded == nil {
 		t.Fatal("expected non-nil after save")
-	}
-	if loaded.State != "running" {
-		t.Errorf("state: got %s, want running", loaded.State)
 	}
 	if loaded.Languages["go"].OnDisk != 100 {
 		t.Errorf("OnDisk: got %d, want 100", loaded.Languages["go"].OnDisk)

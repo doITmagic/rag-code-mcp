@@ -787,7 +787,7 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 		logger.Instance.Warn("[IDX] ⚠️ %d workspaces indexing simultaneously — Ollama requests will serialize implicitly (ws=%s)", activeCount, filepath.Base(root))
 	}
 
-	indexer.SaveIndexStatus(root, &indexer.IndexStatus{State: "starting", StartedAt: time.Now().UTC().Format(time.RFC3339)})
+	indexer.SaveIndexStatus(root, &indexer.IndexStatus{StartedAt: time.Now().UTC().Format(time.RFC3339)})
 
 	go func() {
 		defer func() {
@@ -811,9 +811,8 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 			logger.Instance.Error("[IDX] ws=%s Background indexing failed: %v", filepath.Base(root), err)
 			s := indexer.LoadIndexStatus(root)
 			if s == nil {
-				s = &indexer.IndexStatus{State: "starting"}
+				s = &indexer.IndexStatus{}
 			}
-			s.State = "failed"
 			s.Error = err.Error()
 			s.EndedAt = time.Now().UTC().Format(time.RFC3339)
 			if started, pErr := time.Parse(time.RFC3339, s.StartedAt); pErr == nil {
@@ -824,9 +823,8 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 			logger.Instance.Info("[IDX] ✅ ws=%s Background indexing completed", filepath.Base(root))
 			s := indexer.LoadIndexStatus(root)
 			if s == nil {
-				s = &indexer.IndexStatus{State: "starting"}
+				s = &indexer.IndexStatus{}
 			}
-			s.State = "completed"
 			s.EndedAt = time.Now().UTC().Format(time.RFC3339)
 			if started, pErr := time.Parse(time.RFC3339, s.StartedAt); pErr == nil {
 				s.Elapsed = time.Since(started).Round(time.Second).String()
@@ -909,7 +907,7 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 	{
 		s := indexer.LoadIndexStatus(wctx.Root)
 		if s == nil {
-			s = &indexer.IndexStatus{State: "starting", StartedAt: time.Now().UTC().Format(time.RFC3339)}
+			s = &indexer.IndexStatus{StartedAt: time.Now().UTC().Format(time.RFC3339)}
 		}
 		if s.Languages == nil {
 			s.Languages = make(map[string]indexer.LangStatus)
@@ -936,7 +934,7 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 					return
 				}
 				if s := indexer.LoadIndexStatus(wctx.Root); s != nil {
-					s.State = "running"
+
 					if s.Languages == nil {
 						s.Languages = make(map[string]indexer.LangStatus)
 					}

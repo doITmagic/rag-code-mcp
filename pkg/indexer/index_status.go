@@ -14,8 +14,7 @@ const indexStatusFile = "index_status.json"
 // Written by the indexer to {workspaceRoot}/.ragcode/index_status.json.
 // Read by tools to include progress in MCP responses.
 type IndexStatus struct {
-	State     string                `json:"state"`               // starting | running | completed | failed
-	StartedAt string               `json:"started_at"`           // RFC3339
+	StartedAt string                `json:"started_at"`           // RFC3339
 	EndedAt   string               `json:"ended_at,omitempty"`   // RFC3339
 	Elapsed   string               `json:"elapsed,omitempty"`    // human-readable duration
 	Error     string               `json:"error,omitempty"`

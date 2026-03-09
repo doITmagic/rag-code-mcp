@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
 	"github.com/doITmagic/rag-code-mcp/internal/service/search"
@@ -280,14 +281,24 @@ func TestSearchCodeResumeInterruptedIndexing(t *testing.T) {
 	rootDir := t.TempDir()
 	eng.SetResolver(resolver.New(resolver.Dependencies{Detector: &mockDirDetector{root: rootDir}}))
 
-	// Clean up .ragcode dir created by auto-triggered StartIndexingAsync
-	t.Cleanup(func() { os.RemoveAll(filepath.Join(rootDir, ".ragcode")) })
-
 	// Get workspace ID early
 	wctx, _ := eng.DetectContext(context.Background(), "dummy.go")
 	if wctx == nil {
 		t.Fatalf("Failed to detect context")
 	}
+
+	// Wait for background goroutine (triggered by connectTriggered in DetectContext)
+	// to finish before TempDir cleanup removes the directory.
+	t.Cleanup(func() {
+		for i := 0; i < 200; i++ {
+			if len(eng.ActiveIndexingJobs()) == 0 {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		os.RemoveAll(filepath.Join(rootDir, ".ragcode"))
+	})
+
 	// Make the collection exist so search continues
 	goColl := CollectionNameFor(wctx.ID, "go")
 	store := &multiLangStore{
@@ -301,10 +312,98 @@ func TestSearchCodeResumeInterruptedIndexing(t *testing.T) {
 	eng.SetSearchService(search.NewService(llmProvider, store))
 
 	// Verify SearchCode succeeds (returns results) when collection exists.
-	// Auto-resume behavior is tested separately in TestSearchCodeAutoResumesInterruptedIndexing.
 	_, err := eng.SearchCode(context.Background(), "dummy.go", "test", 10, false)
 	if err != nil {
 		t.Fatalf("Expected no error when collection exists, got: %v", err)
+	}
+}
+
+// TestStartIndexingAsyncRecreateQueuesWhenJobRunning verifies BUG-004 fix:
+// when recreate=true is requested while a job is already running, the recreate
+// must be queued as pendingOverflow (full re-index) rather than silently dropped.
+func TestStartIndexingAsyncRecreateQueuesWhenJobRunning(t *testing.T) {
+	llmProvider := &countingLLM{}
+	eng := newEngineCountingLLM(&testStore{existing: map[string]bool{}}, llmProvider)
+
+	const wsID = "test-ws-id"
+	const wsRoot = "/tmp/fake-ws"
+
+	// Simulate a job already running for this workspace.
+	eng.indexingJobs.Store(wsID, time.Now())
+
+	// Request recreate=true while the job is running.
+	eng.StartIndexingAsync(wsRoot, wsID, nil, true)
+
+	// The job is still marked as running (we put it there).
+	_, stillRunning := eng.indexingJobs.Load(wsID)
+	if !stillRunning {
+		t.Fatal("Expected job to still be running (we stored it manually)")
+	}
+
+	// The recreate MUST be queued as overflow — not silently dropped.
+	eng.pendingMu.Lock()
+	overflow := eng.pendingOverflow[wsID]
+	_, hasPendingFiles := eng.pendingFiles[wsID]
+	eng.pendingMu.Unlock()
+
+	if !overflow {
+		t.Error("Expected pendingOverflow[wsID]=true when recreate=true is requested while job runs")
+	}
+	if hasPendingFiles {
+		t.Error("Expected pendingFiles[wsID] to be cleared when overflow is set")
+	}
+
+	// Cleanup: remove the fake job
+	eng.indexingJobs.Delete(wsID)
+}
+
+// TestStartIndexingAsyncRecreateStartsImmediatelyWhenNoJobRunning verifies that
+// when recreate=true and no job is running, the job starts immediately (normal path).
+func TestStartIndexingAsyncRecreateStartsImmediatelyWhenNoJobRunning(t *testing.T) {
+	llmProvider := &countingLLM{}
+	eng := newEngineCountingLLM(&testStore{existing: map[string]bool{}}, llmProvider)
+
+	rootDir := t.TempDir()
+	eng.SetResolver(resolver.New(resolver.Dependencies{Detector: &mockDirDetector{root: rootDir}}))
+
+	// DetectContext triggers connectTriggered → StartIndexingAsync. Wait for it to finish.
+	wctx, _ := eng.DetectContext(context.Background(), "dummy.go")
+	if wctx == nil {
+		t.Fatalf("Failed to detect context")
+	}
+
+	for i := 0; i < 200; i++ {
+		if len(eng.ActiveIndexingJobs()) == 0 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	t.Cleanup(func() {
+		for i := 0; i < 200; i++ {
+			if len(eng.ActiveIndexingJobs()) == 0 {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		os.RemoveAll(filepath.Join(rootDir, ".ragcode"))
+	})
+
+	// No job running — recreate=true should start immediately.
+	eng.StartIndexingAsync(wctx.Root, wctx.ID, nil, true)
+
+	_, nowRunning := eng.indexingJobs.Load(wctx.ID)
+	if !nowRunning {
+		t.Error("Expected job to be running immediately when recreate=true and no job was active")
+	}
+
+	// Nothing should be queued in pendingOverflow.
+	eng.pendingMu.Lock()
+	overflow := eng.pendingOverflow[wctx.ID]
+	eng.pendingMu.Unlock()
+
+	if overflow {
+		t.Error("Expected no pendingOverflow when job started immediately")
 	}
 }
 
@@ -319,5 +418,3 @@ func (m *mockDirDetector) DetectFromFilePath(_ context.Context, path string) (*c
 		Confidence: 1.0,
 	}, nil
 }
-
-

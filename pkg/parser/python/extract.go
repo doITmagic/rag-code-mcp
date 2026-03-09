@@ -1009,11 +1009,12 @@ func extractCodeFromContent(content []byte, startLine, endLine int) string {
 func getIndentation(line string) int {
 	count := 0
 	for _, ch := range line {
-		if ch == ' ' {
+		switch ch {
+		case ' ':
 			count++
-		} else if ch == '\t' {
+		case '\t':
 			count += 4
-		} else {
+		default:
 			break
 		}
 	}

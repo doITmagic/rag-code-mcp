@@ -774,9 +774,20 @@ func (e *Engine) tryStartPendingIndex(root, workspaceID string) {
 
 // StartIndexingAsync starts the indexing process in a background goroutine.
 // If changedFiles is nil or empty, a full re-index is performed.
+// If recreate=true and a job is already running, the recreate is queued and
+// will start immediately after the current job finishes.
 func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recreate bool) {
 	if _, loaded := e.indexingJobs.LoadOrStore(id, time.Now()); loaded {
-		return // Already running
+		// A job is already running. If recreate=true, queue it so it fires
+		// after the current job finishes (via tryStartPendingIndex/defer).
+		if recreate {
+			e.pendingMu.Lock()
+			e.pendingOverflow[id] = true // overflow = full re-index
+			delete(e.pendingFiles, id)
+			e.pendingMu.Unlock()
+			logger.Instance.Info("[IDX] ⏳ ws=%s recreate requested while indexing — queued for after current job", filepath.Base(root))
+		}
+		return
 	}
 
 	// Count active jobs after adding this one — warn if multiple workspaces are indexing

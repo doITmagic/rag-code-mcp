@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 
@@ -277,6 +279,9 @@ func TestSearchCodeResumeInterruptedIndexing(t *testing.T) {
 	// Mock resolver configures a fake detector returning a tmp root
 	rootDir := t.TempDir()
 	eng.SetResolver(resolver.New(resolver.Dependencies{Detector: &mockDirDetector{root: rootDir}}))
+
+	// Clean up .ragcode dir created by auto-triggered StartIndexingAsync
+	t.Cleanup(func() { os.RemoveAll(filepath.Join(rootDir, ".ragcode")) })
 
 	// Get workspace ID early
 	wctx, _ := eng.DetectContext(context.Background(), "dummy.go")

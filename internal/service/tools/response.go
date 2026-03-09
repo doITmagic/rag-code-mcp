@@ -26,7 +26,7 @@ type ContextMetadata struct {
 	Language        string                       `json:"language,omitempty"`
 	Collection      string                       `json:"collection,omitempty"`
 	Telemetry       *telemetry.Savings           `json:"telemetry,omitempty"`
-	IndexingStatus  *indexer.IndexStatus         `json:"indexing_progress,omitempty"` // present when indexing is in progress or just completed
+	IndexingStatus  *indexer.IndexStatus         `json:"indexing_progress,omitempty"` // JSON tag kept as "indexing_progress" for backward compatibility; present when indexing is in progress or just completed
 	SessionMetrics  *telemetry.AggregatedMetrics `json:"session_metrics,omitempty"`   // cumulative search stats from .ragcode/search_metrics.jsonl
 }
 
@@ -60,7 +60,7 @@ func ContextFromWorkspace(wctx *engine.WorkspaceContext) ContextMetadata {
 // ContextFromWorkspaceWithStatus builds ContextMetadata and attaches indexing status from disk.
 func ContextFromWorkspaceWithStatus(wctx *engine.WorkspaceContext, eng *engine.Engine) ContextMetadata {
 	ctx := ContextFromWorkspace(wctx)
-	if eng != nil {
+	if eng != nil && wctx != nil {
 		ctx.IndexingStatus = eng.GetIndexStatus(wctx.Root)
 	}
 	return ctx

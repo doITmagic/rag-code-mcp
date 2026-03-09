@@ -168,7 +168,7 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 			WorkspaceRoot:    wctx.Root,
 			DetectionSource:  wctx.DetectionSource,
 			Telemetry:        telemetry.CalculateSavings(baselineBytes, actualBytes),
-			IndexingStatus: nil,
+			IndexingStatus:   idx,
 		},
 	}
 	return resp.JSON()

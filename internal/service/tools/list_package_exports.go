@@ -94,10 +94,17 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 	// Fan-out to all language collections in parallel — zero embedding
 	// Filter only by package; is_public check happens in the results loop
 	// (with graceful fallback for older index entries that predate the is_public field).
-	filter := map[string]interface{}{
-		"package": packageName,
+	//
+	// The index stores the short package name (e.g. "indexer"), not the full Go
+	// import path (e.g. "github.com/doITmagic/rag-code-mcp/pkg/indexer").
+	// Normalize by taking the last path segment so both forms work.
+	filterPackage := packageName
+	if idx := strings.LastIndex(packageName, "/"); idx >= 0 {
+		filterPackage = packageName[idx+1:]
 	}
-
+	filter := map[string]interface{}{
+		"package": filterPackage,
+	}
 
 	allResults, err := t.engine.ExactSearchPolyglot(ctx, wctx.ID, filter, 1000)
 	if err != nil {

@@ -3,7 +3,10 @@ package engine
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 	"github.com/doITmagic/rag-code-mcp/pkg/workspace/resolver"
@@ -76,9 +79,14 @@ func TestSearchCodeReturnsResultsFromOtherLangsWhenPrimaryMissing(t *testing.T) 
 		t.Error("Expected py-result in merged results")
 	}
 
-	// Cleanup: stop progress flusher
+	// Cleanup: wait for bg goroutines
 	t.Cleanup(func() {
-
+		for i := 0; i < 200; i++ {
+			if len(eng2.ActiveIndexingJobs()) == 0 {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
 	})
 }
 
@@ -125,14 +133,13 @@ func TestSearchCodeBlocksWhenZeroCollectionsExist(t *testing.T) {
 		t.Fatalf("Expected ErrIndexingStarted or ErrNotIndexed, got: %T: %v", err, err)
 	}
 
-	// Cleanup
+	// Cleanup: wait for bg goroutines from both eng and eng2
 	t.Cleanup(func() {
-
-		// Wait for bg indexing to drain
-		for i := 0; i < 100; i++ {
-			if len(eng2.ActiveIndexingJobs()) == 0 {
+		for i := 0; i < 200; i++ {
+			if len(eng.ActiveIndexingJobs()) == 0 && len(eng2.ActiveIndexingJobs()) == 0 {
 				break
 			}
+			time.Sleep(time.Millisecond)
 		}
 	})
 }
@@ -178,8 +185,14 @@ func TestSearchCodeIndexingInProgressStillSearches(t *testing.T) {
 
 	// Cleanup the fake job
 	eng2.indexingJobs.Delete(wctx.ID)
+	// Cleanup: wait for bg goroutines
 	t.Cleanup(func() {
-
+		for i := 0; i < 200; i++ {
+			if len(eng.ActiveIndexingJobs()) == 0 && len(eng2.ActiveIndexingJobs()) == 0 {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
 	})
 }
 
@@ -226,15 +239,18 @@ func TestHybridSearchCodeReturnsNilWhenCollectionMissing(t *testing.T) {
 
 	_ = wctx
 
-	// Cleanup
+	// Cleanup: wait for BOTH engine instances' goroutines to finish.
+	// eng spawned a goroutine via DetectContext→connectTriggered→StartIndexingAsync.
+	// eng2 spawned one via HybridSearchCode→StartIndexingAsync.
+	// Both write to rootDir/.ragcode/ — if we don't wait, TempDir cleanup fails.
 	t.Cleanup(func() {
-
-		// Wait for bg indexing to drain
-		for i := 0; i < 100; i++ {
-			if len(eng2.ActiveIndexingJobs()) == 0 {
+		for i := 0; i < 200; i++ {
+			if len(eng.ActiveIndexingJobs()) == 0 && len(eng2.ActiveIndexingJobs()) == 0 {
 				break
 			}
+			time.Sleep(time.Millisecond)
 		}
+		os.RemoveAll(filepath.Join(rootDir, ".ragcode"))
 	})
 }
 
@@ -281,7 +297,12 @@ func TestHybridSearchCodeStillWorksWhenCollectionExists(t *testing.T) {
 	}
 
 	t.Cleanup(func() {
-
+		for i := 0; i < 200; i++ {
+			if len(eng2.ActiveIndexingJobs()) == 0 {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
 	})
 }
 

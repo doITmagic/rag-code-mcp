@@ -205,7 +205,7 @@ func (t *SmartSearchTool) buildResponseMeta(meta searchMetadata) ToolResponse {
 
 	var idxStatus *indexer.IndexStatus
 	if meta.workspaceRoot != "" {
-			idxStatus = indexer.LoadIndexStatus(meta.workspaceRoot)
+		idxStatus = indexer.LoadIndexStatus(meta.workspaceRoot)
 	}
 
 	response := ToolResponse{

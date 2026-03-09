@@ -256,7 +256,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 			WorkspaceRoot:    wctx.Root,
 			DetectionSource:  wctx.DetectionSource,
 			Telemetry:        telemetry.CalculateSavings(baselineBytes, actualBytes),
-			IndexingStatus: nil,
+			IndexingStatus:   idx,
 		},
 	}
 	return resp.JSON()

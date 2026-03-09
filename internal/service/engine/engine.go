@@ -809,19 +809,29 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 
 		if err != nil {
 			logger.Instance.Error("[IDX] ws=%s Background indexing failed: %v", filepath.Base(root), err)
-			if s := indexer.LoadIndexStatus(root); s != nil {
-				s.State = "failed"
-				s.Error = err.Error()
-				s.EndedAt = time.Now().UTC().Format(time.RFC3339)
-				indexer.SaveIndexStatus(root, s)
+			s := indexer.LoadIndexStatus(root)
+			if s == nil {
+				s = &indexer.IndexStatus{State: "starting"}
 			}
+			s.State = "failed"
+			s.Error = err.Error()
+			s.EndedAt = time.Now().UTC().Format(time.RFC3339)
+			if started, pErr := time.Parse(time.RFC3339, s.StartedAt); pErr == nil {
+				s.Elapsed = time.Since(started).Round(time.Second).String()
+			}
+			indexer.SaveIndexStatus(root, s)
 		} else {
 			logger.Instance.Info("[IDX] ✅ ws=%s Background indexing completed", filepath.Base(root))
-			if s := indexer.LoadIndexStatus(root); s != nil {
-				s.State = "completed"
-				s.EndedAt = time.Now().UTC().Format(time.RFC3339)
-				indexer.SaveIndexStatus(root, s)
+			s := indexer.LoadIndexStatus(root)
+			if s == nil {
+				s = &indexer.IndexStatus{State: "starting"}
 			}
+			s.State = "completed"
+			s.EndedAt = time.Now().UTC().Format(time.RFC3339)
+			if started, pErr := time.Parse(time.RFC3339, s.StartedAt); pErr == nil {
+				s.Elapsed = time.Since(started).Round(time.Second).String()
+			}
+			indexer.SaveIndexStatus(root, s)
 		}
 	}()
 }
@@ -921,6 +931,10 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 			ExcludePatterns: excludePatterns,
 			Recreate:        recreate,
 			Progress: func(doneFiles, totalFiles int) {
+				// Throttle disk I/O: write every 10 files or on the last file
+				if doneFiles%10 != 0 && doneFiles != totalFiles {
+					return
+				}
 				if s := indexer.LoadIndexStatus(wctx.Root); s != nil {
 					s.State = "running"
 					if s.Languages == nil {

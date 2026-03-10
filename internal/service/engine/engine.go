@@ -762,8 +762,8 @@ func (e *Engine) popPendingIndex(workspaceID string) (files []string, overflow b
 func (e *Engine) tryStartPendingIndex(root, workspaceID string) {
 	files, overflow := e.popPendingIndex(workspaceID)
 	if overflow {
-		logger.Instance.Info("[IDX] ♻️ Pending changes exceeded limit for ws=%s — triggering full scan", filepath.Base(root))
-		e.StartIndexingAsync(root, workspaceID, nil, false)
+		logger.Instance.Info("[IDX] ♻️ Pending changes exceeded limit for ws=%s — triggering full re-index", filepath.Base(root))
+		e.StartIndexingAsync(root, workspaceID, nil, true)
 		return
 	}
 	if len(files) == 0 {

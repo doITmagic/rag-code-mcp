@@ -147,3 +147,15 @@ Indexează fișierele `.md` din workspace (README, guides, API docs) în aceeaș
 - [ ] **[P2]** `.txt` — split pe paragrafe cu `RecursiveCharacterSplitter`.
 - [ ] **[P2]** `.json` / `.yaml` — flatten keys ca text și indexare ca documentație structurată.
 - [ ] **[P2]** `.rst` / `.adoc` — convertor la markdown + chunking standard.
+
+## Task 9: UX / Metrics Simplification & Indexing Priority
+
+### Goal
+- Simplify the indexing progress metrics visible to the AI (MCP output) to prevent confusion and encourage semantic tool usage.
+- Prioritize indexing the project's majority language first (e.g., if it's a Go project with 177 files and 10 markdown files, index Go files before Docs).
+
+### Subtasks
+- [ ] **[P0]** Refactor `index_status.json` structure or the MCP response envelope to only expose `total_files` and `indexed_files` per language, dropping task-specific states like `changed` and `processed`.
+- [ ] **[P0]** Provide an explicit `"status": "up_to_date"` string when `indexed_files == total_files` to build AI trust.
+- [ ] **[P0]** In `internal/service/engine/engine.go` during `IndexWorkspace`, dynamically sort the `languages` slice (e.g. `docs`, `go`, etc.) descending based on their `fileCounts` value before entering the core processing loop. This guarantees the highest coverage language completes first.
+- [ ] **[P1]** Ensure `IndexFiles` (incremental logic triggered on single file edits) safely patches `index_status.json` by delta (e.g., adding +1 to total/indexed) without resetting or zeroing out the existing statistics built by the main `IndexWorkspace` routine.

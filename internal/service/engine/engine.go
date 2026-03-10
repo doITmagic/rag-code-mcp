@@ -952,6 +952,22 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 		diskTotal := fileCounts[lang]
 		collection := wctx.CollectionName(lang)
 		logger.Instance.Info("[IDX] ws=%s lang=%s ▶ starting (on_disk=%d)", wsName, lang, diskTotal)
+
+		// Capture the already-processed count before this run starts.
+		// For incremental runs (only changed files), we accumulate on top of
+		// whatever was already indexed in Qdrant. For a full re-index
+		// (recreate=true, or all files changed), we reset to 0.
+		// baseProcessed is captured once per language, before the Progress
+		// callback fires, so it's safe to close over it.
+		baseProcessed := s.Languages[lang].Processed
+		if recreate {
+			baseProcessed = 0
+		}
+		// firstTick is used to detect on the first Progress callback whether
+		// this is a full re-index (totalFiles >= diskTotal) so we can reset
+		// baseProcessed to 0 and avoid double-counting.
+		firstTick := true
+
 		err := e.indexer.IndexWorkspace(ctx, wctx.Root, collection, indexer.Options{
 			Language:        lang,
 			WorkspaceName:   wsName,
@@ -962,10 +978,21 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 				if doneFiles%10 != 0 && doneFiles != totalFiles {
 					return
 				}
+				// On the first tick, decide if this is a full re-index.
+				// If totalFiles covers all on-disk files, reset base to 0
+				// so we don't double-count the existing Processed value.
+				if firstTick {
+					firstTick = false
+					if diskTotal > 0 && totalFiles >= diskTotal {
+						baseProcessed = 0
+					}
+				}
 				ls := s.Languages[lang]
 				ls.OnDisk = diskTotal   // real total files on disk
-				ls.Changed = totalFiles // files that needed re-indexing
-				ls.Processed = doneFiles
+				ls.Changed = totalFiles // files that needed re-indexing this run
+				// Cumulative total: for incremental runs add to the existing
+				// DB count; for full re-indexes (base=0) start from scratch.
+				ls.Processed = baseProcessed + doneFiles
 				s.Languages[lang] = ls
 				indexer.SaveIndexStatus(wctx.Root, s)
 			},

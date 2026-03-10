@@ -47,17 +47,24 @@ func (p *TreeSitterParser) Parse(source []byte, filePath string, ext string) ([]
 
 		// A leaf or a reasonably sized chunk (~1500 chars) -> make it a valid symbol chunk
 		if node.ChildCount() == 0 || nodeLen <= 1500 {
-			text := strings.TrimSpace(node.Text(source))
+			// Prevent massive leaf nodes (e.g. 50MB SQL INSERT values) from
+			// allocating the full string — slice the underlying bytes directly.
+			var text string
+			if nodeLen > 8192 {
+				end := int(node.StartByte()) + 8192
+				if end > len(source) {
+					end = len(source)
+				}
+				text = strings.TrimSpace(string(source[node.StartByte():end])) + "\n...[TRUNCATED]"
+			} else {
+				text = strings.TrimSpace(node.Text(source))
+			}
+
 			if len(text) < 10 {
 				for i := 0; i < node.ChildCount(); i++ {
 					walk(node.Child(i), parentSig)
 				}
 				return
-			}
-
-			// Prevent massive leaf nodes (e.g. 50MB SQL INSERT values) from crashing Ollama
-			if len(text) > 8192 {
-				text = text[:8192] + "\n...[TRUNCATED]"
 			}
 
 			startLine := int(node.StartPoint().Row) + 1

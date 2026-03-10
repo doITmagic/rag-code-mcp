@@ -65,8 +65,12 @@ func SaveIndexStatus(workspaceRoot string, status *IndexStatus) {
 	}
 	path := filepath.Join(dir, indexStatusFile)
 	if err := os.Rename(tmpName, path); err != nil {
-		os.Remove(tmpName)
-		logger.Instance.Warn("index_status: rename failed for %s: %v", path, err)
+		// Windows-safe fallback: os.Rename fails when dest exists on Windows.
+		_ = os.Remove(path)
+		if err2 := os.Rename(tmpName, path); err2 != nil {
+			os.Remove(tmpName)
+			logger.Instance.Warn("index_status: rename failed for %s: %v", path, err2)
+		}
 	}
 }
 

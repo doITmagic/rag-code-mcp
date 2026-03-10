@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/updater"
@@ -216,6 +217,8 @@ func Run(rcfg RunConfig) error {
 	// 2. ResponseWriter: always injected into context so DetectContext can set
 	//    X-Resolved-Workspace header in the response — the adapter reads it
 	//    and caches it for subsequent requests.
+	var resumeIndexingOnce sync.Once
+	
 	mcpHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := transport.WithResponseWriter(r.Context(), w)
 		if wsRoot := r.Header.Get("X-Workspace-Root"); wsRoot != "" {
@@ -223,6 +226,10 @@ func Run(rcfg RunConfig) error {
 			ctx = transport.WithWorkspaceHint(ctx, wsRoot)
 		} else {
 			logger.Instance.Debug("[DAEMON] Request without X-Workspace-Root (first request or no workspace resolved yet)")
+			resumeIndexingOnce.Do(func() {
+				logger.Instance.Info("[DAEMON] Checking registry for incomplete indexing jobs...")
+				go eng.ResumeIndexingOnConnect()
+			})
 		}
 		r = r.WithContext(ctx)
 		mcpMux.ServeHTTP(w, r)

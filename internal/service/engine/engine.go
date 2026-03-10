@@ -45,6 +45,7 @@ type Engine struct {
 	pendingFiles    map[string]map[string]struct{} // workspaceID -> set(filePath)
 	pendingOverflow map[string]bool                // workspaceID -> too many pending changes, fallback to full scan
 
+	registry *registry.Registry
 
 
 	// detectionCache stores resolved WorkspaceContext with TTL to avoid
@@ -113,6 +114,7 @@ func NewEngine(idx *indexer.Service, srv *search.Service, registryPath string, c
 		resolver:        res,
 		config:          cfg,
 		watchers:        watcherMgr,
+		registry:        reg,
 
 		pendingFiles:    make(map[string]map[string]struct{}),
 		pendingOverflow: make(map[string]bool),
@@ -278,10 +280,12 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 	// We use connectTriggered to ensure this only happens ONCE per WorkspaceID
 	// per daemon lifetime, preventing full index scans on every cache miss.
 	// recreate=false ensures incremental indexing — only new/changed files are processed.
-	if _, triggered := e.connectTriggered.LoadOrStore(wctx.ID, true); !triggered {
-		if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); !alreadyRunning {
-			logger.Instance.Info("[DAEMON] [WS-DETECT] Auto-triggering incremental index for workspace: %s", wctx.Root)
-			go e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+	if e.config == nil || e.config.Workspace.AutoIndex {
+		if _, triggered := e.connectTriggered.LoadOrStore(wctx.ID, true); !triggered {
+			if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); !alreadyRunning {
+				logger.Instance.Info("[DAEMON] [WS-DETECT] Auto-triggering incremental index for workspace: %s", wctx.Root)
+				go e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+			}
 		}
 	}
 
@@ -328,6 +332,65 @@ func (e *Engine) CheckAndReindexOnConnect(hint string) string {
 	}
 
 	return wctx.Root
+}
+
+// ResumeIndexingOnConnect iterates through all registered workspaces, checks if their
+// indexing was interrupted (no EndedAt status), and resumes indexing for the one
+// that was most recently being indexed.
+func (e *Engine) ResumeIndexingOnConnect() {
+	if e.config != nil && !e.config.Workspace.AutoIndex {
+		logger.Instance.Debug("[DAEMON] ResumeIndexingOnConnect: auto_index disabled")
+		return
+	}
+
+	if e.registry == nil {
+		logger.Instance.Debug("[DAEMON] ResumeIndexingOnConnect: no registry configured")
+		return
+	}
+
+	entries := e.registry.List()
+	if len(entries) == 0 {
+		return
+	}
+
+	var bestRoot string
+	var bestID string
+	var bestStartedAt time.Time
+
+	for _, entry := range entries {
+		wsRoot := entry.Root
+		wsID := entry.ID
+
+		status := e.GetIndexStatus(wsRoot)
+		if status == nil {
+			continue // Indexing never started
+		}
+
+		// Check if it's incomplete (started but no EndedAt)
+		if status.EndedAt != "" {
+			continue // already finished
+		}
+
+		// Parse StartedAt to find the most recent
+		startedT, err := time.Parse(time.RFC3339, status.StartedAt)
+		if err != nil {
+			continue // Invalid timestamp
+		}
+
+		if startedT.After(bestStartedAt) {
+			bestStartedAt = startedT
+			bestRoot = wsRoot
+			bestID = wsID
+		}
+	}
+
+	if bestRoot != "" {
+		logger.Instance.Info("[DAEMON] Resuming incomplete indexing for workspace: %s (started at: %v)", filepath.Base(bestRoot), bestStartedAt)
+		// trigger indexing incrementally
+		e.StartIndexingAsync(bestRoot, bestID, nil, false)
+	} else {
+		logger.Instance.Debug("[DAEMON] ResumeIndexingOnConnect: no incomplete indexing jobs found")
+	}
 }
 
 // SearchCodeResult wraps search results with workspace context.

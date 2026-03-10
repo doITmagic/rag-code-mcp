@@ -777,6 +777,11 @@ func (e *Engine) tryStartPendingIndex(root, workspaceID string) {
 // If recreate=true and a job is already running, the recreate is queued and
 // will start immediately after the current job finishes.
 func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recreate bool) {
+	if watch.IsInvalidRoot(root) {
+		logger.Instance.Error("[IDX] ⛔ Refusing to index invalid/dangerous root: %s", root)
+		return
+	}
+
 	if _, loaded := e.indexingJobs.LoadOrStore(id, time.Now()); loaded {
 		// A job is already running. If recreate=true, queue it so it fires
 		// after the current job finishes (via tryStartPendingIndex/defer).

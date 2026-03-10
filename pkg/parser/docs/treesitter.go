@@ -35,9 +35,10 @@ func (p *TreeSitterParser) Parse(source []byte, filePath string, ext string) ([]
 
 	var walk func(node *gotreesitter.Node, parentSig string)
 	walk = func(node *gotreesitter.Node, parentSig string) {
-		text := strings.TrimSpace(node.Text(source))
-		if len(text) < 10 {
-			// Skip too small block, but we must recurse its children just in case they hold valid stuff
+		nodeLen := int(node.EndByte() - node.StartByte())
+
+		if nodeLen < 5 {
+			// Skip too small block naturally, but we must recurse its children just in case they hold valid stuff
 			for i := 0; i < node.ChildCount(); i++ {
 				walk(node.Child(i), parentSig)
 			}
@@ -45,7 +46,20 @@ func (p *TreeSitterParser) Parse(source []byte, filePath string, ext string) ([]
 		}
 
 		// A leaf or a reasonably sized chunk (~1500 chars) -> make it a valid symbol chunk
-		if node.ChildCount() == 0 || len(text) <= 1500 {
+		if node.ChildCount() == 0 || nodeLen <= 1500 {
+			text := strings.TrimSpace(node.Text(source))
+			if len(text) < 10 {
+				for i := 0; i < node.ChildCount(); i++ {
+					walk(node.Child(i), parentSig)
+				}
+				return
+			}
+
+			// Prevent massive leaf nodes (e.g. 50MB SQL INSERT values) from crashing Ollama
+			if len(text) > 8192 {
+				text = text[:8192] + "\n...[TRUNCATED]"
+			}
+
 			startLine := int(node.StartPoint().Row) + 1
 			endLine := int(node.EndPoint().Row) + 1
 

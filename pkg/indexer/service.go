@@ -514,7 +514,7 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 				// Throttle: small pause between embeds to avoid overwhelming Ollama.
 				// 150ms adds ~15s per 100 symbols — negligible vs total indexing time,
 				// but prevents Ollama from freezing under sustained concurrent load.
-				time.Sleep(10 * time.Millisecond)
+				time.Sleep(150 * time.Millisecond)
 
 				vector := make([]float32, len(vector64))
 				for i, v := range vector64 {

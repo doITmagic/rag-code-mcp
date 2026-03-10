@@ -269,3 +269,44 @@ In `AnalyzePackage` in `pkg/parser/go/analyzer.go`, add iteration over `typ.Func
 
 *Last updated: 2026-03-09 — BUG-001 fixed, BUG-003 added*
 
+---
+
+## BUG-004: AST Fallback Search and Indexer do not exclude unconfigured directories like `inspirations/`
+
+**Status:** Open  
+**Date confirmed:** 2026-03-09  
+**Affected component:** `FallbackDirectSearch` (`internal/service/engine/engine_fallback_search.go`) and `IndexWorkspace` (`pkg/indexer/service.go`)  
+**Severity:** Medium — causes irrelevant, old, or draft code to pollute semantic and fallback search results.
+
+### Description
+
+When performing a search that falls back to the AST (e.g. while `go` files are `processed: 0`), RAGCode can return results from the `inspirations/` directory (or other directories that should logically be ignored). This happens because `filepath.WalkDir` relies entirely on a hardcoded list of `excludePatterns` loaded from `config.Workspace.ExcludePatterns`, alongside a basic check for `.`, `vendor`, and `node_modules`.
+
+### Example
+
+Searching for the processing of `state.json` via `rag_search` returned a fallback result pointing to:
+`/home/razvan/go/src/github.com/doITmagic/rag-code-mcp/inspirations/rag-code-mcp/internal/workspace/state.go` 
+instead of the actual code in `pkg/indexer/state.go`.
+
+### Root Cause
+In both `internal/service/engine/engine_fallback_search.go` (lines 88-103) and `pkg/indexer/service.go` (lines 72-88), the exclusion logic is implemented manually:
+```go
+if d.IsDir() {
+    name := d.Name()
+    if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" {
+        return filepath.SkipDir
+    }
+    for _, p := range excludePatterns {
+        if name == p {
+            return filepath.SkipDir
+        }
+    }
+    return nil
+}
+```
+If `inspirations` or other custom draft folders are not explicitly provided in the YAML config `exclude_patterns`, they are scanned by the fallback module and indexer. The system **does not automatically parse `.ragcodeignore` or `.gitignore`**, nor does it have a default ignore list for common draft/backup directories like `inspirations`.
+
+### Proposed Fix
+1. Ensure that `.gitignore` or `.ragcodeignore` files are parsed and respected during the `filepath.WalkDir` traversal.
+2. Consider adding `inspirations` and `drafts` strings to the default hardcoded exclusions if they represent common anti-patterns for this specific repo, or automatically bundle `.gitignore` rules into the `excludePatterns` array at startup.
+

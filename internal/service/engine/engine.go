@@ -803,7 +803,17 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 		logger.Instance.Warn("[IDX] ⚠️ %d workspaces indexing simultaneously — Ollama requests will serialize implicitly (ws=%s)", activeCount, filepath.Base(root))
 	}
 
-	indexer.SaveIndexStatus(root, &indexer.IndexStatus{StartedAt: time.Now().UTC().Format(time.RFC3339)})
+	// Preserve existing Languages data on restart so incremental indexing
+	// doesn't show processed=0 to AI consumers. Reset only lifecycle fields.
+	s := indexer.LoadIndexStatus(root)
+	if s == nil {
+		s = &indexer.IndexStatus{}
+	}
+	s.StartedAt = time.Now().UTC().Format(time.RFC3339)
+	s.EndedAt = ""
+	s.Elapsed = ""
+	s.Error = ""
+	indexer.SaveIndexStatus(root, s)
 
 	go func() {
 		defer func() {
@@ -823,31 +833,31 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 			err = e.IndexWorkspace(ctx, root, recreate)
 		}
 
+		finalizeIndexStatus(root, err)
 		if err != nil {
 			logger.Instance.Error("[IDX] ws=%s Background indexing failed: %v", filepath.Base(root), err)
-			s := indexer.LoadIndexStatus(root)
-			if s == nil {
-				s = &indexer.IndexStatus{}
-			}
-			s.Error = err.Error()
-			s.EndedAt = time.Now().UTC().Format(time.RFC3339)
-			if started, pErr := time.Parse(time.RFC3339, s.StartedAt); pErr == nil {
-				s.Elapsed = time.Since(started).Round(time.Second).String()
-			}
-			indexer.SaveIndexStatus(root, s)
 		} else {
 			logger.Instance.Info("[IDX] ✅ ws=%s Background indexing completed", filepath.Base(root))
-			s := indexer.LoadIndexStatus(root)
-			if s == nil {
-				s = &indexer.IndexStatus{}
-			}
-			s.EndedAt = time.Now().UTC().Format(time.RFC3339)
-			if started, pErr := time.Parse(time.RFC3339, s.StartedAt); pErr == nil {
-				s.Elapsed = time.Since(started).Round(time.Second).String()
-			}
-			indexer.SaveIndexStatus(root, s)
 		}
 	}()
+}
+
+// finalizeIndexStatus loads the current status, stamps EndedAt/Elapsed/Error,
+// and saves it atomically. Centralises the logic that was duplicated in the
+// success and error branches of StartIndexingAsync.
+func finalizeIndexStatus(root string, indexErr error) {
+	s := indexer.LoadIndexStatus(root)
+	if s == nil {
+		s = &indexer.IndexStatus{}
+	}
+	s.EndedAt = time.Now().UTC().Format(time.RFC3339)
+	if started, pErr := time.Parse(time.RFC3339, s.StartedAt); pErr == nil {
+		s.Elapsed = time.Since(started).Round(time.Second).String()
+	}
+	if indexErr != nil {
+		s.Error = indexErr.Error()
+	}
+	indexer.SaveIndexStatus(root, s)
 }
 
 // IndexFiles indexes specific files in a workspace.
@@ -918,21 +928,24 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 	fileCounts := e.indexer.CountAllFiles(wctx.Root, excludePatterns)
 	logger.Instance.Info("[IDX] ws=%s file counts: %v", wsName, fileCounts)
 
-	// Pre-populate index_status.json with the real disk totals so that
-	// even languages with 0 changed files still show correct on_disk counts.
-	{
-		s := indexer.LoadIndexStatus(wctx.Root)
-		if s == nil {
-			s = &indexer.IndexStatus{StartedAt: time.Now().UTC().Format(time.RFC3339)}
-		}
-		if s.Languages == nil {
-			s.Languages = make(map[string]indexer.LangStatus)
-		}
-		for _, lang := range languages {
-			s.Languages[lang] = indexer.LangStatus{OnDisk: fileCounts[lang]}
-		}
-		indexer.SaveIndexStatus(wctx.Root, s)
+	// Load or create a shared in-memory IndexStatus for the entire indexing run.
+	// This avoids calling LoadIndexStatus (JSON read + parse) on every Progress tick.
+	// The single *IndexStatus is updated in-place; only SaveIndexStatus (atomic write)
+	// hits the disk, and only every 10 files.
+	s := indexer.LoadIndexStatus(wctx.Root)
+	if s == nil {
+		s = &indexer.IndexStatus{StartedAt: time.Now().UTC().Format(time.RFC3339)}
 	}
+	if s.Languages == nil {
+		s.Languages = make(map[string]indexer.LangStatus)
+	}
+	// Pre-populate real on_disk counts so languages with 0 changed files still appear.
+	for _, l := range languages {
+		entry := s.Languages[l]
+		entry.OnDisk = fileCounts[l]
+		s.Languages[l] = entry
+	}
+	indexer.SaveIndexStatus(wctx.Root, s)
 
 	var indexErrors []string
 	for _, lang := range languages {
@@ -949,18 +962,12 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 				if doneFiles%10 != 0 && doneFiles != totalFiles {
 					return
 				}
-				if s := indexer.LoadIndexStatus(wctx.Root); s != nil {
-
-					if s.Languages == nil {
-						s.Languages = make(map[string]indexer.LangStatus)
-					}
-					ls := s.Languages[lang]
-					ls.OnDisk = diskTotal   // real total files on disk for this language
-					ls.Changed = totalFiles // files that needed re-indexing (changedFiles)
-					ls.Processed = doneFiles
-					s.Languages[lang] = ls
-					indexer.SaveIndexStatus(wctx.Root, s)
-				}
+				ls := s.Languages[lang]
+				ls.OnDisk = diskTotal   // real total files on disk
+				ls.Changed = totalFiles // files that needed re-indexing
+				ls.Processed = doneFiles
+				s.Languages[lang] = ls
+				indexer.SaveIndexStatus(wctx.Root, s)
 			},
 		})
 		if err != nil {

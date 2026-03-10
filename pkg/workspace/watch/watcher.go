@@ -233,7 +233,8 @@ func normalizeExclude(patterns []string) map[string]struct{} {
 
 // IsInvalidRoot reports whether root is an unsafe or degenerate directory
 // that must not be used as a workspace root for indexing or watching.
-// It rejects the filesystem root (/), the user home directory (~),
+// It rejects the filesystem root (/), the resolved user home directory
+// (as returned by os.UserHomeDir — note: literal "~" is NOT expanded),
 // and the system temp directory.
 func IsInvalidRoot(root string) bool {
 	clean := filepath.Clean(strings.TrimSpace(root))

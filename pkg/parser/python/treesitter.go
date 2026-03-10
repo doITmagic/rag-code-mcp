@@ -37,7 +37,7 @@ func (p *TreeSitterParser) Parse(source []byte, filePath string) (*PyFileAnalysi
 
 	// Workaround: gotreesitter v0.6.0 cannot parse `except X as e:` — it produces
 	// a flat/broken AST. Strip the `as VARNAME` part before parsing.
-	// See: https://github.com/odvcencio/gotreesitter/issues/TBD
+	// See patchExceptAs for details; the workaround preserves byte offsets.
 	parseable := patchExceptAs(source)
 
 	parser := gotreesitter.NewParser(lang.Language())
@@ -763,47 +763,62 @@ func (p *TreeSitterParser) extractAssignmentDirect(node *gotreesitter.Node, sour
 	}
 }
 
-// extractClassVarsFromBlock extracts class-level variables from a class body block
+// extractClassVarsFromBlock extracts class-level variables from a class body block.
+// Handles both `expression_statement > assignment` (standard) and
+// `assignment` placed directly in the block (gotreesitter quirk, same as module-level).
 func (p *TreeSitterParser) extractClassVarsFromBlock(blockNode *gotreesitter.Node, source []byte, lang *gotreesitter.Language, filePath string) []VariableInfo {
 	var vars []VariableInfo
 	for i := 0; i < blockNode.ChildCount(); i++ {
 		child := blockNode.Child(i)
 		ct := child.Type(lang)
-		if ct != "expression_statement" {
+
+		// Find the assignment node, regardless of whether it is wrapped in
+		// expression_statement or placed directly in the block.
+		var assignNode *gotreesitter.Node
+		switch ct {
+		case "expression_statement":
+			for j := 0; j < child.ChildCount(); j++ {
+				gc := child.Child(j)
+				if gc.Type(lang) == "assignment" {
+					assignNode = gc
+					break
+				}
+			}
+		case "assignment":
+			// gotreesitter may place assignments directly in the block without
+			// an expression_statement wrapper (same as at module level).
+			assignNode = child
+		}
+
+		if assignNode == nil {
 			continue
 		}
-		for j := 0; j < child.ChildCount(); j++ {
-			gc := child.Child(j)
-			gct := gc.Type(lang)
-			if gct != "assignment" {
-				continue
-			}
-			text := gc.Text(source)
-			parts := strings.SplitN(text, "=", 2)
-			if len(parts) < 2 {
-				continue
-			}
-			lhs := strings.TrimSpace(parts[0])
-			rhs := strings.TrimSpace(parts[1])
-			line := int(gc.StartPoint().Row) + 1
 
-			var varName, varType string
-			if colonIdx := strings.Index(lhs, ":"); colonIdx > 0 {
-				varName = strings.TrimSpace(lhs[:colonIdx])
-				varType = strings.TrimSpace(lhs[colonIdx+1:])
-			} else {
-				varName = lhs
-			}
-
-			if varName == "" || strings.Contains(varName, ".") {
-				continue
-			}
-
-			vars = append(vars, VariableInfo{
-				Name: varName, Type: varType, Value: rhs,
-				FilePath: filePath, StartLine: line, EndLine: line,
-			})
+		text := assignNode.Text(source)
+		parts := strings.SplitN(text, "=", 2)
+		if len(parts) < 2 {
+			continue
 		}
+		lhs := strings.TrimSpace(parts[0])
+		rhs := strings.TrimSpace(parts[1])
+		line := int(assignNode.StartPoint().Row) + 1
+
+		var varName, varType string
+		if colonIdx := strings.Index(lhs, ":"); colonIdx > 0 {
+			varName = strings.TrimSpace(lhs[:colonIdx])
+			varType = strings.TrimSpace(lhs[colonIdx+1:])
+		} else {
+			varName = lhs
+		}
+
+		if varName == "" || strings.Contains(varName, ".") {
+			continue
+		}
+
+		vars = append(vars, VariableInfo{
+			Name: varName, Type: varType, Value: rhs,
+			FilePath: filePath, StartLine: line, EndLine: line,
+		})
 	}
 	return vars
 }

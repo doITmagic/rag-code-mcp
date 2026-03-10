@@ -24,11 +24,13 @@ type IndexStatus struct {
 // LangStatus holds indexing stats for a single language.
 type LangStatus struct {
 	OnDisk    int `json:"on_disk"`    // total files on disk for this language
-	Changed   int `json:"changed"`   // files that need processing
+	Changed   int `json:"-"`          // internal: files that need processing (hidden from AI consumers)
 	Processed int `json:"processed"` // files processed so far
 }
 
 // SaveIndexStatus writes the IndexStatus to {workspaceRoot}/.ragcode/index_status.json.
+// The write is atomic: data is written to a temp file first, then renamed into place,
+// so concurrent readers always see a complete JSON file.
 func SaveIndexStatus(workspaceRoot string, status *IndexStatus) {
 	if workspaceRoot == "" || status == nil {
 		return
@@ -38,14 +40,33 @@ func SaveIndexStatus(workspaceRoot string, status *IndexStatus) {
 		logger.Instance.Warn("index_status: cannot create .ragcode dir: %v", err)
 		return
 	}
-	path := filepath.Join(dir, indexStatusFile)
 	b, err := json.MarshalIndent(status, "", "  ")
 	if err != nil {
 		logger.Instance.Warn("index_status: marshal failed: %v", err)
 		return
 	}
-	if err := os.WriteFile(path, b, 0o644); err != nil {
-		logger.Instance.Warn("index_status: write failed for %s: %v", path, err)
+	// Write to a temp file in the same directory so that rename is atomic.
+	tmp, err := os.CreateTemp(dir, indexStatusFile+".tmp-*")
+	if err != nil {
+		logger.Instance.Warn("index_status: cannot create temp file: %v", err)
+		return
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		logger.Instance.Warn("index_status: write to temp failed: %v", err)
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		logger.Instance.Warn("index_status: close temp failed: %v", err)
+		return
+	}
+	path := filepath.Join(dir, indexStatusFile)
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		logger.Instance.Warn("index_status: rename failed for %s: %v", path, err)
 	}
 }
 

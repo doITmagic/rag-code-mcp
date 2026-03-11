@@ -11,6 +11,8 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
+	"github.com/odvcencio/gotreesitter"
+	"github.com/odvcencio/gotreesitter/grammars"
 )
 
 func init() {
@@ -34,14 +36,27 @@ func (a *Analyzer) Name() string {
 	return "html"
 }
 
-// CanHandle returns true for .html and .htm files.
+// CanHandle returns true for .html, .htm, .css, and .scss files.
 func (a *Analyzer) CanHandle(filePath string) bool {
 	ext := strings.ToLower(filepath.Ext(filePath))
-	return ext == ".html" || ext == ".htm"
+	switch ext {
+	case ".html", ".htm", ".css", ".scss", ".sass", ".less":
+		return true
+	default:
+		return false
+	}
 }
 
 // Analyze extracts symbols (sections) from a file or directory.
 func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result, error) {
+	ext := strings.ToLower(filepath.Ext(path))
+
+	// CSS/SCSS files: use tree-sitter parsing (not goquery)
+	if ext == ".css" || ext == ".scss" || ext == ".sass" || ext == ".less" {
+		return a.analyzeCSS(path)
+	}
+
+	// HTML files: use goquery
 	chunks, err := a.ca.AnalyzePaths([]string{path})
 	if err != nil {
 		return nil, err
@@ -58,6 +73,88 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 			Content:   ch.Content,
 			Signature: ch.Signature,
 			Metadata:  ch.Metadata,
+		})
+	}
+
+	return &pkgParser.Result{
+		Symbols:  symbols,
+		Language: "html",
+	}, nil
+}
+
+// analyzeCSS parses CSS/SCSS/LESS files using tree-sitter.
+func (a *Analyzer) analyzeCSS(path string) (*pkgParser.Result, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("css read %s: %w", path, err)
+	}
+
+	text := strings.TrimSpace(string(content))
+	if text == "" {
+		return &pkgParser.Result{Language: "html"}, nil
+	}
+
+	// Use tree-sitter for proper CSS/SCSS parsing
+	langInfo := grammars.DetectLanguage(path)
+	if langInfo == nil {
+		// Fallback: if tree-sitter doesn't recognize the extension, skip
+		return &pkgParser.Result{Language: "html"}, nil
+	}
+
+	langObj := langInfo.Language()
+	tsParser := gotreesitter.NewParser(langObj)
+	tree, err := tsParser.Parse(content)
+	if err != nil {
+		return nil, fmt.Errorf("css treesitter parse %s: %w", path, err)
+	}
+
+	baseName := filepath.Base(path)
+	langName := langInfo.Name
+	var symbols []pkgParser.Symbol
+	root := tree.RootNode()
+
+	// Walk tree-sitter nodes, extracting rule blocks as symbols
+	for i := 0; i < root.ChildCount(); i++ {
+		node := root.Child(i)
+		nodeType := node.Type(langObj)
+		nodeText := strings.TrimSpace(node.Text(content))
+
+		if len(nodeText) < 5 {
+			continue
+		}
+
+		// Truncate very large blocks
+		if len(nodeText) > 4096 {
+			nodeText = nodeText[:4096] + "\n...[TRUNCATED]"
+		}
+
+		startLine := int(node.StartPoint().Row) + 1
+		endLine := int(node.EndPoint().Row) + 1
+
+		// Extract selector from CSS rule nodes
+		selector := nodeType
+		if node.ChildCount() > 0 {
+			firstChild := node.Child(0)
+			firstChildText := strings.TrimSpace(firstChild.Text(content))
+			if firstChildText != "" && len(firstChildText) < 200 {
+				selector = firstChildText
+			}
+		}
+
+		symbols = append(symbols, pkgParser.Symbol{
+			Name:      baseName,
+			Type:      "style_rule",
+			FilePath:  path,
+			Language:  langName,
+			Content:   nodeText,
+			Signature: selector,
+			StartLine: startLine,
+			EndLine:   endLine,
+			IsPublic:  true,
+			Metadata: map[string]interface{}{
+				"selector":  selector,
+				"node_type": nodeType,
+			},
 		})
 	}
 
@@ -245,7 +342,12 @@ func (ca *CodeAnalyzer) shouldSkipDir(path, root string) bool {
 
 func (ca *CodeAnalyzer) isHTMLFile(name string) bool {
 	lower := strings.ToLower(name)
-	return strings.HasSuffix(lower, ".html") || strings.HasSuffix(lower, ".htm")
+	for _, ext := range []string{".html", ".htm", ".css", ".scss", ".sass", ".less"} {
+		if strings.HasSuffix(lower, ext) {
+			return true
+		}
+	}
+	return false
 }
 
 func headingLevel(tag string) int {

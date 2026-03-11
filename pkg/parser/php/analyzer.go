@@ -659,8 +659,8 @@ func (v *symbolCollector) buildMethodSignature(name string, params []ast.Vertex,
 				paramStr += v.extractTypeNameString(p.Type) + " "
 			}
 
-			// Add name
-			paramStr += "$" + v.extractVariableName(p.Var)
+			// Add name (AST includes $ in variable names)
+			paramStr += v.extractVariableName(p.Var)
 
 			paramStrs = append(paramStrs, paramStr)
 		}
@@ -941,7 +941,7 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 					Type:      "property",
 					Language:  "php",
 					Package:   class.Namespace,
-					Signature: fmt.Sprintf("%s %s $%s", prop.Visibility, prop.Type, prop.Name),
+					Signature: fmt.Sprintf("%s %s %s", prop.Visibility, prop.Type, prop.Name),
 					FilePath:  class.FilePath,
 					StartLine: prop.StartLine,
 					EndLine:   prop.EndLine,

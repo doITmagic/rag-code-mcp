@@ -928,6 +928,13 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 	fileCounts := e.indexer.CountAllFiles(wctx.Root, excludePatterns)
 	logger.Instance.Info("[IDX] ws=%s file counts: %v", wsName, fileCounts)
 
+	// Sort languages by file count descending so the dominant language is indexed
+	// first and AI search works immediately for the most relevant code.
+	sort.Slice(languages, func(i, j int) bool {
+		return fileCounts[languages[i]] > fileCounts[languages[j]]
+	})
+	logger.Instance.Info("[IDX] ws=%s indexing order: %v", wsName, languages)
+
 	// Load or create a shared in-memory IndexStatus for the entire indexing run.
 	// This avoids calling LoadIndexStatus (JSON read + parse) on every Progress tick.
 	// The single *IndexStatus is updated in-place; only SaveIndexStatus (atomic write)

@@ -895,6 +895,14 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 			for _, use := range class.Uses {
 				chunk.Relations = append(chunk.Relations, pkgParser.Relation{TargetName: use, Type: pkgParser.RelUsesTrait})
 			}
+			// Add uses_type relations from PHP "use" import statements.
+			// This enables find_usages to discover which classes import a given type
+			// (e.g. find_usages("Lawyer") returns all controllers with "use App\Lawyer").
+			for alias, fullPath := range class.Imports {
+				// Use the short alias as target name (matches how symbols are indexed)
+				_ = fullPath
+				chunk.Relations = append(chunk.Relations, pkgParser.Relation{TargetName: alias, Type: pkgParser.RelUsesType})
+			}
 
 			// Add method and its relations
 			for _, method := range class.Methods {

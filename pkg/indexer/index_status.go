@@ -64,3 +64,28 @@ func LoadIndexStatus(workspaceRoot string) *IndexStatus {
 	}
 	return &s
 }
+
+// GetLastInterruptedWorkspace checks a list of roots and picks the one 
+// that is incomplete (StartedAt without EndedAt) with the most recent Start time.
+func GetLastInterruptedWorkspace(roots []string) string {
+	var bestRoot string
+	var bestStartedAt string
+
+	for _, root := range roots {
+		status := LoadIndexStatus(root)
+		if status == nil {
+			continue
+		}
+		if status.EndedAt != "" {
+			continue // Already finished
+		}
+
+		if status.StartedAt != "" && status.StartedAt > bestStartedAt {
+			// Basic lexicographical comparison works for RFC3339 timestamps
+			bestStartedAt = status.StartedAt
+			bestRoot = root
+		}
+	}
+
+	return bestRoot
+}

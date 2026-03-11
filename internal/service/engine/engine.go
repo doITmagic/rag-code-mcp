@@ -353,41 +353,18 @@ func (e *Engine) ResumeIndexingOnConnect() {
 		return
 	}
 
-	var bestRoot string
-	var bestID string
-	var bestStartedAt time.Time
-
+	var roots []string
+	idMap := make(map[string]string)
 	for _, entry := range entries {
-		wsRoot := entry.Root
-		wsID := entry.ID
-
-		status := e.GetIndexStatus(wsRoot)
-		if status == nil {
-			continue // Indexing never started
-		}
-
-		// Check if it's incomplete (started but no EndedAt)
-		if status.EndedAt != "" {
-			continue // already finished
-		}
-
-		// Parse StartedAt to find the most recent
-		startedT, err := time.Parse(time.RFC3339, status.StartedAt)
-		if err != nil {
-			continue // Invalid timestamp
-		}
-
-		if startedT.After(bestStartedAt) {
-			bestStartedAt = startedT
-			bestRoot = wsRoot
-			bestID = wsID
-		}
+		roots = append(roots, entry.Root)
+		idMap[entry.Root] = entry.ID
 	}
 
+	bestRoot := indexer.GetLastInterruptedWorkspace(roots)
 	if bestRoot != "" {
-		logger.Instance.Info("[DAEMON] Resuming incomplete indexing for workspace: %s (started at: %v)", filepath.Base(bestRoot), bestStartedAt)
+		logger.Instance.Info("[DAEMON] Resuming incomplete indexing for workspace: %s", filepath.Base(bestRoot))
 		// trigger indexing incrementally
-		e.StartIndexingAsync(bestRoot, bestID, nil, false)
+		e.StartIndexingAsync(bestRoot, idMap[bestRoot], nil, false)
 	} else {
 		logger.Instance.Debug("[DAEMON] ResumeIndexingOnConnect: no incomplete indexing jobs found")
 	}

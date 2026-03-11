@@ -155,7 +155,7 @@ In reality, the index may be completely stale — all 232 files could be unindex
 
 ## BUG-003: Top-level Go functions with no AST relations are missing from the vector index
 
-**Status:** Open  
+**Status:** ✅ Fixed (2026-03-10, PR #40)  
 **Date confirmed:** 2026-03-09  
 **Affected component:** Go parser / indexer (`pkg/indexer`, `internal/parser`)  
 **Severity:** Medium — `rag_list_package_exports` and `rag_search` silently omit exported constructor/loader functions

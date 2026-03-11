@@ -54,6 +54,9 @@ Thumbs.db
 .env
 .env.local
 
+# Local project config (not for VCS)
+.trello.json
+
 # Temporary files
 tmp/
 temp/

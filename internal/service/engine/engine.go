@@ -282,10 +282,14 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 	// recreate=false ensures incremental indexing — only new/changed files are processed.
 	if e.config == nil || e.config.Workspace.AutoIndex {
 		if _, triggered := e.connectTriggered.LoadOrStore(wctx.ID, true); !triggered {
-			if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); !alreadyRunning {
-				logger.Instance.Info("[DAEMON] [WS-DETECT] Auto-triggering incremental index for workspace: %s", wctx.Root)
-				go e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
-			}
+			// Do NOT check indexingJobs.Load here — that is a TOCTOU race window.
+			// StartIndexingAsync uses indexingJobs.LoadOrStore atomically and is
+			// already idempotent: if a job is running it returns immediately.
+			// Calling it directly (not via `go`) avoids the extra scheduling delay
+			// that previously widened the race window between ResumeIndexingOnConnect
+			// and DetectContext. StartIndexingAsync spawns its own goroutine internally.
+			logger.Instance.Info("[DAEMON] [WS-DETECT] Auto-triggering incremental index for workspace: %s", wctx.Root)
+			e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 		}
 	}
 
@@ -363,7 +367,10 @@ func (e *Engine) ResumeIndexingOnConnect() {
 	bestRoot := indexer.GetLastInterruptedWorkspace(roots)
 	if bestRoot != "" {
 		logger.Instance.Info("[DAEMON] Resuming incomplete indexing for workspace: %s", filepath.Base(bestRoot))
-		// trigger indexing incrementally
+		// Mark as triggered BEFORE calling StartIndexingAsync so that DetectContext's
+		// auto-trigger (connectTriggered.LoadOrStore) sees this workspace as already
+		// handled and does NOT start a second concurrent indexing job.
+		e.connectTriggered.Store(idMap[bestRoot], true)
 		e.StartIndexingAsync(bestRoot, idMap[bestRoot], nil, false)
 	} else {
 		logger.Instance.Debug("[DAEMON] ResumeIndexingOnConnect: no incomplete indexing jobs found")

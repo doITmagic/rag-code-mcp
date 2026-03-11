@@ -1015,7 +1015,7 @@ func getIndentation(line string) int {
 		case '\t':
 			count += 4
 		default:
-			break
+			return count
 		}
 	}
 	return count

@@ -255,9 +255,10 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 		Message: "Found package exports\n\n" + response.String(),
 		Data:    exports,
 		Context: ContextMetadata{
-			WorkspaceRoot:    wctx.Root,
-			DetectionSource:  wctx.DetectionSource,
-			Telemetry:        telemetry.CalculateSavings(baselineBytes, actualBytes),
+			WorkspaceRoot:   wctx.Root,
+			DetectionSource: wctx.DetectionSource,
+			Telemetry:       telemetry.CalculateSavings(baselineBytes, actualBytes),
+			IndexingStatus:  t.engine.GetIndexStatus(wctx.Root),
 		},
 	}
 

@@ -126,17 +126,11 @@ func (t *EvaluateRagCodeTool) Execute(ctx context.Context, args map[string]inter
 		}
 	}
 
-
-
 	response := ToolResponse{
 		Status:  "success",
 		Message: b.String(),
 		Data:    data,
-		Context: ContextMetadata{
-			WorkspaceRoot:    workspaceRoot,
-			DetectionSource:  source,
-			IndexingStatus: nil,
-		},
+		Context: ContextFromWorkspaceWithStatus(wctx, t.engine),
 	}
 
 	return response.JSON()

@@ -245,11 +245,8 @@ func (t *SmartSearchTool) buildResponseMeta(meta searchMetadata) ToolResponse {
 			response.Warning = fallbackNote
 		}
 	}
-
 	return response
 }
-
-
 
 // ─── Result Serialization ────────────────────────────────────────────────────
 

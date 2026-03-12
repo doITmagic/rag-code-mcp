@@ -10,6 +10,19 @@ import (
 	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
 )
 
+// FrameworkEnricher defines an interface for adding framework-specific parsing (e.g., Laravel, WordPress).
+type FrameworkEnricher interface {
+	IsApplicable(ca *CodeAnalyzer, paths []string) bool
+	Enrich(ca *CodeAnalyzer, packages []*PackageInfo, paths []string, chunks []CodeChunk) []CodeChunk
+}
+
+var enrichers []FrameworkEnricher
+
+// RegisterEnricher adds a framework-specific enricher to the PHP parser.
+func RegisterEnricher(e FrameworkEnricher) {
+	enrichers = append(enrichers, e)
+}
+
 func init() {
 	pkgParser.Register(NewAnalyzer())
 }
@@ -38,9 +51,20 @@ func (a *Analyzer) CanHandle(filePath string) bool {
 
 // Analyze extracts symbols from a file or directory.
 func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result, error) {
-	chunks, err := a.codeAnalyzer.AnalyzePaths([]string{path})
+	paths := []string{path}
+	chunks, err := a.codeAnalyzer.AnalyzePaths(paths)
 	if err != nil {
 		return nil, err
+	}
+
+	// Fetch packages analyzed by the core PHP parser
+	packages := a.codeAnalyzer.GetPackages()
+
+	// Run all registered framework enrichers
+	for _, enricher := range enrichers {
+		if enricher.IsApplicable(a.codeAnalyzer, paths) {
+			chunks = enricher.Enrich(a.codeAnalyzer, packages, paths, chunks)
+		}
 	}
 
 	// If no symbols found and the file is in a routes/ directory,

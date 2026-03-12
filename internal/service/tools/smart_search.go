@@ -477,4 +477,3 @@ func (t *SmartSearchTool) groupDocsByTree(results []mergedResult) []mergedResult
 
 	return out
 }
-

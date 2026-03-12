@@ -28,7 +28,6 @@ var _ = Describe("Health Metrics & Index Status", func() {
 		ctx = context.Background()
 	})
 
-
 	// ─── 2. Stale chunk detection ────────────────────────────────────────────────
 
 	Describe("rag_search (SmartSearchTool) — stale chunk detection", func() {

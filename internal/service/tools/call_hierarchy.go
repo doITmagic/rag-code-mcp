@@ -165,10 +165,10 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 		Message: sb.String(),
 		Data:    rootNode,
 		Context: ContextMetadata{
-			WorkspaceRoot:    wctx.Root,
-			DetectionSource:  wctx.DetectionSource,
-			Telemetry:        telemetry.CalculateSavings(baselineBytes, actualBytes),
-			IndexingStatus:   idx,
+			WorkspaceRoot:   wctx.Root,
+			DetectionSource: wctx.DetectionSource,
+			Telemetry:       telemetry.CalculateSavings(baselineBytes, actualBytes),
+			IndexingStatus:  idx,
 		},
 	}
 	return resp.JSON()

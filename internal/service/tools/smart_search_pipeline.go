@@ -211,12 +211,12 @@ func (t *SmartSearchTool) buildResponseMeta(meta searchMetadata) ToolResponse {
 	response := ToolResponse{
 		Status: "success",
 		Context: ContextMetadata{
-			WorkspaceRoot:    meta.workspaceRoot,
-			DetectionSource:  meta.detectionSource,
-			Language:         meta.language,
-			Collection:       meta.collection,
-			IndexingStatus: idxStatus,
-			SessionMetrics:   telemetry.ReadAggregatedMetrics(meta.workspaceRoot),
+			WorkspaceRoot:   meta.workspaceRoot,
+			DetectionSource: meta.detectionSource,
+			Language:        meta.language,
+			Collection:      meta.collection,
+			IndexingStatus:  idxStatus,
+			SessionMetrics:  telemetry.ReadAggregatedMetrics(meta.workspaceRoot),
 		},
 	}
 

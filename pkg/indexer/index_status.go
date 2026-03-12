@@ -17,17 +17,17 @@ const indexStatusFile = "index_status.json"
 // Written by the indexer to {workspaceRoot}/.ragcode/index_status.json.
 // Read by tools to include progress in MCP responses.
 type IndexStatus struct {
-	StartedAt string                `json:"started_at"`           // RFC3339
-	EndedAt   string               `json:"ended_at,omitempty"`   // RFC3339
-	Elapsed   string               `json:"elapsed,omitempty"`    // human-readable duration
-	Error     string               `json:"error,omitempty"`
+	StartedAt string                `json:"started_at"`         // RFC3339
+	EndedAt   string                `json:"ended_at,omitempty"` // RFC3339
+	Elapsed   string                `json:"elapsed,omitempty"`  // human-readable duration
+	Error     string                `json:"error,omitempty"`
 	Languages map[string]LangStatus `json:"languages,omitempty"`
 }
 
 // LangStatus holds indexing stats for a single language.
 type LangStatus struct {
-	OnDisk    int `json:"on_disk"`    // total files on disk for this language
-	Changed   int `json:"-"`          // internal: files that need processing (hidden from AI consumers)
+	OnDisk    int `json:"on_disk"`   // total files on disk for this language
+	Changed   int `json:"-"`         // internal: files that need processing (hidden from AI consumers)
 	Processed int `json:"processed"` // files processed so far
 }
 
@@ -131,7 +131,7 @@ func LoadIndexStatus(workspaceRoot string) *IndexStatus {
 	return &s
 }
 
-// GetLastInterruptedWorkspace checks a list of roots and picks the one 
+// GetLastInterruptedWorkspace checks a list of roots and picks the one
 // that is incomplete (StartedAt without EndedAt) with the most recent Start time.
 func GetLastInterruptedWorkspace(roots []string) string {
 	var bestRoot string

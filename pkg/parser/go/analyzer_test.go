@@ -141,8 +141,8 @@ func TestRealPackage_IndexerSignatures(t *testing.T) {
 	}
 
 	cases := []struct {
-		name        string
-		wantParts   []string // all must appear in Signature
+		name      string
+		wantParts []string // all must appear in Signature
 	}{
 		// From Qdrant payload "signature" field:
 		{"SaveIndexStatus", []string{"SaveIndexStatus", "workspaceRoot", "IndexStatus"}},

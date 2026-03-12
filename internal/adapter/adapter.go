@@ -7,14 +7,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"strings"
 	"time"
 )
 
 // RunBridge reads JSON-RPC messages from stdin, forwards each as an HTTP POST
-// to the daemon via Unix socket, and writes the JSON response to stdout.
+// to the daemon via local TCP port, and writes the JSON response to stdout.
 //
 // The adapter reads/writes single JSON payloads (no SSE framing).
 // Accept header includes text/event-stream for StreamableHTTPHandler compatibility,
@@ -27,14 +26,9 @@ import (
 // the IDE is intentionally ignored — only the daemon-resolved root is trusted.
 //
 // Returns nil on stdin EOF (normal IDE shutdown).
-func RunBridge(ctx context.Context, socketPath string, stdin io.Reader, stdout io.Writer, workspaceHint string) error {
+func RunBridge(ctx context.Context, port int, stdin io.Reader, stdout io.Writer, workspaceHint string) error {
 	client := &http.Client{
 		Timeout: 5 * time.Minute, // prevent indefinite hangs on stalled daemon
-		Transport: &http.Transport{
-			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
-				return net.DialTimeout("unix", socketPath, 10*time.Second)
-			},
-		},
 	}
 
 	scanner := bufio.NewScanner(stdin)
@@ -53,7 +47,7 @@ func RunBridge(ctx context.Context, socketPath string, stdin io.Reader, stdout i
 		}
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-			"http://daemon/mcp", bytes.NewReader([]byte(line)))
+			fmt.Sprintf("http://127.0.0.1:%d/mcp", port), bytes.NewReader([]byte(line)))
 		if err != nil {
 			writeJSONRPCError(stdout, line, fmt.Errorf("create request: %w", err))
 			continue

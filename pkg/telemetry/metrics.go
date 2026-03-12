@@ -10,15 +10,15 @@ import (
 
 // SearchMetric records a single tool invocation for cumulative analytics.
 type SearchMetric struct {
-	Timestamp    time.Time `json:"ts"`
-	Tool         string    `json:"tool"`                    // "rag_search", "rag_find_usages", etc.
-	Query        string    `json:"query,omitempty"`         // search query
-	ResultCount  int       `json:"result_count"`            // number of results returned
-	TopScore     float32   `json:"top_score,omitempty"`     // score of best result
-	Source       string    `json:"source,omitempty"`        // "vector", "fallback", "hybrid"
-	BytesSaved   int64     `json:"bytes_saved,omitempty"`   // bytes avoided via RAG
-	TokensSaved  int64     `json:"tokens_saved,omitempty"`  // estimated tokens saved
-	ResponseMs   int64     `json:"response_ms,omitempty"`   // response time in milliseconds
+	Timestamp   time.Time `json:"ts"`
+	Tool        string    `json:"tool"`                   // "rag_search", "rag_find_usages", etc.
+	Query       string    `json:"query,omitempty"`        // search query
+	ResultCount int       `json:"result_count"`           // number of results returned
+	TopScore    float32   `json:"top_score,omitempty"`    // score of best result
+	Source      string    `json:"source,omitempty"`       // "vector", "fallback", "hybrid"
+	BytesSaved  int64     `json:"bytes_saved,omitempty"`  // bytes avoided via RAG
+	TokensSaved int64     `json:"tokens_saved,omitempty"` // estimated tokens saved
+	ResponseMs  int64     `json:"response_ms,omitempty"`  // response time in milliseconds
 }
 
 const metricsFile = "search_metrics.jsonl"

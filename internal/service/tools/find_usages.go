@@ -253,10 +253,10 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 		Message: "Found symbol usages\n\n" + response.String(),
 		Data:    usages,
 		Context: ContextMetadata{
-			WorkspaceRoot:    wctx.Root,
-			DetectionSource:  wctx.DetectionSource,
-			Telemetry:        telemetry.CalculateSavings(baselineBytes, actualBytes),
-			IndexingStatus:   idx,
+			WorkspaceRoot:   wctx.Root,
+			DetectionSource: wctx.DetectionSource,
+			Telemetry:       telemetry.CalculateSavings(baselineBytes, actualBytes),
+			IndexingStatus:  idx,
 		},
 	}
 	return resp.JSON()

@@ -219,7 +219,7 @@ func Run(rcfg RunConfig) error {
 	//    X-Resolved-Workspace header in the response — the adapter reads it
 	//    and caches it for subsequent requests.
 	var resumeIndexingOnce sync.Once
-	
+
 	mcpHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := transport.WithResponseWriter(r.Context(), w)
 		if wsRoot := r.Header.Get("X-Workspace-Root"); wsRoot != "" {
@@ -245,20 +245,16 @@ func Run(rcfg RunConfig) error {
 	if err := os.MkdirAll(ragcodeDir, 0o700); err != nil {
 		return fmt.Errorf("cannot create ~/.ragcode: %w", err)
 	}
-	socketPath := filepath.Join(ragcodeDir, "daemon.sock")
-	pidPath := filepath.Join(ragcodeDir, "daemon.pid")
 
 	// ── Start Daemon Listeners ──
 	logger.Instance.Info("--- DAEMON MODE --- version=%s pid=%d", rcfg.Version, os.Getpid())
 
 	listenErr := ListenAndServe(context.Background(), ListenConfig{
-		SocketPath: socketPath,
-		PIDPath:    pidPath,
-		Version:    rcfg.Version,
-		HTTPPort:   rcfg.HTTPPort,
-		Handler:    mcpHandler,
+		Port:    rcfg.HTTPPort,
+		Version: rcfg.Version,
+		Handler: mcpHandler,
 		OnReady: func() {
-			logger.Instance.Info("Daemon ready — socket=%s, http_port=%d", socketPath, rcfg.HTTPPort)
+			logger.Instance.Info("Daemon ready — port=%d", rcfg.HTTPPort)
 		},
 	})
 

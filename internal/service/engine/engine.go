@@ -47,12 +47,9 @@ type Engine struct {
 
 	registry *registry.Registry
 
-
 	// detectionCache stores resolved WorkspaceContext with TTL to avoid
 	// repeated full resolver cascades for the same path.
 	detectionCache sync.Map // map[string]*detectionCacheEntry
-
-
 
 	// connectTriggered tracks whether background indexing was automatically
 	// triggered for a workspace ID upon initial daemon resolution.
@@ -109,12 +106,12 @@ func NewEngine(idx *indexer.Service, srv *search.Service, registryPath string, c
 	}
 
 	return &Engine{
-		indexer:         idx,
-		search:          srv,
-		resolver:        res,
-		config:          cfg,
-		watchers:        watcherMgr,
-		registry:        reg,
+		indexer:  idx,
+		search:   srv,
+		resolver: res,
+		config:   cfg,
+		watchers: watcherMgr,
+		registry: reg,
 
 		pendingFiles:    make(map[string]map[string]struct{}),
 		pendingOverflow: make(map[string]bool),
@@ -454,8 +451,6 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 	primaryColl := wctx.CollectionName(primaryLang)
 	t1 := time.Now()
 
-
-
 	// Check if the primary collection exists.
 	// If not, trigger background indexing but do NOT block — the fan-out below
 	// will search any other language collections that do exist.
@@ -647,8 +642,6 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 	}
 
 	collection := wctx.CollectionName(lang)
-
-
 
 	exists, err := e.search.CollectionExists(ctx, collection)
 	if err != nil {

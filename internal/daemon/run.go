@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -212,6 +213,13 @@ func Run(rcfg RunConfig) error {
 
 	mcpMux := http.NewServeMux()
 	mcpMux.Handle("/mcp", streamableHandler)
+
+	// Profiling endpoints
+	mcpMux.HandleFunc("/debug/pprof/", pprof.Index)
+	mcpMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mcpMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mcpMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mcpMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
 	// Middleware: sticky workspace + response writer injection.
 	//

@@ -3,19 +3,43 @@ package python
 import (
 	"regexp"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 )
 
-// TreeSitterParser uses tree-sitter AST for Python parsing
-// Primary engine, falls back to regex-based CodeAnalyzer when needed
-type TreeSitterParser struct{}
+// TreeSitterParser uses tree-sitter AST for Python parsing.
+// Caches Parser instances per language to avoid re-allocating expensive lookup tables.
+type TreeSitterParser struct {
+	mu      sync.Mutex
+	parsers map[string]*gotreesitter.Parser
+}
 
 // NewTreeSitterParser creates a new tree-sitter Python parser
 func NewTreeSitterParser() *TreeSitterParser {
-	return &TreeSitterParser{}
+	return &TreeSitterParser{
+		parsers: make(map[string]*gotreesitter.Parser),
+	}
+}
+
+func (p *TreeSitterParser) getOrCreateParser(lang *grammars.LangEntry) *gotreesitter.Parser {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if cached, ok := p.parsers[lang.Name]; ok {
+		return cached
+	}
+	parser := gotreesitter.NewParser(lang.Language())
+	p.parsers[lang.Name] = parser
+	return parser
+}
+
+// ReleaseResources drops cached tree-sitter parsers so the GC can reclaim arena memory.
+func (p *TreeSitterParser) ReleaseResources() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.parsers = make(map[string]*gotreesitter.Parser)
 }
 
 // PyFileAnalysis holds the parsed results from tree-sitter
@@ -40,11 +64,12 @@ func (p *TreeSitterParser) Parse(source []byte, filePath string) (*PyFileAnalysi
 	// See patchExceptAs for details; the workaround preserves byte offsets.
 	parseable := patchExceptAs(source)
 
-	parser := gotreesitter.NewParser(lang.Language())
+	parser := p.getOrCreateParser(lang)
 	tree, err := parser.Parse(parseable)
 	if err != nil {
 		return nil, err
 	}
+	defer tree.Release()
 
 	root := tree.RootNode()
 	langObj := lang.Language()

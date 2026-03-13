@@ -23,6 +23,7 @@ import (
 	"github.com/doITmagic/rag-code-mcp/internal/utils"
 	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
 	"github.com/doITmagic/rag-code-mcp/pkg/llm"
+	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/css"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/docs"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/go"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/html"

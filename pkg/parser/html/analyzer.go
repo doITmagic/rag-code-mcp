@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/PuerkitoBio/goquery"
 	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
@@ -20,15 +21,38 @@ func init() {
 }
 
 // Analyzer implements the pkgParser.Analyzer interface for HTML.
+// Caches gotreesitter.Parser instances per language to avoid re-allocating expensive lookup tables.
 type Analyzer struct {
-	ca *CodeAnalyzer
+	ca      *CodeAnalyzer
+	mu      sync.Mutex
+	parsers map[string]*gotreesitter.Parser
 }
 
 // NewAnalyzer creates a new HTML analyzer.
 func NewAnalyzer() *Analyzer {
 	return &Analyzer{
-		ca: NewCodeAnalyzer(),
+		ca:      NewCodeAnalyzer(),
+		parsers: make(map[string]*gotreesitter.Parser),
 	}
+}
+
+func (a *Analyzer) getOrCreateParser(lang *grammars.LangEntry) *gotreesitter.Parser {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if cached, ok := a.parsers[lang.Name]; ok {
+		return cached
+	}
+	p := gotreesitter.NewParser(lang.Language())
+	a.parsers[lang.Name] = p
+	return p
+}
+
+// ReleaseResources drops cached tree-sitter parsers so the GC can
+// reclaim the arena memory they reference.
+func (a *Analyzer) ReleaseResources() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.parsers = make(map[string]*gotreesitter.Parser)
 }
 
 // Name returns "html".
@@ -36,26 +60,19 @@ func (a *Analyzer) Name() string {
 	return "html"
 }
 
-// CanHandle returns true for .html, .htm, .css, and .scss files.
+// CanHandle returns true for .html files.
 func (a *Analyzer) CanHandle(filePath string) bool {
 	ext := strings.ToLower(filepath.Ext(filePath))
 	switch ext {
-	case ".html", ".htm", ".css", ".scss", ".sass", ".less":
+	case ".html", ".htm":
 		return true
 	default:
 		return false
 	}
 }
 
-// Analyze extracts symbols (sections) from a file or directory.
+// Analyze extracts symbols (sections) from an HTML file.
 func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result, error) {
-	ext := strings.ToLower(filepath.Ext(path))
-
-	// CSS/SCSS files: use tree-sitter parsing (not goquery)
-	if ext == ".css" || ext == ".scss" || ext == ".sass" || ext == ".less" {
-		return a.analyzeCSS(path)
-	}
-
 	// HTML files: use goquery
 	chunks, err := a.ca.AnalyzePaths([]string{path})
 	if err != nil {
@@ -102,11 +119,12 @@ func (a *Analyzer) analyzeCSS(path string) (*pkgParser.Result, error) {
 	}
 
 	langObj := langInfo.Language()
-	tsParser := gotreesitter.NewParser(langObj)
+	tsParser := a.getOrCreateParser(langInfo)
 	tree, err := tsParser.Parse(content)
 	if err != nil {
 		return nil, fmt.Errorf("css treesitter parse %s: %w", path, err)
 	}
+	defer tree.Release()
 
 	baseName := filepath.Base(path)
 	langName := langInfo.Name
@@ -342,7 +360,7 @@ func (ca *CodeAnalyzer) shouldSkipDir(path, root string) bool {
 
 func (ca *CodeAnalyzer) isHTMLFile(name string) bool {
 	lower := strings.ToLower(name)
-	for _, ext := range []string{".html", ".htm", ".css", ".scss", ".sass", ".less"} {
+	for _, ext := range []string{".html", ".htm"} {
 		if strings.HasSuffix(lower, ext) {
 			return true
 		}

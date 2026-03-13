@@ -4,16 +4,42 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
 	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 )
 
-type TreeSitterParser struct{}
+// TreeSitterParser parses documentation files using tree-sitter.
+// Caches Parser instances per language to avoid re-allocating expensive lookup tables.
+type TreeSitterParser struct {
+	mu      sync.Mutex
+	parsers map[string]*gotreesitter.Parser
+}
 
 func NewTreeSitterParser() *TreeSitterParser {
-	return &TreeSitterParser{}
+	return &TreeSitterParser{
+		parsers: make(map[string]*gotreesitter.Parser),
+	}
+}
+
+func (p *TreeSitterParser) getOrCreateParser(lang *grammars.LangEntry) *gotreesitter.Parser {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if cached, ok := p.parsers[lang.Name]; ok {
+		return cached
+	}
+	tsParser := gotreesitter.NewParser(lang.Language())
+	p.parsers[lang.Name] = tsParser
+	return tsParser
+}
+
+// ReleaseResources drops cached tree-sitter parsers so the GC can reclaim arena memory.
+func (p *TreeSitterParser) ReleaseResources() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.parsers = make(map[string]*gotreesitter.Parser)
 }
 
 func (p *TreeSitterParser) Parse(source []byte, filePath string, ext string) ([]parser.Symbol, error) {
@@ -23,11 +49,12 @@ func (p *TreeSitterParser) Parse(source []byte, filePath string, ext string) ([]
 	}
 
 	langObj := langInfo.Language()
-	parserTs := gotreesitter.NewParser(langObj)
+	parserTs := p.getOrCreateParser(langInfo)
 	tree, err := parserTs.Parse(source)
 	if err != nil {
 		return nil, fmt.Errorf("ts parse error: %w", err)
 	}
+	defer tree.Release()
 
 	langName := langInfo.Name
 	var symbols []parser.Symbol

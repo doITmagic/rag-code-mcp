@@ -26,6 +26,13 @@ func NewAnalyzer() *Analyzer {
 	}
 }
 
+// ReleaseResources drops cached tree-sitter parsers so the GC can reclaim arena memory.
+func (a *Analyzer) ReleaseResources() {
+	if a.tsParser != nil {
+		a.tsParser.ReleaseResources()
+	}
+}
+
 func (a *Analyzer) Name() string {
 	return "docs"
 }

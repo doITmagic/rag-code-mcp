@@ -2,17 +2,42 @@ package react
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 )
 
-// TreeSitterAnalyzer uses tree-sitter AST for accurate React/RN pattern detection
-type TreeSitterAnalyzer struct{}
+// TreeSitterAnalyzer uses tree-sitter AST for accurate React/RN pattern detection.
+// Caches Parser instances per language to avoid re-allocating expensive lookup tables.
+type TreeSitterAnalyzer struct {
+	mu      sync.Mutex
+	parsers map[string]*gotreesitter.Parser
+}
 
 // NewTreeSitterAnalyzer creates a new tree-sitter based React analyzer
 func NewTreeSitterAnalyzer() *TreeSitterAnalyzer {
-	return &TreeSitterAnalyzer{}
+	return &TreeSitterAnalyzer{
+		parsers: make(map[string]*gotreesitter.Parser),
+	}
+}
+
+func (t *TreeSitterAnalyzer) getOrCreateParser(lang *grammars.LangEntry) *gotreesitter.Parser {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if cached, ok := t.parsers[lang.Name]; ok {
+		return cached
+	}
+	p := gotreesitter.NewParser(lang.Language())
+	t.parsers[lang.Name] = p
+	return p
+}
+
+// ReleaseResources drops cached tree-sitter parsers so the GC can reclaim arena memory.
+func (t *TreeSitterAnalyzer) ReleaseResources() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.parsers = make(map[string]*gotreesitter.Parser)
 }
 
 // Analyze parses source with tree-sitter and extracts React/RN patterns from the AST
@@ -22,11 +47,12 @@ func (t *TreeSitterAnalyzer) Analyze(source []byte, filePath string) *ReactInfo 
 		return nil
 	}
 
-	parser := gotreesitter.NewParser(lang.Language())
+	parser := t.getOrCreateParser(lang)
 	tree, err := parser.Parse(source)
 	if err != nil {
 		return nil
 	}
+	defer tree.Release()
 
 	root := tree.RootNode()
 	langObj := lang.Language()

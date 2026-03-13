@@ -57,6 +57,7 @@ func StartDaemon(binaryPath string, port int, extraArgs ...string) error {
 		return fmt.Errorf("failed to start daemon: %w", err)
 	}
 
+	// Don't wait for the daemon process — it runs independently
 	go func() { _ = cmd.Wait() }()
 
 	return waitForDaemon(port)

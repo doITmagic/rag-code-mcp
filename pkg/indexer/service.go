@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,6 +20,7 @@ import (
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/doITmagic/rag-code-mcp/pkg/llm"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
+	"github.com/doITmagic/rag-code-mcp/pkg/parser/arenagc"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 )
 
@@ -221,7 +223,7 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 	var fileErrs []string
 	for _, path := range changedFiles {
 		fileNum := int(doneFiles.Load()) + 1
-		logger.Instance.Debug("[IDX] ws=%s lang=%s [%d/%d] %s (indexing...)",
+		logger.Instance.Info("[IDX] ws=%s lang=%s [%d/%d] %s (indexing...)",
 			wsName, opts.Language, fileNum, totalFiles, filepath.Base(path))
 
 		symCount, indexErr := s.IndexFile(ctx, collection, path, state)
@@ -229,13 +231,17 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 			logger.Instance.Warn("[IDX] ws=%s lang=%s ⚠️ %s: %v", wsName, opts.Language, filepath.Base(path), indexErr)
 			fileErrs = append(fileErrs, fmt.Sprintf("%s: %v", path, indexErr))
 		} else {
-			logger.Instance.Debug("[IDX] ws=%s lang=%s %s → %d symbol(s)", wsName, opts.Language, filepath.Base(path), symCount)
+			logger.Instance.Info("[IDX] ws=%s lang=%s %s → %d symbol(s)", wsName, opts.Language, filepath.Base(path), symCount)
 		}
+
+		// Release gotreesitter arena memory after each file so it doesn't
+		// accumulate across hundreds of files.
+		arenagc.DrainArenaPools()
 
 		// Increment after IndexFile so 100% is only reported once the last file is done.
 		n := int(doneFiles.Add(1))
 		pct := n * 100 / totalFiles
-		logger.Instance.Debug("[IDX] ws=%s lang=%s [%d/%d] done (%d%%)", wsName, opts.Language, n, totalFiles, pct)
+		logger.Instance.Info("[IDX] ws=%s lang=%s [%d/%d] done (%d%%)", wsName, opts.Language, n, totalFiles, pct)
 		if opts.Progress != nil {
 			opts.Progress(n, totalFiles)
 		}
@@ -253,6 +259,17 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 	}
 
 	logger.Instance.Info("[IDX] ws=%s lang=%s ✅ DONE %d file(s)", wsName, opts.Language, totalFiles)
+
+	// Release cached tree-sitter parsers so the GC can reclaim arena memory.
+	// gotreesitter's nodeArena pools retain large pre-allocated slabs (up to 128MB
+	// for CSS files like bootstrap.css). Dropping parser references allows the GC
+	// to collect them. Parsers will be lazily recreated if needed later.
+	parser.ReleaseAllResources()
+	arenagc.DrainArenaPools()
+	runtime.GC()
+	debug.FreeOSMemory()
+	logger.Instance.Info("[IDX] ws=%s lang=%s 🧹 Released parser caches, drained arena pools, forced GC", wsName, opts.Language)
+
 	return nil
 }
 
@@ -340,6 +357,13 @@ func (s *Service) IndexFile(ctx context.Context, collection, path string, state 
 	a := parser.GetByFile(path)
 	if a == nil {
 		logger.Instance.Debug("Skipping unsupported file type: %s", path)
+		return 0, nil
+	}
+
+	// Skip minified/vendored files — tree-sitter GLR parsing on dense
+	// machine-generated code can allocate 500MB+ of arena memory.
+	if isMinifiedOrVendored(path) {
+		logger.Instance.Debug("[IDX] Skipping minified/vendored file: %s", filepath.Base(path))
 		return 0, nil
 	}
 
@@ -514,7 +538,7 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 				// Throttle: small pause between embeds to avoid overwhelming Ollama.
 				// 150ms adds ~15s per 100 symbols — negligible vs total indexing time,
 				// but prevents Ollama from freezing under sustained concurrent load.
-				time.Sleep(10 * time.Millisecond)
+				time.Sleep(150 * time.Millisecond)
 
 				vector := make([]float32, len(vector64))
 				for i, v := range vector64 {

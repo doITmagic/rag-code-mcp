@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -402,45 +403,47 @@ func stopRunningProcess(binPath string) {
 
 	log("Stopping existing process gracefully: " + binPath)
 
-	// Attempt Graceful Shutdown using PID file
-	home, err := os.UserHomeDir()
-	if err == nil {
-		pidPath := filepath.Join(home, ".ragcode", "daemon.pid")
-		if data, err := os.ReadFile(pidPath); err == nil {
-			pidStr := strings.TrimSpace(string(data))
-			if pid, err := strconv.Atoi(pidStr); err == nil {
-				log(fmt.Sprintf("Found daemon PID: %d. Sending termination signal...", pid))
+	// Attempt Graceful Shutdown using TCP health endpoint
+	client := &http.Client{Timeout: 2 * time.Second}
+	if resp, err := client.Get("http://127.0.0.1:39000/health"); err == nil {
+		defer resp.Body.Close()
+		var health struct {
+			PID int `json:"pid"`
+		}
+		if decodeErr := json.NewDecoder(resp.Body).Decode(&health); decodeErr == nil && health.PID > 0 {
+			pid := health.PID
+			pidStr := strconv.Itoa(pid)
+			log(fmt.Sprintf("Found daemon PID: %d. Sending termination signal...", pid))
 
-				// For Windows
-				if runtime.GOOS == "windows" {
-					_ = exec.Command("taskkill", "/PID", pidStr).Run()
-					time.Sleep(2 * time.Second)
-					_ = exec.Command("taskkill", "/F", "/PID", pidStr).Run()
-					return
+			// For Windows
+			if runtime.GOOS == "windows" {
+				_ = exec.Command("taskkill", "/PID", pidStr).Run()
+				time.Sleep(2 * time.Second)
+				_ = exec.Command("taskkill", "/F", "/PID", pidStr).Run()
+				return
+			}
+
+			// For Unix
+			process, err := os.FindProcess(pid)
+			if err == nil {
+				// Send SIGTERM
+				_ = process.Signal(syscall.SIGTERM)
+
+				// Wait up to 5 seconds for it to exit gracefully
+				for i := 0; i < 50; i++ {
+					if err := process.Signal(syscall.Signal(0)); err != nil {
+						// Process is gone
+						break
+					}
+					time.Sleep(100 * time.Millisecond)
 				}
 
-				// For Unix
-				process, err := os.FindProcess(pid)
-				if err == nil {
-					// Send SIGTERM
-					_ = process.Signal(syscall.SIGTERM)
-
-					// Wait up to 5 seconds for it to exit gracefully
-					for i := 0; i < 50; i++ {
-						if err := process.Signal(syscall.Signal(0)); err != nil {
-							// Process is gone
-							break
-						}
-						time.Sleep(100 * time.Millisecond)
-					}
-
-					// After grace period, only SIGKILL if process still appears alive
-					if err := process.Signal(syscall.Signal(0)); err == nil {
-						_ = process.Signal(syscall.SIGKILL)
-						time.Sleep(200 * time.Millisecond)
-					}
-					return
+				// After grace period, only SIGKILL if process still appears alive
+				if err := process.Signal(syscall.Signal(0)); err == nil {
+					_ = process.Signal(syscall.SIGKILL)
+					time.Sleep(200 * time.Millisecond)
 				}
+				return
 			}
 		}
 	}

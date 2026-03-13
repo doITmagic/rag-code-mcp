@@ -35,11 +35,15 @@ var (
 )
 
 // Analyzer detects Node.js/Express-specific patterns
-type Analyzer struct{}
+type Analyzer struct {
+	tsAnalyzer *TreeSitterAnalyzer
+}
 
 // NewAnalyzer creates a new Node.js analyzer
 func NewAnalyzer() *Analyzer {
-	return &Analyzer{}
+	return &Analyzer{
+		tsAnalyzer: NewTreeSitterAnalyzer(),
+	}
 }
 
 // IsNodeProject checks if a file looks like a Node.js project file
@@ -53,8 +57,7 @@ func IsNodeProject(source string) bool {
 // Uses tree-sitter AST as primary engine, with regex fallback
 func (a *Analyzer) Analyze(source string, filePath string) *NodeInfo {
 	// Try tree-sitter first
-	tsAnalyzer := NewTreeSitterAnalyzer()
-	info := tsAnalyzer.Analyze([]byte(source), filePath)
+	info := a.tsAnalyzer.Analyze([]byte(source), filePath)
 	if info != nil && (len(info.Routes) > 0 || len(info.Requires) > 0 || len(info.ModuleExports) > 0) {
 		return info
 	}

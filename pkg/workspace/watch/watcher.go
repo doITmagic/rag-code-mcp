@@ -87,7 +87,7 @@ func NewFileWatcher(root string, opts Options, onChange func(context.Context, st
 
 // Start begins watching the directory tree.
 func (fw *FileWatcher) Start() {
-	if isInvalidRoot(fw.root) {
+	if IsInvalidRoot(fw.root) {
 		logger.Instance.Error("Cannot start watcher on invalid root directory: %s", fw.root)
 		return
 	}
@@ -231,7 +231,12 @@ func normalizeExclude(patterns []string) map[string]struct{} {
 	return result
 }
 
-func isInvalidRoot(root string) bool {
+// IsInvalidRoot reports whether root is an unsafe or degenerate directory
+// that must not be used as a workspace root for indexing or watching.
+// It rejects the filesystem root (/), the resolved user home directory
+// (as returned by os.UserHomeDir — note: literal "~" is NOT expanded),
+// and the system temp directory.
+func IsInvalidRoot(root string) bool {
 	clean := filepath.Clean(strings.TrimSpace(root))
 	if clean == "" || clean == "." {
 		return true

@@ -26,6 +26,13 @@ func NewAnalyzer() *Analyzer {
 	}
 }
 
+// ReleaseResources drops cached tree-sitter parsers so the GC can reclaim arena memory.
+func (a *Analyzer) ReleaseResources() {
+	if a.tsParser != nil {
+		a.tsParser.ReleaseResources()
+	}
+}
+
 func (a *Analyzer) Name() string {
 	return "docs"
 }
@@ -36,8 +43,8 @@ func (a *Analyzer) CanHandle(path string) bool {
 	// Markdown
 	case ".md", ".markdown":
 		return true
-	// Tree-sitter supported structured / config / markup / scripts
-	case ".yaml", ".yml", ".json", ".xml", ".toml", ".rst", ".css", ".scss", ".sql", ".sh", ".svelte":
+	// Tree-sitter supported structured / config / markup
+	case ".yaml", ".yml", ".json", ".xml", ".toml", ".rst":
 		return true
 	default:
 		return false

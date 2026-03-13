@@ -36,9 +36,10 @@ Standard MCP servers fail in monorepos, deeply nested vendor directories, or mul
 Naive RAG systems chunk code into arbitrary 1000-character blocks, often splitting a function exactly in half. RagCode uses native Abstract Syntax Tree (AST) parsers to generate context-complete `Symbols`.
 
 *   **Go & Python**: Full native Tree-sitter AST traversal.
-*   **PHP Ecosystem**: Deep inspection not just for Vanilla PHP, but specifically extracting macros for Laravel (Eloquent, Routes) and WordPress (Hooks, Widgets, WooCommerce, Oxygen Builder).
+*   **PHP Ecosystem**: Deep inspection not just for Vanilla PHP, but specifically extracting macros for Laravel (Eloquent, Routes, Controllers) and WordPress (Hooks, Widgets, WooCommerce, Oxygen Builder).
 *   **JS / TS**: Native coverage for React, Vue, Next.js, and Node modules.
-*   **Generic Fallback**: Structural mapping for CSS, HTML, JSON, and YAML.
+*   **HTML & CSS**: HTML semantic sectioning via goquery; CSS/SCSS/SASS/LESS parsing via tree-sitter.
+*   **Documentation**: Structural mapping for Markdown, JSON, YAML, XML, and TOML.
 
 ### Micro-Features & Engineering Highlights:
 - **Dynamic Symbol Hydration**: Every chunk contains exact Byte Offsets, Line Boundaries, Type Signatures, and Docstrings, allowing `rag_read_file_context` to perform `O(1)` file seeks instead of regex matching.

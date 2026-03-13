@@ -45,16 +45,11 @@ type Engine struct {
 	pendingFiles    map[string]map[string]struct{} // workspaceID -> set(filePath)
 	pendingOverflow map[string]bool                // workspaceID -> too many pending changes, fallback to full scan
 
-	progress *progressStore
+	registry *registry.Registry
 
 	// detectionCache stores resolved WorkspaceContext with TTL to avoid
 	// repeated full resolver cascades for the same path.
 	detectionCache sync.Map // map[string]*detectionCacheEntry
-
-	// resumeAttempts throttles auto-resume of interrupted indexing.
-	// Key: workspace ID, Value: time.Time of last resume attempt.
-	// Prevents CPU/log churn when indexing keeps failing (e.g. Ollama down).
-	resumeAttempts sync.Map
 
 	// connectTriggered tracks whether background indexing was automatically
 	// triggered for a workspace ID upon initial daemon resolution.
@@ -111,24 +106,22 @@ func NewEngine(idx *indexer.Service, srv *search.Service, registryPath string, c
 	}
 
 	return &Engine{
-		indexer:         idx,
-		search:          srv,
-		resolver:        res,
-		config:          cfg,
-		watchers:        watcherMgr,
-		progress:        newProgressStore(),
+		indexer:  idx,
+		search:   srv,
+		resolver: res,
+		config:   cfg,
+		watchers: watcherMgr,
+		registry: reg,
+
 		pendingFiles:    make(map[string]map[string]struct{}),
 		pendingOverflow: make(map[string]bool),
 	}
 }
 
-// GetIndexProgress returns the last known indexing progress for a workspace.
-// workspaceRoot is used as a hint to load persisted status from disc if not in memory.
-func (e *Engine) GetIndexProgress(workspaceID, workspaceRoot string) *IndexProgress {
-	if e.progress == nil {
-		return nil
-	}
-	return e.progress.get(workspaceID, workspaceRoot)
+// GetIndexStatus returns the last known indexing status for a workspace.
+// Reads directly from {workspaceRoot}/.ragcode/index_status.json.
+func (e *Engine) GetIndexStatus(workspaceRoot string) *indexer.IndexStatus {
+	return indexer.LoadIndexStatus(workspaceRoot)
 }
 
 // ActiveIndexingJobs returns the IDs of workspaces currently being indexed.
@@ -284,10 +277,16 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 	// We use connectTriggered to ensure this only happens ONCE per WorkspaceID
 	// per daemon lifetime, preventing full index scans on every cache miss.
 	// recreate=false ensures incremental indexing — only new/changed files are processed.
-	if _, triggered := e.connectTriggered.LoadOrStore(wctx.ID, true); !triggered {
-		if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); !alreadyRunning {
+	if e.config == nil || e.config.Workspace.AutoIndex {
+		if _, triggered := e.connectTriggered.LoadOrStore(wctx.ID, true); !triggered {
+			// Do NOT check indexingJobs.Load here — that is a TOCTOU race window.
+			// StartIndexingAsync uses indexingJobs.LoadOrStore atomically and is
+			// already idempotent: if a job is running it returns immediately.
+			// Calling it directly (not via `go`) avoids the extra scheduling delay
+			// that previously widened the race window between ResumeIndexingOnConnect
+			// and DetectContext. StartIndexingAsync spawns its own goroutine internally.
 			logger.Instance.Info("[DAEMON] [WS-DETECT] Auto-triggering incremental index for workspace: %s", wctx.Root)
-			go e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+			e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 		}
 	}
 
@@ -334,6 +333,45 @@ func (e *Engine) CheckAndReindexOnConnect(hint string) string {
 	}
 
 	return wctx.Root
+}
+
+// ResumeIndexingOnConnect iterates through all registered workspaces, checks if their
+// indexing was interrupted (no EndedAt status), and resumes indexing for the one
+// that was most recently being indexed.
+func (e *Engine) ResumeIndexingOnConnect() {
+	if e.config != nil && !e.config.Workspace.AutoIndex {
+		logger.Instance.Debug("[DAEMON] ResumeIndexingOnConnect: auto_index disabled")
+		return
+	}
+
+	if e.registry == nil {
+		logger.Instance.Debug("[DAEMON] ResumeIndexingOnConnect: no registry configured")
+		return
+	}
+
+	entries := e.registry.List()
+	if len(entries) == 0 {
+		return
+	}
+
+	var roots []string
+	idMap := make(map[string]string)
+	for _, entry := range entries {
+		roots = append(roots, entry.Root)
+		idMap[entry.Root] = entry.ID
+	}
+
+	bestRoot := indexer.GetLastInterruptedWorkspace(roots)
+	if bestRoot != "" {
+		logger.Instance.Info("[DAEMON] Resuming incomplete indexing for workspace: %s", filepath.Base(bestRoot))
+		// Mark as triggered BEFORE calling StartIndexingAsync so that DetectContext's
+		// auto-trigger (connectTriggered.LoadOrStore) sees this workspace as already
+		// handled and does NOT start a second concurrent indexing job.
+		e.connectTriggered.Store(idMap[bestRoot], true)
+		e.StartIndexingAsync(bestRoot, idMap[bestRoot], nil, false)
+	} else {
+		logger.Instance.Debug("[DAEMON] ResumeIndexingOnConnect: no incomplete indexing jobs found")
+	}
 }
 
 // SearchCodeResult wraps search results with workspace context.
@@ -412,23 +450,6 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 
 	primaryColl := wctx.CollectionName(primaryLang)
 	t1 := time.Now()
-
-	// Auto-resume: if GlobalPercent is between 1-99 and state is "running",
-	// the indexer was interrupted — trigger a background re-index.
-	if idxStatus := loadIndexStatus(wctx.Root); idxStatus != nil {
-		if idxStatus.WorkspaceID == wctx.ID && idxStatus.GlobalPercent > 0 && idxStatus.GlobalPercent < 100 && idxStatus.State == "running" {
-			if _, ok := e.indexingJobs.Load(wctx.ID); !ok {
-				const resumeCooldown = 5 * time.Minute
-				now := time.Now()
-				if last, loaded := e.resumeAttempts.Load(wctx.ID); !loaded || now.Sub(last.(time.Time)) > resumeCooldown {
-					e.resumeAttempts.Store(wctx.ID, now)
-					logger.Instance.Info("[IDX] ws=%s Indexing interrupted at %d%% — auto-resuming", filepath.Base(wctx.Root), idxStatus.GlobalPercent)
-					e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
-				}
-			}
-			logger.Instance.Info("[IDX] ws=%s Indexing in progress (%d%%) — will search available collections", filepath.Base(wctx.Root), idxStatus.GlobalPercent)
-		}
-	}
 
 	// Check if the primary collection exists.
 	// If not, trigger background indexing but do NOT block — the fan-out below
@@ -622,22 +643,6 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 
 	collection := wctx.CollectionName(lang)
 
-	// Auto-resume from index_status.json: if indexing was interrupted, resume it.
-	if idxStatus := loadIndexStatus(wctx.Root); idxStatus != nil {
-		if idxStatus.WorkspaceID == wctx.ID && idxStatus.GlobalPercent > 0 && idxStatus.GlobalPercent < 100 && idxStatus.State == "running" {
-			if _, ok := e.indexingJobs.Load(wctx.ID); !ok {
-				const resumeCooldown = 5 * time.Minute
-				now := time.Now()
-				if last, loaded := e.resumeAttempts.Load(wctx.ID); !loaded || now.Sub(last.(time.Time)) > resumeCooldown {
-					e.resumeAttempts.Store(wctx.ID, now)
-					logger.Instance.Info("[IDX] ws=%s Indexing interrupted at %d%% — auto-resuming", filepath.Base(wctx.Root), idxStatus.GlobalPercent)
-					e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
-				}
-			}
-			logger.Instance.Info("[IDX] ws=%s Indexing in progress (%d%%) — will search available collections", filepath.Base(wctx.Root), idxStatus.GlobalPercent)
-		}
-	}
-
 	exists, err := e.search.CollectionExists(ctx, collection)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check collection: %w", err)
@@ -797,8 +802,8 @@ func (e *Engine) popPendingIndex(workspaceID string) (files []string, overflow b
 func (e *Engine) tryStartPendingIndex(root, workspaceID string) {
 	files, overflow := e.popPendingIndex(workspaceID)
 	if overflow {
-		logger.Instance.Info("[IDX] ♻️ Pending changes exceeded limit for ws=%s — triggering full scan", filepath.Base(root))
-		e.StartIndexingAsync(root, workspaceID, nil, false)
+		logger.Instance.Info("[IDX] ♻️ Pending changes exceeded limit for ws=%s — triggering full re-index", filepath.Base(root))
+		e.StartIndexingAsync(root, workspaceID, nil, true)
 		return
 	}
 	if len(files) == 0 {
@@ -809,9 +814,25 @@ func (e *Engine) tryStartPendingIndex(root, workspaceID string) {
 
 // StartIndexingAsync starts the indexing process in a background goroutine.
 // If changedFiles is nil or empty, a full re-index is performed.
+// If recreate=true and a job is already running, the recreate is queued and
+// will start immediately after the current job finishes.
 func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recreate bool) {
+	if watch.IsInvalidRoot(root) {
+		logger.Instance.Error("[IDX] ⛔ Refusing to index invalid/dangerous root: %s", root)
+		return
+	}
+
 	if _, loaded := e.indexingJobs.LoadOrStore(id, time.Now()); loaded {
-		return // Already running
+		// A job is already running. If recreate=true, queue it so it fires
+		// after the current job finishes (via tryStartPendingIndex/defer).
+		if recreate {
+			e.pendingMu.Lock()
+			e.pendingOverflow[id] = true // overflow = full re-index
+			delete(e.pendingFiles, id)
+			e.pendingMu.Unlock()
+			logger.Instance.Info("[IDX] ⏳ ws=%s recreate requested while indexing — queued for after current job", filepath.Base(root))
+		}
+		return
 	}
 
 	// Count active jobs after adding this one — warn if multiple workspaces are indexing
@@ -822,10 +843,17 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 		logger.Instance.Warn("[IDX] ⚠️ %d workspaces indexing simultaneously — Ollama requests will serialize implicitly (ws=%s)", activeCount, filepath.Base(root))
 	}
 
-	jobID := fmt.Sprintf("%s-%d", id, time.Now().UnixNano())
-	if e.progress != nil {
-		e.progress.start(id, root, jobID, time.Now())
+	// Preserve existing Languages data on restart so incremental indexing
+	// doesn't show processed=0 to AI consumers. Reset only lifecycle fields.
+	s := indexer.LoadIndexStatus(root)
+	if s == nil {
+		s = &indexer.IndexStatus{}
 	}
+	s.StartedAt = time.Now().UTC().Format(time.RFC3339)
+	s.EndedAt = ""
+	s.Elapsed = ""
+	s.Error = ""
+	indexer.SaveIndexStatus(root, s)
 
 	go func() {
 		defer func() {
@@ -845,18 +873,31 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 			err = e.IndexWorkspace(ctx, root, recreate)
 		}
 
+		finalizeIndexStatus(root, err)
 		if err != nil {
 			logger.Instance.Error("[IDX] ws=%s Background indexing failed: %v", filepath.Base(root), err)
-			if e.progress != nil {
-				e.progress.fail(id, root, time.Now(), err.Error())
-			}
 		} else {
 			logger.Instance.Info("[IDX] ✅ ws=%s Background indexing completed", filepath.Base(root))
-			if e.progress != nil {
-				e.progress.complete(id, root, time.Now())
-			}
 		}
 	}()
+}
+
+// finalizeIndexStatus loads the current status, stamps EndedAt/Elapsed/Error,
+// and saves it atomically. Centralises the logic that was duplicated in the
+// success and error branches of StartIndexingAsync.
+func finalizeIndexStatus(root string, indexErr error) {
+	s := indexer.LoadIndexStatus(root)
+	if s == nil {
+		s = &indexer.IndexStatus{}
+	}
+	s.EndedAt = time.Now().UTC().Format(time.RFC3339)
+	if started, pErr := time.Parse(time.RFC3339, s.StartedAt); pErr == nil {
+		s.Elapsed = time.Since(started).Round(time.Second).String()
+	}
+	if indexErr != nil {
+		s.Error = indexErr.Error()
+	}
+	indexer.SaveIndexStatus(root, s)
 }
 
 // IndexFiles indexes specific files in a workspace.
@@ -916,39 +957,92 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 
 	wsName := filepath.Base(wctx.Root)
 
-	// Pre-scan: count files for every language before starting indexing.
-	// This gives progressStore an accurate denominator from the start, so
-	// GlobalPercent increases monotonically instead of resetting per language.
 	var excludePatterns []string
 	if e.config != nil {
 		excludePatterns = e.config.Workspace.ExcludePatterns
 	}
-	// Pre-scan: single WalkDir counting files per language before indexing begins.
-	// This gives progressStore an accurate denominator from the start, so
-	// GlobalPercent increases monotonically. One combined walk avoids
-	// O(languages x files) traversals that per-language scans would incur.
-	if e.progress != nil {
-		fileCounts := e.indexer.CountAllFiles(wctx.Root, excludePatterns)
-		for _, lang := range languages {
-			e.progress.preRegister(wctx.ID, lang, fileCounts[lang], time.Now())
-		}
+
+	// Pre-count total files per language with a single WalkDir pass.
+	// This gives us the real on_disk totals for accurate progress reporting,
+	// instead of using len(changedFiles) which only reflects modified files.
+	fileCounts := e.indexer.CountAllFiles(wctx.Root, excludePatterns)
+	logger.Instance.Info("[IDX] ws=%s file counts: %v", wsName, fileCounts)
+
+	// Sort languages by file count descending so the dominant language is indexed
+	// first and AI search works immediately for the most relevant code.
+	sort.Slice(languages, func(i, j int) bool {
+		return fileCounts[languages[i]] > fileCounts[languages[j]]
+	})
+	logger.Instance.Info("[IDX] ws=%s indexing order: %v", wsName, languages)
+
+	// Load or create a shared in-memory IndexStatus for the entire indexing run.
+	// This avoids calling LoadIndexStatus (JSON read + parse) on every Progress tick.
+	// The single *IndexStatus is updated in-place; only SaveIndexStatus (atomic write)
+	// hits the disk, and only every 10 files.
+	s := indexer.LoadIndexStatus(wctx.Root)
+	if s == nil {
+		s = &indexer.IndexStatus{StartedAt: time.Now().UTC().Format(time.RFC3339)}
 	}
+	if s.Languages == nil {
+		s.Languages = make(map[string]indexer.LangStatus)
+	}
+	// Pre-populate real on_disk counts so languages with 0 changed files still appear.
+	for _, l := range languages {
+		entry := s.Languages[l]
+		entry.OnDisk = fileCounts[l]
+		s.Languages[l] = entry
+	}
+	indexer.SaveIndexStatus(wctx.Root, s)
 
 	var indexErrors []string
 	for _, lang := range languages {
+		diskTotal := fileCounts[lang]
 		collection := wctx.CollectionName(lang)
-		progressCb := func(doneFiles, totalFiles int) {
-			if e.progress != nil {
-				e.progress.update(wctx.ID, lang, doneFiles, totalFiles, time.Now())
-			}
+		logger.Instance.Info("[IDX] ws=%s lang=%s ▶ starting (on_disk=%d)", wsName, lang, diskTotal)
+
+		// Capture the already-processed count before this run starts.
+		// For incremental runs (only changed files), we accumulate on top of
+		// whatever was already indexed in Qdrant. For a full re-index
+		// (recreate=true, or all files changed), we reset to 0.
+		// baseProcessed is captured once per language, before the Progress
+		// callback fires, so it's safe to close over it.
+		baseProcessed := s.Languages[lang].Processed
+		if recreate {
+			baseProcessed = 0
 		}
-		logger.Instance.Info("[IDX] ws=%s lang=%s ▶ starting", wsName, lang)
+		// firstTick is used to detect on the first Progress callback whether
+		// this is a full re-index (totalFiles >= diskTotal) so we can reset
+		// baseProcessed to 0 and avoid double-counting.
+		firstTick := true
+
 		err := e.indexer.IndexWorkspace(ctx, wctx.Root, collection, indexer.Options{
 			Language:        lang,
 			WorkspaceName:   wsName,
 			ExcludePatterns: excludePatterns,
 			Recreate:        recreate,
-			Progress:        progressCb,
+			Progress: func(doneFiles, totalFiles int) {
+				// Throttle disk I/O: write every 10 files or on the last file
+				if doneFiles%10 != 0 && doneFiles != totalFiles {
+					return
+				}
+				// On the first tick, decide if this is a full re-index.
+				// If totalFiles covers all on-disk files, reset base to 0
+				// so we don't double-count the existing Processed value.
+				if firstTick {
+					firstTick = false
+					if diskTotal > 0 && totalFiles >= diskTotal {
+						baseProcessed = 0
+					}
+				}
+				ls := s.Languages[lang]
+				ls.OnDisk = diskTotal   // real total files on disk
+				ls.Changed = totalFiles // files that needed re-indexing this run
+				// Cumulative total: for incremental runs add to the existing
+				// DB count; for full re-indexes (base=0) start from scratch.
+				ls.Processed = baseProcessed + doneFiles
+				s.Languages[lang] = ls
+				indexer.SaveIndexStatus(wctx.Root, s)
+			},
 		})
 		if err != nil {
 			logger.Instance.Error("[IDX] ws=%s lang=%s ❌ failed: %v", wsName, lang, err)

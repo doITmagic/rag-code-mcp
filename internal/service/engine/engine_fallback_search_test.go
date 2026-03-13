@@ -94,12 +94,6 @@ func ValidateEmail(email string) bool {
 	eng := NewEngine(idxSvc, searchSvc, "", &config.Config{})
 	eng.SetResolver(resolver.New(resolver.Dependencies{Detector: &mockDirDetector{root: root}}))
 
-	t.Cleanup(func() {
-		if eng.progress != nil {
-			eng.progress.stop()
-		}
-	})
-
 	return root, eng
 }
 

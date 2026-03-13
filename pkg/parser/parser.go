@@ -112,3 +112,24 @@ type Analyzer interface {
 	// Analyze extracts symbols from a file or directory.
 	Analyze(ctx context.Context, path string) (*Result, error)
 }
+
+// ResourceReleaser is an optional interface that analyzers can implement
+// to release cached resources (e.g. tree-sitter parser instances) after
+// indexing completes. This allows the GC to reclaim arena memory that
+// gotreesitter pools retain indefinitely.
+type ResourceReleaser interface {
+	ReleaseResources()
+}
+
+// ReleaseAllResources calls ReleaseResources on every registered analyzer
+// that implements the ResourceReleaser interface. Call this after indexing
+// completes to free cached tree-sitter parsers and their arena memory.
+func ReleaseAllResources() {
+	mu.RLock()
+	defer mu.RUnlock()
+	for _, a := range analyzers {
+		if rr, ok := a.(ResourceReleaser); ok {
+			rr.ReleaseResources()
+		}
+	}
+}

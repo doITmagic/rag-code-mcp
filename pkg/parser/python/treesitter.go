@@ -1,19 +1,45 @@
 package python
 
 import (
+	"regexp"
 	"strings"
+	"sync"
+	"unicode"
 
 	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 )
 
-// TreeSitterParser uses tree-sitter AST for Python parsing
-// Primary engine, falls back to regex-based CodeAnalyzer when needed
-type TreeSitterParser struct{}
+// TreeSitterParser uses tree-sitter AST for Python parsing.
+// Caches Parser instances per language to avoid re-allocating expensive lookup tables.
+type TreeSitterParser struct {
+	mu      sync.Mutex
+	parsers map[string]*gotreesitter.Parser
+}
 
 // NewTreeSitterParser creates a new tree-sitter Python parser
 func NewTreeSitterParser() *TreeSitterParser {
-	return &TreeSitterParser{}
+	return &TreeSitterParser{
+		parsers: make(map[string]*gotreesitter.Parser),
+	}
+}
+
+func (p *TreeSitterParser) getOrCreateParser(lang *grammars.LangEntry) *gotreesitter.Parser {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if cached, ok := p.parsers[lang.Name]; ok {
+		return cached
+	}
+	parser := gotreesitter.NewParser(lang.Language())
+	p.parsers[lang.Name] = parser
+	return parser
+}
+
+// ReleaseResources drops cached tree-sitter parsers so the GC can reclaim arena memory.
+func (p *TreeSitterParser) ReleaseResources() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.parsers = make(map[string]*gotreesitter.Parser)
 }
 
 // PyFileAnalysis holds the parsed results from tree-sitter
@@ -21,6 +47,8 @@ type PyFileAnalysis struct {
 	Functions []FunctionInfo
 	Classes   []ClassInfo
 	Imports   []ImportInfo
+	Variables []VariableInfo
+	Constants []ConstantInfo
 	FilePath  string
 }
 
@@ -31,11 +59,17 @@ func (p *TreeSitterParser) Parse(source []byte, filePath string) (*PyFileAnalysi
 		return nil, nil
 	}
 
-	parser := gotreesitter.NewParser(lang.Language())
-	tree, err := parser.Parse(source)
+	// Workaround: gotreesitter v0.6.0 cannot parse `except X as e:` — it produces
+	// a flat/broken AST. Strip the `as VARNAME` part before parsing.
+	// See patchExceptAs for details; the workaround preserves byte offsets.
+	parseable := patchExceptAs(source)
+
+	parser := p.getOrCreateParser(lang)
+	tree, err := parser.Parse(parseable)
 	if err != nil {
 		return nil, err
 	}
+	defer tree.Release()
 
 	root := tree.RootNode()
 	langObj := lang.Language()
@@ -64,6 +98,11 @@ func (p *TreeSitterParser) Parse(source []byte, filePath string) (*PyFileAnalysi
 		case "import_from_statement":
 			imps := p.extractFromImport(child, source, langObj)
 			fa.Imports = append(fa.Imports, imps...)
+		case "expression_statement":
+			p.extractAssignment(child, source, langObj, filePath, fa)
+		case "assignment":
+			// gotreesitter may put assignments directly at root without expression_statement wrapper
+			p.extractAssignmentDirect(child, source, langObj, filePath, fa)
 		}
 	}
 
@@ -92,6 +131,11 @@ func (p *TreeSitterParser) extractFunction(node *gotreesitter.Node, source []byt
 			fn.ReturnType = child.Text(source)
 		case "async":
 			fn.IsAsync = true
+		case "block":
+			// Extract calls from function body for Code Graph relations
+			fn.Calls = p.extractCallsFromNode(child, source, lang)
+			// Detect generator
+			fn.IsGenerator = p.nodeContainsType(child, lang, "yield")
 		}
 	}
 
@@ -118,17 +162,24 @@ func (p *TreeSitterParser) extractClass(node *gotreesitter.Node, source []byte, 
 				cls.Name = child.Text(source)
 			}
 		case "argument_list":
-			// Base classes: class Foo(Bar, Mixin):
+			// Base classes: class Foo(Bar, Mixin, metaclass=Meta):
 			for j := 0; j < child.ChildCount(); j++ {
 				arg := child.Child(j)
 				at := arg.Type(lang)
-				if at == "identifier" || at == "attribute" {
+				switch at {
+				case "identifier", "attribute":
 					cls.Bases = append(cls.Bases, arg.Text(source))
+				case "keyword_argument":
+					txt := arg.Text(source)
+					if strings.HasPrefix(txt, "metaclass=") {
+						cls.Metaclass = strings.TrimPrefix(txt, "metaclass=")
+					}
 				}
 			}
 		case "block":
 			cls.Description = p.extractDocstringFromBody(node, source, lang)
 			cls.Methods = p.extractClassMethods(child, source, lang, cls.Name, filePath)
+			cls.ClassVars = p.extractClassVarsFromBlock(child, source, lang, filePath)
 		}
 	}
 
@@ -142,7 +193,7 @@ func (p *TreeSitterParser) extractClass(node *gotreesitter.Node, source []byte, 
 		case "ABC", "ABCMeta":
 			cls.IsAbstract = true
 		}
-		if strings.HasSuffix(cls.Name, "Mixin") {
+		if strings.Contains(base, "Mixin") {
 			cls.IsMixin = true
 		}
 	}
@@ -163,17 +214,19 @@ func (p *TreeSitterParser) extractClassMethods(blockNode *gotreesitter.Node, sou
 		var fnNode *gotreesitter.Node
 		var decorators []string
 
-		if ct == "function_definition" {
+		switch ct {
+		case "function_definition":
 			fnNode = child
-		} else if ct == "decorated_definition" {
+		case "decorated_definition":
 			for j := 0; j < child.ChildCount(); j++ {
 				gc := child.Child(j)
 				gct := gc.Type(lang)
-				if gct == "decorator" {
+				switch gct {
+				case "decorator":
 					dec := strings.TrimPrefix(gc.Text(source), "@")
 					dec = strings.SplitN(dec, "\n", 2)[0]
 					decorators = append(decorators, dec)
-				} else if gct == "function_definition" {
+				case "function_definition":
 					fnNode = gc
 				}
 			}
@@ -204,6 +257,9 @@ func (p *TreeSitterParser) extractClassMethods(blockNode *gotreesitter.Node, sou
 				method.ReturnType = fc.Text(source)
 			case "async":
 				method.IsAsync = true
+			case "block":
+				// Extract calls from method body for Code Graph relations
+				method.Calls = p.extractCallsFromNode(fc, source, lang)
 			}
 		}
 
@@ -421,25 +477,35 @@ func (p *TreeSitterParser) extractDocstringFromBody(fnNode *gotreesitter.Node, s
 			return ""
 		}
 		stmt := child.Child(0)
-		if stmt.Type(lang) != "expression_statement" {
-			return ""
+		stmtType := stmt.Type(lang)
+
+		// Case 1: gotreesitter puts string directly in block (no expression_statement wrapper)
+		if stmtType == "string" {
+			return p.stripDocstringQuotes(stmt.Text(source))
 		}
-		for k := 0; k < stmt.ChildCount(); k++ {
-			expr := stmt.Child(k)
-			if expr.Type(lang) == "string" {
-				text := expr.Text(source)
-				// Strip triple quotes
-				for _, q := range []string{`"""`, `'''`} {
-					text = strings.TrimPrefix(text, q)
-					text = strings.TrimSuffix(text, q)
+
+		// Case 2: expression_statement wrapping a string
+		if stmtType == "expression_statement" {
+			for k := 0; k < stmt.ChildCount(); k++ {
+				expr := stmt.Child(k)
+				if expr.Type(lang) == "string" {
+					return p.stripDocstringQuotes(expr.Text(source))
 				}
-				text = strings.Trim(text, `"'`)
-				return strings.TrimSpace(text)
 			}
 		}
 		return ""
 	}
 	return ""
+}
+
+// stripDocstringQuotes removes triple-quotes from a docstring text
+func (p *TreeSitterParser) stripDocstringQuotes(text string) string {
+	for _, q := range []string{`"""`, `'''`} {
+		text = strings.TrimPrefix(text, q)
+		text = strings.TrimSuffix(text, q)
+	}
+	text = strings.Trim(text, `"'`)
+	return strings.TrimSpace(text)
 }
 
 // buildFuncSignature builds a function signature string
@@ -472,4 +538,312 @@ func (p *TreeSitterParser) buildFuncSignature(name string, params []ParamInfo, r
 // buildMethodSignature is the same as buildFuncSignature
 func (p *TreeSitterParser) buildMethodSignature(name string, params []ParamInfo, returnType string, isAsync bool) string {
 	return p.buildFuncSignature(name, params, returnType, isAsync)
+}
+
+// ── Call extraction for Code Graph ──────────────────────────────────────────
+
+// extractCallsFromNode recursively walks an AST node and extracts all call expressions.
+// Powers Code Graph relations (RelCalls) for rag_find_usages / rag_call_hierarchy.
+func (p *TreeSitterParser) extractCallsFromNode(node *gotreesitter.Node, source []byte, lang *gotreesitter.Language) []MethodCall {
+	var calls []MethodCall
+	seen := make(map[string]bool)
+	p.walkCalls(node, source, lang, &calls, seen)
+	return calls
+}
+
+func (p *TreeSitterParser) walkCalls(node *gotreesitter.Node, source []byte, lang *gotreesitter.Language, calls *[]MethodCall, seen map[string]bool) {
+	if node == nil {
+		return
+	}
+	if node.Type(lang) == "call" {
+		p.handleCallNode(node, source, lang, calls, seen)
+	}
+	for i := 0; i < node.ChildCount(); i++ {
+		p.walkCalls(node.Child(i), source, lang, calls, seen)
+	}
+}
+
+// handleCallNode extracts a single call: foo(), self.bar(), ClassName.method(), ClassName()
+func (p *TreeSitterParser) handleCallNode(callNode *gotreesitter.Node, source []byte, lang *gotreesitter.Language, calls *[]MethodCall, seen map[string]bool) {
+	lineNum := int(callNode.StartPoint().Row) + 1
+
+	// Find the function expression child (first non-punctuation child)
+	var funcExpr *gotreesitter.Node
+	for i := 0; i < callNode.ChildCount(); i++ {
+		c := callNode.Child(i)
+		ct := c.Type(lang)
+		if ct == "identifier" || ct == "attribute" {
+			funcExpr = c
+			break
+		}
+	}
+	if funcExpr == nil {
+		return
+	}
+
+	ct := funcExpr.Type(lang)
+
+	switch ct {
+	case "identifier":
+		// Direct call: foo() or MyClass()
+		name := funcExpr.Text(source)
+		if name == "" || isBuiltinType(name) || isPythonBuiltinFunc(name) {
+			return
+		}
+		key := "fn." + name
+		if !seen[key] {
+			*calls = append(*calls, MethodCall{Name: name, Line: lineNum})
+			seen[key] = true
+		}
+
+	case "attribute":
+		// Dotted call: self.method(), ClassName.method(), module.func()
+		fullText := funcExpr.Text(source)
+		fullText = strings.Join(strings.Fields(fullText), "")
+
+		dotIdx := strings.LastIndex(fullText, ".")
+		if dotIdx < 0 || dotIdx == len(fullText)-1 {
+			return
+		}
+		receiver := fullText[:dotIdx]
+		method := fullText[dotIdx+1:]
+
+		// Skip self.x() and cls.x() — those are internal method calls
+		if receiver == "self" || receiver == "cls" || receiver == "super()" {
+			return
+		}
+
+		// If receiver looks PascalCase → class static call → add receiver as dependency
+		if len(receiver) > 0 && unicode.IsUpper(rune(receiver[0])) && !isBuiltinType(receiver) {
+			key := "cls." + receiver
+			if !seen[key] {
+				*calls = append(*calls, MethodCall{Name: receiver, Line: lineNum})
+				seen[key] = true
+			}
+		}
+
+		// Add the method call itself
+		if method != "" && !isPythonBuiltinFunc(method) {
+			key := receiver + "." + method
+			if !seen[key] {
+				*calls = append(*calls, MethodCall{
+					Name:      method,
+					Receiver:  receiver,
+					ClassName: receiver,
+					Line:      lineNum,
+				})
+				seen[key] = true
+			}
+		}
+	}
+}
+
+// nodeContainsType checks if a node tree contains a node of the given type.
+func (p *TreeSitterParser) nodeContainsType(node *gotreesitter.Node, lang *gotreesitter.Language, nodeType string) bool {
+	if node == nil {
+		return false
+	}
+	if node.Type(lang) == nodeType {
+		return true
+	}
+	for i := 0; i < node.ChildCount(); i++ {
+		if p.nodeContainsType(node.Child(i), lang, nodeType) {
+			return true
+		}
+	}
+	return false
+}
+
+// isPythonBuiltinFunc returns true for Python keywords/built-in functions that should NOT be tracked.
+func isPythonBuiltinFunc(name string) bool {
+	return pythonBuiltins[name]
+}
+
+var pythonBuiltins = map[string]bool{
+	"if": true, "else": true, "elif": true, "for": true, "while": true,
+	"try": true, "except": true, "finally": true, "with": true, "as": true,
+	"def": true, "class": true, "return": true, "yield": true, "raise": true,
+	"import": true, "from": true, "pass": true, "break": true, "continue": true,
+	"and": true, "or": true, "not": true, "in": true, "is": true,
+	"lambda": true, "global": true, "nonlocal": true, "assert": true, "del": true,
+	"async": true, "await": true,
+	"print": true, "len": true, "range": true, "str": true, "int": true,
+	"float": true, "bool": true, "list": true, "dict": true, "set": true,
+	"tuple": true, "type": true, "isinstance": true, "issubclass": true,
+	"hasattr": true, "getattr": true, "setattr": true, "delattr": true,
+	"open": true, "input": true, "super": true, "property": true,
+	"staticmethod": true, "classmethod": true, "enumerate": true, "zip": true,
+	"map": true, "filter": true, "sorted": true, "reversed": true,
+	"min": true, "max": true, "sum": true, "abs": true, "round": true,
+	"any": true, "all": true, "next": true, "iter": true,
+	"repr": true, "hash": true, "id": true, "dir": true, "vars": true,
+	"callable": true, "hex": true, "oct": true, "bin": true, "chr": true,
+	"ord": true, "format": true, "object": true,
+}
+
+// exceptAsRe matches `except <Type> as <var>:` and captures the parts to strip `as <var>`.
+// Workaround for gotreesitter v0.6.0 bug: `except X as e:` produces broken AST.
+var exceptAsRe = regexp.MustCompile(`(\bexcept\s+\w[\w.]*)(\s+as\s+\w+)(\s*:)`)
+
+// patchExceptAs strips `as VARNAME` from except clauses so gotreesitter can parse correctly.
+// The line numbers and structure are preserved (same byte offsets via padding).
+func patchExceptAs(source []byte) []byte {
+	if !exceptAsRe.Match(source) {
+		return source
+	}
+	// Replace `except ValueError as e:` → `except ValueError      :`
+	// We pad with spaces to keep byte offsets and line numbers identical.
+	return exceptAsRe.ReplaceAllFunc(source, func(m []byte) []byte {
+		parts := exceptAsRe.FindSubmatch(m)
+		// parts[1] = "except ValueError"
+		// parts[2] = " as e"
+		// parts[3] = ":"
+		padLen := len(parts[2])
+		result := make([]byte, 0, len(m))
+		result = append(result, parts[1]...)
+		for i := 0; i < padLen; i++ {
+			result = append(result, ' ')
+		}
+		result = append(result, parts[3]...)
+		return result
+	})
+}
+
+// extractAssignment handles module-level assignments: VAR = value, x: int = 5
+func (p *TreeSitterParser) extractAssignment(exprStmt *gotreesitter.Node, source []byte, lang *gotreesitter.Language, filePath string, fa *PyFileAnalysis) {
+	for i := 0; i < exprStmt.ChildCount(); i++ {
+		child := exprStmt.Child(i)
+		ct := child.Type(lang)
+		if ct != "assignment" {
+			continue
+		}
+		text := child.Text(source)
+		parts := strings.SplitN(text, "=", 2)
+		if len(parts) < 2 {
+			continue
+		}
+		lhs := strings.TrimSpace(parts[0])
+		rhs := strings.TrimSpace(parts[1])
+		line := int(child.StartPoint().Row) + 1
+
+		var varName, varType string
+		if colonIdx := strings.Index(lhs, ":"); colonIdx > 0 {
+			varName = strings.TrimSpace(lhs[:colonIdx])
+			varType = strings.TrimSpace(lhs[colonIdx+1:])
+		} else {
+			varName = lhs
+		}
+
+		if varName == "" || strings.Contains(varName, ".") || strings.Contains(varName, "[") {
+			continue
+		}
+
+		if isConstantName(varName) {
+			fa.Constants = append(fa.Constants, ConstantInfo{
+				Name: varName, Type: varType, Value: rhs,
+				FilePath: filePath, StartLine: line, EndLine: line,
+			})
+		} else {
+			fa.Variables = append(fa.Variables, VariableInfo{
+				Name: varName, Type: varType, Value: rhs,
+				FilePath: filePath, StartLine: line, EndLine: line,
+			})
+		}
+	}
+}
+
+// extractAssignmentDirect handles a raw assignment node at root level (no expression_statement wrapper)
+func (p *TreeSitterParser) extractAssignmentDirect(node *gotreesitter.Node, source []byte, lang *gotreesitter.Language, filePath string, fa *PyFileAnalysis) {
+	text := node.Text(source)
+	parts := strings.SplitN(text, "=", 2)
+	if len(parts) < 2 {
+		return
+	}
+	lhs := strings.TrimSpace(parts[0])
+	rhs := strings.TrimSpace(parts[1])
+	line := int(node.StartPoint().Row) + 1
+
+	var varName, varType string
+	if colonIdx := strings.Index(lhs, ":"); colonIdx > 0 {
+		varName = strings.TrimSpace(lhs[:colonIdx])
+		varType = strings.TrimSpace(lhs[colonIdx+1:])
+	} else {
+		varName = lhs
+	}
+
+	if varName == "" || strings.Contains(varName, ".") || strings.Contains(varName, "[") {
+		return
+	}
+
+	if isConstantName(varName) {
+		fa.Constants = append(fa.Constants, ConstantInfo{
+			Name: varName, Type: varType, Value: rhs,
+			FilePath: filePath, StartLine: line, EndLine: line,
+		})
+	} else {
+		fa.Variables = append(fa.Variables, VariableInfo{
+			Name: varName, Type: varType, Value: rhs,
+			FilePath: filePath, StartLine: line, EndLine: line,
+		})
+	}
+}
+
+// extractClassVarsFromBlock extracts class-level variables from a class body block.
+// Handles both `expression_statement > assignment` (standard) and
+// `assignment` placed directly in the block (gotreesitter quirk, same as module-level).
+func (p *TreeSitterParser) extractClassVarsFromBlock(blockNode *gotreesitter.Node, source []byte, lang *gotreesitter.Language, filePath string) []VariableInfo {
+	var vars []VariableInfo
+	for i := 0; i < blockNode.ChildCount(); i++ {
+		child := blockNode.Child(i)
+		ct := child.Type(lang)
+
+		// Find the assignment node, regardless of whether it is wrapped in
+		// expression_statement or placed directly in the block.
+		var assignNode *gotreesitter.Node
+		switch ct {
+		case "expression_statement":
+			for j := 0; j < child.ChildCount(); j++ {
+				gc := child.Child(j)
+				if gc.Type(lang) == "assignment" {
+					assignNode = gc
+					break
+				}
+			}
+		case "assignment":
+			// gotreesitter may place assignments directly in the block without
+			// an expression_statement wrapper (same as at module level).
+			assignNode = child
+		}
+
+		if assignNode == nil {
+			continue
+		}
+
+		text := assignNode.Text(source)
+		parts := strings.SplitN(text, "=", 2)
+		if len(parts) < 2 {
+			continue
+		}
+		lhs := strings.TrimSpace(parts[0])
+		rhs := strings.TrimSpace(parts[1])
+		line := int(assignNode.StartPoint().Row) + 1
+
+		var varName, varType string
+		if colonIdx := strings.Index(lhs, ":"); colonIdx > 0 {
+			varName = strings.TrimSpace(lhs[:colonIdx])
+			varType = strings.TrimSpace(lhs[colonIdx+1:])
+		} else {
+			varName = lhs
+		}
+
+		if varName == "" || strings.Contains(varName, ".") {
+			continue
+		}
+
+		vars = append(vars, VariableInfo{
+			Name: varName, Type: varType, Value: rhs,
+			FilePath: filePath, StartLine: line, EndLine: line,
+		})
+	}
+	return vars
 }

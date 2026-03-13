@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/updater"
@@ -21,10 +23,14 @@ import (
 	"github.com/doITmagic/rag-code-mcp/internal/utils"
 	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
 	"github.com/doITmagic/rag-code-mcp/pkg/llm"
+	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/css"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/docs"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/go"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/html"
+	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/javascript"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/php"
+	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/php/laravel"
+	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/php/wordpress"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/python"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -209,6 +215,13 @@ func Run(rcfg RunConfig) error {
 	mcpMux := http.NewServeMux()
 	mcpMux.Handle("/mcp", streamableHandler)
 
+	// Profiling endpoints
+	mcpMux.HandleFunc("/debug/pprof/", pprof.Index)
+	mcpMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mcpMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mcpMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mcpMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
 	// Middleware: sticky workspace + response writer injection.
 	//
 	// 1. X-Workspace-Root (sticky): adapter learned workspace from a previous
@@ -216,6 +229,8 @@ func Run(rcfg RunConfig) error {
 	// 2. ResponseWriter: always injected into context so DetectContext can set
 	//    X-Resolved-Workspace header in the response — the adapter reads it
 	//    and caches it for subsequent requests.
+	var resumeIndexingOnce sync.Once
+
 	mcpHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := transport.WithResponseWriter(r.Context(), w)
 		if wsRoot := r.Header.Get("X-Workspace-Root"); wsRoot != "" {
@@ -223,6 +238,10 @@ func Run(rcfg RunConfig) error {
 			ctx = transport.WithWorkspaceHint(ctx, wsRoot)
 		} else {
 			logger.Instance.Debug("[DAEMON] Request without X-Workspace-Root (first request or no workspace resolved yet)")
+			resumeIndexingOnce.Do(func() {
+				logger.Instance.Info("[DAEMON] Checking registry for incomplete indexing jobs...")
+				go eng.ResumeIndexingOnConnect()
+			})
 		}
 		r = r.WithContext(ctx)
 		mcpMux.ServeHTTP(w, r)
@@ -237,20 +256,16 @@ func Run(rcfg RunConfig) error {
 	if err := os.MkdirAll(ragcodeDir, 0o700); err != nil {
 		return fmt.Errorf("cannot create ~/.ragcode: %w", err)
 	}
-	socketPath := filepath.Join(ragcodeDir, "daemon.sock")
-	pidPath := filepath.Join(ragcodeDir, "daemon.pid")
 
 	// ── Start Daemon Listeners ──
 	logger.Instance.Info("--- DAEMON MODE --- version=%s pid=%d", rcfg.Version, os.Getpid())
 
 	listenErr := ListenAndServe(context.Background(), ListenConfig{
-		SocketPath: socketPath,
-		PIDPath:    pidPath,
-		Version:    rcfg.Version,
-		HTTPPort:   rcfg.HTTPPort,
-		Handler:    mcpHandler,
+		Port:    rcfg.HTTPPort,
+		Version: rcfg.Version,
+		Handler: mcpHandler,
 		OnReady: func() {
-			logger.Instance.Info("Daemon ready — socket=%s, http_port=%d", socketPath, rcfg.HTTPPort)
+			logger.Instance.Info("Daemon ready — port=%d", rcfg.HTTPPort)
 		},
 	})
 

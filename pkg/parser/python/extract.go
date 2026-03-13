@@ -24,6 +24,7 @@ var (
 type CodeAnalyzer struct {
 	modules      map[string]*ModuleInfo
 	includeTests bool // Option to include test files
+	tsParser     *TreeSitterParser
 }
 
 // NewCodeAnalyzer creates a new Python code analyzer
@@ -31,6 +32,14 @@ func NewCodeAnalyzer() *CodeAnalyzer {
 	return &CodeAnalyzer{
 		modules:      make(map[string]*ModuleInfo),
 		includeTests: false,
+		tsParser:     NewTreeSitterParser(),
+	}
+}
+
+// ReleaseResources drops cached tree-sitter parsers so the GC can reclaim arena memory.
+func (ca *CodeAnalyzer) ReleaseResources() {
+	if ca.tsParser != nil {
+		ca.tsParser.ReleaseResources()
 	}
 }
 
@@ -127,8 +136,7 @@ func (ca *CodeAnalyzer) parseAndCollect(filePath string, content []byte) error {
 	module.Description = ca.extractModuleDocstring(lines)
 
 	// Try tree-sitter for imports (more accurate than regex for complex cases)
-	tsParser := NewTreeSitterParser()
-	tsResult, tsErr := tsParser.Parse(content, filePath)
+	tsResult, tsErr := ca.tsParser.Parse(content, filePath)
 	if tsErr == nil && tsResult != nil && len(tsResult.Imports) > 0 {
 		module.Imports = tsResult.Imports
 	} else {
@@ -1009,12 +1017,13 @@ func extractCodeFromContent(content []byte, startLine, endLine int) string {
 func getIndentation(line string) int {
 	count := 0
 	for _, ch := range line {
-		if ch == ' ' {
+		switch ch {
+		case ' ':
 			count++
-		} else if ch == '\t' {
+		case '\t':
 			count += 4
-		} else {
-			break
+		default:
+			return count
 		}
 	}
 	return count

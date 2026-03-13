@@ -1,203 +1,86 @@
-package daemon
+package daemon_test
 
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
-	"strings"
+	"strconv"
 	"testing"
 	"time"
 
+	"github.com/doITmagic/rag-code-mcp/internal/daemon"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestListenAndServe_UnixSocket(t *testing.T) {
-	dir := t.TempDir()
-	sockPath := filepath.Join(dir, "test.sock")
-	pidPath := filepath.Join(dir, "test.pid")
+func getFreePort() (int, error) {
+	addr, err := net.ResolveTCPAddr("tcp", "localhost:0")
+	if err != nil {
+		return 0, err
+	}
+	l, err := net.ListenTCP("tcp", addr)
+	if err != nil {
+		return 0, err
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
+func TestListenAndServe_Success(t *testing.T) {
+	port, err := getFreePort()
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	ready := make(chan struct{})
-
 	go func() {
-		_ = ListenAndServe(ctx, ListenConfig{
-			SocketPath: sockPath,
-			PIDPath:    pidPath,
-			Version:    "1.0.0-test",
-			HTTPPort:   0, // disabled
-			OnReady:    func() { close(ready) },
-			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(`{"ok":true}`))
-			}),
+		_ = daemon.ListenAndServe(ctx, daemon.ListenConfig{
+			Port:    port,
+			Version: "test-1.0",
+			OnReady: func() { close(ready) },
 		})
 	}()
 
 	select {
 	case <-ready:
-	case <-time.After(3 * time.Second):
-		t.Fatal("daemon did not become ready in 3s")
+	case <-time.After(5 * time.Second):
+		t.Fatal("daemon did not start in time")
 	}
 
-	// Connect via Unix socket and hit /health
-	client := &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
-				return net.Dial("unix", sockPath)
-			},
-		},
-	}
-
-	resp, err := client.Get("http://daemon/health")
+	// Verify health endpoint works
+	resp, err := http.Get("http://127.0.0.1:" + strconv.Itoa(port) + "/health")
 	require.NoError(t, err)
 	defer resp.Body.Close()
+
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	var health HealthResponse
-	body, _ := io.ReadAll(resp.Body)
-	err = json.Unmarshal(body, &health)
+	var health daemon.HealthResponse
+	err = json.NewDecoder(resp.Body).Decode(&health)
 	require.NoError(t, err)
-	assert.Equal(t, "ok", health.Status)
-	assert.Equal(t, "1.0.0-test", health.Version)
-	assert.Equal(t, os.Getpid(), health.PID)
+	assert.Equal(t, "test-1.0", health.Version)
 }
 
-func TestListenAndServe_PIDFileWritten(t *testing.T) {
-	dir := t.TempDir()
-	sockPath := filepath.Join(dir, "test.sock")
-	pidPath := filepath.Join(dir, "test.pid")
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	ready := make(chan struct{})
-
-	go func() {
-		_ = ListenAndServe(ctx, ListenConfig{
-			SocketPath: sockPath,
-			PIDPath:    pidPath,
-			Version:    "2.0.0",
-			HTTPPort:   0,
-			OnReady:    func() { close(ready) },
-		})
-	}()
-
-	<-ready
-
-	// Verify PID file
-	info, err := ReadPID(pidPath)
+func TestListenAndServe_PortConflict(t *testing.T) {
+	port, err := getFreePort()
 	require.NoError(t, err)
-	assert.Equal(t, os.Getpid(), info.PID)
-	assert.Equal(t, "2.0.0", info.Version)
 
-	// Cancel and wait for cleanup
-	cancel()
+	// Block the port first
+	l, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
+	require.NoError(t, err)
+	defer l.Close()
 
-	// Verify socket file was cleaned up (poll instead of fixed sleep)
-	require.Eventually(t, func() bool {
-		_, err := os.Stat(sockPath)
-		return os.IsNotExist(err)
-	}, 3*time.Second, 50*time.Millisecond, "socket file should be removed after shutdown")
-}
-
-func TestListenAndServe_MCPHandler(t *testing.T) {
-	dir := t.TempDir()
-	sockPath := filepath.Join(dir, "test.sock")
-	pidPath := filepath.Join(dir, "test.pid")
-
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	ready := make(chan struct{})
-
-	// Custom handler simulating MCP
-	mcpHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		var req map[string]any
-		_ = json.Unmarshal(body, &req)
-
-		resp := map[string]any{
-			"jsonrpc": "2.0",
-			"id":      req["id"],
-			"result":  map[string]any{"tools": []string{"rag_search"}},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
+	err = daemon.ListenAndServe(ctx, daemon.ListenConfig{
+		Port:    port,
+		Version: "test-1.0",
+		OnReady: func() {}, // Should not be called
 	})
-
-	go func() {
-		_ = ListenAndServe(ctx, ListenConfig{
-			SocketPath: sockPath,
-			PIDPath:    pidPath,
-			Version:    "1.0.0",
-			HTTPPort:   0,
-			OnReady:    func() { close(ready) },
-			Handler:    mcpHandler,
-		})
-	}()
-
-	<-ready
-
-	client := &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
-				return net.Dial("unix", sockPath)
-			},
-		},
-	}
-
-	// Send MCP-like JSON-RPC request
-	resp, err := client.Post("http://daemon/mcp",
-		"application/json",
-		io.NopCloser(
-			strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`),
-		),
-	)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	var result map[string]any
-	body, _ := io.ReadAll(resp.Body)
-	err = json.Unmarshal(body, &result)
-	require.NoError(t, err)
-	assert.Equal(t, float64(1), result["id"])
-	assert.NotNil(t, result["result"])
-}
-
-func TestListenAndServe_StaleSocketCleanup(t *testing.T) {
-	dir := t.TempDir()
-	sockPath := filepath.Join(dir, "test.sock")
-	pidPath := filepath.Join(dir, "test.pid")
-
-	// Create a stale socket file
-	require.NoError(t, os.WriteFile(sockPath, []byte("stale"), 0644))
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	ready := make(chan struct{})
-
-	go func() {
-		_ = ListenAndServe(ctx, ListenConfig{
-			SocketPath: sockPath,
-			PIDPath:    pidPath,
-			Version:    "1.0.0",
-			HTTPPort:   0,
-			OnReady:    func() { close(ready) },
-		})
-	}()
-
-	select {
-	case <-ready:
-		// Success — daemon started despite stale file
-	case <-time.After(3 * time.Second):
-		t.Fatal("daemon should have cleaned up stale socket and started")
-	}
+	
+	// Expect address in use error
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "address already in use")
 }

@@ -267,20 +267,16 @@ func (t *SmartSearchTool) handleSearchError(err error, workspaceRoot, workspaceI
 	if errors.As(err, &indexingStarted) {
 		response.Status = "indexing_started"
 		response.Context.WorkspaceRoot = indexingStarted.WorkspaceRoot
-		if indexingStarted.WorkspaceID != "" {
-			response.Context.IndexingProgress = BuildIndexingProgress(t.engine, indexingStarted.WorkspaceID, indexingStarted.WorkspaceRoot)
-		}
-		response.Message = buildIndexingMessage("🚀", indexingStarted.WorkspaceRoot, response.Context.IndexingProgress)
+		response.Context.IndexingStatus = t.engine.GetIndexStatus(indexingStarted.WorkspaceRoot)
+		response.Message = fmt.Sprintf("🚀 Indexing started for workspace '%s'. Results will appear as indexing progresses.", indexingStarted.WorkspaceRoot)
 		return response.JSON()
 	}
 
 	if errors.As(err, &indexingInProgress) {
 		response.Status = "indexing_in_progress"
 		response.Context.WorkspaceRoot = indexingInProgress.WorkspaceRoot
-		if indexingInProgress.WorkspaceID != "" {
-			response.Context.IndexingProgress = BuildIndexingProgress(t.engine, indexingInProgress.WorkspaceID, indexingInProgress.WorkspaceRoot)
-		}
-		response.Message = buildIndexingMessage("⏳", indexingInProgress.WorkspaceRoot, response.Context.IndexingProgress)
+		response.Context.IndexingStatus = t.engine.GetIndexStatus(indexingInProgress.WorkspaceRoot)
+		response.Message = fmt.Sprintf("⏳ Indexing in progress for workspace '%s'. Results will improve as indexing completes.", indexingInProgress.WorkspaceRoot)
 		return response.JSON()
 	}
 
@@ -481,4 +477,3 @@ func (t *SmartSearchTool) groupDocsByTree(results []mergedResult) []mergedResult
 
 	return out
 }
-

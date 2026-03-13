@@ -40,6 +40,17 @@ func TestCheckAndReindexOnConnect_ReturnsRoot(t *testing.T) {
 		Detector: &mockDirDetector{root: rootDir},
 	}))
 
+	// Cleanup: wait for background goroutines spawned by DetectContext→connectTriggered
+	t.Cleanup(func() {
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if len(eng.ActiveIndexingJobs()) == 0 {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	})
+
 	result := eng.CheckAndReindexOnConnect("some/file.go")
 	if result != rootDir {
 		t.Errorf("expected root=%q, got %q", rootDir, result)
@@ -88,9 +99,7 @@ func TestCheckAndReindexOnConnect_TriggersReindex(t *testing.T) {
 
 	// Register cleanup immediately — before any Fatal that could skip it.
 	t.Cleanup(func() {
-		if eng.progress != nil {
-			eng.progress.stop()
-		}
+
 		deadline := time.Now().Add(5 * time.Second)
 		for time.Now().Before(deadline) {
 			if len(eng.ActiveIndexingJobs()) == 0 {

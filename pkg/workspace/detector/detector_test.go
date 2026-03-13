@@ -111,8 +111,15 @@ func TestDetectExclusion(t *testing.T) {
 
 func TestDetectNoMarkers(t *testing.T) {
 	tmp := t.TempDir()
-	det := New(DefaultOptions())
-	if _, err := det.DetectFromFilePath(context.Background(), filepath.Join(tmp, "nope.go")); err == nil {
+	// Use a nested subdirectory to avoid picking up .ragcode markers
+	// left by other tests in /tmp/ (parent directory traversal).
+	nested := filepath.Join(tmp, "isolated", "deep")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// Restrict detection to the temp dir so it won't traverse to /tmp/.ragcode/
+	det := New(Options{AllowedRoots: []string{tmp}})
+	if _, err := det.DetectFromFilePath(context.Background(), filepath.Join(nested, "nope.go")); err == nil {
 		t.Fatalf("expected error when no markers present")
 	}
 }

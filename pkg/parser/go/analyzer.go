@@ -139,6 +139,15 @@ func (ca *CodeAnalyzer) AnalyzePackage(dir string) (*PackageInfo, error) {
 			info.Types[typeIdx].Methods = append(info.Types[typeIdx].Methods,
 				ca.convertFunctionToMethodInfo(methodInfo, typ.Name))
 		}
+
+		// Process constructor/factory functions associated with this type.
+		// go/doc automatically moves functions like NewX(), LoadX() that return *T
+		// from the top-level Funcs list into typ.Funcs. Without this loop they
+		// were silently dropped from the index (BUG-003).
+		for _, fn := range typ.Funcs {
+			fnInfo := ca.analyzeFunctionDecl(fset, fn, astFuncMap)
+			info.Functions = append(info.Functions, fnInfo)
+		}
 	} // Consts and vars
 	for _, c := range docPkg.Consts {
 		constInfo := ca.analyzeConstantDecl(fset, c)

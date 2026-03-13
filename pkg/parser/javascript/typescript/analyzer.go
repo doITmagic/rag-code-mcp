@@ -2,6 +2,7 @@ package typescript
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
@@ -17,12 +18,29 @@ var utilityTypes = map[string]bool{
 	"ThisParameterType": true, "OmitThisParameter": true,
 }
 
-// Analyzer detects TypeScript-specific patterns using tree-sitter
-type Analyzer struct{}
+// Analyzer detects TypeScript-specific patterns using tree-sitter.
+// Caches Parser instances per language to avoid re-allocating expensive lookup tables.
+type Analyzer struct {
+	mu      sync.Mutex
+	parsers map[string]*gotreesitter.Parser
+}
 
 // NewAnalyzer creates a new TypeScript analyzer
 func NewAnalyzer() *Analyzer {
-	return &Analyzer{}
+	return &Analyzer{
+		parsers: make(map[string]*gotreesitter.Parser),
+	}
+}
+
+func (a *Analyzer) getOrCreateParser(lang *grammars.LangEntry) *gotreesitter.Parser {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if cached, ok := a.parsers[lang.Name]; ok {
+		return cached
+	}
+	p := gotreesitter.NewParser(lang.Language())
+	a.parsers[lang.Name] = p
+	return p
 }
 
 // IsTypeScriptFile checks if a file is TypeScript
@@ -44,11 +62,12 @@ func (a *Analyzer) Analyze(source string, filePath string) *TypeScriptInfo {
 	}
 
 	src := []byte(source)
-	parser := gotreesitter.NewParser(lang.Language())
+	parser := a.getOrCreateParser(lang)
 	tree, err := parser.Parse(src)
 	if err != nil {
 		return &TypeScriptInfo{}
 	}
+	defer tree.Release()
 
 	root := tree.RootNode()
 	langObj := lang.Language()

@@ -11,7 +11,7 @@ func TestGroupDocsByTree(t *testing.T) {
 	// Create a temporary file for testing disk reads
 	tempDir := t.TempDir()
 	tempFilePath := filepath.Join(tempDir, "test_doc.md")
-	
+
 	// Create a dummy document with 20 lines
 	lines := make([]string, 20)
 	for i := 0; i < 20; i++ {
@@ -72,22 +72,22 @@ func TestGroupDocsByTree(t *testing.T) {
 				if len(results) != 2 {
 					t.Fatalf("Expected 2 results, got %d", len(results))
 				}
-				
+
 				// results are sorted by score. The merged "### Intro" should have max score 0.9
 				if results[0].score != 0.9 {
 					t.Errorf("Expected max score 0.9, got %v", results[0].score)
 				}
-				
+
 				// Check start/end line bounds for the merged "### Intro"
 				if results[0].startLine != 1 || results[0].endLine != 7 {
 					t.Errorf("Expected lines 1-7, got %d-%d", results[0].startLine, results[0].endLine)
 				}
-				
+
 				// Verify the content was loaded from disk and contains Lines A to G (1 to 7)
 				if !strings.Contains(results[0].content, "Line A") || !strings.Contains(results[0].content, "Line G") {
 					t.Errorf("Merged content does not match expected lines from disk")
 				}
-				
+
 				// Setup should be untouched
 				if results[1].signature != "### Setup" {
 					t.Errorf("Expected second result to be '### Setup'")
@@ -125,7 +125,7 @@ func TestGroupDocsByTree(t *testing.T) {
 					startLine: 19, endLine: 20, score: 0.9, // Line S, T
 				},
 			},
-			expected: 1, 
+			expected: 1,
 			check: func(t *testing.T, results []mergedResult) {
 				if len(results) != 1 {
 					t.Fatalf("Expected 1 result after merge, got %d", len(results))

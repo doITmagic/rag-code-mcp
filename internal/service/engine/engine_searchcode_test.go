@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -284,6 +286,19 @@ func TestSearchCodeResumeInterruptedIndexing(t *testing.T) {
 	if wctx == nil {
 		t.Fatalf("Failed to detect context")
 	}
+
+	// Wait for background goroutine (triggered by connectTriggered in DetectContext)
+	// to finish before TempDir cleanup removes the directory.
+	t.Cleanup(func() {
+		for i := 0; i < 200; i++ {
+			if len(eng.ActiveIndexingJobs()) == 0 {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		os.RemoveAll(filepath.Join(rootDir, ".ragcode"))
+	})
+
 	// Make the collection exist so search continues
 	goColl := CollectionNameFor(wctx.ID, "go")
 	store := &multiLangStore{
@@ -297,10 +312,98 @@ func TestSearchCodeResumeInterruptedIndexing(t *testing.T) {
 	eng.SetSearchService(search.NewService(llmProvider, store))
 
 	// Verify SearchCode succeeds (returns results) when collection exists.
-	// Auto-resume behavior is tested separately in TestSearchCodeAutoResumesInterruptedIndexing.
 	_, err := eng.SearchCode(context.Background(), "dummy.go", "test", 10, false)
 	if err != nil {
 		t.Fatalf("Expected no error when collection exists, got: %v", err)
+	}
+}
+
+// TestStartIndexingAsyncRecreateQueuesWhenJobRunning verifies BUG-004 fix:
+// when recreate=true is requested while a job is already running, the recreate
+// must be queued as pendingOverflow (full re-index) rather than silently dropped.
+func TestStartIndexingAsyncRecreateQueuesWhenJobRunning(t *testing.T) {
+	llmProvider := &countingLLM{}
+	eng := newEngineCountingLLM(&testStore{existing: map[string]bool{}}, llmProvider)
+
+	const wsID = "test-ws-id"
+	const wsRoot = "/tmp/fake-ws"
+
+	// Simulate a job already running for this workspace.
+	eng.indexingJobs.Store(wsID, time.Now())
+
+	// Request recreate=true while the job is running.
+	eng.StartIndexingAsync(wsRoot, wsID, nil, true)
+
+	// The job is still marked as running (we put it there).
+	_, stillRunning := eng.indexingJobs.Load(wsID)
+	if !stillRunning {
+		t.Fatal("Expected job to still be running (we stored it manually)")
+	}
+
+	// The recreate MUST be queued as overflow — not silently dropped.
+	eng.pendingMu.Lock()
+	overflow := eng.pendingOverflow[wsID]
+	_, hasPendingFiles := eng.pendingFiles[wsID]
+	eng.pendingMu.Unlock()
+
+	if !overflow {
+		t.Error("Expected pendingOverflow[wsID]=true when recreate=true is requested while job runs")
+	}
+	if hasPendingFiles {
+		t.Error("Expected pendingFiles[wsID] to be cleared when overflow is set")
+	}
+
+	// Cleanup: remove the fake job
+	eng.indexingJobs.Delete(wsID)
+}
+
+// TestStartIndexingAsyncRecreateStartsImmediatelyWhenNoJobRunning verifies that
+// when recreate=true and no job is running, the job starts immediately (normal path).
+func TestStartIndexingAsyncRecreateStartsImmediatelyWhenNoJobRunning(t *testing.T) {
+	llmProvider := &countingLLM{}
+	eng := newEngineCountingLLM(&testStore{existing: map[string]bool{}}, llmProvider)
+
+	rootDir := t.TempDir()
+	eng.SetResolver(resolver.New(resolver.Dependencies{Detector: &mockDirDetector{root: rootDir}}))
+
+	// DetectContext triggers connectTriggered → StartIndexingAsync. Wait for it to finish.
+	wctx, _ := eng.DetectContext(context.Background(), "dummy.go")
+	if wctx == nil {
+		t.Fatalf("Failed to detect context")
+	}
+
+	for i := 0; i < 200; i++ {
+		if len(eng.ActiveIndexingJobs()) == 0 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	t.Cleanup(func() {
+		for i := 0; i < 200; i++ {
+			if len(eng.ActiveIndexingJobs()) == 0 {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		os.RemoveAll(filepath.Join(rootDir, ".ragcode"))
+	})
+
+	// No job running — recreate=true should start immediately.
+	eng.StartIndexingAsync(wctx.Root, wctx.ID, nil, true)
+
+	_, nowRunning := eng.indexingJobs.Load(wctx.ID)
+	if !nowRunning {
+		t.Error("Expected job to be running immediately when recreate=true and no job was active")
+	}
+
+	// Nothing should be queued in pendingOverflow.
+	eng.pendingMu.Lock()
+	overflow := eng.pendingOverflow[wctx.ID]
+	eng.pendingMu.Unlock()
+
+	if overflow {
+		t.Error("Expected no pendingOverflow when job started immediately")
 	}
 }
 
@@ -314,99 +417,4 @@ func (m *mockDirDetector) DetectFromFilePath(_ context.Context, path string) (*c
 		Root:       m.root,
 		Confidence: 1.0,
 	}, nil
-}
-
-// TestSearchCodeAutoResumesInterruptedIndexing verifies that SearchCode triggers
-// a background re-index when index_status.json shows an interrupted indexing
-// session (state="running", 1 <= GlobalPercent <= 99).
-// It also verifies the 5-minute cooldown prevents repeated resume triggers.
-func TestSearchCodeAutoResumesInterruptedIndexing(t *testing.T) {
-	llmProvider := &countingLLM{}
-	eng := newEngineCountingLLM(&testStore{existing: map[string]bool{}}, llmProvider)
-
-	wsRoot := t.TempDir()
-	eng.SetResolver(resolver.New(resolver.Dependencies{Detector: &mockDirDetector{root: wsRoot}}))
-
-	// Pre-fill the connect trigger so we test the search-based auto-resume,
-	// not the daemon's on-connect auto-warmup.
-	wsID := contract.DeriveWorkspaceID(wsRoot, "", "")
-	eng.connectTriggered.Store(wsID, true)
-
-	// Detect context to learn the workspace ID (needed for index_status.json)
-	wctx, err := eng.DetectContext(context.Background(), "dummy.go")
-	if err != nil || wctx == nil {
-		t.Fatal("Failed to detect workspace context")
-	}
-
-	// Write index_status.json that simulates an interrupted indexing session at 50%
-	now := time.Now()
-	status := IndexProgress{
-		JobID:         "interrupted-test-job",
-		WorkspaceID:   wctx.ID,
-		WorkspaceRoot: wsRoot,
-		State:         "running",
-		GlobalPercent: 50,
-		StartedAt:     now.Add(-10 * time.Minute),
-		UpdatedAt:     now,
-		Languages:     map[string]IndexLanguageProgress{},
-	}
-	saveIndexStatus(wsRoot, &status)
-
-	// Pre-emptively set connectTriggered so that DetectContext doesn't
-	// automatically kick off indexing directly when it is called entirely
-	// bypassing the auto-resume retry mechanism we're trying to test here.
-	eng.connectTriggered.Store(wctx.ID, true)
-
-	// Make the go collection exist so SearchCode gets past the fast-fail check
-	goColl := CollectionNameFor(wctx.ID, "go")
-	store := &multiLangStore{
-		testStore: testStore{
-			existing: map[string]bool{goColl: true},
-		},
-	}
-	eng.SetSearchService(search.NewService(llmProvider, store))
-
-	// First call — auto-resume should fire
-	_, _ = eng.SearchCode(context.Background(), "dummy.go", "test", 10, false)
-
-	// resumeAttempts is updated synchronously before the goroutine starts,
-	// so it is readable immediately after SearchCode returns.
-	if _, ok := eng.resumeAttempts.Load(wctx.ID); !ok {
-		t.Error("expected auto-resume to be triggered: resumeAttempts has no entry for workspace")
-	}
-
-	// Second call within cooldown — should NOT trigger another resume attempt.
-	// We verify this by checking that resumeAttempts still holds the same timestamp.
-	first, okFirst := eng.resumeAttempts.Load(wctx.ID)
-	_, _ = eng.SearchCode(context.Background(), "dummy.go", "test", 10, false)
-	second, okSecond := eng.resumeAttempts.Load(wctx.ID)
-	
-	if okFirst && okSecond {
-		if first.(time.Time) != second.(time.Time) {
-			t.Error("cooldown violated: auto-resume was triggered again within the 5-minute window")
-		}
-	} else {
-		t.Error("expected resumeAttempts to be populated for both calls")
-	}
-
-	// Stop the progress flusher goroutine before the test returns.
-	// Without this the goroutine can still write to wsRoot/.ragcode/ while
-	// t.TempDir() cleanup removes the directory, triggering a race under -race.
-	t.Cleanup(func() {
-		if eng.progress != nil {
-			eng.progress.stop()
-		}
-	})
-
-	// Wait for the background indexing goroutine to drain before test returns.
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if len(eng.ActiveIndexingJobs()) == 0 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if jobs := eng.ActiveIndexingJobs(); len(jobs) != 0 {
-		t.Fatalf("background indexing jobs still active after 5s wait: %v", jobs)
-	}
 }

@@ -8,12 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
-
 	"github.com/PuerkitoBio/goquery"
 	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
-	"github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
 )
 
 func init() {
@@ -21,38 +17,15 @@ func init() {
 }
 
 // Analyzer implements the pkgParser.Analyzer interface for HTML.
-// Caches gotreesitter.Parser instances per language to avoid re-allocating expensive lookup tables.
 type Analyzer struct {
-	ca      *CodeAnalyzer
-	mu      sync.Mutex
-	parsers map[string]*gotreesitter.Parser
+	ca *CodeAnalyzer
 }
 
 // NewAnalyzer creates a new HTML analyzer.
 func NewAnalyzer() *Analyzer {
 	return &Analyzer{
-		ca:      NewCodeAnalyzer(),
-		parsers: make(map[string]*gotreesitter.Parser),
+		ca: NewCodeAnalyzer(),
 	}
-}
-
-func (a *Analyzer) getOrCreateParser(lang *grammars.LangEntry) *gotreesitter.Parser {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if cached, ok := a.parsers[lang.Name]; ok {
-		return cached
-	}
-	p := gotreesitter.NewParser(lang.Language())
-	a.parsers[lang.Name] = p
-	return p
-}
-
-// ReleaseResources drops cached tree-sitter parsers so the GC can
-// reclaim the arena memory they reference.
-func (a *Analyzer) ReleaseResources() {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.parsers = make(map[string]*gotreesitter.Parser)
 }
 
 // Name returns "html".

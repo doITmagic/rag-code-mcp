@@ -16,8 +16,8 @@ import (
 // Only the fields we need to access (mu + free) are declared.
 type nodeArenaPool struct {
 	mu      sync.Mutex
-	class   uint8
-	maxSize int
+	_       uint8 // class
+	_       int   // maxSize
 	free    []*struct{} // opaque; we just need to nil the slice
 }
 

@@ -28,7 +28,7 @@ func TestRunBridge(t *testing.T) {
 		hitCount++
 		w.Header().Set("Content-Type", "application/json")
 		// Echo it to prove it hit the server
-		w.Write([]byte(`{"jsonrpc":"2.0", "result": ` + string(body) + `}`)) 
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0", "result": ` + string(body) + `}`)) 
 	}))
 	server.Start()
 	defer server.Close()

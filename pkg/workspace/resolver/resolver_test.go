@@ -2,6 +2,7 @@ package resolver
 
 import (
 	context "context"
+	"strings"
 	testing "testing"
 
 	"github.com/doITmagic/rag-code-mcp/pkg/workspace/contract"
@@ -53,6 +54,32 @@ func TestResolveFilePath(t *testing.T) {
 	}
 	if resp.Metadata.PathContextKey == "" {
 		t.Fatalf("expected context key")
+	}
+}
+
+func TestResolveFilePathNestedWorkspaceOverride(t *testing.T) {
+	// Detector finds /tmp/parent/nested as the workspace root (has its own .git)
+	detector := &fakeDetector{candidate: &contract.WorkspaceCandidate{
+		Root:   "/tmp/parent/nested",
+		Reason: contract.ReasonFilePath,
+	}}
+	// Registry knows /tmp/parent is an already-registered workspace
+	reg := &fakeRegistry{parentRoot: "/tmp/parent"}
+	r := New(Dependencies{Detector: detector, Registry: reg})
+	req := contract.ResolveWorkspaceRequest{FilePath: "/tmp/parent/nested/src/main.py"}
+
+	resp, err := r.Resolve(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.ResolvedRoot != "/tmp/parent" {
+		t.Fatalf("expected parent root /tmp/parent, got %s", resp.ResolvedRoot)
+	}
+	if resp.PathResolutionSource != "nested_workspace_override" {
+		t.Fatalf("expected source nested_workspace_override, got %s", resp.PathResolutionSource)
+	}
+	if resp.PathResolutionConfidence >= 0.95 {
+		t.Fatalf("expected reduced confidence (<0.95), got %f", resp.PathResolutionConfidence)
 	}
 }
 
@@ -235,6 +262,7 @@ type fakeRegistry struct {
 	err           *contract.ResolveWorkspaceError
 	feedbackCount int
 	promoteCount  int
+	parentRoot    string // if set, FindParentWorkspace returns this
 }
 
 func (f *fakeRegistry) ResolveAlias(ctx context.Context, alias string) (*contract.WorkspaceCandidate, *contract.ResolveWorkspaceError) {
@@ -267,6 +295,13 @@ func (f *fakeRegistry) GetActiveWorkspace() (string, error) {
 	return "", nil
 }
 
+func (f *fakeRegistry) FindParentWorkspace(path string) (string, bool) {
+	if f.parentRoot != "" {
+		return f.parentRoot, true
+	}
+	return "", false
+}
+
 type fakeAnnotator struct {
 	branch       string
 	headSHA      string
@@ -284,4 +319,111 @@ func (f *fakeAnnotator) Annotate(ctx context.Context, root string, resp *contrac
 	resp.WorktreeID = f.worktreeID
 	resp.MismatchRisk = f.mismatchRisk
 	return nil
+}
+
+// --- New tests: registry fallback when detector fails ---
+
+func TestResolveFilePathRegistryFallback(t *testing.T) {
+	// Detector fails (file doesn't exist) but registry knows the parent workspace
+	detector := &fakeDetector{err: &contract.ResolveWorkspaceError{
+		Code:    contract.ErrorInvalidPath,
+		Message: "stat path: no such file or directory",
+		Reason:  contract.ReasonInvalidPath,
+	}}
+	reg := &fakeRegistry{parentRoot: "/home/user/project"}
+	r := New(Dependencies{Detector: detector, Registry: reg})
+	req := contract.ResolveWorkspaceRequest{FilePath: "/home/user/project/main.go"}
+
+	resp, err := r.Resolve(context.Background(), req)
+	if err != nil {
+		t.Fatalf("expected registry fallback to succeed, got error: %v", err)
+	}
+	if resp.ResolvedRoot != "/home/user/project" {
+		t.Fatalf("expected root /home/user/project, got %s", resp.ResolvedRoot)
+	}
+	if resp.PathResolutionSource != "registry_fallback" {
+		t.Fatalf("expected source registry_fallback, got %s", resp.PathResolutionSource)
+	}
+	if resp.PathResolutionConfidence > 0.90 {
+		t.Fatalf("expected reduced confidence (<=0.90), got %f", resp.PathResolutionConfidence)
+	}
+	if !resp.UsedFallback {
+		t.Fatalf("expected UsedFallback=true for registry_fallback source")
+	}
+}
+
+func TestResolveFilePathNoRegistryDescriptiveError(t *testing.T) {
+	// Detector fails and no registry configured — should get descriptive hint
+	detector := &fakeDetector{err: &contract.ResolveWorkspaceError{
+		Code:    contract.ErrorInvalidPath,
+		Message: "stat path: no such file or directory",
+		Reason:  contract.ReasonInvalidPath,
+	}}
+	r := New(Dependencies{Detector: detector})
+	req := contract.ResolveWorkspaceRequest{FilePath: "/fake/project/main.go"}
+
+	resp, err := r.Resolve(context.Background(), req)
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if resp != nil {
+		t.Fatalf("expected nil response")
+	}
+	if !strings.Contains(err.Message, "Hint:") {
+		t.Fatalf("expected AI-friendly hint in error message, got: %s", err.Message)
+	}
+	if !strings.Contains(err.Message, "workspace detection") {
+		t.Fatalf("expected 'workspace detection' explanation in error, got: %s", err.Message)
+	}
+}
+
+func TestResolveFilePathRegistryMissDescriptiveError(t *testing.T) {
+	// Detector fails and registry doesn't know this path either
+	detector := &fakeDetector{err: &contract.ResolveWorkspaceError{
+		Code:    contract.ErrorInvalidPath,
+		Message: "stat path: no such file or directory",
+		Reason:  contract.ReasonInvalidPath,
+	}}
+	reg := &fakeRegistry{} // parentRoot is empty => FindParentWorkspace returns false
+	r := New(Dependencies{Detector: detector, Registry: reg})
+	req := contract.ResolveWorkspaceRequest{FilePath: "/unknown/path/file.go"}
+
+	resp, err := r.Resolve(context.Background(), req)
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if resp != nil {
+		t.Fatalf("expected nil response")
+	}
+	if !strings.Contains(err.Message, "Hint:") {
+		t.Fatalf("expected AI hint in error, got: %s", err.Message)
+	}
+}
+
+func TestResolveFilePathNonInvalidPathErrorPassthrough(t *testing.T) {
+	// Detector fails with OUTSIDE_ALLOWED_ROOTS — should NOT trigger
+	// registry fallback and should propagate the original error as-is.
+	detector := &fakeDetector{err: &contract.ResolveWorkspaceError{
+		Code:    contract.ErrorOutsideAllowedRoots,
+		Message: "path /outside is outside allowed workspace roots",
+		Reason:  contract.ReasonOutsideAllowedRoots,
+	}}
+	reg := &fakeRegistry{parentRoot: "/home/user/project"} // registry WOULD match
+	r := New(Dependencies{Detector: detector, Registry: reg})
+	req := contract.ResolveWorkspaceRequest{FilePath: "/outside/main.go"}
+
+	resp, err := r.Resolve(context.Background(), req)
+	if err == nil {
+		t.Fatalf("expected error to propagate, got nil")
+	}
+	if resp != nil {
+		t.Fatalf("expected nil response")
+	}
+	// Error should be the original one, not wrapped with a hint
+	if err.Code != contract.ErrorOutsideAllowedRoots {
+		t.Fatalf("expected ErrorOutsideAllowedRoots, got %s", err.Code)
+	}
+	if strings.Contains(err.Message, "Hint:") {
+		t.Fatalf("non-invalid-path errors should not get hint appended, got: %s", err.Message)
+	}
 }

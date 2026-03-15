@@ -94,11 +94,18 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 	// Fan-out to all language collections in parallel — zero embedding
 	// Filter only by package; is_public check happens in the results loop
 	// (with graceful fallback for older index entries that predate the is_public field).
+	//
+	// The index stores the short package name (e.g. "indexer"), not the full Go
+	// import path (e.g. "github.com/doITmagic/rag-code-mcp/pkg/indexer").
+	// Normalize by taking the last path segment so both forms work.
+	filterPackage := packageName
+	if idx := strings.LastIndex(packageName, "/"); idx >= 0 {
+		filterPackage = packageName[idx+1:]
+	}
 	filter := map[string]interface{}{
-		"package": packageName,
+		"package": filterPackage,
 	}
 
-	idx := t.engine.GetIndexProgress(wctx.ID, wctx.Root)
 	allResults, err := t.engine.ExactSearchPolyglot(ctx, wctx.ID, filter, 1000)
 	if err != nil {
 		var noCollections *engine.ErrNoCollectionsFound
@@ -106,11 +113,7 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 			resp := ToolResponse{
 				Status:  "indexing_required",
 				Message: fmt.Sprintf("⏳ Workspace '%s' is not indexed yet. Indexing is required for complete results.", wctx.Root),
-				Context: ContextFromWorkspaceWithProgress(wctx, t.engine),
-			}
-			if idx != nil {
-				resp.Status = "indexing_in_progress"
-				resp.Data = map[string]any{"indexing": idx}
+				Context: ContextFromWorkspaceWithStatus(wctx, t.engine),
 			}
 			return resp.JSON()
 		}
@@ -123,7 +126,7 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 		resp := ToolResponse{
 			Status:  "success",
 			Message: fmt.Sprintf("No exported symbols found in package '%s'", packageName),
-			Context: ContextFromWorkspaceWithProgress(wctx, t.engine),
+			Context: ContextFromWorkspaceWithStatus(wctx, t.engine),
 		}
 		return resp.JSON()
 	}
@@ -203,7 +206,7 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 		resp := ToolResponse{
 			Status:  "success",
 			Message: fmt.Sprintf("No exported symbols found in package '%s' (after filtering)", packageName),
-			Context: ContextFromWorkspaceWithProgress(wctx, t.engine),
+			Context: ContextFromWorkspaceWithStatus(wctx, t.engine),
 		}
 		return resp.JSON()
 	}
@@ -252,14 +255,11 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 		Message: "Found package exports\n\n" + response.String(),
 		Data:    exports,
 		Context: ContextMetadata{
-			WorkspaceRoot:    wctx.Root,
-			DetectionSource:  wctx.DetectionSource,
-			Telemetry:        telemetry.CalculateSavings(baselineBytes, actualBytes),
-			IndexingProgress: BuildIndexingProgress(t.engine, wctx.ID, wctx.Root),
+			WorkspaceRoot:   wctx.Root,
+			DetectionSource: wctx.DetectionSource,
+			Telemetry:       telemetry.CalculateSavings(baselineBytes, actualBytes),
+			IndexingStatus:  t.engine.GetIndexStatus(wctx.Root),
 		},
-	}
-	if idx != nil && (idx.State == "starting" || idx.State == "running") {
-		resp.Data = map[string]any{"exports": exports, "indexing": idx}
 	}
 
 	return resp.JSON()

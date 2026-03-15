@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
 	"github.com/PuerkitoBio/goquery"
 	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
 )
@@ -34,14 +33,20 @@ func (a *Analyzer) Name() string {
 	return "html"
 }
 
-// CanHandle returns true for .html and .htm files.
+// CanHandle returns true for .html files.
 func (a *Analyzer) CanHandle(filePath string) bool {
 	ext := strings.ToLower(filepath.Ext(filePath))
-	return ext == ".html" || ext == ".htm"
+	switch ext {
+	case ".html", ".htm":
+		return true
+	default:
+		return false
+	}
 }
 
-// Analyze extracts symbols (sections) from a file or directory.
+// Analyze extracts symbols (sections) from an HTML file.
 func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result, error) {
+	// HTML files: use goquery
 	chunks, err := a.ca.AnalyzePaths([]string{path})
 	if err != nil {
 		return nil, err
@@ -66,6 +71,8 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 		Language: "html",
 	}, nil
 }
+
+
 
 // CodeAnalyzer handles the heavy lifting of HTML analysis.
 type CodeAnalyzer struct{}
@@ -245,7 +252,12 @@ func (ca *CodeAnalyzer) shouldSkipDir(path, root string) bool {
 
 func (ca *CodeAnalyzer) isHTMLFile(name string) bool {
 	lower := strings.ToLower(name)
-	return strings.HasSuffix(lower, ".html") || strings.HasSuffix(lower, ".htm")
+	for _, ext := range []string{".html", ".htm"} {
+		if strings.HasSuffix(lower, ext) {
+			return true
+		}
+	}
+	return false
 }
 
 func headingLevel(tag string) int {

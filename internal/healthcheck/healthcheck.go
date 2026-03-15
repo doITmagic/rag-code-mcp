@@ -242,6 +242,9 @@ func CheckOllamaWithModels(baseURL string, requiredModels []string) CheckResult 
 
 		var missing []string
 		for _, requiredModel := range requiredModels {
+			if strings.TrimSpace(requiredModel) == "" {
+				continue
+			}
 			reqBase, reqTag := normalizeModelName(requiredModel)
 			found := false
 

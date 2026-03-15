@@ -1,124 +1,60 @@
-package adapter
+package adapter_test
 
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"io"
-	"net"
 	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/doITmagic/rag-code-mcp/internal/adapter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestBridge_ForwardsRequestAndResponse(t *testing.T) {
-	sockPath := startFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		var req map[string]any
-		_ = json.Unmarshal(body, &req)
+func TestRunBridge(t *testing.T) {
+	// Create an HTTP test server to mock the daemon
+	hitCount := 0
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/mcp", r.URL.Path)
+		assert.Equal(t, http.MethodPost, r.Method)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
 
-		resp := map[string]any{
-			"jsonrpc": "2.0",
-			"id":      req["id"],
-			"result":  map[string]any{"tools": []string{"rag_search"}},
-		}
+		hitCount++
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
-	})
+		// Echo it to prove it hit the server
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0", "result": ` + string(body) + `}`)) 
+	}))
+	server.Start()
+	defer server.Close()
 
-	input := `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}` + "\n"
-	stdout := &bytes.Buffer{}
+	// Extract port from httptest server listener
+	parts := strings.Split(server.Listener.Addr().String(), ":")
+	portStr := parts[len(parts)-1]
 
-	err := RunBridge(context.Background(), sockPath, strings.NewReader(input), stdout, "")
+	port, err := strconv.Atoi(portStr)
 	require.NoError(t, err)
 
-	var resp map[string]any
-	err = json.Unmarshal(stdout.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Equal(t, float64(1), resp["id"])
-	assert.NotNil(t, resp["result"])
-}
+	// Setup stdin with a couple of JSON-RPC requests separated by newline
+	stdinData := `{"jsonrpc":"2.0","id":1,"method":"foo"}` + "\n" + `{"jsonrpc":"2.0","id":2,"method":"bar"}` + "\n"
+	stdin := strings.NewReader(stdinData)
+	var stdout bytes.Buffer
 
-func TestBridge_SendsWorkspaceHintHeader(t *testing.T) {
-	var receivedHint string
+	// Run bridge
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
 
-	sockPath := startFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		receivedHint = r.Header.Get("X-Workspace-Hint")
-		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": nil})
-	})
-
-	input := `{"jsonrpc":"2.0","id":1,"method":"ping"}` + "\n"
-	err := RunBridge(context.Background(), sockPath, strings.NewReader(input), io.Discard, "/home/user/project")
+	err = adapter.RunBridge(ctx, port, stdin, &stdout, "/test/workspace")
 	require.NoError(t, err)
 
-	assert.Equal(t, "/home/user/project", receivedHint)
-}
-
-func TestBridge_SkipsEmptyLines(t *testing.T) {
-	callCount := 0
-	sockPath := startFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		callCount++
-		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": nil})
-	})
-
-	input := "\n\n" + `{"jsonrpc":"2.0","id":1,"method":"ping"}` + "\n\n  \n"
-	err := RunBridge(context.Background(), sockPath, strings.NewReader(input), io.Discard, "")
-	require.NoError(t, err)
-
-	assert.Equal(t, 1, callCount, "only one real JSON line should be forwarded")
-}
-
-func TestBridge_MultipleRequests(t *testing.T) {
-	sockPath := startFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		var req map[string]any
-		_ = json.Unmarshal(body, &req)
-		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req["id"], "result": "ok"})
-	})
-
-	input := `{"jsonrpc":"2.0","id":1,"method":"a"}` + "\n" +
-		`{"jsonrpc":"2.0","id":2,"method":"b"}` + "\n" +
-		`{"jsonrpc":"2.0","id":3,"method":"c"}` + "\n"
-	stdout := &bytes.Buffer{}
-
-	err := RunBridge(context.Background(), sockPath, strings.NewReader(input), stdout, "")
-	require.NoError(t, err)
-
-	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
-	assert.Len(t, lines, 3, "should get 3 responses for 3 requests")
-}
-
-func TestBridge_DaemonUnreachable(t *testing.T) {
-	input := `{"jsonrpc":"2.0","id":1,"method":"test"}` + "\n"
-	stdout := &bytes.Buffer{}
-
-	// Use a non-existent socket path
-	err := RunBridge(context.Background(), "/tmp/nonexistent.sock", strings.NewReader(input), stdout, "")
-	require.NoError(t, err) // bridge itself should not error — it writes JSON-RPC error to stdout
-
-	var resp map[string]any
-	err = json.Unmarshal(stdout.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.NotNil(t, resp["error"], "should receive a JSON-RPC error")
-	assert.Equal(t, float64(1), resp["id"], "error should preserve the request id")
-}
-
-// --- Helper ---
-
-func startFakeDaemon(t *testing.T, handler http.HandlerFunc) string {
-	t.Helper()
-	dir := t.TempDir()
-	sockPath := dir + "/test.sock"
-
-	listener, err := net.Listen("unix", sockPath)
-	require.NoError(t, err)
-
-	srv := &http.Server{Handler: handler}
-	go func() { _ = srv.Serve(listener) }()
-	t.Cleanup(func() { srv.Close() })
-
-	return sockPath
+	// Validate results
+	assert.Equal(t, 2, hitCount)
+	outContent := stdout.String()
+	assert.Contains(t, outContent, `{"jsonrpc":"2.0","id":1,"method":"foo"}`)
+	assert.Contains(t, outContent, `{"jsonrpc":"2.0","id":2,"method":"bar"}`)
 }

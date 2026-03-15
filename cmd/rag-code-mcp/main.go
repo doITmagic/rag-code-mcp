@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"strconv"
 
 	"github.com/Masterminds/semver/v3"
@@ -17,7 +16,7 @@ import (
 )
 
 var (
-	Version = "2.1.59"
+	Version = "2.1.80"
 	Commit  = "none"
 	Date    = "24.10.2025"
 )
@@ -30,7 +29,7 @@ func main() {
 	ollamaModel := flag.String("ollama-model", "", "Ollama chat model override")
 	ollamaEmbed := flag.String("ollama-embed", "", "Ollama embedding model override")
 	qdrantURLFlag := flag.String("qdrant-url", "", "Qdrant URL override")
-	httpPort := flag.Int("http-port", 3000, "Port for optional HTTP server (default 3000, set -1 to disable)")
+	httpPort := flag.Int("http-port", 39000, "Port for TCP daemon server (default 39000)")
 	versionFlag := flag.Bool("version", false, "Print version and exit")
 	uninstallFlag := flag.Bool("uninstall", false, "Uninstall RagCode MCP from this system")
 	flag.Parse()
@@ -50,7 +49,7 @@ func main() {
 	if *daemonFlag {
 		// ═══════════════════════════════════════════════════════════════
 		// DAEMON MODE — the heavy process: Qdrant, Ollama, Engine, MCP
-		// Listens on Unix socket + optional HTTP
+		// Listens exclusively on local TCP port to guarantee singleton
 		// ═══════════════════════════════════════════════════════════════
 		if err := daemon.Run(daemon.RunConfig{
 			Version:       Version,
@@ -67,7 +66,7 @@ func main() {
 		}
 	} else {
 		// ═══════════════════════════════════════════════════════════════
-		// ADAPTER MODE (default) — thin Stdio ↔ Unix socket bridge
+		// ADAPTER MODE (default) — thin Stdio ↔ TCP bridge
 		// Each IDE launches this mode; daemon is started automatically.
 		// ═══════════════════════════════════════════════════════════════
 
@@ -77,7 +76,7 @@ func main() {
 		if *configPath != "config.yaml" {
 			daemonArgs = append(daemonArgs, "--config", *configPath)
 		}
-		if *httpPort != 3000 {
+		if *httpPort != 39000 {
 			daemonArgs = append(daemonArgs, "--http-port", strconv.Itoa(*httpPort))
 		}
 		if *ollamaURLFlag != "" {
@@ -93,57 +92,44 @@ func main() {
 			daemonArgs = append(daemonArgs, "--qdrant-url", *qdrantURLFlag)
 		}
 
-		runAdapter(Version, daemonArgs)
+		runAdapter(Version, *httpPort, daemonArgs)
 	}
 }
 
 // runAdapter is the thin stdio adapter that bridges IDE ↔ daemon.
 // It ensures the daemon is running, handles version upgrades, and bridges stdin/stdout.
 // daemonArgs are extra CLI flags forwarded to the daemon process.
-func runAdapter(version string, daemonArgs []string) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		log.Fatalf("Cannot determine home directory: %v", err)
-	}
-	ragcodeDir := filepath.Join(homeDir, ".ragcode")
-	if err := os.MkdirAll(ragcodeDir, 0o700); err != nil {
-		log.Fatalf("Cannot create ~/.ragcode: %v", err)
-	}
-
-	pidPath := filepath.Join(ragcodeDir, "daemon.pid")
-	sockPath := filepath.Join(ragcodeDir, "daemon.sock")
-
+func runAdapter(version string, httpPort int, daemonArgs []string) {
 	// Check if daemon is already running
-	running, existingVersion := adapter.IsDaemonRunning(pidPath, sockPath)
+	running, existingVersion := adapter.IsDaemonRunning(httpPort)
 
 	// Version upgrade check: if daemon is running an older version, restart it
 	if running && needsUpgrade(existingVersion, version) {
 		logger.Instance.Info("Daemon upgrade needed (%s → %s), restarting...", existingVersion, version)
-		if err := adapter.StopDaemon(pidPath); err != nil {
+		if err := adapter.StopDaemon(httpPort); err != nil {
 			logger.Instance.Warn("Failed to stop old daemon: %v", err)
 		}
-		adapter.CleanupStaleFiles(pidPath, sockPath)
 		running = false
 	}
 
 	// Start daemon if not running
 	if !running {
-		logger.Instance.Info("Starting daemon...")
+		logger.Instance.Info("Starting daemon on port %d...", httpPort)
 		binaryPath, err := os.Executable()
 		if err != nil {
 			log.Fatalf("Cannot determine binary path: %v", err)
 		}
-		if err := adapter.StartDaemon(binaryPath, sockPath, daemonArgs...); err != nil {
+		if err := adapter.StartDaemon(binaryPath, httpPort, daemonArgs...); err != nil {
 			log.Fatalf("Failed to start daemon: %v", err)
 		}
 		logger.Instance.Info("Daemon started successfully")
 	}
 
-	// Bridge stdin ↔ daemon via Unix socket
+	// Bridge stdin ↔ daemon via local TCP port
 	workspaceHint, _ := os.Getwd()
-	logger.Instance.Info("Adapter bridging stdin ↔ daemon (workspace_hint=%s)", workspaceHint)
+	logger.Instance.Info("Adapter bridging stdin ↔ daemon on port %d (workspace_hint=%s)", httpPort, workspaceHint)
 
-	if err := adapter.RunBridge(context.Background(), sockPath, os.Stdin, os.Stdout, workspaceHint); err != nil {
+	if err := adapter.RunBridge(context.Background(), httpPort, os.Stdin, os.Stdout, workspaceHint); err != nil {
 		logger.Instance.Error("Adapter bridge error: %v", err)
 		os.Exit(1)
 	}

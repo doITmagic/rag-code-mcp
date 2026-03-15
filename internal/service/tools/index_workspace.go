@@ -8,6 +8,7 @@ import (
 
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
+	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -109,9 +110,9 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 		}
 	}
 
-	// Include current indexing progress so the AI knows how many files are left
-	if prog := BuildIndexingProgress(t.engine, wctx.ID, wctx.Root); prog != nil {
-		data["indexing_progress"] = prog
+	// Include current indexing status
+	if s := indexer.LoadIndexStatus(wctx.Root); s != nil {
+		data["indexing_progress"] = s
 	}
 
 	response.Data = data

@@ -69,11 +69,15 @@ var (
 )
 
 // Analyzer detects Vue.js-specific patterns
-type Analyzer struct{}
+type Analyzer struct {
+	tsAnalyzer *TreeSitterAnalyzer
+}
 
 // NewAnalyzer creates a new Vue.js analyzer
 func NewAnalyzer() *Analyzer {
-	return &Analyzer{}
+	return &Analyzer{
+		tsAnalyzer: NewTreeSitterAnalyzer(),
+	}
 }
 
 // IsVueFile checks if a file is a Vue SFC or contains Vue patterns
@@ -109,8 +113,7 @@ func (a *Analyzer) Analyze(source string, filePath string) *VueInfo {
 	}
 
 	// Try tree-sitter first for script content parsing
-	tsAnalyzer := NewTreeSitterAnalyzer()
-	tsInfo := tsAnalyzer.AnalyzeScript([]byte(scriptContent), filePath, isSetup)
+	tsInfo := a.tsAnalyzer.AnalyzeScript([]byte(scriptContent), filePath, isSetup)
 	if tsInfo != nil && (len(tsInfo.Composables) > 0 || len(tsInfo.Components) > 0 || tsInfo.Store != nil) {
 		// Merge tree-sitter results with SFC info
 		info.IsVue3 = tsInfo.IsVue3

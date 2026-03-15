@@ -17,11 +17,22 @@ func init() {
 }
 
 // CodeAnalyzer implements parser.Analyzer for JavaScript/TypeScript
-type CodeAnalyzer struct{}
+type CodeAnalyzer struct {
+	tsParser *TreeSitterParser
+}
 
 // NewCodeAnalyzer creates a new JS/TS code analyzer
 func NewCodeAnalyzer() *CodeAnalyzer {
-	return &CodeAnalyzer{}
+	return &CodeAnalyzer{
+		tsParser: NewTreeSitterParser(),
+	}
+}
+
+// ReleaseResources drops cached tree-sitter parsers so the GC can reclaim arena memory.
+func (ca *CodeAnalyzer) ReleaseResources() {
+	if ca.tsParser != nil {
+		ca.tsParser.ReleaseResources()
+	}
 }
 
 // Name returns the analyzer name
@@ -134,9 +145,8 @@ func (ca *CodeAnalyzer) analyzeFile(filePath string) (*fileAnalysis, error) {
 		return ca.analyzeVueFile(filePath, content)
 	}
 
-	// Try tree-sitter first (accurate AST parsing)
-	tsParser := NewTreeSitterParser()
-	fa, err := tsParser.ParseFile(content, filePath)
+	// Tree-sitter (accurate AST parsing) — use the cached parser instance
+	fa, err := ca.tsParser.ParseFile(content, filePath)
 	if err == nil && fa != nil && (len(fa.Functions) > 0 || len(fa.Classes) > 0 ||
 		len(fa.Interfaces) > 0 || len(fa.Types) > 0 || len(fa.Enums) > 0) {
 		// Tree-sitter succeeded — also extract imports/exports if not already done

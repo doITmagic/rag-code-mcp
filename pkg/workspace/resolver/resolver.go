@@ -2,6 +2,7 @@ package resolver
 
 import (
 	context "context"
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -21,6 +22,10 @@ type Registry interface {
 	PromoteCandidate(ctx context.Context, root, client string, executionSucceeded bool) error
 	RegisterWorkspace(root, name, client string) error
 	GetActiveWorkspace() (string, error)
+	// FindParentWorkspace checks if the given path is a subdirectory
+	// of any already-registered workspace. Returns the parent root
+	// and true if found, or ("", false) if no parent exists.
+	FindParentWorkspace(path string) (string, bool)
 }
 
 // RootValidator ensures resolved roots are within allowed boundaries.
@@ -151,9 +156,51 @@ func (r *Resolver) handleFilePath(ctx context.Context, path string) (*contract.R
 			Reason:  contract.ReasonRootsUnavailable,
 		}
 	}
-	result, err := r.deps.Detector.DetectFromFilePath(ctx, path)
-	if err != nil {
-		return nil, err
+	result, detectorErr := r.deps.Detector.DetectFromFilePath(ctx, path)
+	if detectorErr != nil {
+		// Only attempt registry fallback for invalid-path / missing-file errors.
+		// Other errors (OUTSIDE_ALLOWED_ROOTS, exclusions, permission denied)
+		// should propagate as-is to preserve their semantics.
+		if detectorErr.Code == contract.ErrorInvalidPath && detectorErr.Reason == contract.ReasonInvalidPath {
+			if r.deps.Registry != nil {
+				// Normalize to absolute path before registry lookup — the
+				// registry stores normalized roots, so relative or '..' paths
+				// would miss otherwise.
+				normalizedPath, absErr := filepath.Abs(path)
+				if absErr != nil {
+					normalizedPath = filepath.Clean(path)
+				}
+				parentDir := filepath.Dir(normalizedPath)
+				if parentRoot, found := r.deps.Registry.FindParentWorkspace(parentDir); found {
+					r.log(ctx, "registry_fallback", map[string]any{
+						"original_path":  path,
+						"parent_root":    parentRoot,
+						"detector_error": detectorErr.Message,
+						"reason":         "file_path does not exist, resolved via registry",
+					})
+					result = &contract.WorkspaceCandidate{
+						Root:       parentRoot,
+						Reason:     contract.ReasonRegistryFallback,
+						Source:     "registry_fallback",
+						Confidence: 0.85,
+					}
+				}
+			}
+		}
+		// If registry didn't help (or we skipped it for non-invalid-path errors),
+		// return a descriptive error.
+		if result == nil {
+			// Only add the "existing file" hint for invalid-path style errors.
+			if detectorErr.Reason == contract.ReasonInvalidPath {
+				return nil, &contract.ResolveWorkspaceError{
+					Code:    detectorErr.Code,
+					Message: fmt.Sprintf("%s. Hint: file_path is used only for workspace detection and must point to an existing file on disk. Pass any file currently open in the IDE (e.g. from the active editor tab)", detectorErr.Message),
+					Reason:  detectorErr.Reason,
+				}
+			}
+			// For all other detector errors, propagate as-is to preserve context.
+			return nil, detectorErr
+		}
 	}
 	if result == nil || strings.TrimSpace(result.Root) == "" {
 		return nil, &contract.ResolveWorkspaceError{
@@ -162,7 +209,27 @@ func (r *Resolver) handleFilePath(ctx context.Context, path string) (*contract.R
 			Reason:  contract.ReasonInvalidPath,
 		}
 	}
-	r.log(ctx, "file_path", map[string]any{"root": result.Root, "source": "file_path"})
+
+	// Guard: if the detected root is a subdirectory of an already-registered
+	// workspace, prefer the parent. This prevents nested git repos (submodules,
+	// vendored projects, monorepo sub-packages) from being treated as separate
+	// workspaces when they live inside a project that is already indexed.
+	// Skip this check when we already resolved via registry_fallback.
+	if r.deps.Registry != nil && result.Source != "registry_fallback" {
+		if parentRoot, found := r.deps.Registry.FindParentWorkspace(result.Root); found {
+			r.log(ctx, "nested_workspace_override", map[string]any{
+				"detected_root": result.Root,
+				"parent_root":   parentRoot,
+				"reason":        "detected root is subdirectory of registered workspace",
+			})
+			result.Root = parentRoot
+			result.Reason = contract.ReasonFilePath
+			result.Source = "nested_workspace_override"
+			result.Confidence = 0.90 // slightly lower than direct detection
+		}
+	}
+
+	r.log(ctx, "file_path", map[string]any{"root": result.Root, "source": result.Source})
 	if result.Source == "" {
 		result.Source = "file_path"
 	}
@@ -377,7 +444,7 @@ func defaultConfidence(source string) float64 {
 
 func isFallbackSource(source string) bool {
 	switch strings.ToLower(strings.TrimSpace(source)) {
-	case "roots", "registry", "metadata", "resolver":
+	case "roots", "registry", "registry_fallback", "metadata", "resolver":
 		return true
 	default:
 		return false

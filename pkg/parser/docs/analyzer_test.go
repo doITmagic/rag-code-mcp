@@ -13,8 +13,8 @@ import (
 func TestAnalyzer_CanHandle(t *testing.T) {
 	analyzer := NewAnalyzer()
 
-	validExts := []string{"test.md", "README.markdown", "config.yaml", "data.json", "conf.toml", "index.xml", "doc.rst", "style.css", "main.scss", "query.sql", "script.sh"}
-	invalidExts := []string{"main.go", "script.js", "style.less", "data.csv"}
+	validExts := []string{"test.md", "README.markdown", "config.yaml", "data.json", "conf.toml", "index.xml", "doc.rst"}
+	invalidExts := []string{"main.go", "script.js", "style.css", "main.scss", "style.less", "query.sql", "script.sh", "app.svelte", "data.csv"}
 
 	for _, ext := range validExts {
 		assert.True(t, analyzer.CanHandle(ext), "Should handle %s", ext)
@@ -126,25 +126,11 @@ func TestAnalyzer_TreesitterParsing_JSON(t *testing.T) {
 	assert.Greater(t, len(result.Symbols), 0, "Should extract symbols from json via treesitter")
 }
 
-func TestAnalyzer_TreesitterParsing_CSS(t *testing.T) {
+func TestAnalyzer_DoesNotHandle_CSS(t *testing.T) {
 	analyzer := NewAnalyzer()
-
-	tmpDir := t.TempDir()
-	cssFile := filepath.Join(tmpDir, "style.css")
-
-	cssContent := `
-body {
-  background-color: red;
-}
-.header {
-  font-size: 24px;
-}
-`
-	err := os.WriteFile(cssFile, []byte(cssContent), 0644)
-	require.NoError(t, err)
-
-	result, err := analyzer.Analyze(context.Background(), cssFile)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.Greater(t, len(result.Symbols), 0, "Should extract symbols from css via treesitter")
+	assert.False(t, analyzer.CanHandle("style.css"), "CSS should NOT be handled by docs parser")
+	assert.False(t, analyzer.CanHandle("main.scss"), "SCSS should NOT be handled by docs parser")
+	assert.False(t, analyzer.CanHandle("query.sql"), "SQL should NOT be handled by docs parser")
+	assert.False(t, analyzer.CanHandle("script.sh"), "Shell should NOT be handled by docs parser")
+	assert.False(t, analyzer.CanHandle("app.svelte"), "Svelte should NOT be handled by docs parser")
 }

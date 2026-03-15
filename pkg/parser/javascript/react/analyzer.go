@@ -59,11 +59,15 @@ var (
 )
 
 // Analyzer detects React-specific patterns
-type Analyzer struct{}
+type Analyzer struct {
+	tsAnalyzer *TreeSitterAnalyzer
+}
 
 // NewAnalyzer creates a new React analyzer
 func NewAnalyzer() *Analyzer {
-	return &Analyzer{}
+	return &Analyzer{
+		tsAnalyzer: NewTreeSitterAnalyzer(),
+	}
 }
 
 // IsReactFile checks if the file imports React or contains JSX
@@ -80,8 +84,7 @@ func IsReactNativeFile(source string) bool {
 // Uses tree-sitter AST as primary engine, with regex fallback
 func (a *Analyzer) Analyze(source string, filePath string) *ReactInfo {
 	// Try tree-sitter first (accurate AST-based detection)
-	tsAnalyzer := NewTreeSitterAnalyzer()
-	info := tsAnalyzer.Analyze([]byte(source), filePath)
+	info := a.tsAnalyzer.Analyze([]byte(source), filePath)
 	if info != nil && (len(info.Components) > 0 || len(info.Hooks) > 0 || len(info.Contexts) > 0) {
 		return info
 	}

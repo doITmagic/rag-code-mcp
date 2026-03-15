@@ -45,9 +45,10 @@ Click on each language to see the detailed technical documentation for its speci
 |----------|-----------|-------------|--------|
 | **Go** | [`/go`](./go/README.md) | Native AST parsing with full documentation support. | ✅ Production |
 | **Python** | [`/python`](./python/README.md) | Robust regex & indentation analysis. | ✅ Production |
-| **PHP** | [`/php`](./php/README.md) | Deep Laravel integration & Eloquent analysis. | ✅ Production |
-| **HTML** | [`/html`](./html/README.md) | Semantic sectioning based on header hierarchy. | ✅ Production |
-| **JavaScript** | [`/javascript`](./javascript/README.md) | React & TypeScript support. | 🚧 In Progress |
+| **PHP** | [`/php`](./php/README.md) | Deep Laravel integration (Eloquent, Routes, Controllers) & WordPress. | ✅ Production |
+| **HTML & CSS** | [`/html`](./html/README.md) | HTML semantic sectioning + CSS/SCSS/SASS/LESS via tree-sitter. | ✅ Production |
+| **JavaScript** | [`/javascript`](./javascript/README.md) | React, Vue, & TypeScript support. | ✅ Production |
+| **Docs** | [`/docs`](./docs/README.md) | Markdown, JSON, YAML, XML, TOML, reStructuredText. | ✅ Production |
 | **Generic** | [`/generic`](./generic/README.md) | Universal regex-based fallback for other languages. | ✅ Production |
 
 ## 🚀 Unified Symbol Model

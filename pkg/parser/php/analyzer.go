@@ -659,8 +659,8 @@ func (v *symbolCollector) buildMethodSignature(name string, params []ast.Vertex,
 				paramStr += v.extractTypeNameString(p.Type) + " "
 			}
 
-			// Add name
-			paramStr += "$" + v.extractVariableName(p.Var)
+			// Add name (AST includes $ in variable names)
+			paramStr += v.extractVariableName(p.Var)
 
 			paramStrs = append(paramStrs, paramStr)
 		}
@@ -895,6 +895,14 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 			for _, use := range class.Uses {
 				chunk.Relations = append(chunk.Relations, pkgParser.Relation{TargetName: use, Type: pkgParser.RelUsesTrait})
 			}
+			// Add uses_type relations from PHP "use" import statements.
+			// This enables find_usages to discover which classes import a given type
+			// (e.g. find_usages("Lawyer") returns all controllers with "use App\Lawyer").
+			for alias, fullPath := range class.Imports {
+				// Use the short alias as target name (matches how symbols are indexed)
+				_ = fullPath
+				chunk.Relations = append(chunk.Relations, pkgParser.Relation{TargetName: alias, Type: pkgParser.RelUsesType})
+			}
 
 			// Add method and its relations
 			for _, method := range class.Methods {
@@ -941,7 +949,7 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 					Type:      "property",
 					Language:  "php",
 					Package:   class.Namespace,
-					Signature: fmt.Sprintf("%s %s $%s", prop.Visibility, prop.Type, prop.Name),
+					Signature: fmt.Sprintf("%s %s %s", prop.Visibility, prop.Type, prop.Name),
 					FilePath:  class.FilePath,
 					StartLine: prop.StartLine,
 					EndLine:   prop.EndLine,

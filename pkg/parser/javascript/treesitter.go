@@ -2,17 +2,45 @@ package javascript
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 )
 
-// TreeSitterParser uses gotreesitter (pure Go, zero CGO) for accurate JS/TS AST parsing
-type TreeSitterParser struct{}
+// TreeSitterParser uses gotreesitter (pure Go, zero CGO) for accurate JS/TS AST parsing.
+// It caches Parser instances per language to avoid re-allocating expensive lookup tables
+// (~700KB per parser for JS/TS grammars) on every file.
+type TreeSitterParser struct {
+	mu      sync.Mutex
+	parsers map[string]*gotreesitter.Parser
+}
 
 // NewTreeSitterParser creates a new tree-sitter based parser
 func NewTreeSitterParser() *TreeSitterParser {
-	return &TreeSitterParser{}
+	return &TreeSitterParser{
+		parsers: make(map[string]*gotreesitter.Parser),
+	}
+}
+
+// getOrCreateParser returns a cached parser for the given language, creating one if needed.
+// gotreesitter.Parser is NOT safe for concurrent use, but indexing is sequential per language.
+func (p *TreeSitterParser) getOrCreateParser(lang *grammars.LangEntry) *gotreesitter.Parser {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if cached, ok := p.parsers[lang.Name]; ok {
+		return cached
+	}
+	parser := gotreesitter.NewParser(lang.Language())
+	p.parsers[lang.Name] = parser
+	return parser
+}
+
+// ReleaseResources drops cached tree-sitter parsers so the GC can reclaim arena memory.
+func (p *TreeSitterParser) ReleaseResources() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.parsers = make(map[string]*gotreesitter.Parser)
 }
 
 // ParseFile parses a JS/TS file using tree-sitter and returns extracted info
@@ -22,11 +50,12 @@ func (p *TreeSitterParser) ParseFile(source []byte, filePath string) (*fileAnaly
 		return nil, nil // unsupported extension
 	}
 
-	parser := gotreesitter.NewParser(lang.Language())
+	parser := p.getOrCreateParser(lang)
 	tree, err := parser.Parse(source)
 	if err != nil {
 		return nil, err
 	}
+	defer tree.Release()
 
 	root := tree.RootNode()
 	langObj := lang.Language()

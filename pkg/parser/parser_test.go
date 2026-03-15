@@ -41,7 +41,7 @@ func TestRegistry(t *testing.T) {
 	t.Run("GetByFile", func(t *testing.T) {
 		assert.Equal(t, a1, GetByFile("test.go"))
 		assert.Equal(t, a2, GetByFile("main.py"))
-		assert.Nil(t, GetByFile("style.css"))
+		assert.Nil(t, GetByFile("style.unknown"))
 	})
 }
 

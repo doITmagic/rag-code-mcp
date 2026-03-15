@@ -29,9 +29,8 @@ First off, thank you for considering contributing to RagCode MCP! It's people li
    # Start Qdrant
    docker run -d -p 6333:6333 qdrant/qdrant
    
-   # Pull models
-   ollama pull phi3:medium
-   ollama pull mxbai-embed-large
+   # Pull embedding models
+   ollama pull qwen3-embedding:0.6b
    ```
 
 4. **Run the server locally**

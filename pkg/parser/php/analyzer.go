@@ -15,6 +15,7 @@ import (
 	"github.com/VKCOM/php-parser/pkg/visitor"
 	"github.com/VKCOM/php-parser/pkg/visitor/traverser"
 
+	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
 )
 
@@ -22,12 +23,18 @@ import (
 type CodeAnalyzer struct {
 	currentNamespace string
 	packages         map[string]*PackageInfo
+
+	// Cached framework detection results (per directory → result)
+	laravelCache   map[string]bool
+	wordpressCache map[string]bool
 }
 
 // NewCodeAnalyzer creates a new PHP code analyzer
 func NewCodeAnalyzer() *CodeAnalyzer {
 	return &CodeAnalyzer{
-		packages: make(map[string]*PackageInfo),
+		packages:       make(map[string]*PackageInfo),
+		laravelCache:   make(map[string]bool),
+		wordpressCache: make(map[string]bool),
 	}
 }
 
@@ -79,12 +86,12 @@ func (ca *CodeAnalyzer) AnalyzePaths(paths []string) ([]CodeChunk, error) {
 
 				content, err := os.ReadFile(path)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to read %s: %v\n", path, err)
+					logger.Instance.Warn("[PHP] failed to read %s: %v", path, err)
 					return nil
 				}
 
 				if err := ca.parseAndCollect(path, content); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to analyze %s: %v\n", path, err)
+					logger.Instance.Warn("[PHP] failed to analyze %s: %v", path, err)
 				}
 				return nil
 			})
@@ -136,13 +143,13 @@ func (ca *CodeAnalyzer) parseAndCollect(filePath string, content []byte) error {
 	if len(parserErrors) > 0 {
 		// Only log first few errors to avoid spam
 		maxErrors := 3
-		fmt.Fprintf(os.Stderr, "PHP parser warnings in %s:\n", filePath)
+		logger.Instance.Debug("[PHP] parser warnings in %s:", filePath)
 		for i, e := range parserErrors {
 			if i >= maxErrors {
-				fmt.Fprintf(os.Stderr, "  ... and %d more\n", len(parserErrors)-maxErrors)
+				logger.Instance.Debug("[PHP]   ... and %d more", len(parserErrors)-maxErrors)
 				break
 			}
-			fmt.Fprintf(os.Stderr, "  %s\n", e.String())
+			logger.Instance.Debug("[PHP]   %s", e.String())
 		}
 	}
 
@@ -1198,15 +1205,13 @@ func (v *symbolCollector) walkExpr(expr ast.Vertex, calls *[]MethodCall) {
 
 // IsLaravelProject detects if the analyzed code is from a Laravel project
 func (ca *CodeAnalyzer) IsLaravelProject() bool {
+	// 1. Quick check: namespace/class-based detection from parsed packages
 	for _, pkg := range ca.packages {
-		// Check for Laravel-specific namespaces
 		if strings.HasPrefix(pkg.Namespace, "App\\Models") ||
 			strings.HasPrefix(pkg.Namespace, "App\\Http\\Controllers") ||
 			strings.HasPrefix(pkg.Namespace, "Illuminate\\") {
 			return true
 		}
-
-		// Check for Laravel base classes
 		for _, class := range pkg.Classes {
 			if class.Extends == "Model" ||
 				class.Extends == "Controller" ||
@@ -1216,6 +1221,58 @@ func (ca *CodeAnalyzer) IsLaravelProject() bool {
 			}
 		}
 	}
+
+	// 2. Filesystem walk-up: check for "artisan" file by walking parent dirs
+	for _, pkg := range ca.packages {
+		for _, class := range pkg.Classes {
+			if class.FilePath != "" {
+				if ca.isLaravelByFilesystem(class.FilePath) {
+					return true
+				}
+			}
+		}
+		for _, fn := range pkg.Functions {
+			if fn.FilePath != "" {
+				if ca.isLaravelByFilesystem(fn.FilePath) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// isLaravelByFilesystem walks up from filePath checking for Laravel root indicators.
+// Results are cached per directory to avoid repeated stat calls.
+func (ca *CodeAnalyzer) isLaravelByFilesystem(filePath string) bool {
+	dir := filepath.Dir(filePath)
+	for {
+		if result, ok := ca.laravelCache[dir]; ok {
+			return result
+		}
+
+		// Check for artisan (the strongest Laravel indicator)
+		if _, err := os.Stat(filepath.Join(dir, "artisan")); err == nil {
+			ca.laravelCache[dir] = true
+			return true
+		}
+
+		// Also check for composer.json with laravel/framework
+		composerPath := filepath.Join(dir, "composer.json")
+		if content, err := os.ReadFile(composerPath); err == nil {
+			if strings.Contains(string(content), "laravel/framework") {
+				ca.laravelCache[dir] = true
+				return true
+			}
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break // reached filesystem root
+		}
+		dir = parent
+	}
+	ca.laravelCache[dir] = false
 	return false
 }
 

@@ -12,6 +12,8 @@ import (
 	"github.com/VKCOM/php-parser/pkg/version"
 	"github.com/VKCOM/php-parser/pkg/visitor"
 	"github.com/VKCOM/php-parser/pkg/visitor/traverser"
+
+	"github.com/doITmagic/rag-code-mcp/internal/logger"
 )
 
 // RouteAnalyzer parses Laravel route files
@@ -34,7 +36,7 @@ func (ra *RouteAnalyzer) Analyze(filePaths []string) ([]Route, error) {
 		routes, err := ra.analyzeFile(path)
 		if err != nil {
 			// Log error but continue
-			fmt.Fprintf(os.Stderr, "Error analyzing route file %s: %v\n", path, err)
+			logger.Instance.Warn("[LARAVEL] Error analyzing route file %s: %v", path, err)
 			continue
 		}
 		allRoutes = append(allRoutes, routes...)

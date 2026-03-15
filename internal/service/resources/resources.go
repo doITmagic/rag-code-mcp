@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
-	"github.com/doITmagic/rag-code-mcp/internal/service/tools"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -18,17 +17,17 @@ func Register(mcpServer *mcp.Server, eng *engine.Engine) {
 		Description: "Returns the current indexing status and progress for the workspace.",
 		MIMEType:    "application/json",
 	}, func(ctx context.Context, request *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
-		// Folosim exact acelasi mechanism de detectie ca toate tool-urile existente.
-		// Middleware-ul din run.go injecteaza X-Workspace-Root din header in ctx,
-		// iar DetectContext il preia automat din Tier 2 (transport.GetWorkspaceHint).
+		// Same detection mechanism used by all existing tools.
+		// Middleware in run.go reads X-Workspace-Root from the HTTP header into ctx,
+		// and DetectContext picks it up automatically via Tier 2 (transport.GetWorkspaceHint).
 		wctx, err := eng.DetectContext(ctx, "")
 		if err != nil {
 			return nil, fmt.Errorf("failed to detect workspace: %w", err)
 		}
 
-		// BuildIndexingProgress citeste din progressStore (sync.Mutex + deep-copy),
-		// thread-safe fata de indexer-ul care scrie simultan.
-		status := tools.BuildIndexingProgress(eng, wctx.ID, wctx.Root)
+		// GetIndexStatus reads from the on-disk index_status.json,
+		// thread-safe against the indexer writing concurrently.
+		status := eng.GetIndexStatus(wctx.Root)
 		if status == nil {
 			return nil, fmt.Errorf("index status not found for workspace %s", wctx.Root)
 		}

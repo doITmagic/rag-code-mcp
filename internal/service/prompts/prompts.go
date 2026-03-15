@@ -14,8 +14,8 @@ func Register(mcpServer *mcp.Server, eng *engine.Engine) {
 		Name:        "System Diagnostics",
 		Description: "Analyze the current indexing status and troubleshoot common issues based on the workspace resources.",
 		Title:       "Analyze RagCode Indexing System",
-	}, func(ctx context.Context, request *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-		// Idem cu Resources: detectie automata prin ctx, fara logica proprie.
+	}, func(ctx context.Context, _ *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		// Same detection as Resources: auto-detect workspace via ctx, no custom logic.
 		wctx, err := eng.DetectContext(ctx, "")
 		if err != nil {
 			return nil, fmt.Errorf("failed to detect workspace: %w", err)

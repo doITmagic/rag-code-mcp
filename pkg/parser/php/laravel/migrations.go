@@ -1,7 +1,6 @@
 package laravel
 
 import (
-	"fmt"
 	"os"
 	"strings"
 
@@ -12,6 +11,8 @@ import (
 	"github.com/VKCOM/php-parser/pkg/version"
 	"github.com/VKCOM/php-parser/pkg/visitor"
 	"github.com/VKCOM/php-parser/pkg/visitor/traverser"
+
+	"github.com/doITmagic/rag-code-mcp/internal/logger"
 )
 
 // MigrationAnalyzer parses Laravel migration files
@@ -33,7 +34,7 @@ func (ma *MigrationAnalyzer) Analyze(filePaths []string) ([]Migration, error) {
 	for _, path := range filePaths {
 		migrations, err := ma.analyzeFile(path)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error analyzing migration file %s: %v\n", path, err)
+			logger.Instance.Warn("[LARAVEL] Error analyzing migration file %s: %v", path, err)
 			continue
 		}
 		allMigrations = append(allMigrations, migrations...)

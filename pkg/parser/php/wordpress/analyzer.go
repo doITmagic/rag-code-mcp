@@ -387,7 +387,9 @@ func buildHookSignature(hook WPHook) string {
 	}
 }
 
-// IsWordPressProject detects if the given paths contain a WordPress project
+// IsWordPressProject detects if the given paths contain a WordPress project.
+// It first checks the paths directly (directory-level indicators, plugin headers),
+// then walks UP parent directories to find WordPress root indicators.
 func IsWordPressProject(paths []string) bool {
 	for _, root := range paths {
 		info, err := os.Stat(root)
@@ -404,10 +406,15 @@ func IsWordPressProject(paths []string) bool {
 					return true
 				}
 			}
+
+			// Walk UP from file's directory to find WordPress root indicators
+			if isWordPressByFilesystem(filepath.Dir(root)) {
+				return true
+			}
 			continue
 		}
 
-		// Check for WordPress indicator files
+		// Check for WordPress indicator files at this directory level
 		wpIndicators := []string{
 			"wp-config.php",
 			"wp-content",
@@ -420,7 +427,12 @@ func IsWordPressProject(paths []string) bool {
 			}
 		}
 
-		// Walk for plugin/theme headers
+		// Walk UP from this directory to find WordPress root indicators
+		if isWordPressByFilesystem(root) {
+			return true
+		}
+
+		// Walk DOWN for plugin/theme headers (existing logic)
 		found := false
 		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 			if err != nil || found {
@@ -452,6 +464,61 @@ func IsWordPressProject(paths []string) bool {
 		}
 	}
 
+	return false
+}
+
+// isWordPressByFilesystem walks UP parent directories from dir looking for
+// WordPress root indicators (wp-config.php, wp-content, wp-includes, wp-admin)
+// or plugin/theme-level indicators (style.css with "Theme Name:", *.php with "Plugin Name:").
+func isWordPressByFilesystem(dir string) bool {
+	wpIndicators := []string{"wp-config.php", "wp-content", "wp-includes", "wp-admin"}
+	pluginIndicators := []string{"style.css"} // WordPress themes have style.css with "Theme Name:"
+
+	for {
+		// Check standard WP root indicators
+		for _, indicator := range wpIndicators {
+			if _, err := os.Stat(filepath.Join(dir, indicator)); err == nil {
+				return true
+			}
+		}
+
+		// Check for plugin header in main PHP file at this level
+		entries, err := os.ReadDir(dir)
+		if err == nil {
+			for _, entry := range entries {
+				if entry.IsDir() {
+					continue
+				}
+				name := entry.Name()
+
+				// Check style.css for theme header
+				for _, pi := range pluginIndicators {
+					if name == pi {
+						if content, err := os.ReadFile(filepath.Join(dir, name)); err == nil {
+							if strings.Contains(string(content), "Theme Name:") {
+								return true
+							}
+						}
+					}
+				}
+
+				// Check PHP files for plugin header
+				if strings.HasSuffix(name, ".php") {
+					if content, err := os.ReadFile(filepath.Join(dir, name)); err == nil {
+						if strings.Contains(string(content), "Plugin Name:") {
+							return true
+						}
+					}
+				}
+			}
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break // reached filesystem root
+		}
+		dir = parent
+	}
 	return false
 }
 

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
 )
 
@@ -21,6 +22,7 @@ var enrichers []FrameworkEnricher
 // RegisterEnricher adds a framework-specific enricher to the PHP parser.
 func RegisterEnricher(e FrameworkEnricher) {
 	enrichers = append(enrichers, e)
+	logger.Instance.Info("[PHP-ENRICHER] Registered enricher #%d: %T", len(enrichers), e)
 }
 
 func init() {
@@ -52,26 +54,36 @@ func (a *Analyzer) CanHandle(filePath string) bool {
 // Analyze extracts symbols from a file or directory.
 func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result, error) {
 	paths := []string{path}
+	logger.Instance.Debug("[PHP] Analyze: %s (enrichers=%d)", filepath.Base(path), len(enrichers))
+
 	chunks, err := a.codeAnalyzer.AnalyzePaths(paths)
 	if err != nil {
+		logger.Instance.Error("[PHP] Analyze ERROR: %s: %v", filepath.Base(path), err)
 		return nil, err
 	}
+	logger.Instance.Debug("[PHP] Analyze: %s → %d base chunks, %d packages", filepath.Base(path), len(chunks), len(a.codeAnalyzer.GetPackages()))
 
 	// Fetch packages analyzed by the core PHP parser
 	packages := a.codeAnalyzer.GetPackages()
 
 	// Run all registered framework enrichers
-	for _, enricher := range enrichers {
-		if enricher.IsApplicable(a.codeAnalyzer, paths) {
+	for i, enricher := range enrichers {
+		applicable := enricher.IsApplicable(a.codeAnalyzer, paths)
+		logger.Instance.Debug("[PHP] Enricher #%d (%T) IsApplicable=%v for %s", i, enricher, applicable, filepath.Base(path))
+		if applicable {
+			before := len(chunks)
 			chunks = enricher.Enrich(a.codeAnalyzer, packages, paths, chunks)
+			logger.Instance.Info("[PHP] Enricher #%d (%T) enriched: %d → %d chunks for %s", i, enricher, before, len(chunks), filepath.Base(path))
 		}
 	}
 
 	// If no symbols found and the file is in a routes/ directory,
 	// try extracting Route::* calls as symbols (Laravel convention).
 	if len(chunks) == 0 && isRouteFile(path) {
+		logger.Instance.Info("[PHP] Route fallback for %s", filepath.Base(path))
 		routeChunks := a.codeAnalyzer.ExtractRouteChunks(path)
 		chunks = append(chunks, routeChunks...)
+		logger.Instance.Info("[PHP] Route fallback: +%d chunks", len(routeChunks))
 	}
 
 	symbols := make([]pkgParser.Symbol, len(chunks))

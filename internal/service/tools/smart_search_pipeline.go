@@ -10,7 +10,6 @@ import (
 
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
-	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
 	"github.com/doITmagic/rag-code-mcp/pkg/scoring"
 	"github.com/doITmagic/rag-code-mcp/pkg/telemetry"
 )
@@ -203,11 +202,6 @@ func applyScoreFilter(merged []mergedResult, minScore float32) []mergedResult {
 func (t *SmartSearchTool) buildResponseMeta(meta searchMetadata) ToolResponse {
 	isFallback := meta.collection == "fallback"
 
-	var idxStatus *indexer.IndexStatus
-	if meta.workspaceRoot != "" {
-		idxStatus = indexer.LoadIndexStatus(meta.workspaceRoot)
-	}
-
 	response := ToolResponse{
 		Status: "success",
 		Context: ContextMetadata{
@@ -215,7 +209,6 @@ func (t *SmartSearchTool) buildResponseMeta(meta searchMetadata) ToolResponse {
 			DetectionSource: meta.detectionSource,
 			Language:        meta.language,
 			Collection:      meta.collection,
-			IndexingStatus:  idxStatus,
 			SessionMetrics:  telemetry.ReadAggregatedMetrics(meta.workspaceRoot),
 		},
 	}

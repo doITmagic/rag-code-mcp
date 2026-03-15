@@ -128,7 +128,7 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 			resp := ToolResponse{
 				Status:  "indexing_required",
 				Message: fmt.Sprintf("⏳ Workspace '%s' is not indexed yet. Indexing is required for complete call hierarchy results.", wctx.Root),
-				Context: ContextFromWorkspaceWithStatus(wctx, t.engine),
+				Context: ContextFromWorkspace(wctx),
 			}
 			if idx != nil {
 				resp.Status = "indexing_in_progress"
@@ -168,7 +168,6 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 			WorkspaceRoot:   wctx.Root,
 			DetectionSource: wctx.DetectionSource,
 			Telemetry:       telemetry.CalculateSavings(baselineBytes, actualBytes),
-			IndexingStatus:  idx,
 		},
 	}
 	return resp.JSON()

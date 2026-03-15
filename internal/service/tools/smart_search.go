@@ -267,7 +267,6 @@ func (t *SmartSearchTool) handleSearchError(err error, workspaceRoot, workspaceI
 	if errors.As(err, &indexingStarted) {
 		response.Status = "indexing_started"
 		response.Context.WorkspaceRoot = indexingStarted.WorkspaceRoot
-		response.Context.IndexingStatus = t.engine.GetIndexStatus(indexingStarted.WorkspaceRoot)
 		response.Message = fmt.Sprintf("🚀 Indexing started for workspace '%s'. Results will appear as indexing progresses.", indexingStarted.WorkspaceRoot)
 		return response.JSON()
 	}
@@ -275,7 +274,6 @@ func (t *SmartSearchTool) handleSearchError(err error, workspaceRoot, workspaceI
 	if errors.As(err, &indexingInProgress) {
 		response.Status = "indexing_in_progress"
 		response.Context.WorkspaceRoot = indexingInProgress.WorkspaceRoot
-		response.Context.IndexingStatus = t.engine.GetIndexStatus(indexingInProgress.WorkspaceRoot)
 		response.Message = fmt.Sprintf("⏳ Indexing in progress for workspace '%s'. Results will improve as indexing completes.", indexingInProgress.WorkspaceRoot)
 		return response.JSON()
 	}

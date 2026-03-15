@@ -113,7 +113,7 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 			resp := ToolResponse{
 				Status:  "indexing_required",
 				Message: fmt.Sprintf("⏳ Workspace '%s' is not indexed yet. Indexing is required for complete results.", wctx.Root),
-				Context: ContextFromWorkspaceWithStatus(wctx, t.engine),
+				Context: ContextFromWorkspace(wctx),
 			}
 			return resp.JSON()
 		}
@@ -126,7 +126,7 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 		resp := ToolResponse{
 			Status:  "success",
 			Message: fmt.Sprintf("No exported symbols found in package '%s'", packageName),
-			Context: ContextFromWorkspaceWithStatus(wctx, t.engine),
+			Context: ContextFromWorkspace(wctx),
 		}
 		return resp.JSON()
 	}
@@ -206,7 +206,7 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 		resp := ToolResponse{
 			Status:  "success",
 			Message: fmt.Sprintf("No exported symbols found in package '%s' (after filtering)", packageName),
-			Context: ContextFromWorkspaceWithStatus(wctx, t.engine),
+			Context: ContextFromWorkspace(wctx),
 		}
 		return resp.JSON()
 	}
@@ -258,7 +258,6 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 			WorkspaceRoot:   wctx.Root,
 			DetectionSource: wctx.DetectionSource,
 			Telemetry:       telemetry.CalculateSavings(baselineBytes, actualBytes),
-			IndexingStatus:  t.engine.GetIndexStatus(wctx.Root),
 		},
 	}
 

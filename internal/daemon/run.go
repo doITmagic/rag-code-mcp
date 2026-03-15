@@ -17,6 +17,8 @@ import (
 	"github.com/doITmagic/rag-code-mcp/internal/healthcheck"
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
+	"github.com/doITmagic/rag-code-mcp/internal/service/prompts"
+	"github.com/doITmagic/rag-code-mcp/internal/service/resources"
 	"github.com/doITmagic/rag-code-mcp/internal/service/search"
 	"github.com/doITmagic/rag-code-mcp/internal/service/tools"
 	"github.com/doITmagic/rag-code-mcp/internal/transport"
@@ -172,6 +174,10 @@ func Run(rcfg RunConfig) error {
 		tools.NewApplyUpdateTool(rcfg.Version).Register(mcpServer)
 		logger.Instance.Info("Update tools registered (auto_update=false)")
 	}
+
+	// Register Extra Features (Resources & Prompts MVP)
+	resources.Register(mcpServer, eng)
+	prompts.Register(mcpServer, eng)
 
 	logger.Instance.Info("MCP RagCode Daemon initialized (version=%s)", rcfg.Version)
 

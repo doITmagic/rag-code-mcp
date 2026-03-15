@@ -311,7 +311,7 @@ func (t *ReadFileContextTool) buildResponse(wctx *engine.WorkspaceContext, res C
 		Message: fmt.Sprintf("Extracted %s context for lines %d-%d from %s", res.ContextType, res.StartLine, res.EndLine, res.FilePath),
 	}
 	if wctx != nil {
-		resp.Context = ContextFromWorkspaceWithStatus(wctx, t.engine)
+		resp.Context = ContextFromWorkspace(wctx)
 	}
 
 	baselineBytes := int64(0)

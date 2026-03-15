@@ -130,7 +130,7 @@ func (t *EvaluateRagCodeTool) Execute(ctx context.Context, args map[string]inter
 		Status:  "success",
 		Message: b.String(),
 		Data:    data,
-		Context: ContextFromWorkspaceWithStatus(wctx, t.engine),
+		Context: ContextFromWorkspace(wctx),
 	}
 
 	return response.JSON()

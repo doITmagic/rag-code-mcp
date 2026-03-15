@@ -61,7 +61,8 @@ temp/
 # Scripts
 scripts/
 .ragcode/
-.agent/skills/
+.agent/
+.trello.json
 build-binaries.sh
 
 # Debug logs

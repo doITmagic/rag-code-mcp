@@ -1,11 +1,23 @@
 package woocommerce
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/VKCOM/php-parser/pkg/ast"
-	"github.com/doITmagic/rag-code-mcp/pkg/parser/php/wordpress"
 )
+
+// WPHookInput is a local mirror of wordpress.WPHook to avoid import cycles.
+// The wordpress/analyzer.go converts WPHook to WPHookInput before calling AnalyzeHooksFromWP.
+type WPHookInput struct {
+	Type      string
+	Name      string
+	Callback  string
+	Priority  int
+	FilePath  string
+	StartLine int
+	EndLine   int
+}
 
 // areaRule maps a keyword to a WC functional area
 type areaRule struct {
@@ -55,15 +67,11 @@ var wcApiFunctions = map[string]string{
 }
 
 // Analyzer detects WooCommerce-specific patterns in WordPress code
-type Analyzer struct {
-	astHelper *wordpress.ASTHelper
-}
+type Analyzer struct{}
 
 // NewAnalyzer creates a new WooCommerce analyzer
 func NewAnalyzer() *Analyzer {
-	return &Analyzer{
-		astHelper: wordpress.NewASTHelper(),
-	}
+	return &Analyzer{}
 }
 
 // Analyze performs WooCommerce-specific analysis on AST
@@ -73,9 +81,9 @@ func (a *Analyzer) Analyze(root ast.Vertex, filePath string) *WooCommerceInfo {
 	return info
 }
 
-// AnalyzeHooksFromWP classifies existing WordPress hooks as WooCommerce hooks
-// This takes already-detected WP hooks and enriches them with WC area info
-func (a *Analyzer) AnalyzeHooksFromWP(wpHooks []wordpress.WPHook) []WCHook {
+// AnalyzeHooksFromWP classifies existing WordPress hooks as WooCommerce hooks.
+// Uses WPHookInput to avoid import cycle with the wordpress parent package.
+func (a *Analyzer) AnalyzeHooksFromWP(wpHooks []WPHookInput) []WCHook {
 	var wcHooks []WCHook
 
 	for _, h := range wpHooks {
@@ -86,7 +94,7 @@ func (a *Analyzer) AnalyzeHooksFromWP(wpHooks []wordpress.WPHook) []WCHook {
 		wcHook := WCHook{
 			HookName:  h.Name,
 			Area:      classifyHookArea(h.Name),
-			HookType:  string(h.Type),
+			HookType:  h.Type,
 			Callback:  h.Callback,
 			Priority:  h.Priority,
 			FilePath:  h.FilePath,
@@ -160,23 +168,13 @@ func (a *Analyzer) walk(node ast.Vertex, filePath string, info *WooCommerceInfo)
 		a.walk(n.Expr, filePath, info)
 	case *ast.ExprFunctionCall:
 		// Check for WC hooks
-		hook := a.astHelper.ExtractHookFromFunctionCall(n, filePath)
-		if hook != nil && strings.HasPrefix(hook.Name, "woocommerce_") {
-			wcHook := WCHook{
-				HookName:  hook.Name,
-				Area:      classifyHookArea(hook.Name),
-				HookType:  string(hook.Type),
-				Callback:  hook.Callback,
-				Priority:  hook.Priority,
-				FilePath:  hook.FilePath,
-				StartLine: hook.StartLine,
-				EndLine:   hook.EndLine,
-			}
-			info.Hooks = append(info.Hooks, wcHook)
+		hook := extractHookFromFunctionCall(n, filePath)
+		if hook != nil && strings.HasPrefix(hook.HookName, "woocommerce_") {
+			info.Hooks = append(info.Hooks, *hook)
 		}
 
 		// Check for WC API calls
-		funcName := a.extractFuncName(n.Function)
+		funcName := extractFuncName(n.Function)
 		if category, ok := wcApiFunctions[funcName]; ok {
 			info.APICalls = append(info.APICalls, WCAPICall{
 				Function:  funcName,
@@ -189,10 +187,10 @@ func (a *Analyzer) walk(node ast.Vertex, filePath string, info *WooCommerceInfo)
 
 	case *ast.ExprStaticCall:
 		// Check for WC()->... static calls
-		className := a.extractClassName(n.Class)
+		className := extractClassName(n.Class)
 		if className == "WC" {
 			info.APICalls = append(info.APICalls, WCAPICall{
-				Function:  "WC::" + a.extractMethodName(n.Call),
+				Function:  "WC::" + extractMethodName(n.Call),
 				Category:  "core",
 				FilePath:  filePath,
 				StartLine: n.Position.StartLine,
@@ -216,8 +214,67 @@ func classifyHookArea(hookName string) WCHookArea {
 	return WCAreaGeneral
 }
 
+// --- Local AST helpers (avoid importing wordpress parent package) ---
+
+// hookFuncMap maps WordPress hook function names to their HookType string
+var hookFuncMap = map[string]string{
+	"add_action":    "action",
+	"add_filter":    "filter",
+	"do_action":     "action_trigger",
+	"apply_filters": "filter_trigger",
+	"remove_action": "action_removal",
+	"remove_filter": "filter_removal",
+	"has_filter":    "filter_check",
+	"has_action":    "action_check",
+}
+
+// extractHookFromFunctionCall checks if a function call is a WordPress hook and returns a WCHook if it's WC-related
+func extractHookFromFunctionCall(call *ast.ExprFunctionCall, filePath string) *WCHook {
+	funcName := extractFuncName(call.Function)
+	if funcName == "" {
+		return nil
+	}
+
+	hookType, ok := hookFuncMap[funcName]
+	if !ok {
+		return nil
+	}
+
+	// Extract arguments
+	args := extractCallArgs(call.Args)
+	if len(args) == 0 {
+		return nil
+	}
+
+	hookName := args[0]
+
+	hook := &WCHook{
+		HookName:  hookName,
+		Area:      classifyHookArea(hookName),
+		HookType:  hookType,
+		FilePath:  filePath,
+		StartLine: call.Position.StartLine,
+		EndLine:   call.Position.EndLine,
+	}
+
+	// For add/remove hooks: callback, priority
+	if hookType == "action" || hookType == "filter" ||
+		hookType == "action_removal" || hookType == "filter_removal" {
+		if len(args) > 1 {
+			hook.Callback = args[1]
+		}
+		if len(args) > 2 {
+			if p, err := strconv.Atoi(args[2]); err == nil {
+				hook.Priority = p
+			}
+		}
+	}
+
+	return hook
+}
+
 // extractFuncName extracts function name from AST node
-func (a *Analyzer) extractFuncName(node ast.Vertex) string {
+func extractFuncName(node ast.Vertex) string {
 	if node == nil {
 		return ""
 	}
@@ -235,17 +292,82 @@ func (a *Analyzer) extractFuncName(node ast.Vertex) string {
 }
 
 // extractClassName extracts class name from AST node
-func (a *Analyzer) extractClassName(node ast.Vertex) string {
-	return a.extractFuncName(node)
+func extractClassName(node ast.Vertex) string {
+	return extractFuncName(node)
 }
 
 // extractMethodName extracts method name from AST node
-func (a *Analyzer) extractMethodName(node ast.Vertex) string {
+func extractMethodName(node ast.Vertex) string {
 	if node == nil {
 		return ""
 	}
 	if ident, ok := node.(*ast.Identifier); ok {
 		return string(ident.Value)
+	}
+	return ""
+}
+
+// extractCallArgs extracts string arguments from a function call
+func extractCallArgs(args []ast.Vertex) []string {
+	var result []string
+	for _, arg := range args {
+		if argNode, ok := arg.(*ast.Argument); ok {
+			val := extractExprValue(argNode.Expr)
+			result = append(result, val)
+		}
+	}
+	return result
+}
+
+// extractExprValue extracts a string representation from an expression
+func extractExprValue(expr ast.Vertex) string {
+	if expr == nil {
+		return ""
+	}
+	switch n := expr.(type) {
+	case *ast.ScalarString:
+		val := string(n.Value)
+		if len(val) >= 2 {
+			val = val[1 : len(val)-1] // Remove quotes
+		}
+		return val
+	case *ast.ScalarLnumber:
+		return string(n.Value)
+	case *ast.Name:
+		var parts []string
+		for _, part := range n.Parts {
+			if namePart, ok := part.(*ast.NamePart); ok {
+				parts = append(parts, string(namePart.Value))
+			}
+		}
+		return strings.Join(parts, "\\")
+	case *ast.ExprVariable:
+		if nameNode, ok := n.Name.(*ast.Identifier); ok {
+			name := string(nameNode.Value)
+			if strings.HasPrefix(name, "$") {
+				return name
+			}
+			return "$" + name
+		}
+	case *ast.ExprArray:
+		if len(n.Items) == 2 {
+			items := make([]string, 0, 2)
+			for _, item := range n.Items {
+				if arrayItem, ok := item.(*ast.ExprArrayItem); ok {
+					items = append(items, extractExprValue(arrayItem.Val))
+				}
+			}
+			if len(items) == 2 {
+				return items[0] + "::" + items[1]
+			}
+		}
+		return "[array]"
+	case *ast.ExprClosure:
+		return "[closure]"
+	case *ast.ExprArrowFunction:
+		return "[arrow_fn]"
+	case *ast.Identifier:
+		return string(n.Value)
 	}
 	return ""
 }

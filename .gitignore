@@ -60,6 +60,7 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
+docs/plans/*.md
 
 # Scripts
 scripts/

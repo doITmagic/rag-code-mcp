@@ -2,16 +2,18 @@ package wordpress
 
 // WordPressInfo contains WordPress-specific framework information extracted from a project
 type WordPressInfo struct {
-	Hooks         []WPHook       `json:"hooks,omitempty"`
-	PostTypes     []PostType     `json:"post_types,omitempty"`
-	Taxonomies    []Taxonomy     `json:"taxonomies,omitempty"`
-	Shortcodes    []Shortcode    `json:"shortcodes,omitempty"`
-	Blocks        []Block        `json:"blocks,omitempty"`
-	BlockPatterns []BlockPattern `json:"block_patterns,omitempty"`
-	Widgets       []Widget       `json:"widgets,omitempty"`
-	AdminPages    []AdminPage    `json:"admin_pages,omitempty"`
-	Settings      []Setting      `json:"settings,omitempty"`
-	PluginHeader  *PluginHeader  `json:"plugin_header,omitempty"`
+	Hooks           []WPHook       `json:"hooks,omitempty"`
+	PostTypes       []PostType     `json:"post_types,omitempty"`
+	Taxonomies      []Taxonomy     `json:"taxonomies,omitempty"`
+	Shortcodes      []Shortcode    `json:"shortcodes,omitempty"`
+	Blocks          []Block        `json:"blocks,omitempty"`
+	BlockPatterns   []BlockPattern `json:"block_patterns,omitempty"`
+	Widgets         []Widget       `json:"widgets,omitempty"`
+	AdminPages      []AdminPage    `json:"admin_pages,omitempty"`
+	Settings        []Setting      `json:"settings,omitempty"`
+	PluginHeader    *PluginHeader  `json:"plugin_header,omitempty"`
+	OxygenInfo      any            `json:"oxygen,omitempty"`      // *oxygen.OxygenInfo (avoid import cycle)
+	WooCommerceInfo any            `json:"woocommerce,omitempty"` // *woocommerce.WooCommerceInfo (avoid import cycle)
 }
 
 // HookType represents the type of a WordPress hook

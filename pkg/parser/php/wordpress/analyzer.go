@@ -387,7 +387,9 @@ func buildHookSignature(hook WPHook) string {
 	}
 }
 
-// IsWordPressProject detects if the given paths contain a WordPress project
+// IsWordPressProject detects if the given paths contain a WordPress project.
+// It first checks the paths directly (directory-level indicators, plugin headers),
+// then walks UP parent directories to find WordPress root indicators.
 func IsWordPressProject(paths []string) bool {
 	for _, root := range paths {
 		info, err := os.Stat(root)
@@ -404,10 +406,15 @@ func IsWordPressProject(paths []string) bool {
 					return true
 				}
 			}
+
+			// Walk UP from file's directory to find WordPress root indicators
+			if isWordPressByFilesystem(filepath.Dir(root)) {
+				return true
+			}
 			continue
 		}
 
-		// Check for WordPress indicator files
+		// Check for WordPress indicator files at this directory level
 		wpIndicators := []string{
 			"wp-config.php",
 			"wp-content",
@@ -420,7 +427,12 @@ func IsWordPressProject(paths []string) bool {
 			}
 		}
 
-		// Walk for plugin/theme headers
+		// Walk UP from this directory to find WordPress root indicators
+		if isWordPressByFilesystem(root) {
+			return true
+		}
+
+		// Walk DOWN for plugin/theme headers (existing logic)
 		found := false
 		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 			if err != nil || found {
@@ -453,6 +465,80 @@ func IsWordPressProject(paths []string) bool {
 	}
 
 	return false
+}
+
+// maxWalkUpDepth limits how many parent directories the walk-up detection traverses.
+// This prevents scanning unrelated parts of the host filesystem for deeply nested paths.
+const maxWalkUpDepth = 10
+
+// maxHeaderReadBytes limits how many bytes to read when checking for plugin/theme headers.
+// WordPress headers appear in the first few lines of a file, so 4KB is more than enough.
+const maxHeaderReadBytes = 4096
+
+// isWordPressByFilesystem walks UP parent directories from dir looking for
+// WordPress root indicators (wp-config.php, wp-content, wp-includes, wp-admin)
+// or plugin/theme-level indicators (style.css with "Theme Name:", *.php with "Plugin Name:").
+// Stops after maxWalkUpDepth levels to avoid traversing unrelated directories.
+func isWordPressByFilesystem(dir string) bool {
+	wpIndicators := []string{"wp-config.php", "wp-content", "wp-includes", "wp-admin"}
+
+	for depth := 0; depth < maxWalkUpDepth; depth++ {
+		// Check standard WP root indicators
+		for _, indicator := range wpIndicators {
+			if _, err := os.Stat(filepath.Join(dir, indicator)); err == nil {
+				return true
+			}
+		}
+
+		// Check style.css for theme header (read only prefix)
+		if header := readFilePrefix(filepath.Join(dir, "style.css"), maxHeaderReadBytes); header != nil {
+			if strings.Contains(string(header), "Theme Name:") {
+				return true
+			}
+		}
+
+		// Check PHP files at this level for plugin header (only main plugin file candidates)
+		entries, err := os.ReadDir(dir)
+		if err == nil {
+			for _, entry := range entries {
+				if entry.IsDir() {
+					continue
+				}
+				name := entry.Name()
+
+				// Check PHP files for plugin header (read only prefix)
+				if strings.HasSuffix(name, ".php") {
+					if header := readFilePrefix(filepath.Join(dir, name), maxHeaderReadBytes); header != nil {
+						if strings.Contains(string(header), "Plugin Name:") {
+							return true
+						}
+					}
+				}
+			}
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break // reached filesystem root
+		}
+		dir = parent
+	}
+	return false
+}
+
+// readFilePrefix reads up to maxBytes from the file and returns nil if the file doesn't exist.
+func readFilePrefix(path string, maxBytes int) []byte {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	buf := make([]byte, maxBytes)
+	n, _ := f.Read(buf)
+	if n == 0 {
+		return nil
+	}
+	return buf[:n]
 }
 
 // merge helpers to deduplicate when both package-level and AST-level analysis find the same items

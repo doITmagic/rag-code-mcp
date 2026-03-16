@@ -123,6 +123,21 @@ func (e *Enricher) Enrich(ca *php.CodeAnalyzer, packages []*php.PackageInfo, pat
 		}
 	}
 
+	logger.Instance.Debug("[LARAVEL] Enrich DONE: returning %d total chunks (before blade)", len(chunks))
+
+	// Analyze Blade Templates
+	bladeFiles := e.adapter.findBladeFiles(paths)
+	logger.Instance.Debug("[LARAVEL] Enrich: found %d blade files from paths=%v", len(bladeFiles), paths)
+	if len(bladeFiles) > 0 {
+		bladeAnalyzer := NewBladeAnalyzer()
+		bladeTemplates := bladeAnalyzer.Analyze(bladeFiles)
+		if len(bladeTemplates) > 0 {
+			bladeChunks := e.adapter.convertBladeToChunks(bladeTemplates)
+			logger.Instance.Debug("[LARAVEL] Enrich: %d blade templates → %d chunks", len(bladeTemplates), len(bladeChunks))
+			chunks = append(chunks, bladeChunks...)
+		}
+	}
+
 	logger.Instance.Debug("[LARAVEL] Enrich DONE: returning %d total chunks", len(chunks))
 	return chunks
 }

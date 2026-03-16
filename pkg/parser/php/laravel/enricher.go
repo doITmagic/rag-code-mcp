@@ -21,15 +21,18 @@ func init() {
 }
 
 // IsApplicable checks if the parsed paths correspond to a Laravel project.
+// ca.IsLaravelProject() already includes both namespace/class-based AND filesystem walk-up detection,
+// so we only need to call it once. If packages are empty (no classes/functions parsed),
+// fall back to direct path-based filesystem walk-up.
 func (e *Enricher) IsApplicable(ca *php.CodeAnalyzer, paths []string) bool {
-	// 1. Quick: namespace/class-based detection from already-parsed packages
+	// 1. namespace/class-based + cached filesystem walk from parsed packages
 	byPackages := ca.IsLaravelProject()
 	logger.Instance.Debug("[LARAVEL] IsApplicable: ca.IsLaravelProject()=%v for paths=%v", byPackages, paths)
 	if byPackages {
 		return true
 	}
 
-	// 2. Filesystem walk-up
+	// 2. Fallback: direct path-based filesystem walk (useful when no packages were parsed)
 	byFS := IsLaravelProjectByPaths(paths)
 	logger.Instance.Debug("[LARAVEL] IsApplicable: IsLaravelProjectByPaths()=%v for paths=%v", byFS, paths)
 	return byFS
@@ -58,9 +61,14 @@ func IsLaravelProjectByPaths(paths []string) bool {
 	return false
 }
 
+// maxWalkUpDepth limits how many parent directories the walk-up detection traverses.
+// This prevents scanning unrelated parts of the host filesystem for deeply nested paths.
+const maxWalkUpDepth = 10
+
 // isLaravelRoot walks UP from dir checking each parent for Laravel indicators.
+// Stops after maxWalkUpDepth levels to avoid traversing unrelated directories.
 func isLaravelRoot(dir string) bool {
-	for {
+	for depth := 0; depth < maxWalkUpDepth; depth++ {
 		// Check for artisan (the strongest Laravel indicator)
 		artisanPath := filepath.Join(dir, "artisan")
 		if _, err := os.Stat(artisanPath); err == nil {
@@ -88,13 +96,13 @@ func isLaravelRoot(dir string) bool {
 
 // Enrich receives the base PHP chunks and analyzed packages and returns chunks merged with Laravel specifics
 func (e *Enricher) Enrich(ca *php.CodeAnalyzer, packages []*php.PackageInfo, paths []string, chunks []php.CodeChunk) []php.CodeChunk {
-	logger.Instance.Info("[LARAVEL] Enrich: %d packages, %d paths, %d existing chunks", len(packages), len(paths), len(chunks))
+	logger.Instance.Debug("[LARAVEL] Enrich: %d packages, %d paths, %d existing chunks", len(packages), len(paths), len(chunks))
 
 	// Run Laravel-specific package analysis for Controllers and Eloquent Models
 	for _, pkg := range packages {
 		analyzer := NewAnalyzer(pkg)
 		info := analyzer.Analyze()
-		logger.Instance.Info("[LARAVEL] Enrich pkg=%s: models=%d controllers=%d", pkg.Namespace, len(info.Models), len(info.Controllers))
+		logger.Instance.Debug("[LARAVEL] Enrich pkg=%s: models=%d controllers=%d", pkg.Namespace, len(info.Models), len(info.Controllers))
 
 		// Enrich existing chunks with Laravel context (table, fillable, api routes)
 		e.adapter.enrichChunks(chunks, info)
@@ -102,19 +110,19 @@ func (e *Enricher) Enrich(ca *php.CodeAnalyzer, packages []*php.PackageInfo, pat
 
 	// Analyze Routes
 	routeFiles := e.adapter.findRouteFiles(paths)
-	logger.Instance.Info("[LARAVEL] Enrich: found %d route files from paths=%v", len(routeFiles), paths)
+	logger.Instance.Debug("[LARAVEL] Enrich: found %d route files from paths=%v", len(routeFiles), paths)
 	if len(routeFiles) > 0 {
 		routeAnalyzer := NewRouteAnalyzer()
 		routes, err := routeAnalyzer.Analyze(routeFiles)
 		if err == nil {
 			routeChunks := e.adapter.convertRoutesToChunks(routes)
-			logger.Instance.Info("[LARAVEL] Enrich: %d routes → %d chunks", len(routes), len(routeChunks))
+			logger.Instance.Debug("[LARAVEL] Enrich: %d routes → %d chunks", len(routes), len(routeChunks))
 			chunks = append(chunks, routeChunks...)
 		} else {
 			logger.Instance.Error("[LARAVEL] Enrich: route analysis error: %v", err)
 		}
 	}
 
-	logger.Instance.Info("[LARAVEL] Enrich DONE: returning %d total chunks", len(chunks))
+	logger.Instance.Debug("[LARAVEL] Enrich DONE: returning %d total chunks", len(chunks))
 	return chunks
 }

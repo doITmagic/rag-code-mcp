@@ -73,17 +73,17 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 		if applicable {
 			before := len(chunks)
 			chunks = enricher.Enrich(a.codeAnalyzer, packages, paths, chunks)
-			logger.Instance.Info("[PHP] Enricher #%d (%T) enriched: %d → %d chunks for %s", i, enricher, before, len(chunks), filepath.Base(path))
+			logger.Instance.Debug("[PHP] Enricher #%d (%T) enriched: %d → %d chunks for %s", i, enricher, before, len(chunks), filepath.Base(path))
 		}
 	}
 
 	// If no symbols found and the file is in a routes/ directory,
 	// try extracting Route::* calls as symbols (Laravel convention).
 	if len(chunks) == 0 && isRouteFile(path) {
-		logger.Instance.Info("[PHP] Route fallback for %s", filepath.Base(path))
+		logger.Instance.Debug("[PHP] Route fallback for %s", filepath.Base(path))
 		routeChunks := a.codeAnalyzer.ExtractRouteChunks(path)
 		chunks = append(chunks, routeChunks...)
-		logger.Instance.Info("[PHP] Route fallback: +%d chunks", len(routeChunks))
+		logger.Instance.Debug("[PHP] Route fallback: +%d chunks", len(routeChunks))
 	}
 
 	symbols := make([]pkgParser.Symbol, len(chunks))

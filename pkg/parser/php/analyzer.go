@@ -25,16 +25,14 @@ type CodeAnalyzer struct {
 	packages         map[string]*PackageInfo
 
 	// Cached framework detection results (per directory → result)
-	laravelCache   map[string]bool
-	wordpressCache map[string]bool
+	laravelCache map[string]bool
 }
 
 // NewCodeAnalyzer creates a new PHP code analyzer
 func NewCodeAnalyzer() *CodeAnalyzer {
 	return &CodeAnalyzer{
-		packages:       make(map[string]*PackageInfo),
-		laravelCache:   make(map[string]bool),
-		wordpressCache: make(map[string]bool),
+		packages:     make(map[string]*PackageInfo),
+		laravelCache: make(map[string]bool),
 	}
 }
 
@@ -1242,18 +1240,31 @@ func (ca *CodeAnalyzer) IsLaravelProject() bool {
 	return false
 }
 
+// maxLaravelWalkUpDepth limits how many parent directories the walk-up detection traverses.
+const maxLaravelWalkUpDepth = 10
+
 // isLaravelByFilesystem walks up from filePath checking for Laravel root indicators.
-// Results are cached per directory to avoid repeated stat calls.
+// Results are cached per starting directory to avoid repeated stat calls.
 func (ca *CodeAnalyzer) isLaravelByFilesystem(filePath string) bool {
-	dir := filepath.Dir(filePath)
-	for {
+	startDir := filepath.Dir(filePath)
+	// Check cache for the starting directory first
+	if result, ok := ca.laravelCache[startDir]; ok {
+		return result
+	}
+
+	dir := startDir
+	for depth := 0; depth < maxLaravelWalkUpDepth; depth++ {
+		// Check cache for this specific directory
 		if result, ok := ca.laravelCache[dir]; ok {
+			// Cache the result for the starting directory as well
+			ca.laravelCache[startDir] = result
 			return result
 		}
 
 		// Check for artisan (the strongest Laravel indicator)
 		if _, err := os.Stat(filepath.Join(dir, "artisan")); err == nil {
 			ca.laravelCache[dir] = true
+			ca.laravelCache[startDir] = true
 			return true
 		}
 
@@ -1262,6 +1273,7 @@ func (ca *CodeAnalyzer) isLaravelByFilesystem(filePath string) bool {
 		if content, err := os.ReadFile(composerPath); err == nil {
 			if strings.Contains(string(content), "laravel/framework") {
 				ca.laravelCache[dir] = true
+				ca.laravelCache[startDir] = true
 				return true
 			}
 		}
@@ -1272,7 +1284,7 @@ func (ca *CodeAnalyzer) isLaravelByFilesystem(filePath string) bool {
 		}
 		dir = parent
 	}
-	ca.laravelCache[dir] = false
+	ca.laravelCache[startDir] = false
 	return false
 }
 

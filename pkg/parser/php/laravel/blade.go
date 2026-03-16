@@ -12,13 +12,13 @@ import (
 
 // Compiled regex patterns for Blade directives
 var (
-	reExtends   = regexp.MustCompile(`@extends\(\s*['"](.+?)['"]\s*\)`)
-	reSection   = regexp.MustCompile(`@section\(\s*['"](.+?)['"]\s*\)`)
-	reYield     = regexp.MustCompile(`@yield\(\s*['"](.+?)['"]\s*\)`)
-	reInclude   = regexp.MustCompile(`@include\(\s*['"](.+?)['"]\s*\)`)
-	reComponent = regexp.MustCompile(`@component\(\s*['"](.+?)['"]\s*\)`)
-	reEach      = regexp.MustCompile(`@each\(\s*['"](.+?)['"]\s*\)`)
-	rePushStack = regexp.MustCompile(`@(?:push|stack)\(\s*['"](.+?)['"]\s*\)`)
+	reExtends   = regexp.MustCompile(`@extends\(\s*['"]([^'"]+)['"]`)
+	reSection   = regexp.MustCompile(`@section\(\s*['"]([^'"]+)['"]`)
+	reYield     = regexp.MustCompile(`@yield\(\s*['"]([^'"]+)['"]`)
+	reInclude   = regexp.MustCompile(`@include\(\s*['"]([^'"]+)['"]`)
+	reComponent = regexp.MustCompile(`@component\(\s*['"]([^'"]+)['"]`)
+	reEach      = regexp.MustCompile(`@each\(\s*['"]([^'"]+)['"]`)
+	rePushStack = regexp.MustCompile(`@(?:push|stack)\(\s*['"]([^'"]+)['"]`)
 	reProps     = regexp.MustCompile(`@props\(\s*\[(.*?)\]\s*\)`)
 )
 
@@ -127,6 +127,8 @@ func (ba *BladeAnalyzer) analyzeFile(filePath string) (BladeTemplate, error) {
 			tpl.Props = append(tpl.Props, props...)
 		}
 	}
+
+	tpl.TotalLines = lineNum
 
 	return tpl, scanner.Err()
 }

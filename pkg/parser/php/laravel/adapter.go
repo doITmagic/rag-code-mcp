@@ -297,12 +297,19 @@ func (a *Adapter) convertBladeToChunks(templates []BladeTemplate) []php.CodeChun
 			})
 		}
 
+		// EndLine defaults to TotalLines (whole template), fallback to 1 for empty files
+		endLine := tpl.TotalLines
+		if endLine == 0 {
+			endLine = 1
+		}
+
 		chunk := php.CodeChunk{
 			Name:      tpl.Name,
 			Type:      "blade_template",
 			Language:  "php",
 			FilePath:  tpl.FilePath,
 			StartLine: 1,
+			EndLine:   endLine,
 			Signature: sig,
 			Docstring: docstring,
 			Metadata: map[string]any{

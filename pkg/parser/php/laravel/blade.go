@@ -13,7 +13,7 @@ import (
 // Compiled regex patterns for Blade directives
 var (
 	reExtends   = regexp.MustCompile(`@extends\(\s*['"](.+?)['"]\s*\)`)
-	reSection   = regexp.MustCompile(`@section\(\s*['"](.+?)['"]\s*\)`)
+	reSection   = regexp.MustCompile(`@section\(\s*['"](.+?)['"]\s*(?:,.*?)?\)`)
 	reYield     = regexp.MustCompile(`@yield\(\s*['"](.+?)['"]\s*\)`)
 	reInclude   = regexp.MustCompile(`@include\(\s*['"](.+?)['"]\s*\)`)
 	reComponent = regexp.MustCompile(`@component\(\s*['"](.+?)['"]\s*\)`)
@@ -127,6 +127,8 @@ func (ba *BladeAnalyzer) analyzeFile(filePath string) (BladeTemplate, error) {
 			tpl.Props = append(tpl.Props, props...)
 		}
 	}
+
+	tpl.TotalLines = lineNum
 
 	return tpl, scanner.Err()
 }

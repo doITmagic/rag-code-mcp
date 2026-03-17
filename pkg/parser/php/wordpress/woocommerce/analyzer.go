@@ -333,6 +333,8 @@ func extractExprValue(expr ast.Vertex) string {
 		return val
 	case *ast.ScalarLnumber:
 		return string(n.Value)
+	case *ast.ScalarDnumber:
+		return string(n.Value)
 	case *ast.Name:
 		var parts []string
 		for _, part := range n.Parts {
@@ -341,6 +343,14 @@ func extractExprValue(expr ast.Vertex) string {
 			}
 		}
 		return strings.Join(parts, "\\")
+	case *ast.ExprConstFetch:
+		return extractExprValue(n.Const)
+	case *ast.ExprClassConstFetch:
+		if constName, ok := n.Const.(*ast.Identifier); ok {
+			if string(constName.Value) == "class" {
+				return extractExprValue(n.Class) + "::class"
+			}
+		}
 	case *ast.ExprVariable:
 		if nameNode, ok := n.Name.(*ast.Identifier); ok {
 			name := string(nameNode.Value)

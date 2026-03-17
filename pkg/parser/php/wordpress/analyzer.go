@@ -80,6 +80,7 @@ func (a *Analyzer) AnalyzePaths(paths []string) ([]php.CodeChunk, error) {
 // analyzeWordPress performs complete WordPress analysis using both package info and AST
 func (a *Analyzer) analyzeWordPress(packages []*php.PackageInfo, paths []string) *WordPressInfo {
 	info := &WordPressInfo{}
+	var wcAPICalls []woocommerce.WCAPICall
 
 	// Analyze from parsed package info (method calls)
 	info.Hooks = a.hookAnalyzer.AnalyzeHooks(packages)
@@ -149,6 +150,12 @@ func (a *Analyzer) analyzeWordPress(packages []*php.PackageInfo, paths []string)
 				}
 			}
 
+			// WooCommerce API calls from AST
+			wcInfo := a.woocommerceAnalyzer.Analyze(rootNode, path)
+			if wcInfo != nil && len(wcInfo.APICalls) > 0 {
+				wcAPICalls = append(wcAPICalls, wcInfo.APICalls...)
+			}
+
 			return nil
 		})
 	}
@@ -173,8 +180,11 @@ func (a *Analyzer) analyzeWordPress(packages []*php.PackageInfo, paths []string)
 		})
 	}
 	wcHooks := a.woocommerceAnalyzer.AnalyzeHooksFromWP(wcInputHooks)
-	if len(wcHooks) > 0 {
-		wcInfo := &woocommerce.WooCommerceInfo{Hooks: wcHooks}
+	if len(wcHooks) > 0 || len(wcAPICalls) > 0 {
+		wcInfo := &woocommerce.WooCommerceInfo{
+			Hooks:    wcHooks,
+			APICalls: wcAPICalls,
+		}
 		info.WooCommerceInfo = wcInfo
 	}
 
@@ -428,7 +438,7 @@ func (a *Analyzer) convertToChunks(info *WordPressInfo) []php.CodeChunk {
 					FilePath:  wcHook.FilePath,
 					StartLine: wcHook.StartLine,
 					EndLine:   wcHook.EndLine,
-					Signature: fmt.Sprintf("%s('%s', '%s')", wcHook.HookType, wcHook.HookName, wcHook.Callback),
+					Signature: buildWCHookSignature(wcHook),
 					Docstring: fmt.Sprintf("WooCommerce %s hook (%s area): %s", wcHook.HookType, wcHook.Area, wcHook.HookName),
 					Metadata: map[string]any{
 						"framework": "wordpress",
@@ -501,6 +511,33 @@ func buildHookSignature(hook WPHook) string {
 		return fmt.Sprintf("remove_filter('%s', '%s')", hook.Name, hook.Callback)
 	default:
 		return fmt.Sprintf("%s('%s')", hook.Type, hook.Name)
+	}
+}
+
+// buildWCHookSignature creates a readable signature for a WooCommerce hook
+// using the real WordPress function names instead of raw hook type values
+func buildWCHookSignature(wcHook woocommerce.WCHook) string {
+	switch wcHook.HookType {
+	case "action":
+		if wcHook.Priority > 0 {
+			return fmt.Sprintf("add_action('%s', '%s', %d)", wcHook.HookName, wcHook.Callback, wcHook.Priority)
+		}
+		return fmt.Sprintf("add_action('%s', '%s')", wcHook.HookName, wcHook.Callback)
+	case "filter":
+		if wcHook.Priority > 0 {
+			return fmt.Sprintf("add_filter('%s', '%s', %d)", wcHook.HookName, wcHook.Callback, wcHook.Priority)
+		}
+		return fmt.Sprintf("add_filter('%s', '%s')", wcHook.HookName, wcHook.Callback)
+	case "action_trigger":
+		return fmt.Sprintf("do_action('%s')", wcHook.HookName)
+	case "filter_trigger":
+		return fmt.Sprintf("apply_filters('%s')", wcHook.HookName)
+	case "action_removal":
+		return fmt.Sprintf("remove_action('%s', '%s')", wcHook.HookName, wcHook.Callback)
+	case "filter_removal":
+		return fmt.Sprintf("remove_filter('%s', '%s')", wcHook.HookName, wcHook.Callback)
+	default:
+		return fmt.Sprintf("%s('%s', '%s')", wcHook.HookType, wcHook.HookName, wcHook.Callback)
 	}
 }
 

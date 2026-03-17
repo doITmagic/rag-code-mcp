@@ -123,7 +123,7 @@ func (e *Enricher) Enrich(ca *php.CodeAnalyzer, packages []*php.PackageInfo, pat
 		}
 	}
 
-	logger.Instance.Debug("[LARAVEL] Enrich DONE: returning %d total chunks (before blade)", len(chunks))
+	logger.Instance.Debug("[LARAVEL] Enrich: %d chunks after routes, before blade analysis", len(chunks))
 
 	// Analyze Blade Templates
 	bladeFiles := e.adapter.findBladeFiles(paths)

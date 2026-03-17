@@ -132,13 +132,14 @@ type Middleware struct {
 
 // BladeTemplate represents a parsed Blade template with its directives
 type BladeTemplate struct {
-	Name     string         `json:"name"`              // dot notation: layouts.app
-	FilePath string         `json:"file_path"`
-	Extends  string         `json:"extends,omitempty"`  // @extends('...')
-	Sections []BladeSection `json:"sections,omitempty"`
-	Includes []BladeInclude `json:"includes,omitempty"`
-	Stacks   []string       `json:"stacks,omitempty"`   // @push/@stack names
-	Props    []string       `json:"props,omitempty"`    // @props([...])
+	Name       string         `json:"name"`              // dot notation: layouts.app
+	FilePath   string         `json:"file_path"`
+	TotalLines int            `json:"total_lines"`        // total line count of the file
+	Extends    string         `json:"extends,omitempty"`  // @extends('...')
+	Sections   []BladeSection `json:"sections,omitempty"`
+	Includes   []BladeInclude `json:"includes,omitempty"`
+	Stacks     []string       `json:"stacks,omitempty"`   // @push/@stack names
+	Props      []string       `json:"props,omitempty"`    // @props([...])
 }
 
 // BladeSection represents a @section or @yield directive

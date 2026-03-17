@@ -297,12 +297,18 @@ func (a *Adapter) convertBladeToChunks(templates []BladeTemplate) []php.CodeChun
 			})
 		}
 
+		endLine := tpl.TotalLines
+		if endLine < 1 {
+			endLine = 1
+		}
+
 		chunk := php.CodeChunk{
 			Name:      tpl.Name,
 			Type:      "blade_template",
 			Language:  "php",
 			FilePath:  tpl.FilePath,
 			StartLine: 1,
+			EndLine:   endLine,
 			Signature: sig,
 			Docstring: docstring,
 			Metadata: map[string]any{

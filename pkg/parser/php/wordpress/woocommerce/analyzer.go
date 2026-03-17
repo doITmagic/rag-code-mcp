@@ -287,6 +287,14 @@ func extractFuncName(node ast.Vertex) string {
 			}
 		}
 		return strings.Join(parts, "\\")
+	case *ast.NameFullyQualified:
+		var parts []string
+		for _, part := range n.Parts {
+			if namePart, ok := part.(*ast.NamePart); ok {
+				parts = append(parts, string(namePart.Value))
+			}
+		}
+		return strings.Join(parts, "\\")
 	}
 	return ""
 }

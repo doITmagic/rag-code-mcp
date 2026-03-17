@@ -389,6 +389,10 @@ func (a *Analyzer) convertToChunks(info *WordPressInfo) []php.CodeChunk {
 	if info.OxygenInfo != nil {
 		if oxyInfo, ok := info.OxygenInfo.(*oxygen.OxygenInfo); ok {
 			for _, elem := range oxyInfo.Elements {
+					baseClass := elem.BaseClass
+				if baseClass == "" {
+					baseClass = "OxyEl"
+				}
 				chunks = append(chunks, php.CodeChunk{
 					Name:      elem.ClassName,
 					Type:      "oxy_element",
@@ -396,7 +400,7 @@ func (a *Analyzer) convertToChunks(info *WordPressInfo) []php.CodeChunk {
 					FilePath:  elem.FilePath,
 					StartLine: elem.StartLine,
 					EndLine:   elem.EndLine,
-					Signature: fmt.Sprintf("class %s extends OxyEl", elem.ClassName),
+					Signature: fmt.Sprintf("class %s extends %s", elem.ClassName, baseClass),
 					Docstring: fmt.Sprintf("Oxygen Builder Element: %s (methods: %s)", elem.ClassName, strings.Join(elem.Methods, ", ")),
 					Metadata: map[string]any{
 						"framework": "wordpress",
@@ -536,6 +540,10 @@ func buildWCHookSignature(wcHook woocommerce.WCHook) string {
 		return fmt.Sprintf("remove_action('%s', '%s')", wcHook.HookName, wcHook.Callback)
 	case "filter_removal":
 		return fmt.Sprintf("remove_filter('%s', '%s')", wcHook.HookName, wcHook.Callback)
+	case "action_check":
+		return fmt.Sprintf("has_action('%s')", wcHook.HookName)
+	case "filter_check":
+		return fmt.Sprintf("has_filter('%s')", wcHook.HookName)
 	default:
 		return fmt.Sprintf("%s('%s', '%s')", wcHook.HookType, wcHook.HookName, wcHook.Callback)
 	}

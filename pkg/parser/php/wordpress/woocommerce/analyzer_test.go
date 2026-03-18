@@ -8,8 +8,6 @@ import (
 	"github.com/VKCOM/php-parser/pkg/errors"
 	"github.com/VKCOM/php-parser/pkg/parser"
 	"github.com/VKCOM/php-parser/pkg/version"
-
-	"github.com/doITmagic/rag-code-mcp/pkg/parser/php/wordpress"
 )
 
 func parsePHP(t *testing.T, code string) ast.Vertex {
@@ -167,12 +165,12 @@ class MyWCPlugin {
 }
 
 func TestAnalyzeHooksFromWP(t *testing.T) {
-	wpHooks := []wordpress.WPHook{
-		{Type: wordpress.HookAction, Name: "init", Callback: "my_init", FilePath: "test.php", StartLine: 1},
-		{Type: wordpress.HookAction, Name: "woocommerce_before_cart", Callback: "cart_fn", FilePath: "test.php", StartLine: 2, Priority: 20},
-		{Type: wordpress.HookFilter, Name: "woocommerce_product_get_price", Callback: "price_fn", FilePath: "test.php", StartLine: 3},
-		{Type: wordpress.HookAction, Name: "wp_enqueue_scripts", Callback: "enqueue", FilePath: "test.php", StartLine: 4},
-		{Type: wordpress.HookActionTrigger, Name: "woocommerce_checkout_process", FilePath: "test.php", StartLine: 5},
+	wpHooks := []WPHookInput{
+		{Type: "action", Name: "init", Callback: "my_init", FilePath: "test.php", StartLine: 1},
+		{Type: "action", Name: "woocommerce_before_cart", Callback: "cart_fn", FilePath: "test.php", StartLine: 2, Priority: 20},
+		{Type: "filter", Name: "woocommerce_product_get_price", Callback: "price_fn", FilePath: "test.php", StartLine: 3},
+		{Type: "action", Name: "wp_enqueue_scripts", Callback: "enqueue", FilePath: "test.php", StartLine: 4},
+		{Type: "action_trigger", Name: "woocommerce_checkout_process", FilePath: "test.php", StartLine: 5},
 	}
 
 	analyzer := NewAnalyzer()

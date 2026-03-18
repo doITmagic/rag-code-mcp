@@ -3,6 +3,7 @@ package laravel
 import (
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -192,6 +193,138 @@ func (a *Adapter) convertRoutesToChunks(routes []Route) []php.CodeChunk {
 			chunk.Docstring = route.Description
 		} else {
 			chunk.Docstring = fmt.Sprintf("Route %s %s -> %s@%s", route.Method, route.URI, route.Controller, route.Action)
+		}
+
+		chunks = append(chunks, chunk)
+	}
+
+	return chunks
+}
+
+// findBladeFiles searches recursively for .blade.php files in the given paths.
+// Skips vendor/, node_modules/, .git/, and hidden directories.
+func (a *Adapter) findBladeFiles(paths []string) []string {
+	var bladeFiles []string
+
+	for _, root := range paths {
+		info, err := os.Stat(root)
+		if err != nil {
+			continue
+		}
+
+		// Single file check
+		if !info.IsDir() {
+			if strings.HasSuffix(root, ".blade.php") {
+				bladeFiles = append(bladeFiles, root)
+			}
+			continue
+		}
+
+		// Walk directory
+		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if d.IsDir() {
+				base := d.Name()
+				if base == "vendor" || base == "node_modules" || base == ".git" ||
+					strings.HasPrefix(base, ".") {
+					if path != root {
+						return filepath.SkipDir
+					}
+				}
+				return nil
+			}
+			if strings.HasSuffix(d.Name(), ".blade.php") {
+				bladeFiles = append(bladeFiles, path)
+			}
+			return nil
+		})
+	}
+
+	return bladeFiles
+}
+
+// convertBladeToChunks converts BladeTemplate structs to php.CodeChunk with
+// metadata and structural relations (inheritance for @extends, dependency for @include/@component).
+func (a *Adapter) convertBladeToChunks(templates []BladeTemplate) []php.CodeChunk {
+	var chunks []php.CodeChunk
+
+	for _, tpl := range templates {
+		// Build signature
+		sig := tpl.Name
+		if tpl.Extends != "" {
+			sig = fmt.Sprintf("@extends('%s')", tpl.Extends)
+		}
+
+		// Build docstring from directives summary
+		var docParts []string
+		if tpl.Extends != "" {
+			docParts = append(docParts, fmt.Sprintf("Extends: %s", tpl.Extends))
+		}
+		if len(tpl.Sections) > 0 {
+			names := make([]string, len(tpl.Sections))
+			for i, s := range tpl.Sections {
+				names[i] = s.Name
+			}
+			docParts = append(docParts, fmt.Sprintf("Sections: %s", strings.Join(names, ", ")))
+		}
+		if len(tpl.Includes) > 0 {
+			names := make([]string, len(tpl.Includes))
+			for i, inc := range tpl.Includes {
+				names[i] = inc.ViewName
+			}
+			docParts = append(docParts, fmt.Sprintf("Includes: %s", strings.Join(names, ", ")))
+		}
+		if len(tpl.Props) > 0 {
+			docParts = append(docParts, fmt.Sprintf("Props: %s", strings.Join(tpl.Props, ", ")))
+		}
+
+		docstring := strings.Join(docParts, " | ")
+
+		// Build relations
+		var relations []pkgParser.Relation
+		if tpl.Extends != "" {
+			relations = append(relations, pkgParser.Relation{
+				TargetName: tpl.Extends,
+				Type:       pkgParser.RelInheritance,
+			})
+		}
+		for _, inc := range tpl.Includes {
+			relations = append(relations, pkgParser.Relation{
+				TargetName: inc.ViewName,
+				Type:       pkgParser.RelDependency,
+			})
+		}
+
+		endLine := tpl.TotalLines
+		if endLine < 1 {
+			endLine = 1
+		}
+
+		chunk := php.CodeChunk{
+			Name:      tpl.Name,
+			Type:      "blade_template",
+			Language:  "php",
+			FilePath:  tpl.FilePath,
+			StartLine: 1,
+			EndLine:   endLine,
+			Signature: sig,
+			Docstring: docstring,
+			Metadata: map[string]any{
+				"framework":      "laravel",
+				"blade":          true,
+				"sections_count": len(tpl.Sections),
+				"includes_count": len(tpl.Includes),
+			},
+			Relations: relations,
+		}
+
+		if len(tpl.Stacks) > 0 {
+			chunk.Metadata["stacks"] = tpl.Stacks
+		}
+		if len(tpl.Props) > 0 {
+			chunk.Metadata["props"] = tpl.Props
 		}
 
 		chunks = append(chunks, chunk)

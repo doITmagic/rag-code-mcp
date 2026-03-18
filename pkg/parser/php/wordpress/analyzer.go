@@ -15,6 +15,8 @@ import (
 
 	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser/php"
+	"github.com/doITmagic/rag-code-mcp/pkg/parser/php/wordpress/oxygen"
+	"github.com/doITmagic/rag-code-mcp/pkg/parser/php/wordpress/woocommerce"
 )
 
 // Analyzer is the main WordPress framework analyzer that coordinates all WordPress-specific analyzers
@@ -26,6 +28,8 @@ type Analyzer struct {
 	widgetAnalyzer       *WidgetAnalyzer
 	adminAnalyzer        *AdminAnalyzer
 	pluginHeaderAnalyzer *PluginHeaderAnalyzer
+	oxygenAnalyzer       *oxygen.Analyzer
+	woocommerceAnalyzer  *woocommerce.Analyzer
 	phpAnalyzer          *php.CodeAnalyzer
 }
 
@@ -39,6 +43,8 @@ func NewAnalyzer() *Analyzer {
 		widgetAnalyzer:       NewWidgetAnalyzer(),
 		adminAnalyzer:        NewAdminAnalyzer(),
 		pluginHeaderAnalyzer: NewPluginHeaderAnalyzer(),
+		oxygenAnalyzer:       oxygen.NewAnalyzer(),
+		woocommerceAnalyzer:  woocommerce.NewAnalyzer(),
 		phpAnalyzer:          php.NewCodeAnalyzer(),
 	}
 }
@@ -74,6 +80,7 @@ func (a *Analyzer) AnalyzePaths(paths []string) ([]php.CodeChunk, error) {
 // analyzeWordPress performs complete WordPress analysis using both package info and AST
 func (a *Analyzer) analyzeWordPress(packages []*php.PackageInfo, paths []string) *WordPressInfo {
 	info := &WordPressInfo{}
+	var wcAPICalls []woocommerce.WCAPICall
 
 	// Analyze from parsed package info (method calls)
 	info.Hooks = a.hookAnalyzer.AnalyzeHooks(packages)
@@ -143,8 +150,42 @@ func (a *Analyzer) analyzeWordPress(packages []*php.PackageInfo, paths []string)
 				}
 			}
 
+			// WooCommerce API calls from AST
+			wcInfo := a.woocommerceAnalyzer.Analyze(rootNode, path)
+			if wcInfo != nil && len(wcInfo.APICalls) > 0 {
+				wcAPICalls = append(wcAPICalls, wcInfo.APICalls...)
+			}
+
 			return nil
 		})
+	}
+
+	// Oxygen Builder analysis (reuses already-parsed packages)
+	oxyInfo := a.oxygenAnalyzer.AnalyzeFromPackages(packages)
+	if oxyInfo != nil && (len(oxyInfo.Elements) > 0 || len(oxyInfo.Templates) > 0) {
+		info.OxygenInfo = oxyInfo
+	}
+
+	// WooCommerce analysis: classify WP hooks that have woocommerce_ prefix
+	var wcInputHooks []woocommerce.WPHookInput
+	for _, h := range info.Hooks {
+		wcInputHooks = append(wcInputHooks, woocommerce.WPHookInput{
+			Type:      string(h.Type),
+			Name:      h.Name,
+			Callback:  h.Callback,
+			Priority:  h.Priority,
+			FilePath:  h.FilePath,
+			StartLine: h.StartLine,
+			EndLine:   h.EndLine,
+		})
+	}
+	wcHooks := a.woocommerceAnalyzer.AnalyzeHooksFromWP(wcInputHooks)
+	if len(wcHooks) > 0 || len(wcAPICalls) > 0 {
+		wcInfo := &woocommerce.WooCommerceInfo{
+			Hooks:    wcHooks,
+			APICalls: wcAPICalls,
+		}
+		info.WooCommerceInfo = wcInfo
 	}
 
 	return info
@@ -344,6 +385,96 @@ func (a *Analyzer) convertToChunks(info *WordPressInfo) []php.CodeChunk {
 		})
 	}
 
+	// Convert Oxygen elements
+	if info.OxygenInfo != nil {
+		if oxyInfo, ok := info.OxygenInfo.(*oxygen.OxygenInfo); ok {
+			for _, elem := range oxyInfo.Elements {
+					baseClass := elem.BaseClass
+				if baseClass == "" {
+					baseClass = "OxyEl"
+				}
+				chunks = append(chunks, php.CodeChunk{
+					Name:      elem.ClassName,
+					Type:      "oxy_element",
+					Language:  "php",
+					FilePath:  elem.FilePath,
+					StartLine: elem.StartLine,
+					EndLine:   elem.EndLine,
+					Signature: fmt.Sprintf("class %s extends %s", elem.ClassName, baseClass),
+					Docstring: fmt.Sprintf("Oxygen Builder Element: %s (methods: %s)", elem.ClassName, strings.Join(elem.Methods, ", ")),
+					Metadata: map[string]any{
+						"framework": "wordpress",
+						"wp_type":   "oxygen_element",
+						"namespace": elem.Namespace,
+						"has_slug":  elem.SlugMethod,
+						"methods":   elem.Methods,
+					},
+				})
+			}
+
+			for _, tmpl := range oxyInfo.Templates {
+				chunks = append(chunks, php.CodeChunk{
+					Name:      tmpl.PostType,
+					Type:      "oxy_template",
+					Language:  "php",
+					FilePath:  tmpl.FilePath,
+					StartLine: tmpl.Line,
+					EndLine:   tmpl.Line,
+					Signature: fmt.Sprintf("register_post_type('%s', ...)", tmpl.PostType),
+					Docstring: fmt.Sprintf("Oxygen Template: %s", tmpl.PostType),
+					Metadata: map[string]any{
+						"framework": "wordpress",
+						"wp_type":   "oxygen_template",
+					},
+				})
+			}
+		}
+	}
+
+	// Convert WooCommerce hooks
+	if info.WooCommerceInfo != nil {
+		if wcInfo, ok := info.WooCommerceInfo.(*woocommerce.WooCommerceInfo); ok {
+			for _, wcHook := range wcInfo.Hooks {
+				chunks = append(chunks, php.CodeChunk{
+					Name:      wcHook.HookName,
+					Type:      "wc_hook",
+					Language:  "php",
+					FilePath:  wcHook.FilePath,
+					StartLine: wcHook.StartLine,
+					EndLine:   wcHook.EndLine,
+					Signature: buildWCHookSignature(wcHook),
+					Docstring: fmt.Sprintf("WooCommerce %s hook (%s area): %s", wcHook.HookType, wcHook.Area, wcHook.HookName),
+					Metadata: map[string]any{
+						"framework": "wordpress",
+						"wp_type":   "wc_hook",
+						"wc_area":   string(wcHook.Area),
+						"hook_type": wcHook.HookType,
+						"callback":  wcHook.Callback,
+						"priority":  wcHook.Priority,
+					},
+				})
+			}
+
+			for _, apiCall := range wcInfo.APICalls {
+				chunks = append(chunks, php.CodeChunk{
+					Name:      apiCall.Function,
+					Type:      "wc_api_call",
+					Language:  "php",
+					FilePath:  apiCall.FilePath,
+					StartLine: apiCall.StartLine,
+					EndLine:   apiCall.EndLine,
+					Signature: fmt.Sprintf("%s(...)", apiCall.Function),
+					Docstring: fmt.Sprintf("WooCommerce API call: %s (category: %s)", apiCall.Function, apiCall.Category),
+					Metadata: map[string]any{
+						"framework":   "wordpress",
+						"wp_type":     "wc_api_call",
+						"wc_category": apiCall.Category,
+					},
+				})
+			}
+		}
+	}
+
 	return chunks
 }
 
@@ -384,6 +515,37 @@ func buildHookSignature(hook WPHook) string {
 		return fmt.Sprintf("remove_filter('%s', '%s')", hook.Name, hook.Callback)
 	default:
 		return fmt.Sprintf("%s('%s')", hook.Type, hook.Name)
+	}
+}
+
+// buildWCHookSignature creates a readable signature for a WooCommerce hook
+// using the real WordPress function names instead of raw hook type values
+func buildWCHookSignature(wcHook woocommerce.WCHook) string {
+	switch wcHook.HookType {
+	case "action":
+		if wcHook.Priority > 0 {
+			return fmt.Sprintf("add_action('%s', '%s', %d)", wcHook.HookName, wcHook.Callback, wcHook.Priority)
+		}
+		return fmt.Sprintf("add_action('%s', '%s')", wcHook.HookName, wcHook.Callback)
+	case "filter":
+		if wcHook.Priority > 0 {
+			return fmt.Sprintf("add_filter('%s', '%s', %d)", wcHook.HookName, wcHook.Callback, wcHook.Priority)
+		}
+		return fmt.Sprintf("add_filter('%s', '%s')", wcHook.HookName, wcHook.Callback)
+	case "action_trigger":
+		return fmt.Sprintf("do_action('%s')", wcHook.HookName)
+	case "filter_trigger":
+		return fmt.Sprintf("apply_filters('%s')", wcHook.HookName)
+	case "action_removal":
+		return fmt.Sprintf("remove_action('%s', '%s')", wcHook.HookName, wcHook.Callback)
+	case "filter_removal":
+		return fmt.Sprintf("remove_filter('%s', '%s')", wcHook.HookName, wcHook.Callback)
+	case "action_check":
+		return fmt.Sprintf("has_action('%s')", wcHook.HookName)
+	case "filter_check":
+		return fmt.Sprintf("has_filter('%s')", wcHook.HookName)
+	default:
+		return fmt.Sprintf("%s('%s', '%s')", wcHook.HookType, wcHook.HookName, wcHook.Callback)
 	}
 }
 

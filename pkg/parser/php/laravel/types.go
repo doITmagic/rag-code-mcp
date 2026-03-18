@@ -2,11 +2,12 @@ package laravel
 
 // LaravelInfo contains Laravel-specific framework information extracted from a project
 type LaravelInfo struct {
-	Models      []EloquentModel `json:"models"`
-	Controllers []Controller    `json:"controllers"`
-	Routes      []Route         `json:"routes"`
-	Migrations  []Migration     `json:"migrations,omitempty"`
-	Middleware  []Middleware    `json:"middleware,omitempty"`
+	Models         []EloquentModel `json:"models"`
+	Controllers    []Controller    `json:"controllers"`
+	Routes         []Route         `json:"routes"`
+	Migrations     []Migration     `json:"migrations,omitempty"`
+	Middleware     []Middleware    `json:"middleware,omitempty"`
+	BladeTemplates []BladeTemplate `json:"blade_templates,omitempty"`
 }
 
 // EloquentModel represents a Laravel Eloquent model with ORM features
@@ -127,4 +128,30 @@ type Middleware struct {
 	FilePath    string `json:"file_path"`
 	StartLine   int    `json:"start_line"`
 	EndLine     int    `json:"end_line"`
+}
+
+// BladeTemplate represents a parsed Blade template with its directives
+type BladeTemplate struct {
+	Name       string         `json:"name"`              // dot notation: layouts.app
+	FilePath   string         `json:"file_path"`
+	TotalLines int            `json:"total_lines"`        // total line count of the file
+	Extends    string         `json:"extends,omitempty"`  // @extends('...')
+	Sections   []BladeSection `json:"sections,omitempty"`
+	Includes   []BladeInclude `json:"includes,omitempty"`
+	Stacks     []string       `json:"stacks,omitempty"`   // @push/@stack names
+	Props      []string       `json:"props,omitempty"`    // @props([...])
+}
+
+// BladeSection represents a @section or @yield directive
+type BladeSection struct {
+	Name      string `json:"name"`       // section name
+	Type      string `json:"type"`       // "section" or "yield"
+	StartLine int    `json:"start_line"`
+}
+
+// BladeInclude represents an @include, @component, or @each directive
+type BladeInclude struct {
+	ViewName string `json:"view_name"` // dot notation
+	Type     string `json:"type"`      // "include", "component", or "each"
+	Line     int    `json:"line"`
 }

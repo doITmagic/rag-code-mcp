@@ -1,0 +1,12 @@
+{{ template "base" . }}
+
+{{ define "content" }}
+<h1>{{ .PageTitle }}</h1>
+{{ range .Posts }}
+    <article>
+        <h2>{{ .Title }}</h2>
+        <p>{{ .Body | truncate 200 }}</p>
+        <time>{{ formatDate .PublishedAt }}</time>
+    </article>
+{{ end }}
+{{ end }}

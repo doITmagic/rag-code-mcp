@@ -105,11 +105,19 @@ func TestBladeAnalyzer_Includes(t *testing.T) {
 	}
 
 	types := map[string]int{}
+	viewNames := map[string]bool{}
 	for _, inc := range tpl.Includes {
 		types[inc.Type]++
+		viewNames[inc.ViewName] = true
 	}
 	if types["include"] != 1 || types["component"] != 1 || types["each"] != 1 {
 		t.Errorf("unexpected include types: %v", types)
+	}
+	// Verify actual captured view names (not garbage from multi-arg forms)
+	for _, expected := range []string{"partials.header", "components.alert", "partials.item"} {
+		if !viewNames[expected] {
+			t.Errorf("missing expected view name %q, got %v", expected, viewNames)
+		}
 	}
 }
 
@@ -218,11 +226,20 @@ func TestBladeAnalyzer_ComplexTemplate(t *testing.T) {
 	if len(tpl.Sections) != 2 {
 		t.Errorf("expected 2 sections, got %d", len(tpl.Sections))
 	}
+	// Verify section names are correctly captured (not "title', 'Dashboard" from multi-arg)
+	for _, s := range tpl.Sections {
+		if s.Name != "title" && s.Name != "content" {
+			t.Errorf("unexpected section name %q, want 'title' or 'content'", s.Name)
+		}
+	}
 	if len(tpl.Includes) != 3 {
 		t.Errorf("expected 3 includes (2 include + 1 component), got %d", len(tpl.Includes))
 	}
 	if len(tpl.Stacks) != 2 {
 		t.Errorf("expected 2 stacks (scripts, styles), got %d", len(tpl.Stacks))
+	}
+	if tpl.TotalLines != 21 {
+		t.Errorf("TotalLines = %d, want 21", tpl.TotalLines)
 	}
 }
 

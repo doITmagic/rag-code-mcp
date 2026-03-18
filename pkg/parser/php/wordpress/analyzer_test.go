@@ -385,3 +385,138 @@ func TestMergePostTypes_Deduplication(t *testing.T) {
 		t.Errorf("expected 2 post types after merge, got %d", len(result))
 	}
 }
+
+func TestAnalyzer_OxygenElementDetection(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Plugin header to detect as WordPress
+	err := os.WriteFile(filepath.Join(tmpDir, "plugin.php"), []byte(`<?php
+/**
+ * Plugin Name: Oxygen Custom Elements
+ */
+`), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Oxygen element extending OxyEl
+	oxyFile := filepath.Join(tmpDir, "elements.php")
+	err = os.WriteFile(oxyFile, []byte(`<?php
+class MyCustomHeader extends OxyEl {
+    public function slug() {
+        return 'my-custom-header';
+    }
+    public function render($options, $defaults, $content) {
+        echo '<h1>Custom</h1>';
+    }
+}
+`), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	analyzer := NewAnalyzer()
+	chunks, err := analyzer.AnalyzePaths([]string{tmpDir})
+	if err != nil {
+		t.Fatalf("AnalyzePaths failed: %v", err)
+	}
+
+	// Find oxy_element chunks
+	var oxyChunks []string
+	for _, c := range chunks {
+		if c.Type == "oxy_element" {
+			oxyChunks = append(oxyChunks, c.Name)
+			if c.Metadata["framework"] != "wordpress" {
+				t.Errorf("Oxygen chunk %s: expected framework=wordpress", c.Name)
+			}
+			if c.Metadata["wp_type"] != "oxygen_element" {
+				t.Errorf("Oxygen chunk %s: expected wp_type=oxygen_element, got %v", c.Name, c.Metadata["wp_type"])
+			}
+		}
+	}
+
+	if len(oxyChunks) == 0 {
+		t.Error("expected at least 1 oxy_element chunk, got 0")
+	} else {
+		t.Logf("Found Oxygen elements: %v", oxyChunks)
+	}
+}
+
+func TestAnalyzer_WooCommerceHookClassification(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Plugin header
+	err := os.WriteFile(filepath.Join(tmpDir, "plugin.php"), []byte(`<?php
+/**
+ * Plugin Name: WooCommerce Extension
+ */
+`), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// WC hooks
+	wcFile := filepath.Join(tmpDir, "wc-hooks.php")
+	err = os.WriteFile(wcFile, []byte(`<?php
+add_action('woocommerce_before_cart', 'custom_cart_notice');
+add_filter('woocommerce_product_get_price', 'custom_price', 10, 2);
+add_action('woocommerce_checkout_process', 'validate_checkout');
+`), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	analyzer := NewAnalyzer()
+	chunks, err := analyzer.AnalyzePaths([]string{tmpDir})
+	if err != nil {
+		t.Fatalf("AnalyzePaths failed: %v", err)
+	}
+
+	// Find wc_hook chunks
+	wcAreas := make(map[string]bool)
+	for _, c := range chunks {
+		if c.Type == "wc_hook" {
+			area, _ := c.Metadata["wc_area"].(string)
+			wcAreas[area] = true
+			if c.Metadata["framework"] != "wordpress" {
+				t.Errorf("WC chunk %s: expected framework=wordpress", c.Name)
+			}
+		}
+	}
+
+	if len(wcAreas) == 0 {
+		t.Error("expected WC hook chunks, got 0")
+	}
+	if !wcAreas["cart"] {
+		t.Error("expected wc_area=cart for woocommerce_before_cart")
+	}
+	if !wcAreas["product"] {
+		t.Error("expected wc_area=product for woocommerce_product_get_price")
+	}
+	if !wcAreas["checkout"] {
+		t.Error("expected wc_area=checkout for woocommerce_checkout_process")
+	}
+
+	t.Logf("Found WC areas: %v", wcAreas)
+}
+
+func TestConvertToChunks_OxygenAndWooCommerce(t *testing.T) {
+	analyzer := NewAnalyzer()
+
+	// Use concrete types for OxygenInfo and WooCommerceInfo
+	info := &WordPressInfo{
+		Hooks: []WPHook{
+			{Type: HookAction, Name: "init", Callback: "my_init", FilePath: "test.php", StartLine: 1, EndLine: 1},
+		},
+	}
+
+	// Test that convertToChunks handles nil OxygenInfo/WooCommerceInfo gracefully
+	chunks := analyzer.convertToChunks(info)
+	if len(chunks) != 1 {
+		t.Fatalf("expected 1 chunk (hook), got %d", len(chunks))
+	}
+	if chunks[0].Type != "wp_hook" {
+		t.Errorf("expected wp_hook, got %s", chunks[0].Type)
+	}
+}
+

@@ -12,8 +12,9 @@ type OxygenElement struct {
 	ClassName  string   `json:"class_name"`
 	Namespace  string   `json:"namespace,omitempty"`
 	FullName   string   `json:"full_name"`
-	SlugMethod bool     `json:"has_slug"`          // Has slug() method
-	Methods    []string `json:"methods,omitempty"` // Detected methods (init, name, slug, icon, controls, render)
+	BaseClass  string   `json:"base_class,omitempty"` // OxyEl, OxyElShadow, OxygenElement, etc.
+	SlugMethod bool     `json:"has_slug"`             // Has slug() method
+	Methods    []string `json:"methods,omitempty"`    // Detected methods (init, name, slug, icon, controls, render)
 	FilePath   string   `json:"file_path"`
 	StartLine  int      `json:"start_line"`
 	EndLine    int      `json:"end_line"`

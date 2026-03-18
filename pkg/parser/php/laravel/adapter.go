@@ -299,7 +299,7 @@ func (a *Adapter) convertBladeToChunks(templates []BladeTemplate) []php.CodeChun
 
 		// EndLine defaults to TotalLines (whole template), fallback to 1 for empty files
 		endLine := tpl.TotalLines
-		if endLine == 0 {
+		if endLine < 1 {
 			endLine = 1
 		}
 

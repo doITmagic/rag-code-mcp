@@ -107,6 +107,7 @@ func (a *Analyzer) extractOxygenElement(class php.ClassInfo) OxygenElement {
 		ClassName: class.Name,
 		Namespace: class.Namespace,
 		FullName:  class.FullName,
+		BaseClass: extractBaseClassName(class.Extends),
 		FilePath:  class.FilePath,
 		StartLine: class.StartLine,
 		EndLine:   class.EndLine,
@@ -175,6 +176,18 @@ func (a *Analyzer) walkForOxygenTemplates(node ast.Vertex, filePath string, info
 			}
 		}
 	}
+}
+
+// extractBaseClassName extracts the short base class name from a possibly namespaced extends value
+func extractBaseClassName(extends string) string {
+	if extends == "" {
+		return ""
+	}
+	// Get last segment after backslash (e.g., "Ns\OxyEl" → "OxyEl")
+	if idx := strings.LastIndex(extends, "\\"); idx >= 0 {
+		return extends[idx+1:]
+	}
+	return extends
 }
 
 // extractFuncName extracts function name from AST node

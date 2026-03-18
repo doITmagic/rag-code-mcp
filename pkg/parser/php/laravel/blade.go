@@ -61,6 +61,7 @@ func (ba *BladeAnalyzer) analyzeFile(filePath string) (BladeTemplate, error) {
 	}
 
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024) // Allow lines up to 1MB
 	lineNum := 0
 	for scanner.Scan() {
 		lineNum++

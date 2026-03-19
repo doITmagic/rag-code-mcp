@@ -3,19 +3,23 @@ package gotemplate
 import (
 	"bufio"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/doITmagic/rag-code-mcp/internal/logger"
 )
 
 // Regex patterns for Go template directives.
 var (
 	reDefine   = regexp.MustCompile(`\{\{-?\s*define\s+"([^"]+)"\s*-?\}\}`)
-	reBlock    = regexp.MustCompile(`\{\{-?\s*block\s+"([^"]+)"\s*(\.[\w.]*)?`)
-	reTemplate = regexp.MustCompile(`\{\{-?\s*template\s+"([^"]+)"\s*(\.[\w.]*)?`)
-	reRange    = regexp.MustCompile(`\{\{-?\s*range\s+(\.[\w.]+)`)
+	reBlock    = regexp.MustCompile(`\{\{-?\s*block\s+"([^"]+)"\s*(\.[\w.]*)?\s*-?\}\}`)
+	reTemplate = regexp.MustCompile(`\{\{-?\s*template\s+"([^"]+)"\s*(\.[\w.]*)?\s*-?\}\}`)
+	reRange    = regexp.MustCompile(`\{\{-?\s*range\s+(\.[\w.]+)\s*-?\}\}`)
 	reIf       = regexp.MustCompile(`\{\{-?\s*if\s+(.+?)\s*-?\}\}`)
+	reElseIf   = regexp.MustCompile(`\{\{-?\s*else\s+if\s+(.+?)\s*-?\}\}`)
 	reElse     = regexp.MustCompile(`\{\{-?\s*else\s*-?\}\}`)
-	reWith     = regexp.MustCompile(`\{\{-?\s*with\s+(\.[\w.]+)`)
+	reWith     = regexp.MustCompile(`\{\{-?\s*with\s+(\.[\w.]+)\s*-?\}\}`)
 	reEnd      = regexp.MustCompile(`\{\{-?\s*end\s*-?\}\}`)
 	reComment  = regexp.MustCompile(`\{\{/\*.*?\*/\}\}`)
 	reVariable = regexp.MustCompile(`\{\{-?\s*(\.[\w.]+)\s*-?\}\}`)
@@ -43,7 +47,8 @@ func (a *GoTemplateAnalyzer) Analyze(filePaths []string) []GoTemplate {
 	for _, fp := range filePaths {
 		tpl, err := a.analyzeFile(fp)
 		if err != nil {
-			continue // skip unreadable files
+			logger.Instance.Debug("[GOTEMPLATE] skip %s: %v", filepath.Base(fp), err)
+			continue
 		}
 		templates = append(templates, tpl)
 	}
@@ -134,9 +139,23 @@ func (a *GoTemplateAnalyzer) analyzeFile(filePath string) (GoTemplate, error) {
 			stack = append(stack, openBlock{kind: "if", idx: len(tpl.Conditionals) - 1})
 		}
 
-		// {{ else }}
-		if reElse.MatchString(line) {
-			// Find the matching if on the stack
+		// {{ else if .Cond }} — must check BEFORE bare {{ else }}
+		if m := reElseIf.FindStringSubmatch(line); m != nil {
+			// Mark HasElse on the current if
+			for i := len(stack) - 1; i >= 0; i-- {
+				if stack[i].kind == "if" {
+					tpl.Conditionals[stack[i].idx].HasElse = true
+					break
+				}
+			}
+			// Push a new conditional for the else-if branch
+			tpl.Conditionals = append(tpl.Conditionals, ConditionalDirective{
+				Condition: strings.TrimSpace(m[1]),
+				Line:      lineNum,
+			})
+			stack = append(stack, openBlock{kind: "if", idx: len(tpl.Conditionals) - 1})
+		} else if reElse.MatchString(line) {
+			// {{ else }} — bare else without condition
 			for i := len(stack) - 1; i >= 0; i-- {
 				if stack[i].kind == "if" {
 					tpl.Conditionals[stack[i].idx].HasElse = true
@@ -189,6 +208,10 @@ func (a *GoTemplateAnalyzer) analyzeFile(filePath string) (GoTemplate, error) {
 				tpl.CustomFuncs = append(tpl.CustomFuncs, funcName)
 			}
 		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return GoTemplate{}, err
 	}
 
 	tpl.TotalLines = lineNum

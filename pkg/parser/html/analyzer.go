@@ -64,7 +64,7 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 		symbols = append(symbols, a.analyzeGoTemplates(path)...)
 	} else {
 		// Directory: walk and check each HTML file for Go template syntax
-		filepath.WalkDir(path, func(fp string, d fs.DirEntry, err error) error {
+		_ = filepath.WalkDir(path, func(fp string, d fs.DirEntry, err error) error {
 			if err != nil || d.IsDir() {
 				return nil
 			}

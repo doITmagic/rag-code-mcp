@@ -179,3 +179,78 @@ func TestAnalyze_NonexistentFile(t *testing.T) {
 		t.Errorf("expected 0 templates for nonexistent file, got %d", len(templates))
 	}
 }
+
+func TestAnalyze_ElseIf(t *testing.T) {
+	ba := &GoTemplateAnalyzer{}
+	templates := ba.Analyze([]string{testdataPath("elseif.tmpl")})
+
+	if len(templates) != 1 {
+		t.Fatalf("expected 1 template, got %d", len(templates))
+	}
+	tpl := templates[0]
+
+	// Should have 3 conditionals: if .IsAdmin, else if .IsModerator, else if .IsEditor
+	if len(tpl.Conditionals) < 3 {
+		t.Errorf("expected at least 3 conditionals (if + 2 else-if), got %d: %v",
+			len(tpl.Conditionals), tpl.Conditionals)
+	}
+
+	// First conditional (.IsAdmin) should have HasElse=true
+	if len(tpl.Conditionals) > 0 {
+		if tpl.Conditionals[0].Condition != ".IsAdmin" {
+			t.Errorf("expected first condition '.IsAdmin', got %q", tpl.Conditionals[0].Condition)
+		}
+		if !tpl.Conditionals[0].HasElse {
+			t.Error("expected first conditional HasElse=true (has else-if branch)")
+		}
+	}
+
+	// Second conditional (.IsModerator) from else-if
+	if len(tpl.Conditionals) > 1 {
+		if tpl.Conditionals[1].Condition != ".IsModerator" {
+			t.Errorf("expected second condition '.IsModerator', got %q", tpl.Conditionals[1].Condition)
+		}
+	}
+
+	// Third conditional (.IsEditor) from else-if
+	if len(tpl.Conditionals) > 2 {
+		if tpl.Conditionals[2].Condition != ".IsEditor" {
+			t.Errorf("expected third condition '.IsEditor', got %q", tpl.Conditionals[2].Condition)
+		}
+	}
+
+	// Defines
+	if len(tpl.Defines) != 1 {
+		t.Errorf("expected 1 define, got %d", len(tpl.Defines))
+	} else if tpl.Defines[0].Name != "dashboard" {
+		t.Errorf("expected define 'dashboard', got %q", tpl.Defines[0].Name)
+	}
+}
+
+func TestAnalyze_BlockRelations(t *testing.T) {
+	ba := &GoTemplateAnalyzer{}
+	templates := ba.Analyze([]string{testdataPath("layout.html")})
+
+	if len(templates) != 1 {
+		t.Fatalf("expected 1 template, got %d", len(templates))
+	}
+
+	// Convert and check for RelInheritance on blocks
+	symbols := ConvertToSymbols(templates)
+	if len(symbols) == 0 {
+		t.Fatal("expected at least 1 symbol")
+	}
+
+	// File-level symbol should have RelInheritance for block "content"
+	var hasInheritance bool
+	for _, sym := range symbols {
+		for _, rel := range sym.Relations {
+			if rel.Type == "inheritance" && rel.TargetName == "content" {
+				hasInheritance = true
+			}
+		}
+	}
+	if !hasInheritance {
+		t.Error("expected RelInheritance for block 'content' in symbols")
+	}
+}

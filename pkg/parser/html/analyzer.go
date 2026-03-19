@@ -53,24 +53,26 @@ func (a *Analyzer) CanHandle(filePath string) bool {
 func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result, error) {
 	var symbols []pkgParser.Symbol
 
-	// For single files: detect Go template syntax and run GoTemplate analysis
+	// Detect Go template syntax and run GoTemplate analysis
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, err
 	}
 
 	if !info.IsDir() {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil, err
-		}
-
-		// If Go template syntax detected, run Go template analysis first
-		if bytes.Contains(data, []byte("{{")) {
-			goTplAnalyzer := &gotemplate.GoTemplateAnalyzer{}
-			templates := goTplAnalyzer.Analyze([]string{path})
-			symbols = append(symbols, gotemplate.ConvertToSymbols(templates)...)
-		}
+		// Single file: check for Go template syntax
+		symbols = append(symbols, a.analyzeGoTemplates(path)...)
+	} else {
+		// Directory: walk and check each HTML file for Go template syntax
+		filepath.WalkDir(path, func(fp string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			if a.ca.isHTMLFile(d.Name()) {
+				symbols = append(symbols, a.analyzeGoTemplates(fp)...)
+			}
+			return nil
+		})
 	}
 
 	// Always run HTML DOM analysis too (Go templates contain HTML)
@@ -105,8 +107,19 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 	}, nil
 }
 
-
-
+// analyzeGoTemplates checks a single file for Go template syntax and returns symbols.
+func (a *Analyzer) analyzeGoTemplates(filePath string) []pkgParser.Symbol {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil
+	}
+	if !bytes.Contains(data, []byte("{{")) {
+		return nil
+	}
+	goTplAnalyzer := &gotemplate.GoTemplateAnalyzer{}
+	templates := goTplAnalyzer.Analyze([]string{filePath})
+	return gotemplate.ConvertToSymbols(templates)
+}
 // CodeAnalyzer handles the heavy lifting of HTML analysis.
 type CodeAnalyzer struct{}
 

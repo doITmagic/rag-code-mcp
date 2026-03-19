@@ -1,0 +1,23 @@
+{{ define "dashboard" }}
+<div class="dashboard">
+{{ if .IsAdmin }}
+    <h1>Admin Panel</h1>
+{{ else if .IsModerator }}
+    <h2>Moderator View</h2>
+{{ else if .IsEditor }}
+    <h2>Editor View</h2>
+{{ else }}
+    <h2>User View</h2>
+{{ end }}
+
+{{ range .Items }}
+    <span>{{ .Name }}</span>
+{{ end }}
+
+{{ with .Profile }}
+    <p>{{ .Bio }}</p>
+{{ end }}
+
+{{/* Dashboard template with else-if chains */}}
+</div>
+{{ end }}

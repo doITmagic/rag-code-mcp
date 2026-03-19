@@ -9,7 +9,9 @@ import (
 )
 
 // ConvertToSymbols converts parsed GoTemplate results to parser.Symbol entries
-// with structural relations (dependency for {{ template }}, inheritance-like for {{ block }}).
+// with structural relations:
+//   - RelDependency for {{ template "name" }} includes
+//   - RelInheritance for {{ block "name" }} (defines overridable default content)
 func ConvertToSymbols(templates []GoTemplate) []pkgParser.Symbol {
 	var symbols []pkgParser.Symbol
 
@@ -82,6 +84,13 @@ func buildFileSymbol(tpl GoTemplate, nameNoExt string) pkgParser.Symbol {
 		relations = append(relations, pkgParser.Relation{
 			TargetName: inc.Name,
 			Type:       pkgParser.RelDependency,
+		})
+	}
+	// Build relations: blocks → inheritance (overridable default content)
+	for _, blk := range tpl.Blocks {
+		relations = append(relations, pkgParser.Relation{
+			TargetName: blk.Name,
+			Type:       pkgParser.RelInheritance,
 		})
 	}
 

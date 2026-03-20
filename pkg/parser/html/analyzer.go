@@ -64,7 +64,7 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 		symbols = append(symbols, a.analyzeGoTemplates(path)...)
 	} else {
 		// Directory: walk and check each HTML file for Go template syntax
-		_ = filepath.WalkDir(path, func(fp string, d fs.DirEntry, err error) error {
+		if walkErr := filepath.WalkDir(path, func(fp string, d fs.DirEntry, err error) error {
 			if err != nil || d.IsDir() {
 				return nil
 			}
@@ -72,7 +72,10 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 				symbols = append(symbols, a.analyzeGoTemplates(fp)...)
 			}
 			return nil
-		})
+		}); walkErr != nil {
+			// Log but don't fail — HTML DOM analysis may still succeed
+			fmt.Fprintf(os.Stderr, "[HTML] walk error for Go template detection: %v\n", walkErr)
+		}
 	}
 
 	// Always run HTML DOM analysis too (Go templates contain HTML)

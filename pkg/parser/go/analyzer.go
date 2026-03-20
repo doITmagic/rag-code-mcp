@@ -954,7 +954,7 @@ func (ca *CodeAnalyzer) extractCallsFromAST(body *ast.BlockStmt) ([]string, []st
 	ast.Inspect(body, func(n ast.Node) bool {
 		if call, ok := n.(*ast.CallExpr); ok {
 			var name string
-			var sel string // selector part (e.g. "template" in template.ParseFiles)
+			var sel string // selector/method part (e.g. "ParseFiles" in template.ParseFiles)
 			switch fun := call.Fun.(type) {
 			case *ast.Ident:
 				name = fun.Name

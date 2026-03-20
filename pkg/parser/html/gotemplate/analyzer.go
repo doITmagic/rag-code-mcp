@@ -140,6 +140,8 @@ func (a *GoTemplateAnalyzer) analyzeFile(filePath string) (GoTemplate, error) {
 		}
 
 		// {{ else if .Cond }} — must check BEFORE bare {{ else }}
+		// NOTE: else-if does NOT push a new stack entry because Go templates
+		// use a single {{ end }} for the entire if/else-if/else chain.
 		if m := reElseIf.FindStringSubmatch(line); m != nil {
 			// Mark HasElse on the current if
 			for i := len(stack) - 1; i >= 0; i-- {
@@ -148,12 +150,13 @@ func (a *GoTemplateAnalyzer) analyzeFile(filePath string) (GoTemplate, error) {
 					break
 				}
 			}
-			// Push a new conditional for the else-if branch
+			// Record the else-if branch as a conditional (for metadata)
+			// but do NOT push onto stack — no extra {{ end }} expected.
 			tpl.Conditionals = append(tpl.Conditionals, ConditionalDirective{
 				Condition: strings.TrimSpace(m[1]),
 				Line:      lineNum,
+				HasElse:   true, // part of an else-if chain
 			})
-			stack = append(stack, openBlock{kind: "if", idx: len(tpl.Conditionals) - 1})
 		} else if reElse.MatchString(line) {
 			// {{ else }} — bare else without condition
 			for i := len(stack) - 1; i >= 0; i-- {

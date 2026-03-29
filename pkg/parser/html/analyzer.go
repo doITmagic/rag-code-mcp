@@ -8,8 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
 	"github.com/PuerkitoBio/goquery"
+
+	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
+	"github.com/doITmagic/rag-code-mcp/pkg/parser/html/gotemplate"
 )
 
 func init() {
@@ -33,26 +37,66 @@ func (a *Analyzer) Name() string {
 	return "html"
 }
 
-// CanHandle returns true for .html files.
+// CanHandle returns true for .html, .htm, .tmpl, and .gohtml files.
 func (a *Analyzer) CanHandle(filePath string) bool {
 	ext := strings.ToLower(filepath.Ext(filePath))
 	switch ext {
-	case ".html", ".htm":
+	case ".html", ".htm", ".tmpl", ".gohtml":
 		return true
 	default:
 		return false
 	}
 }
 
-// Analyze extracts symbols (sections) from an HTML file.
+// Analyze extracts symbols from an HTML or Go template file.
+// For files with {{ }} syntax: uses both GoTemplate and HTML analysis.
+// For plain HTML files: uses goquery HTML analysis only.
 func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result, error) {
-	// HTML files: use goquery
-	chunks, err := a.ca.AnalyzePaths([]string{path})
+	var symbols []pkgParser.Symbol
+
+	// Detect Go template syntax and run GoTemplate analysis
+	info, err := os.Stat(path)
 	if err != nil {
 		return nil, err
 	}
 
-	var symbols []pkgParser.Symbol
+	if !info.IsDir() {
+		// Single file: check for Go template syntax
+		symbols = append(symbols, a.analyzeGoTemplates(path)...)
+	} else {
+		// Directory: walk once for GoTemplate detection.
+		// DOM analysis is done separately by AnalyzePaths below (different parser, different purpose).
+		if walkErr := filepath.WalkDir(path, func(fp string, d fs.DirEntry, err error) error {
+			if err != nil {
+				logger.Instance.Debug("[HTML] walk entry error %s: %v", fp, err)
+				return nil // continue walking other entries
+			}
+			if d.IsDir() {
+				return nil
+			}
+			if a.ca.isHTMLFile(d.Name()) {
+				symbols = append(symbols, a.analyzeGoTemplates(fp)...)
+			}
+			return nil
+		}); walkErr != nil {
+			// Log but don't fail — HTML DOM analysis may still succeed
+			logger.Instance.Debug("[HTML] walk error for Go template detection: %v", walkErr)
+		}
+	}
+
+	// Always run HTML DOM analysis too (Go templates contain HTML)
+	chunks, err := a.ca.AnalyzePaths([]string{path})
+	if err != nil {
+		// If HTML parsing fails but we got Go template symbols, return those
+		if len(symbols) > 0 {
+			return &pkgParser.Result{
+				Symbols:  symbols,
+				Language: "html",
+			}, nil
+		}
+		return nil, err
+	}
+
 	for _, ch := range chunks {
 		symbols = append(symbols, pkgParser.Symbol{
 			Name:      ch.Name,
@@ -72,8 +116,19 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 	}, nil
 }
 
-
-
+// analyzeGoTemplates checks a single file for Go template syntax and returns symbols.
+func (a *Analyzer) analyzeGoTemplates(filePath string) []pkgParser.Symbol {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil
+	}
+	if !bytes.Contains(data, []byte("{{")) {
+		return nil
+	}
+	goTplAnalyzer := &gotemplate.GoTemplateAnalyzer{}
+	templates := goTplAnalyzer.Analyze([]string{filePath})
+	return gotemplate.ConvertToSymbols(templates)
+}
 // CodeAnalyzer handles the heavy lifting of HTML analysis.
 type CodeAnalyzer struct{}
 
@@ -252,7 +307,7 @@ func (ca *CodeAnalyzer) shouldSkipDir(path, root string) bool {
 
 func (ca *CodeAnalyzer) isHTMLFile(name string) bool {
 	lower := strings.ToLower(name)
-	for _, ext := range []string{".html", ".htm"} {
+	for _, ext := range []string{".html", ".htm", ".tmpl", ".gohtml"} {
 		if strings.HasSuffix(lower, ext) {
 			return true
 		}

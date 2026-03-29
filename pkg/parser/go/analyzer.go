@@ -231,7 +231,7 @@ func (ca *CodeAnalyzer) analyzeFunctionDecl(fset *token.FileSet, fn *doc.Func, a
 			info.Parameters = ca.extractParameters(fn.Decl.Type.Params)
 			info.Returns = ca.extractReturns(fn.Decl.Type.Results)
 		}
-		info.Calls = ca.extractCallsFromAST(astBody)
+		info.Calls, info.TemplateFiles = ca.extractCallsFromAST(astBody)
 	} else if fn.Decl != nil {
 		// Fallback to doc.Func Decl (won't have Body)
 		// Extract position information
@@ -761,6 +761,24 @@ func convertPackageInfoToChunks(pi *PackageInfo) []CodeChunk {
 				Type:       pkgParser.RelCalls,
 			})
 		}
+		// Template file dependencies: template.ParseFiles("layout.html") → RelDependency
+		for _, tplFile := range fn.TemplateFiles {
+			rels = append(rels, pkgParser.Relation{
+				TargetName: tplFile,
+				Type:       pkgParser.RelDependency,
+			})
+		}
+
+		metadata := map[string]any{
+			"receiver":  fn.Receiver,
+			"is_method": fn.IsMethod,
+			"params":    fn.Parameters,
+			"returns":   fn.Returns,
+			"examples":  fn.Examples,
+		}
+		if len(fn.TemplateFiles) > 0 {
+			metadata["template_files"] = fn.TemplateFiles
+		}
 
 		out = append(out, CodeChunk{
 			Type:      kind,
@@ -774,13 +792,7 @@ func convertPackageInfoToChunks(pi *PackageInfo) []CodeChunk {
 			Docstring: fn.Description,
 			Code:      fn.Code,
 			Relations: rels,
-			Metadata: map[string]any{
-				"receiver":  fn.Receiver,
-				"is_method": fn.IsMethod,
-				"params":    fn.Parameters,
-				"returns":   fn.Returns,
-				"examples":  fn.Examples,
-			},
+			Metadata:  metadata,
 		})
 	}
 
@@ -925,29 +937,56 @@ func (ca *CodeAnalyzer) extractCodeFromFile(filePath string, startLine, endLine 
 	return strings.Join(lines, "\n"), nil
 }
 
-func (ca *CodeAnalyzer) extractCallsFromAST(body *ast.BlockStmt) []string {
+func (ca *CodeAnalyzer) extractCallsFromAST(body *ast.BlockStmt) ([]string, []string) {
 	if body == nil {
-		return nil
+		return nil, nil
 	}
 	var calls []string
+	var templateFiles []string
 	seen := make(map[string]bool)
+	seenTpl := make(map[string]bool)
+
+	// Template-related function names that receive file paths as string arguments.
+	templateFuncs := map[string]bool{
+		"ParseFiles": true, "ParseGlob": true,
+	}
 
 	ast.Inspect(body, func(n ast.Node) bool {
 		if call, ok := n.(*ast.CallExpr); ok {
 			var name string
+			var sel string // selector/method part (e.g. "ParseFiles" in template.ParseFiles)
 			switch fun := call.Fun.(type) {
 			case *ast.Ident:
 				name = fun.Name
+				// Also check ident calls for template file extraction (dot-import, wrapper funcs)
+				if templateFuncs[fun.Name] {
+					sel = fun.Name
+				}
 			case *ast.SelectorExpr:
 				x := ca.typeToString(fun.X)
-				name = fmt.Sprintf("%s.%s", x, fun.Sel.Name)
+				sel = fun.Sel.Name
+				name = fmt.Sprintf("%s.%s", x, sel)
 			}
 			if name != "" && !seen[name] {
 				calls = append(calls, name)
 				seen[name] = true
 			}
+
+			// Extract template file paths from template.ParseFiles("a.html", "b.html")
+			// and similar calls (works on any receiver: t.ParseFiles, tpl.ParseFiles, etc.)
+			if templateFuncs[sel] {
+				for _, arg := range call.Args {
+					if lit, ok := arg.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+						path := strings.Trim(lit.Value, "\"`")
+						if path != "" && !seenTpl[path] {
+							seenTpl[path] = true
+							templateFiles = append(templateFiles, path)
+						}
+					}
+				}
+			}
 		}
 		return true
 	})
-	return calls
+	return calls, templateFiles
 }

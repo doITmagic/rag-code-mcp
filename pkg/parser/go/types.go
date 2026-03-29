@@ -51,6 +51,7 @@ type FunctionInfo struct {
 	EndLine     int          `json:"end_line,omitempty"`
 	Code        string       `json:"code,omitempty"`
 	Calls       []string     `json:"calls,omitempty"`
+	TemplateFiles []string   `json:"template_files,omitempty"` // Go template file paths from template.ParseFiles() etc.
 }
 
 // TypeInfo describes a type declaration (struct, interface, alias, etc.)

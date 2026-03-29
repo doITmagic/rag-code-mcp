@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -73,6 +74,9 @@ func TestFetchRemoteStableModel(t *testing.T) {
 
 	model, err := fetchRemoteStableModel(ctx)
 	if err != nil {
+		if strings.Contains(err.Error(), "status 403") {
+			t.Skip("Skipping: GitHub API rate limit (403)")
+		}
 		t.Fatalf("fetchRemoteStableModel failed: %v", err)
 	}
 
@@ -96,6 +100,10 @@ func TestCheckForUpdates(t *testing.T) {
 	// Testing with a very old version to trigger the update logic
 	info, err := CheckForUpdates(ctx, "0.0.1", true)
 	if err != nil {
+		// GitHub API rate-limits unauthenticated requests (403) — skip in CI
+		if strings.Contains(err.Error(), "status 403") {
+			t.Skip("Skipping: GitHub API rate limit (403) — expected in CI without auth token")
+		}
 		t.Fatalf("CheckForUpdates failed: %v", err)
 	}
 

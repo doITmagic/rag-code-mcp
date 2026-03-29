@@ -127,4 +127,75 @@ func TestHTMLAnalyzer_Comprehensive(t *testing.T) {
 			assert.NotEqual(t, "Skip", s.Name)
 		}
 	})
+
+	t.Run("CanHandle_GoTemplateExtensions", func(t *testing.T) {
+		assert.True(t, analyzer.CanHandle("layout.tmpl"))
+		assert.True(t, analyzer.CanHandle("partial.gohtml"))
+		assert.True(t, analyzer.CanHandle("page.HTML"))
+	})
+
+	t.Run("HTML_with_GoTemplate_syntax", func(t *testing.T) {
+		goTplHTML := `<!DOCTYPE html>
+<html>
+<head><title>{{ .Title }}</title></head>
+<body>
+    <h1>{{ .PageTitle }}</h1>
+    {{ range .Items }}
+        <p>{{ .Name }}</p>
+    {{ end }}
+    {{ template "footer" . }}
+</body>
+</html>`
+		goTplPath := filepath.Join(tmpDir, "gotpl.html")
+		require.NoError(t, os.WriteFile(goTplPath, []byte(goTplHTML), 0644))
+
+		res, err := analyzer.Analyze(context.Background(), goTplPath)
+		require.NoError(t, err)
+
+		// Should have BOTH Go template symbols AND HTML symbols
+		assert.Greater(t, len(res.Symbols), 1, "expected both Go template and HTML symbols")
+
+		// Verify Go template symbol exists with correct metadata
+		foundGoTpl := false
+		for _, s := range res.Symbols {
+			if md, ok := s.Metadata["template_type"]; ok && md == "go_template" {
+				foundGoTpl = true
+				// Should have includes relation to "footer"
+				foundRel := false
+				for _, rel := range s.Relations {
+					if rel.TargetName == "footer" {
+						foundRel = true
+					}
+				}
+				assert.True(t, foundRel, "expected relation to 'footer' template")
+			}
+		}
+		assert.True(t, foundGoTpl, "expected go_template symbol")
+	})
+
+	t.Run("Tmpl_file", func(t *testing.T) {
+		tmplContent := `{{ define "sidebar" }}
+<aside>
+    {{ range .Widgets }}
+        <div>{{ .Content }}</div>
+    {{ end }}
+</aside>
+{{ end }}`
+		tmplPath := filepath.Join(tmpDir, "sidebar.tmpl")
+		require.NoError(t, os.WriteFile(tmplPath, []byte(tmplContent), 0644))
+
+		res, err := analyzer.Analyze(context.Background(), tmplPath)
+		require.NoError(t, err)
+
+		// Should produce Go template symbols
+		assert.Greater(t, len(res.Symbols), 0)
+
+		foundDefine := false
+		for _, s := range res.Symbols {
+			if md, ok := s.Metadata["define_name"]; ok && md == "sidebar" {
+				foundDefine = true
+			}
+		}
+		assert.True(t, foundDefine, "expected define 'sidebar' symbol")
+	})
 }

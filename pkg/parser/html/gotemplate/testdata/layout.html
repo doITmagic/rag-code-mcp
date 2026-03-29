@@ -1,0 +1,32 @@
+{{ define "base" }}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ .Title }}</title>
+</head>
+<body>
+    {{ template "nav" . }}
+
+    {{ block "content" . }}
+        <p>Default content</p>
+    {{ end }}
+
+    {{ range .Items }}
+        <div>{{ .Name }}</div>
+    {{ end }}
+
+    {{ if .IsAdmin }}
+        <div>Admin panel</div>
+    {{ else }}
+        <div>User panel</div>
+    {{ end }}
+
+    {{ with .Footer }}
+        <footer>{{ .Copyright }}</footer>
+    {{ end }}
+
+    {{/* This is a comment */}}
+    {{ formatDate .CreatedAt }}
+</body>
+</html>
+{{ end }}

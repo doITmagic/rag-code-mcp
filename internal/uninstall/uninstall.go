@@ -314,15 +314,15 @@ func cleanWorkspaceData(home string) {
 		return
 	}
 
-	var registry map[string]interface{}
-	if err := json.Unmarshal(data, &registry); err != nil {
-		warnMsg("Could not parse registry: " + err.Error())
+	roots := extractWorkspaceRoots(data)
+	if len(roots) == 0 {
+		warnMsg("Could not extract workspace paths from registry, scanning common directories...")
 		scanAndCleanRagcodeDirs(home)
 		return
 	}
 
 	cleaned := 0
-	for wsPath := range registry {
+	for _, wsPath := range roots {
 		ragDir := filepath.Join(wsPath, ".ragcode")
 		if _, err := os.Stat(ragDir); err == nil {
 			if err := os.RemoveAll(ragDir); err != nil {
@@ -335,8 +335,70 @@ func cleanWorkspaceData(home string) {
 	}
 
 	if cleaned == 0 {
-		logMsg("No per-workspace .ragcode/ directories found")
+		logMsg("No per-workspace .ragcode/ directories found in registry entries")
 	}
+}
+
+// extractWorkspaceRoots tries to parse the registry in all known formats
+// and returns all workspace root paths found.
+func extractWorkspaceRoots(data []byte) []string {
+	// V2 format: {"version":"v2", "entries":[{"root":"/path",...}], ...}
+	var v2Store struct {
+		Version string `json:"version"`
+		Entries []struct {
+			Root string `json:"root"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal(data, &v2Store); err == nil && v2Store.Version == "v2" && len(v2Store.Entries) > 0 {
+		roots := make([]string, 0, len(v2Store.Entries))
+		for _, e := range v2Store.Entries {
+			if e.Root != "" {
+				roots = append(roots, e.Root)
+			}
+		}
+		if len(roots) > 0 {
+			logMsg(fmt.Sprintf("Found %d workspace(s) in V2 registry", len(roots)))
+			return roots
+		}
+	}
+
+	// V1 format: [{"root":"/path",...},...]
+	var v1Entries []struct {
+		Root string `json:"root"`
+	}
+	if err := json.Unmarshal(data, &v1Entries); err == nil && len(v1Entries) > 0 {
+		roots := make([]string, 0, len(v1Entries))
+		for _, e := range v1Entries {
+			if e.Root != "" {
+				roots = append(roots, e.Root)
+			}
+		}
+		if len(roots) > 0 {
+			logMsg(fmt.Sprintf("Found %d workspace(s) in V1 registry", len(roots)))
+			return roots
+		}
+	}
+
+	// Legacy flat map format: {"/path/to/ws": {...}, ...}
+	var flatMap map[string]interface{}
+	if err := json.Unmarshal(data, &flatMap); err == nil {
+		roots := make([]string, 0, len(flatMap))
+		for key := range flatMap {
+			// Skip known non-path keys from V2 format
+			if key == "version" || key == "entries" || key == "candidates" {
+				continue
+			}
+			if key != "" {
+				roots = append(roots, key)
+			}
+		}
+		if len(roots) > 0 {
+			logMsg(fmt.Sprintf("Found %d workspace(s) in legacy registry", len(roots)))
+			return roots
+		}
+	}
+
+	return nil
 }
 
 func scanAndCleanRagcodeDirs(home string) {

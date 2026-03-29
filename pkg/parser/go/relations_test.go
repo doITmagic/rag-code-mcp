@@ -100,3 +100,57 @@ func TestGoRelations_TypesAreCanonical(t *testing.T) {
 		}
 	}
 }
+
+const goTemplateUsageCode = `package web
+
+import "html/template"
+
+func RenderPage(w io.Writer, data any) error {
+	t, err := template.ParseFiles("templates/layout.html", "templates/header.html")
+	if err != nil {
+		return err
+	}
+	return t.Execute(w, data)
+}
+
+func RenderDashboard(w io.Writer, data any) error {
+	t := template.Must(template.ParseGlob("templates/dashboard/*.tmpl"))
+	return t.Execute(w, data)
+}
+`
+
+func TestGoRelations_TemplateFileDependencies(t *testing.T) {
+	tmpDir := t.TempDir()
+	f := filepath.Join(tmpDir, "handler.go")
+	require.NoError(t, os.WriteFile(f, []byte(goTemplateUsageCode), 0644))
+
+	ca := NewCodeAnalyzer()
+	res, err := ca.Analyze(context.Background(), tmpDir)
+	require.NoError(t, err)
+
+	renderPage := findGoSymbol(res.Symbols, "RenderPage")
+	require.NotNil(t, renderPage, "RenderPage function symbol must exist")
+
+	// Should have dependency relations to template file paths
+	assert.True(t, hasGoRelation(renderPage.Relations, "templates/layout.html", pkgParser.RelDependency),
+		"RenderPage should have dependency→templates/layout.html; got %v", renderPage.Relations)
+	assert.True(t, hasGoRelation(renderPage.Relations, "templates/header.html", pkgParser.RelDependency),
+		"RenderPage should have dependency→templates/header.html; got %v", renderPage.Relations)
+
+	// Should have template_files in metadata
+	if tplFiles, ok := renderPage.Metadata["template_files"]; ok {
+		files, ok := tplFiles.([]string)
+		assert.True(t, ok, "template_files metadata should be []string")
+		assert.Contains(t, files, "templates/layout.html")
+		assert.Contains(t, files, "templates/header.html")
+	} else {
+		t.Error("expected template_files metadata on RenderPage")
+	}
+
+	// RenderDashboard: ParseGlob with glob pattern
+	renderDash := findGoSymbol(res.Symbols, "RenderDashboard")
+	require.NotNil(t, renderDash, "RenderDashboard function symbol must exist")
+
+	assert.True(t, hasGoRelation(renderDash.Relations, "templates/dashboard/*.tmpl", pkgParser.RelDependency),
+		"RenderDashboard should have dependency→templates/dashboard/*.tmpl; got %v", renderDash.Relations)
+}

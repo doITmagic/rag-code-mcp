@@ -23,6 +23,10 @@ var (
 	reEnd      = regexp.MustCompile(`\{\{-?\s*end\s*-?\}\}`)
 	reComment  = regexp.MustCompile(`\{\{/\*.*?\*/\}\}`)
 	reVariable = regexp.MustCompile(`\{\{-?\s*(\.[\w.]+)\s*-?\}\}`)
+	// Matches any Go template action: {{ ... }}
+	reAction = regexp.MustCompile(`\{\{(.+?)\}\}`)
+	// Matches dot-variables anywhere inside an action (e.g. .Body in "{{ .Body | truncate 200 }}")
+	reActionVar = regexp.MustCompile(`(\.[A-Z]\w*(?:\.[A-Z]\w*)*)`)
 	// Custom funcs: {{ funcName ... }} where funcName is not a keyword.
 	reCustomFunc = regexp.MustCompile(`\{\{-?\s*([a-zA-Z]\w+)\s+`)
 
@@ -194,12 +198,20 @@ func (a *GoTemplateAnalyzer) analyzeFile(filePath string) (GoTemplate, error) {
 			}
 		}
 
-		// Variables: {{ .Something }} — but not inside other directives we already captured
-		for _, m := range reVariable.FindAllStringSubmatch(line, -1) {
-			v := m[1]
-			if !varSet[v] {
-				varSet[v] = true
-				tpl.Variables = append(tpl.Variables, v)
+		// Variables: extract .Var tokens from inside any {{ ... }} action (not just standalone).
+		// This captures variables in pipelines like {{ .Body | truncate 200 }}.
+		for _, actionMatch := range reAction.FindAllStringSubmatch(line, -1) {
+			inner := actionMatch[1]
+			// Skip comments
+			if strings.HasPrefix(strings.TrimSpace(inner), "/*") {
+				continue
+			}
+			for _, varMatch := range reActionVar.FindAllStringSubmatch(inner, -1) {
+				v := varMatch[1]
+				if !varSet[v] {
+					varSet[v] = true
+					tpl.Variables = append(tpl.Variables, v)
+				}
 			}
 		}
 

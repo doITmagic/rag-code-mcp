@@ -349,7 +349,7 @@ func extractWorkspaceRoots(data []byte) []string {
 			Root string `json:"root"`
 		} `json:"entries"`
 	}
-	if err := json.Unmarshal(data, &v2Store); err == nil && v2Store.Version != "" && len(v2Store.Entries) > 0 {
+	if err := json.Unmarshal(data, &v2Store); err == nil && v2Store.Version == "v2" && len(v2Store.Entries) > 0 {
 		roots := make([]string, 0, len(v2Store.Entries))
 		for _, e := range v2Store.Entries {
 			if e.Root != "" {

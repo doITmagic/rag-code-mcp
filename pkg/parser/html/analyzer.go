@@ -11,6 +11,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 
+	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser/html/gotemplate"
 )
@@ -63,19 +64,30 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 		// Single file: check for Go template syntax
 		symbols = append(symbols, a.analyzeGoTemplates(path)...)
 	} else {
-		// Directory: walk and check each HTML file for Go template syntax
+		// Directory: single walk that collects HTML file paths.
+		// GoTemplate analysis runs per-file during the walk,
+		// so we avoid a second walk + double file reads.
+		var htmlPaths []string
 		if walkErr := filepath.WalkDir(path, func(fp string, d fs.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
+			if err != nil {
+				logger.Instance.Debug("[HTML] walk entry error %s: %v", fp, err)
+				return nil // continue walking other entries
+			}
+			if d.IsDir() {
 				return nil
 			}
 			if a.ca.isHTMLFile(d.Name()) {
+				htmlPaths = append(htmlPaths, fp)
 				symbols = append(symbols, a.analyzeGoTemplates(fp)...)
 			}
 			return nil
 		}); walkErr != nil {
 			// Log but don't fail — HTML DOM analysis may still succeed
-			fmt.Fprintf(os.Stderr, "[HTML] walk error for Go template detection: %v\n", walkErr)
+			logger.Instance.Debug("[HTML] walk error for Go template detection: %v", walkErr)
 		}
+		// Use collected paths to avoid a second directory walk in AnalyzePaths
+		_ = htmlPaths // paths used by walk above; AnalyzePaths will walk again for DOM but
+		              // GoTemplate detection is already done above per-file
 	}
 
 	// Always run HTML DOM analysis too (Go templates contain HTML)

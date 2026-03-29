@@ -22,7 +22,6 @@ var (
 	reWith     = regexp.MustCompile(`\{\{-?\s*with\s+(\.[\w.]+)\s*-?\}\}`)
 	reEnd      = regexp.MustCompile(`\{\{-?\s*end\s*-?\}\}`)
 	reComment  = regexp.MustCompile(`\{\{/\*.*?\*/\}\}`)
-	reVariable = regexp.MustCompile(`\{\{-?\s*(\.[\w.]+)\s*-?\}\}`)
 	// Matches any Go template action: {{ ... }}
 	reAction = regexp.MustCompile(`\{\{(.+?)\}\}`)
 	// Matches dot-variables anywhere inside an action (e.g. .Body in "{{ .Body | truncate 200 }}")

@@ -24,8 +24,8 @@ var (
 	reComment  = regexp.MustCompile(`\{\{/\*.*?\*/\}\}`)
 	// Matches any Go template action: {{ ... }}
 	reAction = regexp.MustCompile(`\{\{(.+?)\}\}`)
-	// Matches dot-variables anywhere inside an action (e.g. .Body in "{{ .Body | truncate 200 }}")
-	reActionVar = regexp.MustCompile(`(\.[A-Z]\w*(?:\.[A-Z]\w*)*)`)
+	// Matches dot-variables anywhere inside an action — includes lowercase/underscore (e.g. .user, .items, .Title)
+	reActionVar = regexp.MustCompile(`(\.[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)`)
 	// Custom funcs: {{ funcName ... }} where funcName is not a keyword.
 	reCustomFunc = regexp.MustCompile(`\{\{-?\s*([a-zA-Z]\w+)\s+`)
 

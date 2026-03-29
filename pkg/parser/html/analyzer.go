@@ -64,10 +64,8 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 		// Single file: check for Go template syntax
 		symbols = append(symbols, a.analyzeGoTemplates(path)...)
 	} else {
-		// Directory: single walk that collects HTML file paths.
-		// GoTemplate analysis runs per-file during the walk,
-		// so we avoid a second walk + double file reads.
-		var htmlPaths []string
+		// Directory: walk once for GoTemplate detection.
+		// DOM analysis is done separately by AnalyzePaths below (different parser, different purpose).
 		if walkErr := filepath.WalkDir(path, func(fp string, d fs.DirEntry, err error) error {
 			if err != nil {
 				logger.Instance.Debug("[HTML] walk entry error %s: %v", fp, err)
@@ -77,7 +75,6 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 				return nil
 			}
 			if a.ca.isHTMLFile(d.Name()) {
-				htmlPaths = append(htmlPaths, fp)
 				symbols = append(symbols, a.analyzeGoTemplates(fp)...)
 			}
 			return nil
@@ -85,9 +82,6 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 			// Log but don't fail — HTML DOM analysis may still succeed
 			logger.Instance.Debug("[HTML] walk error for Go template detection: %v", walkErr)
 		}
-		// Use collected paths to avoid a second directory walk in AnalyzePaths
-		_ = htmlPaths // paths used by walk above; AnalyzePaths will walk again for DOM but
-		              // GoTemplate detection is already done above per-file
 	}
 
 	// Always run HTML DOM analysis too (Go templates contain HTML)

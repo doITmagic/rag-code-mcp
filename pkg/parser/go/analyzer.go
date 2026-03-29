@@ -958,6 +958,10 @@ func (ca *CodeAnalyzer) extractCallsFromAST(body *ast.BlockStmt) ([]string, []st
 			switch fun := call.Fun.(type) {
 			case *ast.Ident:
 				name = fun.Name
+				// Also check ident calls for template file extraction (dot-import, wrapper funcs)
+				if templateFuncs[fun.Name] {
+					sel = fun.Name
+				}
 			case *ast.SelectorExpr:
 				x := ca.typeToString(fun.X)
 				sel = fun.Sel.Name

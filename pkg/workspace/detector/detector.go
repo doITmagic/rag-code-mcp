@@ -48,7 +48,6 @@ func DefaultOptions() Options {
 			"docker-compose.yml",
 			"mix.exs",
 			"artisan",
-			".ragcode",
 			".agent",
 			".idea",
 			".vscode",

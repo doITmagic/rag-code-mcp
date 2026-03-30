@@ -2,6 +2,7 @@ package uninstall
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"net"
 	"os"
@@ -307,36 +308,35 @@ func removeDockerResources() {
 func cleanWorkspaceData(home string) {
 	registryPath := filepath.Join(home, installDirName, "registry.json")
 
+	var registryRoots []string
 	data, err := os.ReadFile(registryPath)
-	if err != nil {
-		logMsg("Registry not found, scanning common project directories...")
-		scanAndCleanRagcodeDirs(home)
-		return
+	if err == nil {
+		registryRoots = extractWorkspaceRoots(data)
 	}
 
-	roots := extractWorkspaceRoots(data)
-	if len(roots) == 0 {
-		warnMsg("Could not extract workspace paths from registry, scanning common directories...")
-		scanAndCleanRagcodeDirs(home)
-		return
-	}
-
-	cleaned := 0
-	for _, wsPath := range roots {
-		ragDir := filepath.Join(wsPath, ".ragcode")
-		if _, err := os.Stat(ragDir); err == nil {
-			if err := os.RemoveAll(ragDir); err != nil {
-				warnMsg(fmt.Sprintf("Failed to remove %s: %v", ragDir, err))
-			} else {
-				successMsg("Removed workspace data: " + ragDir)
-				cleaned++
+	// Step 1: direct delete for each workspace known to the registry.
+	if len(registryRoots) > 0 {
+		for _, wsPath := range registryRoots {
+			ragDir := filepath.Join(wsPath, ".ragcode")
+			if _, err := os.Stat(ragDir); err == nil {
+				if err := os.RemoveAll(ragDir); err != nil {
+					warnMsg(fmt.Sprintf("Failed to remove %s: %v", ragDir, err))
+				} else {
+					successMsg("Removed workspace data (from registry): " + ragDir)
+				}
 			}
 		}
+	} else {
+		logMsg("No valid registry found or no per-workspace .ragcode/ directories in registry.")
 	}
 
-	if cleaned == 0 {
-		logMsg("No per-workspace .ragcode/ directories found in registry entries")
-	}
+	// Step 2: catch anything the registry missed — orphaned dirs, workspaces
+	// outside $HOME, or roots the registry entry was lost for.
+	// Scan roots are derived from: registry parent dirs, Qdrant file_path payloads,
+	// IDE project lists, and a shallow $HOME scan.
+	logMsg("Scanning for any orphaned .ragcode/ directories not covered by registry...")
+	qdrantRoots := extractWorkspaceRootsFromQdrant()
+	scanAndCleanRagcodeDirs(home, append(registryRoots, qdrantRoots...))
 }
 
 // extractWorkspaceRoots tries to parse the registry in all known formats
@@ -401,46 +401,333 @@ func extractWorkspaceRoots(data []byte) []string {
 	return nil
 }
 
-func scanAndCleanRagcodeDirs(home string) {
-	searchRoots := []string{
-		filepath.Join(home, "Projects"),
-		filepath.Join(home, "projects"),
-		filepath.Join(home, "go", "src"),
-		filepath.Join(home, "Code"),
-		filepath.Join(home, "code"),
-		filepath.Join(home, "dev"),
-		filepath.Join(home, "workspace"),
+// scanAndCleanRagcodeDirs scans for orphaned .ragcode/ directories not covered
+// by the registry cleanup above.
+//
+// Strategy: instead of guessing user-specific folder names (Projects, code, dev…),
+// we derive search roots from data we already know:
+//  1. Parent directories of every registered workspace root — any sibling or
+//     leftover from a workspace that was unregistered but still has cache.
+//  2. $HOME itself at depth 1 — catches any .ragcode/ that was accidentally
+//     written directly under the user's home directory.
+//
+// This approach works for any user, on any OS, with any folder structure.
+func scanAndCleanRagcodeDirs(home string, registryRoots []string) {
+	// Build a de-duplicated set of directories to scan.
+	seen := make(map[string]struct{})
+	var searchRoots []string
+
+	add := func(dir string) {
+		dir = filepath.Clean(dir)
+		if dir == "." || dir == "" {
+			return
+		}
+		if _, ok := seen[dir]; ok {
+			return
+		}
+		seen[dir] = struct{}{}
+		searchRoots = append(searchRoots, dir)
 	}
+
+	// Derive parent directories from every registered workspace.
+	// These are the most likely places to find orphaned cache dirs.
+	for _, root := range registryRoots {
+		if root != "" {
+			add(filepath.Dir(root))
+		}
+	}
+
+	// Derive parent directories from IDE project lists.
+	// IDEs keep authoritative lists of opened projects in known config files
+	// — much more reliable than guessing folder names.
+	for _, ideRoot := range detectIDEProjectParents(home) {
+		add(ideRoot)
+	}
+
+	// Always include $HOME (depth-1 only) to catch top-level orphans.
+	add(home)
 
 	cleaned := 0
 	for _, root := range searchRoots {
 		if _, err := os.Stat(root); os.IsNotExist(err) {
 			continue
 		}
+
+		// isHomeRoot controls scan depth: for $HOME we only look 1 level deep
+		// to avoid scanning the entire filesystem; for parent dirs derived from
+		// known workspace paths we allow a few levels to catch nested leftovers.
+		maxDepth := 3
+		if filepath.Clean(root) == filepath.Clean(home) {
+			maxDepth = 1
+		}
+
 		_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return nil
 			}
 			rel, _ := filepath.Rel(root, path)
-			if strings.Count(rel, string(os.PathSeparator)) > 4 {
+			if strings.Count(rel, string(os.PathSeparator)) > maxDepth {
 				return filepath.SkipDir
 			}
-			if info.IsDir() && info.Name() == ".ragcode" {
-				if err := os.RemoveAll(path); err != nil {
-					warnMsg(fmt.Sprintf("Failed to remove %s: %v", path, err))
-				} else {
-					successMsg("Removed workspace data: " + path)
-					cleaned++
+			if info.IsDir() {
+				name := info.Name()
+				if name == ".git" || name == "node_modules" || name == "vendor" {
+					return filepath.SkipDir
 				}
-				return filepath.SkipDir
+				if name == ".ragcode" {
+					if err := os.RemoveAll(path); err != nil {
+						warnMsg(fmt.Sprintf("Failed to remove %s: %v", path, err))
+					} else {
+						successMsg("Removed orphaned workspace data: " + path)
+						cleaned++
+					}
+					return filepath.SkipDir
+				}
 			}
 			return nil
 		})
 	}
 
 	if cleaned == 0 {
-		logMsg("No per-workspace .ragcode/ directories found")
+		logMsg("No orphaned .ragcode/ directories found")
 	}
+}
+
+// detectIDEProjectParents returns the *parent directories* of projects known
+// to installed IDEs. We read IDE config files that list recently opened
+// projects — this is authoritative and works regardless of how the user
+// organises their filesystem.
+//
+// Supported:
+//   - JetBrains family (IntelliJ, GoLand, PyCharm, WebStorm, Rider…)
+//     Linux/macOS: ~/.config/JetBrains/*/options/recentProjects.xml
+//     macOS legacy: ~/Library/Application Support/JetBrains/*/options/recentProjects.xml
+//   - VSCode / VSCodium / Cursor / Windsurf
+//     Linux: ~/.config/{Code,VSCodium,Cursor,Windsurf}/User/globalStorage/storage.json
+//     macOS: ~/Library/Application Support/{Code,VSCodium,Cursor,Windsurf}/User/...
+func detectIDEProjectParents(home string) []string {
+	seen := make(map[string]struct{})
+	var parents []string
+
+	addProject := func(projectPath string) {
+		if projectPath == "" {
+			return
+		}
+		parent := filepath.Dir(filepath.Clean(projectPath))
+		if _, ok := seen[parent]; ok {
+			return
+		}
+		seen[parent] = struct{}{}
+		parents = append(parents, parent)
+	}
+
+	// ── JetBrains ─────────────────────────────────────────────────────────────
+	// recentProjects.xml contains <entry key="$USER_HOME$/path/to/project">.
+	type jbEntry struct {
+		Key string `xml:"key,attr"`
+	}
+	type jbMap struct {
+		Entries []jbEntry `xml:"entry"`
+	}
+	type jbComponent struct {
+		Name string `xml:"name,attr"`
+		Map  jbMap  `xml:"map"`
+	}
+	type jbApplication struct {
+		Components []jbComponent `xml:"component"`
+	}
+
+	jetbrainsConfigDirs := []string{
+		filepath.Join(home, ".config", "JetBrains"),
+		filepath.Join(home, "Library", "Application Support", "JetBrains"),
+	}
+	for _, jbBase := range jetbrainsConfigDirs {
+		productDirs, _ := os.ReadDir(jbBase)
+		for _, pd := range productDirs {
+			if !pd.IsDir() {
+				continue
+			}
+			recent := filepath.Join(jbBase, pd.Name(), "options", "recentProjects.xml")
+			data, err := os.ReadFile(recent)
+			if err != nil {
+				continue
+			}
+			var app jbApplication
+			if err := xml.Unmarshal(data, &app); err != nil {
+				continue
+			}
+			for _, comp := range app.Components {
+				if comp.Name != "RecentProjectsManager" && comp.Name != "RecentDirectoryProjectsManager" {
+					continue
+				}
+				for _, entry := range comp.Map.Entries {
+					path := strings.ReplaceAll(entry.Key, "$USER_HOME$", home)
+					addProject(path)
+				}
+			}
+		}
+	}
+
+	// ── VSCode family ─────────────────────────────────────────────────────────
+	// storage.json has {"openedPathsList": {"workspaces3": ["/path", ...]}}
+	type vscodeStorage struct {
+		OpenedPathsList struct {
+			Workspaces  []string `json:"workspaces3"`
+			Folders     []string `json:"workspaceFolder"`
+		} `json:"openedPathsList"`
+	}
+
+	vscodeApps := []string{"Code", "VSCodium", "Cursor", "Windsurf"}
+	vscodeConfigBases := []string{
+		filepath.Join(home, ".config"),
+		filepath.Join(home, "Library", "Application Support"),
+	}
+	for _, base := range vscodeConfigBases {
+		for _, app := range vscodeApps {
+			storagePath := filepath.Join(base, app, "User", "globalStorage", "storage.json")
+			data, err := os.ReadFile(storagePath)
+			if err != nil {
+				continue
+			}
+			var st vscodeStorage
+			if err := json.Unmarshal(data, &st); err != nil {
+				continue
+			}
+			for _, p := range st.OpenedPathsList.Workspaces {
+				// Entries may be "file:///path" URIs.
+				p = strings.TrimPrefix(p, "file://")
+				addProject(p)
+			}
+			for _, p := range st.OpenedPathsList.Folders {
+				p = strings.TrimPrefix(p, "file://")
+				addProject(p)
+			}
+		}
+	}
+
+	// ── AI IDE config directories ─────────────────────────────────────────────
+	// resolveIDEPaths already knows the canonical config-file locations for
+	// every AI IDE (Windsurf, Cursor, Copilot, Antigravity, Claude, Zed…).
+	// The *parent* of each config file is the IDE's own data directory
+	// (e.g. ~/.codeium/windsurf, ~/.cursor). Projects opened in those IDEs
+	// are often stored directly under the grandparent of that config
+	// (e.g. ~/.codeium, ~/.config/zed), so we add both levels.
+	for _, ide := range resolveIDEPaths(home) {
+		if ide.path == "" {
+			continue
+		}
+		// config file's parent dir (the IDE data dir, e.g. ~/.cursor)
+		addProject(filepath.Dir(ide.path))
+	}
+
+	return parents
+}
+
+// extractWorkspaceRootsFromQdrant queries Qdrant (if reachable) to discover
+// workspace roots that were indexed but whose .ragcode/registry entry may have
+// been lost.
+//
+// Strategy: for each ragcode-* collection, fetch a single point via Scroll and
+// read its file_path payload field. Then walk upward from that file_path until
+// we find a directory that contains .git or .ragcode — that is the workspace root.
+// We return those roots so the caller can delete their .ragcode/ dirs.
+func extractWorkspaceRootsFromQdrant() []string {
+	const qdrantAddr = "http://localhost:6333"
+
+	conn, err := net.DialTimeout("tcp", "127.0.0.1:6333", 2*time.Second)
+	if err != nil {
+		return nil // Qdrant not running — skip silently
+	}
+	conn.Close()
+
+	// List all collections.
+	cmd := exec.Command("curl", "-s", qdrantAddr+"/collections")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+
+	var listResp struct {
+		Result struct {
+			Collections []struct {
+				Name string `json:"name"`
+			} `json:"collections"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(output, &listResp); err != nil {
+		return nil
+	}
+
+	seen := make(map[string]struct{})
+	var roots []string
+
+	for _, col := range listResp.Result.Collections {
+		if !strings.HasPrefix(col.Name, "ragcode-") {
+			continue
+		}
+
+		// Scroll 1 point with payload to get a file_path sample.
+		scrollPayload := `{"limit":1,"with_payload":true,"with_vector":false}`
+		scrollCmd := exec.Command("curl", "-s", "-X", "POST",
+			qdrantAddr+"/collections/"+col.Name+"/points/scroll",
+			"-H", "Content-Type: application/json",
+			"-d", scrollPayload)
+		scrollOut, err := scrollCmd.Output()
+		if err != nil {
+			continue
+		}
+
+		var scrollResp struct {
+			Result struct {
+				Points []struct {
+					Payload map[string]interface{} `json:"payload"`
+				} `json:"points"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(scrollOut, &scrollResp); err != nil {
+			continue
+		}
+		if len(scrollResp.Result.Points) == 0 {
+			continue
+		}
+
+		filePath, _ := scrollResp.Result.Points[0].Payload["file_path"].(string)
+		if filePath == "" {
+			continue
+		}
+
+		// Walk upward from filePath to find workspace root.
+		wsRoot := findWorkspaceRootFromFilePath(filePath)
+		if wsRoot == "" {
+			continue
+		}
+		if _, ok := seen[wsRoot]; ok {
+			continue
+		}
+		seen[wsRoot] = struct{}{}
+		roots = append(roots, wsRoot)
+	}
+
+	return roots
+}
+
+// findWorkspaceRootFromFilePath walks upward from a file path until it finds
+// a directory containing .git or .ragcode — the canonical workspace root markers.
+func findWorkspaceRootFromFilePath(filePath string) string {
+	dir := filepath.Dir(filePath)
+	for {
+		for _, marker := range []string{".git", ".ragcode"} {
+			if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
+				return dir
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break // reached filesystem root
+		}
+		dir = parent
+	}
+	return ""
 }
 
 func cleanQdrantCollections() {

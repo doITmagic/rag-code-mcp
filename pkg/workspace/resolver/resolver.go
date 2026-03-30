@@ -142,6 +142,8 @@ func (r *Resolver) handleWorkspaceRoot(ctx context.Context, root string) (*contr
 	}
 	r.log(ctx, "workspace_root", map[string]any{"root": root, "source": "workspace_root"})
 	candidate := &contract.WorkspaceCandidate{Root: root, Reason: contract.ReasonExplicitWorkspaceRoot, Source: "workspace_root", Confidence: 1.0}
+	
+	r.applyNestedOverride(ctx, candidate)
 	return r.finalize(ctx, candidate)
 }
 
@@ -215,16 +217,10 @@ func (r *Resolver) handleFilePath(ctx context.Context, path string) (*contract.R
 	// vendored projects, monorepo sub-packages) from being treated as separate
 	// workspaces when they live inside a project that is already indexed.
 	// Skip this check when we already resolved via registry_fallback.
-	if r.deps.Registry != nil && result.Source != "registry_fallback" {
-		if parentRoot, found := r.deps.Registry.FindParentWorkspace(result.Root); found {
-			r.log(ctx, "nested_workspace_override", map[string]any{
-				"detected_root": result.Root,
-				"parent_root":   parentRoot,
-				"reason":        "detected root is subdirectory of registered workspace",
-			})
-			result.Root = parentRoot
+	if result.Source != "registry_fallback" {
+		r.applyNestedOverride(ctx, result)
+		if result.Source == "nested_workspace_override" {
 			result.Reason = contract.ReasonFilePath
-			result.Source = "nested_workspace_override"
 			result.Confidence = 0.90 // slightly lower than direct detection
 		}
 	}
@@ -298,12 +294,14 @@ func (r *Resolver) handleRoots(ctx context.Context, req contract.ResolveWorkspac
 	if len(roots) == 1 {
 		candidate := &contract.WorkspaceCandidate{Root: roots[0], Reason: contract.ReasonRootsList, Source: "roots", Confidence: 0.8}
 		r.log(ctx, "roots_single", map[string]any{"root": candidate.Root, "source": "roots"})
+		r.applyNestedOverride(ctx, candidate)
 		return r.finalize(ctx, candidate)
 	}
 
 	if best, ok := selectBestRoot(roots); ok {
 		candidate := &contract.WorkspaceCandidate{Root: best, Reason: contract.ReasonRootsList, Source: "roots", Confidence: 0.75}
 		r.log(ctx, "roots_scored", map[string]any{"root": candidate.Root, "source": "roots", "strategy": "depth"})
+		r.applyNestedOverride(ctx, candidate)
 		return r.finalize(ctx, candidate)
 	}
 
@@ -334,6 +332,20 @@ func (r *Resolver) handleRoots(ctx context.Context, req contract.ResolveWorkspac
 		Reason:               contract.ReasonConfirmationRequired,
 		Candidates:           candidates,
 	}, nil
+}
+
+func (r *Resolver) applyNestedOverride(ctx context.Context, candidate *contract.WorkspaceCandidate) {
+	if r.deps.Registry != nil && candidate.Source != "registry_fallback" {
+		if parentRoot, found := r.deps.Registry.FindParentWorkspace(candidate.Root); found {
+			r.log(ctx, "nested_workspace_override", map[string]any{
+				"original_root": candidate.Root,
+				"parent_root":   parentRoot,
+				"reason":        "candidate root is subdirectory of registered workspace",
+			})
+			candidate.Root = parentRoot
+			candidate.Source = "nested_workspace_override"
+		}
+	}
 }
 
 func selectBestRoot(roots []string) (string, bool) {

@@ -466,7 +466,12 @@ func scanAndCleanRagcodeDirs(home string, registryRoots []string) {
 				return nil
 			}
 			rel, _ := filepath.Rel(root, path)
-			if strings.Count(rel, string(os.PathSeparator)) > maxDepth {
+			
+			depth := 0
+			if rel != "." {
+				depth = strings.Count(rel, string(os.PathSeparator)) + 1
+			}
+			if depth > maxDepth {
 				return filepath.SkipDir
 			}
 			if info.IsDir() {
@@ -617,7 +622,8 @@ func detectIDEProjectParents(home string) []string {
 			continue
 		}
 		// config file's parent dir (the IDE data dir, e.g. ~/.cursor)
-		addProject(filepath.Dir(ide.path))
+		dataDir := filepath.Dir(ide.path)
+		addProject(filepath.Join(dataDir, ".ragcode-ide-sentinel"))
 	}
 
 	return parents
@@ -641,7 +647,7 @@ func extractWorkspaceRootsFromQdrant() []string {
 	conn.Close()
 
 	// List all collections.
-	cmd := exec.Command("curl", "-s", qdrantAddr+"/collections")
+	cmd := exec.Command("curl", "-s", "--max-time", "5", "--connect-timeout", "2", qdrantAddr+"/collections")
 	output, err := cmd.Output()
 	if err != nil {
 		return nil
@@ -668,7 +674,7 @@ func extractWorkspaceRootsFromQdrant() []string {
 
 		// Scroll 1 point with payload to get a file_path sample.
 		scrollPayload := `{"limit":1,"with_payload":true,"with_vector":false}`
-		scrollCmd := exec.Command("curl", "-s", "-X", "POST",
+		scrollCmd := exec.Command("curl", "-s", "--max-time", "5", "--connect-timeout", "2", "-X", "POST",
 			qdrantAddr+"/collections/"+col.Name+"/points/scroll",
 			"-H", "Content-Type: application/json",
 			"-d", scrollPayload)
@@ -738,7 +744,7 @@ func cleanQdrantCollections() {
 	}
 	conn.Close()
 
-	cmd := exec.Command("curl", "-s", "http://localhost:6333/collections")
+	cmd := exec.Command("curl", "-s", "--max-time", "5", "--connect-timeout", "2", "http://localhost:6333/collections")
 	output, err := cmd.Output()
 	if err != nil {
 		warnMsg("Could not list Qdrant collections: " + err.Error())
@@ -760,7 +766,7 @@ func cleanQdrantCollections() {
 	deleted := 0
 	for _, col := range resp.Result.Collections {
 		if strings.HasPrefix(col.Name, "ragcode-") {
-			delCmd := exec.Command("curl", "-s", "-X", "DELETE", "http://localhost:6333/collections/"+col.Name)
+			delCmd := exec.Command("curl", "-s", "--max-time", "5", "--connect-timeout", "2", "-X", "DELETE", "http://localhost:6333/collections/"+col.Name)
 			if err := delCmd.Run(); err != nil {
 				warnMsg("Failed to delete collection " + col.Name + ": " + err.Error())
 			} else {

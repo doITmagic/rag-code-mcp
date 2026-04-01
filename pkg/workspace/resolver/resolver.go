@@ -344,6 +344,8 @@ func (r *Resolver) applyNestedOverride(ctx context.Context, candidate *contract.
 			})
 			candidate.Root = parentRoot
 			candidate.Source = "nested_workspace_override"
+			candidate.Reason = contract.ReasonRegistryFallback
+			candidate.Confidence = 0.85
 		}
 	}
 }

@@ -162,3 +162,37 @@ func TestDetectNonExistentFileDescriptiveError(t *testing.T) {
 		t.Fatalf("expected descriptive error with workspace detection hint, got: %s", err.Message)
 	}
 }
+
+func TestDetectMonorepoGitRootPriority(t *testing.T) {
+	// Level 0 has .git (Tier 1)
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, ".git"), []byte{}, 0o644); err != nil {
+		t.Fatalf("marker: %v", err)
+	}
+
+	// Level 1 has go.mod (Tier 3)
+	subDir1 := filepath.Join(tmp, "project_alpha")
+	if err := os.MkdirAll(subDir1, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(subDir1, "go.mod"), []byte("module project_alpha"), 0o644); err != nil {
+		t.Fatalf("marker: %v", err)
+	}
+
+	// File inside Level 1
+	targetFile := filepath.Join(subDir1, "main.go")
+	if err := os.WriteFile(targetFile, []byte("package main"), 0o644); err != nil {
+		t.Fatalf("file: %v", err)
+	}
+
+	det := New(DefaultOptions())
+	resp, err := det.DetectFromFilePath(context.Background(), targetFile)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Validates the detector skips the Tier 3 directory and climbs to the Tier 1 VCS root.
+	if resp.Root != tmp {
+		t.Fatalf("expected tier 1 root %s, got tier 3 %s", tmp, resp.Root)
+	}
+}

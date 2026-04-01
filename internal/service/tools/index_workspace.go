@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
@@ -27,13 +28,14 @@ func NewIndexWorkspaceTool(eng *engine.Engine) *IndexWorkspaceTool {
 func (t *IndexWorkspaceTool) Name() string { return "rag_index_workspace" }
 func (t *IndexWorkspaceTool) Description() string {
 	return "Indexes or reindexes a workspace for semantic code search. " +
-		"Use this tool to manually trigger indexing if search results are stale or 'workspace not indexed'. " +
-		"Analyzes all supported source files and stores vectors for semantic search. " +
-		"The process runs in the background."
+		"Instead of abstract paths, you MUST explicitly provide the absolute 'workspace_root' directory. " +
+		"The tool first validates the root and returns early. Then, you submit a second call with 'confirm': true " +
+		"to actually lock-in the registry root and start the background indexing."
 }
 
 type IndexWorkspaceInput struct {
-	FilePath           string `json:"file_path,omitempty"`
+	WorkspaceRoot      string `json:"workspace_root,omitempty"`
+	Confirm            bool   `json:"confirm,omitempty"`
 	Recreate           bool   `json:"recreate,omitempty"`
 	IncludeRuntimeInfo bool   `json:"include_runtime_info,omitempty"`
 }
@@ -44,7 +46,8 @@ func (t *IndexWorkspaceTool) Register(server *mcp.Server) {
 		Description: t.Description(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input IndexWorkspaceInput) (*mcp.CallToolResult, any, error) {
 		args := map[string]interface{}{
-			"file_path":            input.FilePath,
+			"workspace_root":       input.WorkspaceRoot,
+			"confirm":              input.Confirm,
 			"recreate":             input.Recreate,
 			"include_runtime_info": input.IncludeRuntimeInfo,
 		}
@@ -69,17 +72,43 @@ func (t *IndexWorkspaceTool) Register(server *mcp.Server) {
 }
 
 func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]interface{}) (string, error) {
-	filePath, _ := params["file_path"].(string)
-
-	// Detect workspace context
-	wctx, err := t.engine.DetectContext(ctx, filePath)
-	if err != nil {
+	workspaceRoot, ok := params["workspace_root"].(string)
+	if !ok || workspaceRoot == "" {
 		response := ToolResponse{
 			Status: "error",
-			Error:  err.Error(),
+			Error:  "workspace_root parameter is strictly required to explicitly pinpoint the directory to index.",
 		}
-		body, _ := response.JSON()
-		return body, nil
+		return response.JSON()
+	}
+
+	confirm, _ := params["confirm"].(bool)
+
+	// Detect workspace context using explicit root validation 
+	wctx, err := t.engine.DetectContext(ctx, workspaceRoot)
+	if err != nil {
+		candidates := t.engine.FindAlternativeCandidates(workspaceRoot)
+		msg := err.Error()
+		if len(candidates) > 0 {
+			msg = fmt.Sprintf("Validation failed: %s.\n\nSuggested local roots (Tiers applied):\n- %s", err.Error(), strings.Join(candidates, "\n- "))
+		}
+		
+		response := ToolResponse{
+			Status: "error",
+			Error:  msg,
+		}
+		return response.JSON()
+	}
+
+	if !confirm {
+		response := ToolResponse{
+			Status:  "confirmation_required",
+			Message: fmt.Sprintf("Workspace detected successfully at '%s'. \nVerify this is the correct top-level folder! \n\nCall the tool again passing \"confirm\": true alongside the 'workspace_root' to begin indexing.", wctx.Root),
+			Context: ContextMetadata{
+				WorkspaceRoot:   wctx.Root,
+				DetectionSource: wctx.DetectionSource,
+			},
+		}
+		return response.JSON()
 	}
 
 	recreate, _ := params["recreate"].(bool)
@@ -89,7 +118,7 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 
 	response := ToolResponse{
 		Status:  "indexing_started",
-		Message: fmt.Sprintf("🚀 Indexing started for workspace '%s'. The process is running in the background. You can use rag_search immediately - results will appear as indexing progresses.", wctx.Root),
+		Message: fmt.Sprintf("🚀 Indexing started for validated workspace '%s'. The nested constraints were processed and cleanup checks triggered.", wctx.Root),
 		Context: ContextMetadata{
 			WorkspaceRoot:   wctx.Root,
 			DetectionSource: wctx.DetectionSource,

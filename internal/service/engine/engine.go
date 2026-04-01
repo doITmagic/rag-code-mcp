@@ -140,6 +140,13 @@ func (e *Engine) Config() *config.Config {
 	return e.config
 }
 
+// FindAlternativeCandidates wraps detector logic to offer alternative root suggestions internally
+func (e *Engine) FindAlternativeCandidates(root string) []string {
+	// Isolate execution using official detection definitions 
+	det := detector.New(detector.DefaultOptions())
+	return det.FindAlternativeCandidates(root)
+}
+
 // WorkspaceContext provides information about a detected workspace.
 type WorkspaceContext struct {
 	Root            string

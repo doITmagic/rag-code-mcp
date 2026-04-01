@@ -729,7 +729,7 @@ Find all authentication logic in this codebase.
 cd ~/projects/my-awesome-app
 
 # 2. Ask AI to index (using the prompt above)
-# AI will call: rag_index_workspace with file_path="/path/to/my-awesome-app/main.go"
+# AI will call: rag_index_workspace with workspace_root="/path/to/my-awesome-app" (and must submit a second confirmation call via confirm: true)
 
 # 3. Wait for confirmation (usually 1-5 minutes)
 # ✓ Indexing started for workspace '/path/to/my-awesome-app'

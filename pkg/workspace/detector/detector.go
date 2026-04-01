@@ -48,13 +48,13 @@ func DefaultOptions() Options {
 			"docker-compose.yml",
 			"mix.exs",
 			"artisan",
-			".ragcode",
 			".agent",
 			".idea",
 			".vscode",
 			".vs",
 			".cursor",
 			".windsurf",
+			".claude",
 			"AGENTS.md",
 			"CLAUDE.md",
 		},
@@ -186,6 +186,20 @@ func (d *Detector) inspectDir(dir string) (*contract.WorkspaceCandidate, *contra
 			markers = append(markers, marker)
 		}
 	}
+
+	if d.opts.MetadataFileName != "" {
+		found := false
+		for _, m := range markers {
+			if m == d.opts.MetadataFileName {
+				found = true
+				break
+			}
+		}
+		if !found && exists(filepath.Join(dir, d.opts.MetadataFileName)) {
+			markers = append(markers, d.opts.MetadataFileName)
+		}
+	}
+
 	if len(markers) == 0 {
 		return nil, nil
 	}

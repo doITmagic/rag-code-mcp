@@ -155,8 +155,8 @@ func TestCleanWorkspaceData_WithV2Registry(t *testing.T) {
 		t.Errorf("proj2/.ragcode should have been removed")
 	}
 
-	// proj3/.ragcode should still exist (not in registry)
-	if _, err := os.Stat(filepath.Join(proj3, ".ragcode")); os.IsNotExist(err) {
-		t.Errorf("proj3/.ragcode should NOT have been removed (not in registry)")
+	// proj3/.ragcode should be gone too (cleaned by fallback scan)
+	if _, err := os.Stat(filepath.Join(proj3, ".ragcode")); !os.IsNotExist(err) {
+		t.Errorf("proj3/.ragcode should have been removed by fallback scan")
 	}
 }

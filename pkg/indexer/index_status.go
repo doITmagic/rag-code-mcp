@@ -55,11 +55,37 @@ func callerChain(skip, depth int) string {
 	return strings.Join(parts, " ← ")
 }
 
+// hasParentRagcode walks up the directory tree to check if a `.ragcode` folder exists
+// up to 10 levels above the starting root.
+func hasParentRagcode(root string) bool {
+	dir := root
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	for i := 0; i < 10; i++ {
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+
+		ragcodePath := filepath.Join(dir, ".ragcode")
+		if stat, err := os.Stat(ragcodePath); err == nil && stat.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
 // SaveIndexStatus writes the IndexStatus to {workspaceRoot}/.ragcode/index_status.json.
 // The write is atomic: data is written to a temp file first, then renamed into place,
 // so concurrent readers always see a complete JSON file.
 func SaveIndexStatus(workspaceRoot string, status *IndexStatus) {
 	if workspaceRoot == "" || status == nil {
+		return
+	}
+	if hasParentRagcode(workspaceRoot) {
+		logger.Instance.Debug("[INDEX_STATUS] 🚫 Blocked creating .ragcode in %s (parent already has .ragcode)", workspaceRoot)
 		return
 	}
 	dir := filepath.Join(workspaceRoot, ".ragcode")

@@ -145,6 +145,7 @@ func (r *Registry) Upsert(root, name, client string) (*Entry, error) {
 		if client != "" {
 			entry.Client = client
 		}
+		r.absorbChildren(root)
 		return entry, r.save()
 	}
 
@@ -164,6 +165,7 @@ func (r *Registry) Upsert(root, name, client string) (*Entry, error) {
 		r.indexName[lower] = append(r.indexName[lower], id)
 	}
 
+	r.absorbChildren(root)
 	return entry, r.save()
 }
 
@@ -221,6 +223,7 @@ func (r *Registry) PromoteCandidate(ctx context.Context, root, client string, ex
 		"candidate_count":     candidate.Count,
 	})
 
+	r.absorbChildren(cleanRoot)
 	return r.save()
 }
 
@@ -279,6 +282,51 @@ func (r *Registry) FindParentWorkspace(path string) (string, bool) {
 		return "", false
 	}
 	return bestRoot, true
+}
+
+// absorbChildren removes any registered entries that are subdirectories of parentRoot.
+// It also cleans up the associated .ragcode folders on disk.
+func (r *Registry) absorbChildren(parentRoot string) {
+	cleanParent := strings.ToLower(filepath.Clean(parentRoot))
+	prefix := strings.TrimRight(cleanParent, string(filepath.Separator)) + string(filepath.Separator)
+
+	var toDelete []string
+	for id, entry := range r.entries {
+		entryRoot := strings.ToLower(filepath.Clean(entry.Root))
+		if entryRoot != cleanParent && strings.HasPrefix(entryRoot, prefix) {
+			toDelete = append(toDelete, id)
+		}
+	}
+
+	for _, id := range toDelete {
+		child := r.entries[id]
+		delete(r.entries, id)
+		delete(r.indexRoot, strings.ToLower(child.Root))
+		if child.Name != "" {
+			lower := strings.ToLower(child.Name)
+			ids := r.indexName[lower]
+			filtered := make([]string, 0, len(ids))
+			for _, existing := range ids {
+				if existing != id {
+					filtered = append(filtered, existing)
+				}
+			}
+			if len(filtered) == 0 {
+				delete(r.indexName, lower)
+			} else {
+				r.indexName[lower] = filtered
+			}
+		}
+
+		// Auto-cleanup: remove .ragcode directory from child
+		ragcodeDir := filepath.Join(child.Root, ".ragcode")
+		_ = os.RemoveAll(ragcodeDir)
+
+		r.audit.Record(context.Background(), "registry.child_absorbed", map[string]any{
+			"child_root":  child.Root,
+			"parent_root": parentRoot,
+		})
+	}
 }
 
 // LookupByName returns entries matching the provided name.

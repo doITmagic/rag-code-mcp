@@ -472,7 +472,10 @@ func scanAndCleanRagcodeDirs(home string, registryRoots []string) {
 				depth = strings.Count(rel, string(os.PathSeparator)) + 1
 			}
 			if depth > maxDepth {
-				return filepath.SkipDir
+				if info != nil && info.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
 			}
 			if info.IsDir() {
 				name := info.Name()
@@ -624,6 +627,12 @@ func detectIDEProjectParents(home string) []string {
 		// config file's parent dir (the IDE data dir, e.g. ~/.cursor)
 		dataDir := filepath.Dir(ide.path)
 		addProject(filepath.Join(dataDir, ".ragcode-ide-sentinel"))
+
+		// also add the grandparent dir (e.g. ~/.codeium, ~/.config/zed)
+		grandparent := filepath.Dir(dataDir)
+		if grandparent != "" && grandparent != dataDir {
+			addProject(filepath.Join(grandparent, ".ragcode-ide-sentinel"))
+		}
 	}
 
 	return parents

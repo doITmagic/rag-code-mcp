@@ -54,6 +54,7 @@ func DefaultOptions() Options {
 			".vs",
 			".cursor",
 			".windsurf",
+			".claude",
 			"AGENTS.md",
 			"CLAUDE.md",
 		},

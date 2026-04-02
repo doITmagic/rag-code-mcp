@@ -1039,12 +1039,12 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 	// This gives us the real on_disk totals for accurate progress reporting,
 	// instead of using len(changedFiles) which only reflects modified files.
 	fileCounts := e.indexer.CountAllFiles(wctx.Root, excludePatterns)
-	logger.Instance.Info("[IDX] ws=%s file counts: %v", wsName, fileCounts)
+	logger.Instance.Info("[IDX] ws=%s file counts: %v (breakdowns: %v)", wsName, fileCounts.Counts, fileCounts.Breakdowns)
 
 	// Sort languages by file count descending so the dominant language is indexed
 	// first and AI search works immediately for the most relevant code.
 	sort.Slice(languages, func(i, j int) bool {
-		return fileCounts[languages[i]] > fileCounts[languages[j]]
+		return fileCounts.Counts[languages[i]] > fileCounts.Counts[languages[j]]
 	})
 	logger.Instance.Info("[IDX] ws=%s indexing order: %v", wsName, languages)
 
@@ -1059,17 +1059,21 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 	if s.Languages == nil {
 		s.Languages = make(map[string]indexer.LangStatus)
 	}
-	// Pre-populate real on_disk counts so languages with 0 changed files still appear.
+	// Pre-populate real on_disk counts and extension breakdowns so languages
+	// with 0 changed files still appear, and consumers see sub-type detail.
 	for _, l := range languages {
 		entry := s.Languages[l]
-		entry.OnDisk = fileCounts[l]
+		entry.OnDisk = fileCounts.Counts[l]
+		if bd, ok := fileCounts.Breakdowns[l]; ok {
+			entry.Breakdown = bd
+		}
 		s.Languages[l] = entry
 	}
 	indexer.SaveIndexStatus(wctx.Root, s)
 
 	var indexErrors []string
 	for _, lang := range languages {
-		diskTotal := fileCounts[lang]
+		diskTotal := fileCounts.Counts[lang]
 		collection := wctx.CollectionName(lang)
 		logger.Instance.Info("[IDX] ws=%s lang=%s ▶ starting (on_disk=%d)", wsName, lang, diskTotal)
 

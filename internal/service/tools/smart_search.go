@@ -243,7 +243,7 @@ func (t *SmartSearchTool) mergeResults(semantic, hybrid *engine.SearchCodeResult
 }
 
 // handleSearchError handles indexing/workspace errors consistently.
-func (t *SmartSearchTool) handleSearchError(err error, workspaceRoot, workspaceID string) (string, error) {
+func (t *SmartSearchTool) handleSearchError(err error, _, _ string) (string, error) {
 	if err == nil {
 		response := ToolResponse{
 			Status:  "no_results",

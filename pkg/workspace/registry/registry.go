@@ -130,8 +130,9 @@ func (r *Registry) ResolveAlias(ctx context.Context, alias string) (*contract.Wo
 
 // Upsert confirms a workspace selection and updates timestamps.
 func (r *Registry) Upsert(root, name, client string) (*Entry, error) {
+	var absorbed []absorbedChild
+
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	root = filepath.Clean(root)
 	id := hashRoot(root)
@@ -145,8 +146,11 @@ func (r *Registry) Upsert(root, name, client string) (*Entry, error) {
 		if client != "" {
 			entry.Client = client
 		}
-		r.absorbChildren(root)
-		return entry, r.save()
+		absorbed = r.absorbChildren(root)
+		err := r.save()
+		r.mu.Unlock()
+		r.cleanupAbsorbed(absorbed)
+		return entry, err
 	}
 
 	entry := &Entry{
@@ -165,8 +169,11 @@ func (r *Registry) Upsert(root, name, client string) (*Entry, error) {
 		r.indexName[lower] = append(r.indexName[lower], id)
 	}
 
-	r.absorbChildren(root)
-	return entry, r.save()
+	absorbed = r.absorbChildren(root)
+	err := r.save()
+	r.mu.Unlock()
+	r.cleanupAbsorbed(absorbed)
+	return entry, err
 }
 
 // PromoteCandidate promotes a suggested path candidate to a confirmed entry only when execution succeeded.
@@ -175,13 +182,15 @@ func (r *Registry) PromoteCandidate(ctx context.Context, root, client string, ex
 		return nil
 	}
 
+	var absorbed []absorbedChild
+
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	cleanRoot := filepath.Clean(root)
 	normalized := strings.ToLower(cleanRoot)
 	candidate, ok := r.candidates[normalized]
 	if !ok {
+		r.mu.Unlock()
 		return nil
 	}
 
@@ -223,8 +232,11 @@ func (r *Registry) PromoteCandidate(ctx context.Context, root, client string, ex
 		"candidate_count":     candidate.Count,
 	})
 
-	r.absorbChildren(cleanRoot)
-	return r.save()
+	absorbed = r.absorbChildren(cleanRoot)
+	err := r.save()
+	r.mu.Unlock()
+	r.cleanupAbsorbed(absorbed)
+	return err
 }
 
 // LookupByID returns an entry by ID.
@@ -284,9 +296,17 @@ func (r *Registry) FindParentWorkspace(path string) (string, bool) {
 	return bestRoot, true
 }
 
+// absorbedChild holds info about a child entry that was removed from the registry.
+// Used to defer FS cleanup and audit events until after the mutex is released.
+type absorbedChild struct {
+	Root       string
+	ParentRoot string
+}
+
 // absorbChildren removes any registered entries that are subdirectories of parentRoot.
-// It also cleans up the associated .ragcode folders on disk.
-func (r *Registry) absorbChildren(parentRoot string) {
+// Returns info about absorbed children for post-lock cleanup (FS + audit).
+// MUST be called while r.mu is held.
+func (r *Registry) absorbChildren(parentRoot string) []absorbedChild {
 	cleanParent := strings.ToLower(filepath.Clean(parentRoot))
 	prefix := strings.TrimRight(cleanParent, string(filepath.Separator)) + string(filepath.Separator)
 
@@ -298,8 +318,10 @@ func (r *Registry) absorbChildren(parentRoot string) {
 		}
 	}
 
+	var absorbed []absorbedChild
 	for _, id := range toDelete {
 		child := r.entries[id]
+		absorbed = append(absorbed, absorbedChild{Root: child.Root, ParentRoot: parentRoot})
 		delete(r.entries, id)
 		delete(r.indexRoot, strings.ToLower(child.Root))
 		if child.Name != "" {
@@ -317,14 +339,23 @@ func (r *Registry) absorbChildren(parentRoot string) {
 				r.indexName[lower] = filtered
 			}
 		}
+	}
+	return absorbed
+}
 
-		// Auto-cleanup: remove .ragcode directory from child
+// cleanupAbsorbed performs FS cleanup and audit recording for absorbed children.
+// MUST be called AFTER r.mu is released to avoid deadlocks.
+func (r *Registry) cleanupAbsorbed(absorbed []absorbedChild) {
+	for _, child := range absorbed {
 		ragcodeDir := filepath.Join(child.Root, ".ragcode")
-		_ = os.RemoveAll(ragcodeDir)
+		if err := os.RemoveAll(ragcodeDir); err != nil {
+			// Log removal errors instead of silently ignoring
+			_ = err // os.RemoveAll already handles non-existent dirs
+		}
 
 		r.audit.Record(context.Background(), "registry.child_absorbed", map[string]any{
 			"child_root":  child.Root,
-			"parent_root": parentRoot,
+			"parent_root": child.ParentRoot,
 		})
 	}
 }

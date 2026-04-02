@@ -32,6 +32,7 @@ type Engine struct {
 	indexer  *indexer.Service
 	search   *search.Service
 	resolver *resolver.Resolver
+	detector *detector.Detector
 	config   *config.Config
 	watchers *watch.Manager
 
@@ -109,6 +110,7 @@ func NewEngine(idx *indexer.Service, srv *search.Service, registryPath string, c
 		indexer:  idx,
 		search:   srv,
 		resolver: res,
+		detector: det,
 		config:   cfg,
 		watchers: watcherMgr,
 		registry: reg,
@@ -140,11 +142,10 @@ func (e *Engine) Config() *config.Config {
 	return e.config
 }
 
-// FindAlternativeCandidates wraps detector logic to offer alternative root suggestions internally
+// FindAlternativeCandidates wraps detector logic to offer alternative root suggestions internally.
+// Uses the engine's configured detector to ensure consistent AllowedRoots/ExcludePatterns.
 func (e *Engine) FindAlternativeCandidates(root string) []string {
-	// Isolate execution using official detection definitions 
-	det := detector.New(detector.DefaultOptions())
-	return det.FindAlternativeCandidates(root)
+	return e.detector.FindAlternativeCandidates(root)
 }
 
 // WorkspaceContext provides information about a detected workspace.
@@ -171,11 +172,20 @@ func (w *WorkspaceContext) CollectionName(lang string) string {
 
 // DetectFromParams resolves workspace context from a tool args map.
 // Reads file_path, workspace_root, or workspace keys (in that priority order).
+// Routes workspace_root through the explicit workspace root path for correct
+// resolver semantics (ReasonExplicitWorkspaceRoot, confidence 1.0).
 func (e *Engine) DetectFromParams(ctx context.Context, params map[string]interface{}) (*WorkspaceContext, error) {
-	for _, key := range []string{"file_path", "workspace_root", "workspace"} {
-		if v, ok := params[key].(string); ok && strings.TrimSpace(v) != "" {
-			return e.DetectContext(ctx, v)
-		}
+	// Check file_path first (highest specificity)
+	if v, ok := params["file_path"].(string); ok && strings.TrimSpace(v) != "" {
+		return e.DetectContext(ctx, v)
+	}
+	// workspace_root should route through the explicit root path
+	if v, ok := params["workspace_root"].(string); ok && strings.TrimSpace(v) != "" {
+		return e.DetectContextAsRoot(ctx, v)
+	}
+	// workspace alias
+	if v, ok := params["workspace"].(string); ok && strings.TrimSpace(v) != "" {
+		return e.DetectContext(ctx, v)
 	}
 	return e.DetectContext(ctx, "")
 }
@@ -303,6 +313,62 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 			wctx:   wctx,
 			expiry: time.Now().Add(detectionCacheTTL),
 		})
+	}
+
+	return wctx, nil
+}
+
+// DetectContextAsRoot resolves workspace context using an explicit workspace root path.
+// Unlike DetectContext (which routes through req.FilePath → marker detection),
+// this method uses req.WorkspaceRoot which the resolver treats as a trusted,
+// pre-validated root with ReasonExplicitWorkspaceRoot and confidence 1.0.
+func (e *Engine) DetectContextAsRoot(ctx context.Context, root string) (*WorkspaceContext, error) {
+	if strings.TrimSpace(root) == "" {
+		return e.DetectContext(ctx, "")
+	}
+
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve workspace root path: %w", err)
+	}
+
+	logger.Instance.Info("[WS-DETECT] ▶ DetectContextAsRoot called: root=%q", abs)
+
+	req := contract.ResolveWorkspaceRequest{
+		WorkspaceRoot: abs,
+	}
+
+	resp, wsErr := e.resolver.Resolve(ctx, req)
+	if wsErr != nil {
+		return nil, fmt.Errorf("workspace root resolution failed: %s", wsErr.Message)
+	}
+
+	wctx := &WorkspaceContext{
+		Root:            resp.ResolvedRoot,
+		ID:              resp.WorkspaceID,
+		Branch:          resp.Branch,
+		WorktreeID:      resp.WorktreeID,
+		MismatchRisk:    resp.MismatchRisk,
+		DetectionSource: "explicit_workspace_root",
+		ReindexRequired: resp.ReindexRequired,
+		HeadSHA:         resp.HeadSHA,
+	}
+
+	if resp.PathResolutionSource != "" && resp.PathResolutionSource != "workspace_root" {
+		wctx.DetectionSource = resp.PathResolutionSource
+	}
+
+	logger.Instance.Info("[DAEMON] [WS-DETECT] ◀ Resolved via root: root=%s, id=%s, branch=%s, source=%s",
+		wctx.Root, wctx.ID, wctx.Branch, wctx.DetectionSource)
+
+	transport.SetResponseHeader(ctx, "X-Resolved-Workspace", wctx.Root)
+
+	// Auto-trigger indexing same as DetectContext
+	if e.config == nil || e.config.Workspace.AutoIndex {
+		if _, triggered := e.connectTriggered.LoadOrStore(wctx.ID, true); !triggered {
+			logger.Instance.Info("[DAEMON] [WS-DETECT] Auto-triggering incremental index for workspace: %s", wctx.Root)
+			e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+		}
 	}
 
 	return wctx, nil

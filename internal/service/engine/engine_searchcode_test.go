@@ -236,13 +236,10 @@ func TestSearchCodeSurfacesErrorWhenAllFail(t *testing.T) {
 	// Only go collection exists, but it always returns an error
 	store := &multiLangStore{
 		testStore: testStore{
-			existing:       map[string]bool{goColl: true},
-			exactSearchErr: nil, // ExactSearch not involved here
+			existing: map[string]bool{goColl: true},
 		},
-		resultsByLang: nil, // SearchCodeOnly will return nil, nil (no error, no results)
 	}
-	// Override SearchCodeOnly to return an error
-	store.testStore.exactSearchErr = nil
+	_ = store // store not used directly; errorStore replaces it below
 
 	// We need a different approach — use errorStore
 	errorStore := &errorSearchCodeOnlyStore{

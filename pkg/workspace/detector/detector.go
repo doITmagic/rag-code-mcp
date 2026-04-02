@@ -30,7 +30,7 @@ func DefaultOptions() Options {
 	return Options{
 		Tier1Markers: []string{".git", ".svn", ".hg"},
 		Tier2Markers: []string{
-			".ragcode", "root", "AGENTS.md", "CLAUDE.md",
+			"AGENTS.md", "CLAUDE.md",
 			".agent", ".cursor", ".windsurf", ".claude",
 			".idea", ".vscode", ".vs",
 		},

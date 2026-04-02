@@ -78,7 +78,7 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 		if d.IsDir() {
 			name := d.Name()
 			// Basic exclusion
-			if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" {
+			if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" || name == "tmp" {
 				return filepath.SkipDir
 			}
 			// User exclusion
@@ -612,19 +612,29 @@ func (s *Service) symbolToMap(sym parser.Symbol) map[string]interface{} {
 	return res
 }
 
+// FileCountResult holds the results of a file count scan:
+// per-language totals and per-extension breakdowns within each language.
+type FileCountResult struct {
+	Counts     map[string]int            // langName → total count
+	Breakdowns map[string]map[string]int // langName → (extension → count)
+}
+
 // CountAllFiles counts files per language in root using a single WalkDir pass,
 // applying the same directory exclusion rules as IndexWorkspace.
-// It returns a map[langName]count that can be used to pre-populate progress
-// totals before indexing begins, avoiding O(languages × files) traversals.
-func (s *Service) CountAllFiles(root string, excludePatterns []string) map[string]int {
-	counts := make(map[string]int)
+// It returns a FileCountResult with per-language totals and per-extension
+// breakdowns, used to pre-populate progress totals before indexing begins.
+func (s *Service) CountAllFiles(root string, excludePatterns []string) FileCountResult {
+	result := FileCountResult{
+		Counts:     make(map[string]int),
+		Breakdowns: make(map[string]map[string]int),
+	}
 	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
 		if d.IsDir() {
 			name := d.Name()
-			if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" {
+			if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" || name == "tmp" {
 				return filepath.SkipDir
 			}
 			for _, p := range excludePatterns {
@@ -638,8 +648,17 @@ func (s *Service) CountAllFiles(root string, excludePatterns []string) map[strin
 		if a == nil {
 			return nil
 		}
-		counts[a.Name()]++
+		lang := a.Name()
+		result.Counts[lang]++
+
+		// Track per-extension breakdown
+		ext := strings.ToLower(filepath.Ext(path))
+		if result.Breakdowns[lang] == nil {
+			result.Breakdowns[lang] = make(map[string]int)
+		}
+		result.Breakdowns[lang][ext]++
+
 		return nil
 	})
-	return counts
+	return result
 }

@@ -27,9 +27,10 @@ type IndexStatus struct {
 
 // LangStatus holds indexing stats for a single language.
 type LangStatus struct {
-	OnDisk    int `json:"on_disk"`   // total files on disk for this language
-	Changed   int `json:"-"`         // internal: files that need processing (hidden from AI consumers)
-	Processed int `json:"processed"` // files processed so far
+	OnDisk    int            `json:"on_disk"`              // total files on disk for this language
+	Changed   int            `json:"-"`                    // internal: files that need processing (hidden from AI consumers)
+	Processed int            `json:"processed"`            // files processed so far
+	Breakdown map[string]int `json:"breakdown,omitempty"`  // extension → count (e.g. ".ts": 37, ".js": 2)
 }
 
 // callerChain returns a compact caller stack (skipping skip frames) for debugging.

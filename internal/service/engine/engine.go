@@ -181,7 +181,7 @@ func (e *Engine) DetectFromParams(ctx context.Context, params map[string]interfa
 	}
 	// workspace_root should route through the explicit root path
 	if v, ok := params["workspace_root"].(string); ok && strings.TrimSpace(v) != "" {
-		return e.DetectContextAsRoot(ctx, v)
+		return e.DetectContextAsRoot(ctx, v, true)
 	}
 	// workspace alias
 	if v, ok := params["workspace"].(string); ok && strings.TrimSpace(v) != "" {
@@ -322,7 +322,11 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 // Unlike DetectContext (which routes through req.FilePath → marker detection),
 // this method uses req.WorkspaceRoot which the resolver treats as a trusted,
 // pre-validated root with ReasonExplicitWorkspaceRoot and confidence 1.0.
-func (e *Engine) DetectContextAsRoot(ctx context.Context, root string) (*WorkspaceContext, error) {
+//
+// triggerAutoIndex controls whether background indexing is auto-triggered:
+//   - true  → normal connect behavior (sets connectTriggered, starts indexing)
+//   - false → pure validation (resolve only, no indexing side effects)
+func (e *Engine) DetectContextAsRoot(ctx context.Context, root string, triggerAutoIndex bool) (*WorkspaceContext, error) {
 	if strings.TrimSpace(root) == "" {
 		return e.DetectContext(ctx, "")
 	}
@@ -332,7 +336,7 @@ func (e *Engine) DetectContextAsRoot(ctx context.Context, root string) (*Workspa
 		return nil, fmt.Errorf("failed to resolve workspace root path: %w", err)
 	}
 
-	logger.Instance.Info("[WS-DETECT] ▶ DetectContextAsRoot called: root=%q", abs)
+	logger.Instance.Info("[WS-DETECT] ▶ DetectContextAsRoot called: root=%q triggerAutoIndex=%v", abs, triggerAutoIndex)
 
 	req := contract.ResolveWorkspaceRequest{
 		WorkspaceRoot: abs,
@@ -363,11 +367,12 @@ func (e *Engine) DetectContextAsRoot(ctx context.Context, root string) (*Workspa
 
 	transport.SetResponseHeader(ctx, "X-Resolved-Workspace", wctx.Root)
 
-	// Auto-trigger indexing same as DetectContext
-	if e.config == nil || e.config.Workspace.AutoIndex {
-		if _, triggered := e.connectTriggered.LoadOrStore(wctx.ID, true); !triggered {
-			logger.Instance.Info("[DAEMON] [WS-DETECT] Auto-triggering incremental index for workspace: %s", wctx.Root)
-			e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+	if triggerAutoIndex {
+		if e.config == nil || e.config.Workspace.AutoIndex {
+			if _, triggered := e.connectTriggered.LoadOrStore(wctx.ID, true); !triggered {
+				logger.Instance.Info("[DAEMON] [WS-DETECT] Auto-triggering incremental index for workspace: %s", wctx.Root)
+				e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+			}
 		}
 	}
 

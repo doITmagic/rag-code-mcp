@@ -192,7 +192,10 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 		return response.JSON()
 	}
 
-	wctx, err := t.engine.DetectContextAsRoot(ctx, workspaceRoot)
+	confirm, _ := params["confirm"].(bool)
+
+	// Validation step must not start background indexing as a side effect.
+	wctx, err := t.engine.DetectContextAsRoot(ctx, workspaceRoot, confirm)
 	if err != nil {
 		candidates := t.engine.FindAlternativeCandidates(workspaceRoot)
 		msg := err.Error()
@@ -206,7 +209,6 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 		return response.JSON()
 	}
 
-	confirm, _ := params["confirm"].(bool)
 	if !confirm {
 		return t.handleValidationStep(wctx)
 	}

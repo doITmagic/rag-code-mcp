@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/doITmagic/rag-code-mcp/pkg/workspace/contract"
 )
 
@@ -147,9 +148,10 @@ func (r *Registry) Upsert(root, name, client string) (*Entry, error) {
 			entry.Client = client
 		}
 		absorbed = r.absorbChildren(root)
+		audit := r.audit // capture under lock
 		err := r.save()
 		r.mu.Unlock()
-		r.cleanupAbsorbed(absorbed)
+		r.cleanupAbsorbed(absorbed, audit)
 		return entry, err
 	}
 
@@ -170,9 +172,10 @@ func (r *Registry) Upsert(root, name, client string) (*Entry, error) {
 	}
 
 	absorbed = r.absorbChildren(root)
+	audit := r.audit // capture under lock
 	err := r.save()
 	r.mu.Unlock()
-	r.cleanupAbsorbed(absorbed)
+	r.cleanupAbsorbed(absorbed, audit)
 	return entry, err
 }
 
@@ -233,9 +236,10 @@ func (r *Registry) PromoteCandidate(ctx context.Context, root, client string, ex
 	})
 
 	absorbed = r.absorbChildren(cleanRoot)
+	audit := r.audit // capture under lock
 	err := r.save()
 	r.mu.Unlock()
-	r.cleanupAbsorbed(absorbed)
+	r.cleanupAbsorbed(absorbed, audit)
 	return err
 }
 
@@ -345,15 +349,19 @@ func (r *Registry) absorbChildren(parentRoot string) []absorbedChild {
 
 // cleanupAbsorbed performs FS cleanup and audit recording for absorbed children.
 // MUST be called AFTER r.mu is released to avoid deadlocks.
-func (r *Registry) cleanupAbsorbed(absorbed []absorbedChild) {
+// audit must be captured under r.mu by the caller to avoid a data race with SetAuditSink.
+func (r *Registry) cleanupAbsorbed(absorbed []absorbedChild, audit AuditSink) {
 	for _, child := range absorbed {
 		ragcodeDir := filepath.Join(child.Root, ".ragcode")
 		if err := os.RemoveAll(ragcodeDir); err != nil {
-			// Log removal errors instead of silently ignoring
-			_ = err // os.RemoveAll already handles non-existent dirs
+			logger.Instance.Warn("[REGISTRY] Failed to remove .ragcode dir for absorbed child %s: %v", child.Root, err)
+			audit.Record(context.Background(), "registry.child_cleanup_failed", map[string]any{
+				"child_root": child.Root,
+				"error":      err.Error(),
+			})
 		}
 
-		r.audit.Record(context.Background(), "registry.child_absorbed", map[string]any{
+		audit.Record(context.Background(), "registry.child_absorbed", map[string]any{
 			"child_root":  child.Root,
 			"parent_root": child.ParentRoot,
 		})

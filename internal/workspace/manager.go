@@ -634,13 +634,43 @@ func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string
 	}
 
 	// Check for deleted files (both code and docs)
-	// We scan the state and check if files still exist in current scan
-	// But scan only has current files.
-	// Better: iterate state.Files and check if they exist on disk.
-	state.mu.RLock()
-	for path := range state.Files {
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			// It's deleted. Determine if it was code or doc based on extension
+	// Use directory-aware cleanup: detect the highest deleted directory and
+	// bulk-remove all vectors under it rather than deleting one by one.
+	staleFiles := CollectStaleFiles(state)
+
+	if len(staleFiles) > 0 {
+		dirPrefixes, individualStale := GroupByDeletedRoot(staleFiles, info.Root)
+
+		// --- Bulk delete for entire deleted directories ---
+		for prefix, files := range dirPrefixes {
+			log.Printf("🔍 Detected deleted directory: %s (%d tracked files)", prefix, len(files))
+
+			deleted, delErr := collectionClient.DeleteByPrefix(ctx, "file", prefix)
+			if delErr != nil {
+				log.Printf("⚠️  Prefix delete failed for %s: %v — falling back to per-file delete", prefix, delErr)
+				// Fallback: delete individually
+				for _, path := range files {
+					if err := ltm.DeleteByMetadata(ctx, "file", path); err != nil {
+						log.Printf("⚠️  Failed to delete chunks for %s: %v", path, err)
+					}
+				}
+			} else if deleted > 0 {
+				log.Printf("🧹 Bulk-deleted %d vectors under %s", deleted, prefix)
+			}
+
+			// Also remove any other state entries that match this prefix
+			// (files we haven't seen in staleFiles because they weren't in the iteration)
+			state.mu.Lock()
+			for path := range state.Files {
+				if strings.HasPrefix(path, prefix) {
+					delete(state.Files, path)
+				}
+			}
+			state.mu.Unlock()
+		}
+
+		// --- Individual file deletions (parent dir still exists) ---
+		for _, path := range individualStale {
 			ext := strings.ToLower(filepath.Ext(path))
 			if ext == ".md" {
 				docsToDelete = append(docsToDelete, path)
@@ -649,7 +679,6 @@ func (m *Manager) IndexLanguage(ctx context.Context, info *Info, language string
 			}
 		}
 	}
-	state.mu.RUnlock()
 
 	// Process deletions (Code)
 	if len(filesToDelete) > 0 {

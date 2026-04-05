@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/qdrant/go-client/qdrant"
 )
@@ -513,6 +514,53 @@ func (c *QdrantClient) DeleteByFilter(ctx context.Context, key, value string) er
 	}
 
 	return nil
+}
+
+// DeleteByPrefix deletes all vectors where the payload field `key` starts with `prefix`.
+// Uses Scroll to find matching points (client-side prefix filter) then batch deletes them.
+// Returns the number of deleted points.
+func (c *QdrantClient) DeleteByPrefix(ctx context.Context, key, prefix string) (int, error) {
+	// Single-pass scroll: request all points with only the target payload field.
+	// Workspace collections typically have <10k points, so a single pass is fine.
+	// If pagination is needed in the future, the Scroll Offset field can be used.
+	results, err := c.client.Scroll(ctx, &qdrant.ScrollPoints{
+		CollectionName: c.config.Collection,
+		Limit:          qdrant.PtrOf(uint32(50000)),
+		WithPayload:    qdrant.NewWithPayloadInclude(key),
+	})
+	if err != nil {
+		return 0, fmt.Errorf("scroll for prefix %q failed: %w", prefix, err)
+	}
+
+	var allMatchingIDs []*qdrant.PointId
+	for _, point := range results {
+		if val, ok := point.Payload[key]; ok {
+			if strings.HasPrefix(val.GetStringValue(), prefix) {
+				allMatchingIDs = append(allMatchingIDs, point.Id)
+			}
+		}
+	}
+
+	if len(allMatchingIDs) == 0 {
+		return 0, nil
+	}
+
+	// Batch delete all matching point IDs
+	_, err = c.client.Delete(ctx, &qdrant.DeletePoints{
+		CollectionName: c.config.Collection,
+		Points: &qdrant.PointsSelector{
+			PointsSelectorOneOf: &qdrant.PointsSelector_Points{
+				Points: &qdrant.PointsIdsList{
+					Ids: allMatchingIDs,
+				},
+			},
+		},
+	})
+	if err != nil {
+		return 0, fmt.Errorf("batch delete of %d points by prefix %q failed: %w", len(allMatchingIDs), prefix, err)
+	}
+
+	return len(allMatchingIDs), nil
 }
 
 // Close closes the Qdrant client connection

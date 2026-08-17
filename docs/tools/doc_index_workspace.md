@@ -8,7 +8,7 @@
 
 This tool doesn't query the search API. Instead, it triggers the internal **Indexer Service Pipeline**.
 
-1. **Resolution phase**: Resolves the exact boundaries of the Git repository based on `file_path`.
+1. **Resolution phase**: Validates the strictly provided `workspace_root` parameter, checks boundaries & dependencies, and enforces an AI confirmation sequence via the `confirm: true` parameter rule before proceeding.
 2. **Asynchronous Hand-off**: Executes `engine.StartIndexingAsync(wctx.Root, wctx.ID, nil, recreate)`.
 
 ## Features

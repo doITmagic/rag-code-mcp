@@ -60,7 +60,7 @@
     },
     {
       "name": "rag_index_workspace",
-      "description": "Index or reindex a workspace for semantic code search. Analyzes all supported source files and stores vectors. Runs in the background."
+      "description": "Indexes or reindexes a workspace for semantic code search. Instead of abstract paths, you MUST explicitly provide the absolute 'workspace_root' directory. The tool first validates the root and returns early. Then, you submit a second call with 'confirm': true to actually lock-in the registry root and start the background indexing."
     },
     {
       "name": "rag_list_skills",

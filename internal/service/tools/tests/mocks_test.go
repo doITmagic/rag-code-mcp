@@ -82,6 +82,10 @@ func (m *mockVectorStore) DeleteByFilter(ctx context.Context, collection string,
 	return nil
 }
 
+func (m *mockVectorStore) DeleteByPrefix(ctx context.Context, collection string, key string, prefix string) (int, error) {
+	return 0, nil
+}
+
 func (m *mockVectorStore) DeleteCollection(ctx context.Context, name string) error {
 	return nil
 }

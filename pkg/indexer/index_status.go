@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
 )
@@ -26,9 +27,10 @@ type IndexStatus struct {
 
 // LangStatus holds indexing stats for a single language.
 type LangStatus struct {
-	OnDisk    int `json:"on_disk"`   // total files on disk for this language
-	Changed   int `json:"-"`         // internal: files that need processing (hidden from AI consumers)
-	Processed int `json:"processed"` // files processed so far
+	OnDisk    int            `json:"on_disk"`             // total files on disk for this language
+	Changed   int            `json:"-"`                   // internal: files that need processing (hidden from AI consumers)
+	Processed int            `json:"processed"`           // files processed so far
+	Breakdown map[string]int `json:"breakdown,omitempty"` // extension → count (e.g. ".ts": 37, ".js": 2)
 }
 
 // callerChain returns a compact caller stack (skipping skip frames) for debugging.
@@ -55,6 +57,56 @@ func callerChain(skip, depth int) string {
 	return strings.Join(parts, " ← ")
 }
 
+// hasParentRagcode walks up the directory tree to check if a `.ragcode` folder exists
+// up to 10 levels above the starting root.
+func hasParentRagcode(root string) bool {
+	dir := root
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	for i := 0; i < 10; i++ {
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+
+		ragcodePath := filepath.Join(dir, ".ragcode")
+		if stat, err := os.Stat(ragcodePath); err == nil && stat.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
+// parentRagcodeCache caches hasParentRagcode results per workspace root.
+// This avoids up to 10 os.Stat calls on every SaveIndexStatus invocation
+// during indexing, where SaveIndexStatus is called very frequently.
+var parentRagcodeCache sync.Map // map[string]bool
+
+// ClearParentRagcodeCache should be called when workspace topology changes
+// (e.g., after absorbing children or re-registering workspaces).
+func ClearParentRagcodeCache() {
+	parentRagcodeCache.Range(func(key, _ any) bool {
+		parentRagcodeCache.Delete(key)
+		return true
+	})
+}
+
+// cachedHasParentRagcode returns hasParentRagcode result, using a per-root cache.
+func cachedHasParentRagcode(root string) bool {
+	abs := root
+	if a, err := filepath.Abs(root); err == nil {
+		abs = a
+	}
+	if cached, ok := parentRagcodeCache.Load(abs); ok {
+		return cached.(bool)
+	}
+	result := hasParentRagcode(root)
+	parentRagcodeCache.Store(abs, result)
+	return result
+}
+
 // SaveIndexStatus writes the IndexStatus to {workspaceRoot}/.ragcode/index_status.json.
 // The write is atomic: data is written to a temp file first, then renamed into place,
 // so concurrent readers always see a complete JSON file.
@@ -66,6 +118,12 @@ func SaveIndexStatus(workspaceRoot string, status *IndexStatus) {
 	dirExisted := true
 	if _, statErr := os.Stat(dir); os.IsNotExist(statErr) {
 		dirExisted = false
+		// Only check parent .ragcode when we're about to create a NEW .ragcode dir.
+		// When the dir already exists, the check is unnecessary (it was validated at creation time).
+		if cachedHasParentRagcode(workspaceRoot) {
+			logger.Instance.Debug("[INDEX_STATUS] 🚫 Blocked creating .ragcode in %s (parent already has .ragcode)", workspaceRoot)
+			return
+		}
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		logger.Instance.Warn("index_status: cannot create .ragcode dir: %v", err)

@@ -69,7 +69,13 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 		state = NewState()
 	}
 
-	// 1. Scan for changes
+	// 1. Proactive stale vector cleanup for deleted files and directories
+	var staleCleaned bool
+	if !opts.Recreate {
+		staleCleaned = s.cleanupStaleFiles(ctx, root, collection, state, opts.Language)
+	}
+
+	// 2. Scan for changes
 	var changedFiles []string
 	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -78,7 +84,7 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 		if d.IsDir() {
 			name := d.Name()
 			// Basic exclusion
-			if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" {
+			if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" || name == "tmp" {
 				return filepath.SkipDir
 			}
 			// User exclusion
@@ -105,7 +111,7 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 		return fmt.Errorf("failed to scan workspace: %w", err)
 	}
 
-	// 2. Filter files by language and supported parser
+	// 3. Filter files by language and supported parser
 	var filteredFiles []string
 	for _, p := range changedFiles {
 		a := parser.GetByFile(p)
@@ -120,11 +126,16 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 	changedFiles = filteredFiles
 
 	if len(changedFiles) == 0 {
+		if staleCleaned {
+			if saveErr := state.Save(statePath); saveErr != nil {
+				logger.Instance.Warn("Failed to save state after stale cleanup in %s: %v", root, saveErr)
+			}
+		}
 		logger.Instance.Debug("No changes detected in %s (Language: %s)", root, opts.Language)
 		return nil
 	}
 
-	// 3. Ensure collection exists ONLY if we have files to index
+	// 4. Ensure collection exists ONLY if we have files to index
 	if opts.Recreate {
 		logger.Instance.Info("Dropping collection %s for recreation", collection)
 		if err := s.deleteCollectionForRecreate(ctx, collection); err != nil {
@@ -612,19 +623,29 @@ func (s *Service) symbolToMap(sym parser.Symbol) map[string]interface{} {
 	return res
 }
 
+// FileCountResult holds the results of a file count scan:
+// per-language totals and per-extension breakdowns within each language.
+type FileCountResult struct {
+	Counts     map[string]int            // langName → total count
+	Breakdowns map[string]map[string]int // langName → (extension → count)
+}
+
 // CountAllFiles counts files per language in root using a single WalkDir pass,
 // applying the same directory exclusion rules as IndexWorkspace.
-// It returns a map[langName]count that can be used to pre-populate progress
-// totals before indexing begins, avoiding O(languages × files) traversals.
-func (s *Service) CountAllFiles(root string, excludePatterns []string) map[string]int {
-	counts := make(map[string]int)
+// It returns a FileCountResult with per-language totals and per-extension
+// breakdowns, used to pre-populate progress totals before indexing begins.
+func (s *Service) CountAllFiles(root string, excludePatterns []string) FileCountResult {
+	result := FileCountResult{
+		Counts:     make(map[string]int),
+		Breakdowns: make(map[string]map[string]int),
+	}
 	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
 		if d.IsDir() {
 			name := d.Name()
-			if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" {
+			if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" || name == "tmp" {
 				return filepath.SkipDir
 			}
 			for _, p := range excludePatterns {
@@ -638,8 +659,73 @@ func (s *Service) CountAllFiles(root string, excludePatterns []string) map[strin
 		if a == nil {
 			return nil
 		}
-		counts[a.Name()]++
+		lang := a.Name()
+		result.Counts[lang]++
+
+		// Track per-extension breakdown
+		ext := strings.ToLower(filepath.Ext(path))
+		if result.Breakdowns[lang] == nil {
+			result.Breakdowns[lang] = make(map[string]int)
+		}
+		result.Breakdowns[lang][ext]++
+
 		return nil
 	})
-	return counts
+	return result
+}
+
+// cleanupStaleFiles detects deleted files or directories, cleans up their vectors from Qdrant,
+// and updates the local index state. If targetLanguage is non-empty, only files matching that parser
+// language are removed from state and cleaned from this collection.
+func (s *Service) cleanupStaleFiles(ctx context.Context, root, collection string, state *State, targetLanguage string) bool {
+	staleFiles := CollectStaleFiles(state)
+	if len(staleFiles) == 0 {
+		return false
+	}
+
+	// Filter stale files to only those matching targetLanguage (if specified)
+	if targetLanguage != "" {
+		var matched []string
+		for _, f := range staleFiles {
+			a := parser.GetByFile(f)
+			if a != nil && a.Name() == targetLanguage {
+				matched = append(matched, f)
+			}
+		}
+		staleFiles = matched
+	}
+
+	if len(staleFiles) == 0 {
+		return false
+	}
+
+	dirPrefixes, individualFiles := GroupByDeletedRoot(staleFiles, root)
+
+	// 1. Bulk delete for entire deleted directories
+	for prefix, files := range dirPrefixes {
+		deleted, err := s.store.DeleteByPrefix(ctx, collection, "file_path", prefix)
+		if err != nil {
+			logger.Instance.Warn("[IDX] Prefix delete failed for %s: %v, falling back to per-file delete", prefix, err)
+			for _, path := range files {
+				if delErr := s.store.DeleteByFilter(ctx, collection, "file_path", path); delErr != nil {
+					logger.Instance.Warn("[IDX] Failed to delete points for stale file %s: %v", path, delErr)
+				}
+			}
+		} else if deleted > 0 {
+			logger.Instance.Info("[IDX] 🧹 Bulk-deleted %d vectors under deleted directory: %s", deleted, prefix)
+		}
+		for _, path := range files {
+			state.RemoveFile(path)
+		}
+	}
+
+	// 2. Individual file deletions
+	for _, path := range individualFiles {
+		if err := s.store.DeleteByFilter(ctx, collection, "file_path", path); err != nil {
+			logger.Instance.Warn("[IDX] Failed to delete points for stale file %s: %v", path, err)
+		}
+		state.RemoveFile(path)
+	}
+
+	return true
 }

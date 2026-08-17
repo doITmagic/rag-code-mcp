@@ -646,6 +646,19 @@ func configureIDEs(selected []string, binDir string, transport string, ssePort i
 		log(fmt.Sprintf(`  command = "%s"`, binPath))
 		log(`  args = []`)
 	}
+
+	// OpenClaw / NemoClaw Logging
+	openclawPath := filepath.Join(home, ".openclaw")
+	if _, err := os.Stat(openclawPath); err == nil {
+		log("OpenClaw detected at ~/.openclaw – requires manual config.")
+		log(fmt.Sprintf(`  Run: openclaw mcp set ragcode "%s"`, binPath))
+	}
+
+	nemoclawPath := filepath.Join(home, ".nemoclaw")
+	if _, err := os.Stat(nemoclawPath); err == nil {
+		log("NemoClaw sandbox detected – requires manual policy config.")
+		log("  Please refer to NVIDIA OpenShell documentation to map the MCP tool.")
+	}
 }
 
 type idePath struct {
@@ -659,13 +672,10 @@ func resolveIDEPaths(home string) map[string]idePath {
 			path:        filepath.Join(home, ".codeium", "windsurf", "mcp_config.json"),
 			displayName: "Windsurf",
 		},
-		"cursor": {
-			path:        filepath.Join(home, ".cursor", "mcp.config.json"),
-			displayName: "Cursor",
-		},
+		"cursor": determineCursorPath(home),
 		"copilot": {
-			path:        filepath.Join(home, ".aitk", "mcp.json"),
-			displayName: "GitHub Copilot",
+			path:        filepath.Join(home, ".copilot", "mcp-config.json"),
+			displayName: "GitHub Copilot CLI",
 		},
 		"antigravity": {
 			path:        filepath.Join(home, ".gemini", "antigravity", "mcp_config.json"),
@@ -684,6 +694,14 @@ func resolveIDEPaths(home string) map[string]idePath {
 		"gemini-cli": {
 			path:        filepath.Join(home, ".gemini", "settings.json"),
 			displayName: "Gemini CLI",
+		},
+		"openhands": {
+			path:        filepath.Join(home, ".openhands", "mcp.json"),
+			displayName: "OpenHands",
+		},
+		"continue": {
+			path:        filepath.Join(home, ".continue", "mcpServers", "ragcode.json"),
+			displayName: "Continue.dev",
 		},
 	}
 
@@ -711,31 +729,39 @@ func resolveIDEPaths(home string) map[string]idePath {
 		paths["zed"] = idePath{filepath.Join(home, ".config", "zed", "settings.json"), "Zed Editor"}
 	}
 
-	// VS Code (modern copilot mcp.json)
-	if vsPath, ok := determineVSCodePath(home); ok {
-		paths["vs-code"] = vsPath
+	// VS Code (Copilot & popular extensions like Roo Code, Cline)
+	if vsCodeUserDir, ok := getVSCodeUserDir(home); ok {
+		paths["vs-code"] = idePath{path: filepath.Join(vsCodeUserDir, "mcp.json"), displayName: "VS Code (Copilot)"}
+		paths["roo-code"] = idePath{path: filepath.Join(vsCodeUserDir, "globalStorage", "rooveterinaryinc.roo-cline", "settings", "cline_mcp_settings.json"), displayName: "Roo Code (VS Code)"}
+		paths["cline"] = idePath{path: filepath.Join(vsCodeUserDir, "globalStorage", "saoudrizwan.claude-dev", "settings", "cline_mcp_settings.json"), displayName: "Cline (VS Code)"}
 	}
 
 	return paths
 }
 
-func determineVSCodePath(home string) (idePath, bool) {
-	var userDir string
+func determineCursorPath(home string) idePath {
+	if runtime.GOOS == "windows" {
+		appData := os.Getenv("APPDATA")
+		if appData != "" {
+			return idePath{path: filepath.Join(appData, "Cursor", "mcp.json"), displayName: "Cursor"}
+		}
+	}
+	return idePath{path: filepath.Join(home, ".cursor", "mcp.json"), displayName: "Cursor"}
+}
+
+func getVSCodeUserDir(home string) (string, bool) {
 	switch runtime.GOOS {
 	case "windows":
 		appData := os.Getenv("APPDATA")
 		if appData == "" {
-			return idePath{}, false
+			return "", false
 		}
-		userDir = filepath.Join(appData, "Code", "User")
+		return filepath.Join(appData, "Code", "User"), true
 	case "darwin":
-		userDir = filepath.Join(home, "Library", "Application Support", "Code", "User")
+		return filepath.Join(home, "Library", "Application Support", "Code", "User"), true
 	default:
-		userDir = filepath.Join(home, ".config", "Code", "User")
+		return filepath.Join(home, ".config", "Code", "User"), true
 	}
-
-	newPath := filepath.Join(userDir, "mcp.json") // modern copilot mcp standard
-	return idePath{path: newPath, displayName: "VS Code"}, true
 }
 
 type ideSelection struct {

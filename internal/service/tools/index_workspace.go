@@ -90,79 +90,42 @@ func (t *IndexWorkspaceTool) Register(server *mcp.Server) {
 	})
 }
 
-func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]interface{}) (string, error) {
-	workspaceRoot, ok := params["workspace_root"].(string)
-	if !ok || workspaceRoot == "" {
-		response := ToolResponse{
-			Status: "error",
-			Error:  "workspace_root parameter is strictly required to explicitly pinpoint the directory to index.",
+// cleanupExpiredConfirmations purges expired nonce entries from pendingConfirmations.
+func (t *IndexWorkspaceTool) cleanupExpiredConfirmations() {
+	now := time.Now()
+	t.pendingConfirmations.Range(func(key, value any) bool {
+		if entry, ok := value.(confirmationEntry); ok && now.After(entry.Expiry) {
+			t.pendingConfirmations.Delete(key)
 		}
-		return response.JSON()
+		return true
+	})
+}
+
+func (t *IndexWorkspaceTool) handleValidationStep(wctx *engine.WorkspaceContext) (string, error) {
+	t.cleanupExpiredConfirmations()
+	nonce := generateNonce()
+	t.pendingConfirmations.Store(wctx.Root, confirmationEntry{
+		Nonce:  nonce,
+		Expiry: time.Now().Add(5 * time.Minute),
+	})
+
+	response := ToolResponse{
+		Status:  "confirmation_required",
+		Message: fmt.Sprintf("Workspace detected successfully at '%s'. \nVerify this is the correct top-level folder! \n\nCall the tool again passing \"confirm\": true and \"confirmation_token\": \"%s\" alongside the 'workspace_root' to begin indexing.", wctx.Root, nonce),
+		Context: ContextMetadata{
+			WorkspaceRoot:   wctx.Root,
+			DetectionSource: wctx.DetectionSource,
+		},
+		Data: map[string]interface{}{
+			"confirmation_token": nonce,
+		},
 	}
+	return response.JSON()
+}
 
-	confirm, _ := params["confirm"].(bool)
-
-	// Detect workspace context using explicit workspace root path (routes through
-	// req.WorkspaceRoot for correct resolver semantics: ReasonExplicitWorkspaceRoot)
-	wctx, err := t.engine.DetectContextAsRoot(ctx, workspaceRoot)
-	if err != nil {
-		candidates := t.engine.FindAlternativeCandidates(workspaceRoot)
-		msg := err.Error()
-		if len(candidates) > 0 {
-			msg = fmt.Sprintf("Validation failed: %s.\n\nSuggested local roots (Tiers applied):\n- %s", err.Error(), strings.Join(candidates, "\n- "))
-		}
-		
-		response := ToolResponse{
-			Status: "error",
-			Error:  msg,
-		}
-		return response.JSON()
-	}
-
-	if !confirm {
-		// Generate a confirmation nonce for this workspace root
-		nonce := generateNonce()
-		t.pendingConfirmations.Store(wctx.Root, confirmationEntry{
-			Nonce:  nonce,
-			Expiry: time.Now().Add(5 * time.Minute),
-		})
-
-		response := ToolResponse{
-			Status:  "confirmation_required",
-			Message: fmt.Sprintf("Workspace detected successfully at '%s'. \nVerify this is the correct top-level folder! \n\nCall the tool again passing \"confirm\": true and \"confirmation_token\": \"%s\" alongside the 'workspace_root' to begin indexing.", wctx.Root, nonce),
-			Context: ContextMetadata{
-				WorkspaceRoot:   wctx.Root,
-				DetectionSource: wctx.DetectionSource,
-			},
-			Data: map[string]interface{}{
-				"confirmation_token": nonce,
-			},
-		}
-		return response.JSON()
-	}
-
-	// Confirm flow: validate the confirmation token
-	token, _ := params["confirmation_token"].(string)
-	if entry, ok := t.pendingConfirmations.LoadAndDelete(wctx.Root); ok {
-		ce := entry.(confirmationEntry)
-		if time.Now().After(ce.Expiry) {
-			response := ToolResponse{
-				Status: "error",
-				Error:  "Confirmation token expired. Please run the validation step again (without confirm: true) to get a new token.",
-			}
-			return response.JSON()
-		}
-		if token != ce.Nonce {
-			// Re-store the entry so the user can retry with the correct token
-			t.pendingConfirmations.Store(wctx.Root, ce)
-			response := ToolResponse{
-				Status: "error",
-				Error:  fmt.Sprintf("Invalid confirmation_token. Expected the token returned from the validation step. Please provide 'confirmation_token': '%s'.", ce.Nonce),
-			}
-			return response.JSON()
-		}
-	} else {
-		// No pending validation — user sent confirm:true without prior validation
+func (t *IndexWorkspaceTool) verifyConfirmationToken(wctx *engine.WorkspaceContext, token string) (string, error) {
+	entry, ok := t.pendingConfirmations.LoadAndDelete(wctx.Root)
+	if !ok {
 		response := ToolResponse{
 			Status: "error",
 			Error:  "No pending validation found. Please run the tool first without 'confirm: true' to validate the workspace root and receive a confirmation_token.",
@@ -170,11 +133,27 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 		return response.JSON()
 	}
 
-	recreate, _ := params["recreate"].(bool)
+	ce := entry.(confirmationEntry)
+	if time.Now().After(ce.Expiry) {
+		response := ToolResponse{
+			Status: "error",
+			Error:  "Confirmation token expired. Please run the validation step again (without confirm: true) to get a new token.",
+		}
+		return response.JSON()
+	}
+	if token != ce.Nonce {
+		t.pendingConfirmations.Store(wctx.Root, ce)
+		response := ToolResponse{
+			Status: "error",
+			Error:  fmt.Sprintf("Invalid confirmation_token. Expected the token returned from the validation step. Please provide 'confirmation_token': '%s'.", ce.Nonce),
+		}
+		return response.JSON()
+	}
 
-	// Trigger async indexing
-	t.engine.StartIndexingAsync(wctx.Root, wctx.ID, nil, recreate)
+	return "", nil
+}
 
+func (t *IndexWorkspaceTool) buildSuccessResponse(wctx *engine.WorkspaceContext, includeRuntime bool) (string, error) {
 	response := ToolResponse{
 		Status:  "indexing_started",
 		Message: fmt.Sprintf("🚀 Indexing started for validated workspace '%s'. The nested constraints were processed and cleanup checks triggered.", wctx.Root),
@@ -185,11 +164,7 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 	}
 
 	data := map[string]interface{}{}
-
-	includeRuntimeInfo, _ := params["include_runtime_info"].(bool)
-	if includeRuntimeInfo {
-		// Expose only non-sensitive runtime information to avoid leaking
-		// precise uptime or internal build metadata (commit hash/date).
+	if includeRuntime {
 		data["runtime"] = map[string]interface{}{
 			"go_version": runtime.Version(),
 			"build_info": map[string]string{
@@ -198,15 +173,52 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 		}
 	}
 
-	// Include current indexing status
 	if s := indexer.LoadIndexStatus(wctx.Root); s != nil {
 		data["indexing_progress"] = s
 	}
 
 	response.Data = data
-
-	// Warn if fallback was used
 	response.SetFallbackWarning(wctx.DetectionSource == "registry_fallback")
-
 	return response.JSON()
+}
+
+func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]interface{}) (string, error) {
+	workspaceRoot, ok := params["workspace_root"].(string)
+	if !ok || workspaceRoot == "" {
+		response := ToolResponse{
+			Status: "error",
+			Error:  "workspace_root parameter is strictly required to explicitly pinpoint the directory to index.",
+		}
+		return response.JSON()
+	}
+
+	wctx, err := t.engine.DetectContextAsRoot(ctx, workspaceRoot)
+	if err != nil {
+		candidates := t.engine.FindAlternativeCandidates(workspaceRoot)
+		msg := err.Error()
+		if len(candidates) > 0 {
+			msg = fmt.Sprintf("Validation failed: %s.\n\nSuggested local roots (Tiers applied):\n- %s", err.Error(), strings.Join(candidates, "\n- "))
+		}
+		response := ToolResponse{
+			Status: "error",
+			Error:  msg,
+		}
+		return response.JSON()
+	}
+
+	confirm, _ := params["confirm"].(bool)
+	if !confirm {
+		return t.handleValidationStep(wctx)
+	}
+
+	token, _ := params["confirmation_token"].(string)
+	if errResp, err := t.verifyConfirmationToken(wctx, token); errResp != "" || err != nil {
+		return errResp, err
+	}
+
+	recreate, _ := params["recreate"].(bool)
+	t.engine.StartIndexingAsync(wctx.Root, wctx.ID, nil, recreate)
+
+	includeRuntimeInfo, _ := params["include_runtime_info"].(bool)
+	return t.buildSuccessResponse(wctx, includeRuntimeInfo)
 }

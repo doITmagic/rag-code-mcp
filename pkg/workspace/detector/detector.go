@@ -13,10 +13,10 @@ import (
 
 // Options configures the detector behavior.
 type Options struct {
-	Tier1Markers     []string
-	Tier2Markers     []string
-	Tier3Markers     []string
-	Markers          []string // Consolidated array used internally
+	Tier1Markers []string
+	Tier2Markers []string
+	Tier3Markers []string
+	Markers      []string // Consolidated array used internally
 
 	AllowedRoots     []string
 	ExcludePatterns  []string
@@ -49,19 +49,20 @@ func DefaultOptions() Options {
 
 // Detector performs marker-based root detection with security validation.
 type Detector struct {
-	opts Options
+	opts    Options
+	tierMap map[string]int
 }
 
 // New creates a new detector with the supplied options.
 func New(opts Options) *Detector {
 	defaults := DefaultOptions()
-	
+
 	if len(opts.Tier1Markers) == 0 && len(opts.Tier2Markers) == 0 && len(opts.Tier3Markers) == 0 && len(opts.Markers) == 0 {
 		opts.Tier1Markers = defaults.Tier1Markers
 		opts.Tier2Markers = defaults.Tier2Markers
 		opts.Tier3Markers = defaults.Tier3Markers
 	}
-	
+
 	if len(opts.Markers) == 0 {
 		opts.Markers = append(opts.Markers, opts.Tier1Markers...)
 		opts.Markers = append(opts.Markers, opts.Tier2Markers...)
@@ -74,7 +75,22 @@ func New(opts Options) *Detector {
 	if opts.MetadataFileName == "" {
 		opts.MetadataFileName = defaults.MetadataFileName
 	}
-	return &Detector{opts: opts}
+
+	tierMap := make(map[string]int, len(opts.Tier1Markers)+len(opts.Tier2Markers)+len(opts.Tier3Markers))
+	for _, m := range opts.Tier1Markers {
+		tierMap[m] = 1
+	}
+	for _, m := range opts.Tier2Markers {
+		tierMap[m] = 2
+	}
+	for _, m := range opts.Tier3Markers {
+		tierMap[m] = 3
+	}
+
+	return &Detector{
+		opts:    opts,
+		tierMap: tierMap,
+	}
 }
 
 // DetectFromFilePath implements resolver.Detector.
@@ -141,23 +157,10 @@ func (d *Detector) DetectFromFilePath(ctx context.Context, filePath string) (*co
 
 func (d *Detector) getTier(marker string) int {
 	base := filepath.Base(marker)
-	
-	for _, m := range d.opts.Tier1Markers {
-		if base == m {
-			return 1
-		}
+	if tier, ok := d.tierMap[base]; ok {
+		return tier
 	}
-	for _, m := range d.opts.Tier2Markers {
-		if base == m {
-			return 2
-		}
-	}
-	for _, m := range d.opts.Tier3Markers {
-		if base == m {
-			return 3
-		}
-	}
-	return 3 // Implicit fallback 
+	return 3 // Implicit fallback
 }
 
 func (d *Detector) getCandidateTier(candidate *contract.WorkspaceCandidate) int {
@@ -200,7 +203,7 @@ func (d *Detector) walkUp(start string) (*contract.WorkspaceCandidate, *contract
 				if tier < bestTier {
 					bestTier = tier
 					bestCandidate = candidate
-					
+
 					// Tier 1 is absolute max priority, we can stop early
 					if tier == 1 {
 						break
@@ -234,7 +237,7 @@ func (d *Detector) FindAlternativeCandidates(start string) []string {
 	if candidate != nil {
 		results = append(results, candidate.Root)
 	}
-	// As a fallback safety for subdirectories without stopping, 
+	// As a fallback safety for subdirectories without stopping,
 	// one could inspect subdirectories here up to depth 1, but up-walk is generally accurate.
 	return results
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -84,6 +85,18 @@ func (s *State) RemoveFile(path string) {
 	defer s.mu.Unlock()
 
 	delete(s.Files, path)
+}
+
+// RemovePrefix removes all files matching the given path prefix from the state.
+func (s *State) RemovePrefix(prefix string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for path := range s.Files {
+		if strings.HasPrefix(path, prefix) {
+			delete(s.Files, path)
+		}
+	}
 }
 
 // GetFileState retrieves the state for a single file.

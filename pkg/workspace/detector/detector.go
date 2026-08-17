@@ -57,7 +57,7 @@ type Detector struct {
 func New(opts Options) *Detector {
 	defaults := DefaultOptions()
 
-	if len(opts.Tier1Markers) == 0 && len(opts.Tier2Markers) == 0 && len(opts.Tier3Markers) == 0 && len(opts.Markers) == 0 {
+	if len(opts.Tier1Markers) == 0 && len(opts.Tier2Markers) == 0 && len(opts.Tier3Markers) == 0 {
 		opts.Tier1Markers = defaults.Tier1Markers
 		opts.Tier2Markers = defaults.Tier2Markers
 		opts.Tier3Markers = defaults.Tier3Markers

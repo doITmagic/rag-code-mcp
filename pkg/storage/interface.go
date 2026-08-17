@@ -71,6 +71,10 @@ type VectorStore interface {
 	// DeleteByFilter removes points matching a specific metadata filter.
 	DeleteByFilter(ctx context.Context, collection string, key string, value interface{}) error
 
+	// DeleteByPrefix deletes all points where payload field `key` starts with `prefix`.
+	// Returns the count of deleted points.
+	DeleteByPrefix(ctx context.Context, collection string, key string, prefix string) (int, error)
+
 	// DeleteCollection drops an entire collection and all its data.
 	DeleteCollection(ctx context.Context, name string) error
 }

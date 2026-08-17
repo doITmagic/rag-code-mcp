@@ -402,6 +402,73 @@ func (s *QdrantStore) DeleteByFilter(ctx context.Context, collection string, key
 	return err
 }
 
+// DeleteByPrefix deletes all points where payload field `key` starts with `prefix`.
+func (s *QdrantStore) DeleteByPrefix(ctx context.Context, collection string, key string, prefix string) (int, error) {
+	var allMatchingIDs []*qdrant.PointId
+	var offset *qdrant.PointId
+
+	payloadSelector := &qdrant.WithPayloadSelector{
+		SelectorOptions: &qdrant.WithPayloadSelector_Include{
+			Include: &qdrant.PayloadIncludeSelector{
+				Fields: []string{key},
+			},
+		},
+	}
+
+	for {
+		res, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
+			CollectionName: collection,
+			Limit:          ptr(uint32(10000)),
+			Offset:         offset,
+			WithPayload:    payloadSelector,
+		})
+		if err != nil {
+			return 0, fmt.Errorf("scroll for prefix %q failed: %w", prefix, err)
+		}
+
+		if len(res) == 0 {
+			break
+		}
+
+		for _, p := range res {
+			if p.Payload != nil {
+				if val, ok := p.Payload[key]; ok && val != nil {
+					if strings.HasPrefix(val.GetStringValue(), prefix) {
+						allMatchingIDs = append(allMatchingIDs, p.Id)
+					}
+				}
+			}
+			offset = p.Id
+		}
+
+		if len(res) < 10000 {
+			break
+		}
+	}
+
+	if len(allMatchingIDs) == 0 {
+		return 0, nil
+	}
+
+	wait := true
+	_, err := s.client.Delete(ctx, &qdrant.DeletePoints{
+		CollectionName: collection,
+		Points: &qdrant.PointsSelector{
+			PointsSelectorOneOf: &qdrant.PointsSelector_Points{
+				Points: &qdrant.PointsIdsList{
+					Ids: allMatchingIDs,
+				},
+			},
+		},
+		Wait: &wait,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("batch delete of %d points by prefix %q failed: %w", len(allMatchingIDs), prefix, err)
+	}
+
+	return len(allMatchingIDs), nil
+}
+
 func (s *QdrantStore) searchByChunkType(ctx context.Context, collection string, query SearchQuery, chunkType string) ([]SearchResult, error) {
 	limit := normalizeLimit(query.Limit)
 	withPayload := true

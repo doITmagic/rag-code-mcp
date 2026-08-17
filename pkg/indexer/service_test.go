@@ -37,8 +37,10 @@ func (m *mockEmbedder) GetEmbeddingDimension() uint64 { return 1024 }
 
 type mockStore struct {
 	storage.VectorStore
-	upsertPoints []storage.Point
-	mu           sync.Mutex
+	upsertPoints    []storage.Point
+	deletedPrefixes []string
+	deletedFilters  []string
+	mu              sync.Mutex
 }
 
 func (m *mockStore) Upsert(ctx context.Context, collection string, points []storage.Point) (*storage.UpdateResult, error) {
@@ -57,11 +59,72 @@ func (m *mockStore) CreateCollection(ctx context.Context, collection string, dim
 }
 
 func (m *mockStore) DeleteByFilter(ctx context.Context, collection string, field string, value interface{}) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deletedFilters = append(m.deletedFilters, fmt.Sprintf("%v", value))
 	return nil
+}
+
+func (m *mockStore) DeleteByPrefix(ctx context.Context, collection string, key string, prefix string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deletedPrefixes = append(m.deletedPrefixes, prefix)
+	return 1, nil
 }
 
 func (m *mockStore) DeleteCollection(ctx context.Context, collection string) error {
 	return nil
+}
+
+func TestCleanupStaleFiles(t *testing.T) {
+	wsRoot := t.TempDir()
+	srcDir := filepath.Join(wsRoot, "src")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	existingFile := filepath.Join(srcDir, "active.go")
+	if err := os.WriteFile(existingFile, []byte("package main"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	state := NewState()
+	info, _ := os.Stat(existingFile)
+	state.UpdateFile(existingFile, info)
+	state.Files[filepath.Join(srcDir, "deleted_file.go")] = FileState{Path: filepath.Join(srcDir, "deleted_file.go")}
+	state.Files[filepath.Join(wsRoot, "tmp", "sub", "orphan.go")] = FileState{Path: filepath.Join(wsRoot, "tmp", "sub", "orphan.go")}
+
+	mockStore := &mockStore{}
+	svc := NewService(&mockEmbedder{}, mockStore)
+
+	cleaned := svc.cleanupStaleFiles(context.Background(), wsRoot, "test_collection", state, "go")
+	if !cleaned {
+		t.Fatal("expected cleanupStaleFiles to return true")
+	}
+
+	mockStore.mu.Lock()
+	prefixes := mockStore.deletedPrefixes
+	filters := mockStore.deletedFilters
+	mockStore.mu.Unlock()
+
+	expectedPrefix := filepath.Join(wsRoot, "tmp") + string(os.PathSeparator)
+	if len(prefixes) != 1 || prefixes[0] != expectedPrefix {
+		t.Errorf("expected deletedPrefixes [%q], got %v", expectedPrefix, prefixes)
+	}
+
+	expectedFilter := filepath.Join(srcDir, "deleted_file.go")
+	if len(filters) != 1 || filters[0] != expectedFilter {
+		t.Errorf("expected deletedFilters [%q], got %v", expectedFilter, filters)
+	}
+
+	state.mu.RLock()
+	remaining := len(state.Files)
+	_, activeExists := state.Files[existingFile]
+	state.mu.RUnlock()
+
+	if remaining != 1 || !activeExists {
+		t.Errorf("expected 1 remaining file in state (active.go), got %d files", remaining)
+	}
 }
 
 type mockStoreDeleteRecreate struct {

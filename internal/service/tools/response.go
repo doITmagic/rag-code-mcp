@@ -32,6 +32,12 @@ type ContextMetadata struct {
 
 // JSON returns the marshaled JSON string of the response.
 func (r ToolResponse) JSON() (string, error) {
+	// Every tool serialises through here, so an inferred workspace is flagged
+	// uniformly instead of only by the two tools that remembered to call
+	// SetFallbackWarning. An existing warning (branch mismatch) is kept.
+	if r.Warning == "" {
+		r.SetFallbackWarning(r.Context.DetectionSource == "registry_fallback")
+	}
 	b, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("marshal response: %w", err)

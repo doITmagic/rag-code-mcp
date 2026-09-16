@@ -38,6 +38,11 @@ func (r ToolResponse) JSON() (string, error) {
 	if r.Warning == "" {
 		r.SetFallbackWarning(r.Context.DetectionSource == "registry_fallback")
 	}
+	// Completed progress is historical noise in normal tool responses. Active
+	// or failed indexing remains visible because it affects result completeness.
+	if status := r.Context.IndexingStatus; status != nil && status.EndedAt != "" && status.Error == "" {
+		r.Context.IndexingStatus = nil
+	}
 	b, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("marshal response: %w", err)

@@ -25,6 +25,19 @@ type IndexStatus struct {
 	Languages map[string]LangStatus `json:"languages,omitempty"`
 }
 
+// MarshalJSON omits languages that have no files in the workspace.
+func (s IndexStatus) MarshalJSON() ([]byte, error) {
+	type plainIndexStatus IndexStatus
+	filtered := make(map[string]LangStatus, len(s.Languages))
+	for language, status := range s.Languages {
+		if status.OnDisk > 0 {
+			filtered[language] = status
+		}
+	}
+	s.Languages = filtered
+	return json.Marshal(plainIndexStatus(s))
+}
+
 // LangStatus holds indexing stats for a single language.
 type LangStatus struct {
 	OnDisk    int            `json:"on_disk"`             // total files on disk for this language

@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
 )
 
 func decode(t *testing.T, s string) ToolResponse {
@@ -65,5 +67,25 @@ func TestJSONAddsFallbackWarning(t *testing.T) {
 	out, _ = ToolResponse{Status: "success", Context: ContextMetadata{DetectionSource: "file_path"}}.JSON()
 	if r := decode(t, out); r.Warning != "" {
 		t.Fatalf("unexpected warning: %q", r.Warning)
+	}
+}
+
+func TestJSONOmitsCompletedIndexingProgress(t *testing.T) {
+	completed := &indexer.IndexStatus{StartedAt: "start", EndedAt: "end"}
+	out, err := ToolResponse{Status: "success", Context: ContextMetadata{IndexingStatus: completed}}.JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response := decode(t, out); response.Context.IndexingStatus != nil {
+		t.Fatalf("completed indexing progress leaked: %+v", response.Context.IndexingStatus)
+	}
+
+	active := &indexer.IndexStatus{StartedAt: "start"}
+	out, err = ToolResponse{Status: "success", Context: ContextMetadata{IndexingStatus: active}}.JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response := decode(t, out); response.Context.IndexingStatus == nil {
+		t.Fatal("active indexing progress was omitted")
 	}
 }

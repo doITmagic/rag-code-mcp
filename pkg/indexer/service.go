@@ -383,6 +383,7 @@ func (s *Service) IndexFile(ctx context.Context, collection, path string, state 
 		logger.Instance.Error("Analyze failed for %s: %v", path, err)
 		return 0, fmt.Errorf("analyze failed: %w", err)
 	}
+	res.Symbols = symbolsForFile(res.Symbols, path)
 
 	// Remove old points for this file if we are updating
 	if err := s.store.DeleteByFilter(ctx, collection, "file_path", path); err != nil {
@@ -402,6 +403,18 @@ func (s *Service) IndexFile(ctx context.Context, collection, path string, state 
 	}
 
 	return len(res.Symbols), nil
+}
+
+func symbolsForFile(symbols []parser.Symbol, path string) []parser.Symbol {
+	target := filepath.Clean(path)
+	filtered := symbols[:0]
+	for _, symbol := range symbols {
+		candidate := filepath.Clean(symbol.FilePath)
+		if candidate == target || runtime.GOOS == "windows" && strings.EqualFold(candidate, target) {
+			filtered = append(filtered, symbol)
+		}
+	}
+	return filtered
 }
 
 // RemoveFile deletes every vector indexed for path and forgets it in state.

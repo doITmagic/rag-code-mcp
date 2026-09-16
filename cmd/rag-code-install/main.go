@@ -816,13 +816,9 @@ func updateMCPConfig(ideKey, displayName, path, binPath, transport string, ssePo
 		return updateZedConfig(displayName, path, binPath, transport, ssePort)
 	}
 
-	configMap := make(map[string]interface{})
-
-	// Read existing
-	if data, err := os.ReadFile(path); err == nil {
-		if err := json.Unmarshal(data, &configMap); err != nil {
-			warn(fmt.Sprintf("Failed to parse existing MCP config %s: %v", path, err))
-		}
+	configMap, ok := readJSONConfig(path)
+	if !ok {
+		return false
 	}
 
 	collectionKey := "mcpServers"
@@ -861,12 +857,9 @@ func updateMCPConfig(ideKey, displayName, path, binPath, transport string, ssePo
 // live under "context_servers" in the main settings.json.
 // SSE mode: Zed supports HTTP MCP servers via the "url" field inside "command".
 func updateZedConfig(displayName, path, binPath, transport string, ssePort int) bool {
-	configMap := make(map[string]interface{})
-
-	if data, err := os.ReadFile(path); err == nil {
-		if err := json.Unmarshal(data, &configMap); err != nil {
-			warn(fmt.Sprintf("Failed to parse existing Zed config %s: %v", path, err))
-		}
+	configMap, ok := readJSONConfig(path)
+	if !ok {
+		return false
 	}
 
 	contextServers := make(map[string]interface{})
@@ -910,6 +903,27 @@ func updateZedConfig(displayName, path, binPath, transport string, ssePort int) 
 		}
 	}
 	return false
+}
+
+// readJSONConfig loads an existing IDE config. A missing file yields an empty
+// map. A file that exists but does not parse is reported and ok is false, so
+// the caller skips it instead of overwriting the user's other settings. A UTF-8
+// BOM (written by many Windows tools) is tolerated.
+func readJSONConfig(path string) (map[string]interface{}, bool) {
+	configMap := make(map[string]interface{})
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return configMap, true
+	}
+	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
+	if len(bytes.TrimSpace(data)) == 0 {
+		return configMap, true
+	}
+	if err := json.Unmarshal(data, &configMap); err != nil {
+		warn(fmt.Sprintf("Skipping %s: existing config is not valid JSON (%v). Add the ragcode server manually.", path, err))
+		return nil, false
+	}
+	return configMap, true
 }
 
 func downloadAndExtractLatest() (string, error) {

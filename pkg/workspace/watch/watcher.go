@@ -268,7 +268,8 @@ func IsInvalidRoot(root string) bool {
 	if clean == "" || clean == "." {
 		return true
 	}
-	if clean == string(os.PathSeparator) {
+	// A volume root is its own parent: "/" on Unix, "C:\" on Windows.
+	if clean == string(os.PathSeparator) || filepath.Dir(clean) == clean {
 		return true
 	}
 	home, err := os.UserHomeDir()

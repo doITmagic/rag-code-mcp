@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
 	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
+	"github.com/doITmagic/rag-code-mcp/pkg/workspace/watch"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -193,6 +195,18 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 	}
 
 	confirm, _ := params["confirm"].(bool)
+
+	// Refuse the home, temp and filesystem roots before anything is resolved:
+	// resolving registers the root, and registering a root absorbs every
+	// workspace beneath it — for the home directory that is all of them.
+	// StartIndexingAsync also refuses these, but by then the damage is done.
+	if abs, err := filepath.Abs(workspaceRoot); err == nil && watch.IsInvalidRoot(abs) {
+		response := ToolResponse{
+			Status: "error",
+			Error:  fmt.Sprintf("Refusing to index '%s': the home, temp and filesystem root directories cannot be workspaces. Pass the project directory instead.", abs),
+		}
+		return response.JSON()
+	}
 
 	// Validation step must not start background indexing as a side effect.
 	wctx, err := t.engine.DetectContextAsRoot(ctx, workspaceRoot, confirm)

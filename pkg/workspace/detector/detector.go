@@ -25,7 +25,7 @@ type Options struct {
 	MetadataFileName string
 }
 
-// DefaultOptions provides sane defaults aligned with TASKS.md requirements.
+// DefaultOptions provides sane defaults for root detection.
 func DefaultOptions() Options {
 	return Options{
 		Tier1Markers: []string{".git", ".svn", ".hg"},

@@ -13,6 +13,7 @@ type JSInfo struct {
 
 // JSFunction represents a JS/TS function (classic or arrow)
 type JSFunction struct {
+	Calls      []string       `json:"calls,omitempty"` // callee names found in the body
 	Name       string         `json:"name"`
 	Params     []string       `json:"params,omitempty"`
 	ReturnType string         `json:"return_type,omitempty"` // TS only
@@ -46,6 +47,8 @@ type JSClass struct {
 
 // JSMethod represents a method inside a JS/TS class
 type JSMethod struct {
+	Code       string   `json:"code,omitempty"`
+	Calls      []string `json:"calls,omitempty"` // callee names found in the body
 	Name       string   `json:"name"`
 	Params     []string `json:"params,omitempty"`
 	ReturnType string   `json:"return_type,omitempty"`

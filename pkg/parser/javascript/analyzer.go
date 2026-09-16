@@ -274,6 +274,9 @@ func (ca *CodeAnalyzer) convertToSymbols(fa fileAnalysis) []pkgParser.Symbol {
 				Type:       pkgParser.RelDependency,
 			})
 		}
+		for _, call := range fn.Calls {
+			sym.Relations = append(sym.Relations, pkgParser.Relation{TargetName: call, Type: pkgParser.RelCalls})
+		}
 
 		symbols = append(symbols, sym)
 	}
@@ -318,11 +321,12 @@ func (ca *CodeAnalyzer) convertToSymbols(fa fileAnalysis) []pkgParser.Symbol {
 		// Class methods as separate symbols
 		for _, method := range cls.Methods {
 			methodSig := fmt.Sprintf("%s.%s(%s)", cls.Name, method.Name, strings.Join(method.Params, ", "))
-			symbols = append(symbols, pkgParser.Symbol{
+			msym := pkgParser.Symbol{
 				Name:      fmt.Sprintf("%s.%s", cls.Name, method.Name),
 				Type:      pkgParser.Method,
 				Signature: methodSig,
 				Docstring: method.Docstring,
+				Content:   method.Code,
 				StartLine: method.StartLine,
 				EndLine:   method.EndLine,
 				FilePath:  cls.FilePath,
@@ -334,7 +338,11 @@ func (ca *CodeAnalyzer) convertToSymbols(fa fileAnalysis) []pkgParser.Symbol {
 					"visibility": method.Visibility,
 					"class":      cls.Name,
 				},
-			})
+			}
+			for _, call := range method.Calls {
+				msym.Relations = append(msym.Relations, pkgParser.Relation{TargetName: call, Type: pkgParser.RelCalls})
+			}
+			symbols = append(symbols, msym)
 		}
 	}
 
@@ -347,6 +355,7 @@ func (ca *CodeAnalyzer) convertToSymbols(fa fileAnalysis) []pkgParser.Symbol {
 
 		symbols = append(symbols, pkgParser.Symbol{
 			Name:      iface.Name,
+			Content:   iface.Code,
 			Type:      pkgParser.Interface,
 			Signature: sig,
 			Docstring: iface.Docstring,
@@ -399,6 +408,14 @@ func (ca *CodeAnalyzer) convertToSymbols(fa fileAnalysis) []pkgParser.Symbol {
 		})
 	}
 
+	// JS has no package clause; like the Python analyzer, use the module
+	// name (file stem) so rag_list_package_exports can address a file.
+	mod := strings.TrimSuffix(filepath.Base(fa.FilePath), filepath.Ext(fa.FilePath))
+	for i := range symbols {
+		if symbols[i].Package == "" {
+			symbols[i].Package = mod
+		}
+	}
 	return symbols
 }
 

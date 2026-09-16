@@ -126,6 +126,8 @@ func (p *TreeSitterParser) extractFunction(node *gotreesitter.Node, source []byt
 		FilePath:  filePath,
 		StartLine: int(node.StartPoint().Row) + 1,
 		EndLine:   int(node.EndPoint().Row) + 1,
+		Code:      node.Text(source),
+		Calls:     collectCalls(node, source, lang),
 	}
 
 	for i := 0; i < node.ChildCount(); i++ {
@@ -150,6 +152,7 @@ func (p *TreeSitterParser) extractClass(node *gotreesitter.Node, source []byte, 
 		FilePath:  filePath,
 		StartLine: int(node.StartPoint().Row) + 1,
 		EndLine:   int(node.EndPoint().Row) + 1,
+		Code:      node.Text(source),
 	}
 
 	for i := 0; i < node.ChildCount(); i++ {
@@ -227,6 +230,8 @@ func (p *TreeSitterParser) extractClassMethods(bodyNode *gotreesitter.Node, sour
 			StartLine:  int(child.StartPoint().Row) + 1,
 			EndLine:    int(child.EndPoint().Row) + 1,
 			Visibility: "public",
+			Code:       child.Text(source),
+			Calls:      collectCalls(child, source, lang),
 		}
 
 		for j := 0; j < child.ChildCount(); j++ {
@@ -464,6 +469,8 @@ func (p *TreeSitterParser) extractArrowFromDeclaration(node *gotreesitter.Node, 
 					FilePath:  filePath,
 					StartLine: int(node.StartPoint().Row) + 1,
 					EndLine:   int(node.EndPoint().Row) + 1,
+					Code:      text,
+					Calls:     collectCalls(child, source, lang),
 				})
 			}
 		}
@@ -531,6 +538,7 @@ func (p *TreeSitterParser) extractInterface(node *gotreesitter.Node, source []by
 		FilePath:  filePath,
 		StartLine: int(node.StartPoint().Row) + 1,
 		EndLine:   int(node.EndPoint().Row) + 1,
+		Code:      node.Text(source),
 	}
 
 	for i := 0; i < node.ChildCount(); i++ {
@@ -667,4 +675,56 @@ func detectLanguage(filePath string) string {
 		return "typescript"
 	}
 	return "javascript"
+}
+
+// collectCalls returns the unqualified names of every call made inside node:
+// `foo()` gives foo, `a.b.c()` gives c, `new Foo()` gives Foo. Nested
+// function bodies are included, like the Go analyzer's call extraction.
+// Duplicates are dropped; order is source order.
+func collectCalls(node *gotreesitter.Node, source []byte, lang *gotreesitter.Language) []string {
+	var calls []string
+	seen := make(map[string]bool)
+	var walk func(n *gotreesitter.Node)
+	walk = func(n *gotreesitter.Node) {
+		if n == nil {
+			return
+		}
+		switch n.Type(lang) {
+		case "call_expression", "new_expression":
+			// call: the callee is the first child; new: skip the `new` keyword.
+			callee := ""
+			for i := 0; i < n.ChildCount(); i++ {
+				if c := n.Child(i); c != nil && c.Type(lang) != "new" {
+					callee = calleeName(c, source, lang)
+					break
+				}
+			}
+			if callee != "" && !seen[callee] {
+				seen[callee] = true
+				calls = append(calls, callee)
+			}
+		}
+		for i := 0; i < n.ChildCount(); i++ {
+			walk(n.Child(i))
+		}
+	}
+	walk(node)
+	return calls
+}
+
+// calleeName reduces a call target to its last identifier.
+func calleeName(n *gotreesitter.Node, source []byte, lang *gotreesitter.Language) string {
+	if n == nil {
+		return ""
+	}
+	switch n.Type(lang) {
+	case "identifier", "property_identifier":
+		return n.Text(source)
+	case "member_expression":
+		// last child is the property (a.b.c → c)
+		if n.ChildCount() > 0 {
+			return calleeName(n.Child(n.ChildCount()-1), source, lang)
+		}
+	}
+	return ""
 }

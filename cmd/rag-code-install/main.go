@@ -868,7 +868,7 @@ func updateZedConfig(displayName, path, binPath, transport string, ssePort int) 
 
 	var ragcodeEntry map[string]interface{}
 	if transport == "sse" {
-		// Zed Streamable HTTP: endpoint /mcp, fără sesiuni
+		// Zed Streamable HTTP: /mcp endpoint, no sessions
 		ragcodeEntry = map[string]interface{}{
 			"command": map[string]interface{}{
 				"url": fmt.Sprintf("http://localhost:%d/mcp", ssePort),
@@ -975,7 +975,7 @@ func buildMCPServerEntry(ideKey, binPath string) map[string]interface{} {
 }
 
 // buildSSEServerEntry builds the Streamable HTTP (stateless) MCP server entry.
-// Agentul trimite POST direct la /mcp — fără sesiuni, fără sessionid.
+// The agent POSTs straight to /mcp — no sessions, no sessionid.
 func buildSSEServerEntry(ssePort int) map[string]interface{} {
 	return map[string]interface{}{
 		"url": fmt.Sprintf("http://localhost:%d/mcp", ssePort),

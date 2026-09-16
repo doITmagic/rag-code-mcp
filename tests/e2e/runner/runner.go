@@ -273,9 +273,9 @@ func (r *Runner) runStep(ctx context.Context, step map[string]any) error {
 		return r.stepLXCPushBinaries(ctx, step)
 	case "lxc.exec":
 		return r.stepLXCExec(ctx, step)
-	case "wait.http", "wait.http_sse": // wait.http_sse păstrat ca alias pentru backward compat
+	case "wait.http", "wait.http_sse": // wait.http_sse kept as an alias for backward compat
 		return r.stepWaitHTTP(ctx, step)
-	case "mcp.connect", "mcp.connect_sse": // mcp.connect_sse păstrat ca alias pentru backward compat
+	case "mcp.connect", "mcp.connect_sse": // mcp.connect_sse kept as an alias for backward compat
 		return r.stepMCPConnect(ctx, step)
 	case "mcp.tool_call":
 		return r.stepMCPToolCall(ctx, step)
@@ -562,7 +562,7 @@ func (r *Runner) stepMCPToolCall(ctx context.Context, step map[string]any) error
 		"name":      name,
 		"arguments": r.expandAny(args).(map[string]any),
 	}
-	// SendJSONRPC este sincron cu transport stateless — răspunsul vine direct.
+	// SendJSONRPC is synchronous on the stateless transport — the response comes back directly.
 	msg, err := r.MCP.SendJSONRPC(id, "tools/call", payload)
 	if err != nil {
 		return err
@@ -754,7 +754,7 @@ func (r *Runner) lxcGetIP(ctx context.Context, container string) (string, error)
 }
 
 // --- MCP client (Streamable HTTP stateless) ---
-// POST /mcp — fără sesiuni, fără sessionid, răspuns direct în body.
+// POST /mcp — no sessions, no sessionid, response straight in the body.
 
 type MCPClient struct {
 	BaseURL    string
@@ -768,7 +768,7 @@ func NewMCPClient(baseURL string) *MCPClient {
 	}
 }
 
-// SendJSONRPC trimite un request JSON-RPC la /mcp și returnează răspunsul sincron.
+// SendJSONRPC sends a JSON-RPC request to /mcp and returns the response synchronously.
 func (c *MCPClient) SendJSONRPC(id, method string, params any) (map[string]any, error) {
 	payload := map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}
 	body, err := json.Marshal(payload)
@@ -793,7 +793,7 @@ func (c *MCPClient) SendJSONRPC(id, method string, params any) (map[string]any, 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		return nil, fmt.Errorf("/mcp status %d: %s", resp.StatusCode, string(respBody))
 	}
-	// Dacă răspunsul e SSE, extragem linia data:
+	// If the response is SSE, extract the data: line.
 	if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
 		respBody = extractSSEData(respBody)
 	}
@@ -804,15 +804,15 @@ func (c *MCPClient) SendJSONRPC(id, method string, params any) (map[string]any, 
 	return msg, nil
 }
 
-// WaitForID trimite request-ul și returnează răspunsul direct (transport stateless = sincron).
+// WaitForID sends the request and returns the response directly (stateless transport = synchronous).
 // Parametrul timeout este folosit ca HTTP client timeout.
 func (c *MCPClient) WaitForID(id string, timeout time.Duration) (map[string]any, error) {
-	// Cu transport stateless, răspunsul vine direct — nu e nevoie de polling.
-	// Această funcție este păstrată pentru compatibilitate cu stepMCPToolCall.
+	// With the stateless transport the response comes back directly — no polling needed.
+	// Kept for compatibility with stepMCPToolCall.
 	return nil, fmt.Errorf("WaitForID: use SendJSONRPC directly for stateless transport (id=%s)", id)
 }
 
-// extractSSEData extrage payload-ul JSON dintr-un răspuns SSE.
+// extractSSEData extracts the JSON payload from an SSE response.
 func extractSSEData(body []byte) []byte {
 	for _, line := range strings.Split(string(body), "\n") {
 		line = strings.TrimSpace(line)

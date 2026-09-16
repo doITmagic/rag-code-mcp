@@ -280,7 +280,10 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 
 	// If the resolver applied a more specific override (e.g. nested_workspace_override),
 	// surface it so the agent can see exactly what happened in the response.
-	if resp.PathResolutionSource != "" && resp.PathResolutionSource != source {
+	// A registry fallback is passed to the resolver as an explicit root, so
+	// its "workspace_root" is not more specific — keep the fallback label,
+	// which is what triggers the fallback warning in tool responses.
+	if resp.PathResolutionSource != "" && resp.PathResolutionSource != source && source != "registry_fallback" {
 		wctx.DetectionSource = resp.PathResolutionSource
 		logger.Instance.Info("[DAEMON] [WS-DETECT] ◀ Resolver override: source changed %s → %s (root: %s)",
 			source, resp.PathResolutionSource, wctx.Root)

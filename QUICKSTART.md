@@ -39,7 +39,13 @@ Expand-Archive ragcode.zip -DestinationPath . -Force
 
 ## 3. Your First Query (Zero Config)
 
-RagCode is now available in your IDE (Windsurf, Cursor, Antigravity, Claude Desktop). 
+RagCode is now configured in detected clients, including Codex, Antigravity, Claude Desktop and Claude Code. Restart the client to reload its MCP configuration. Codex registration uses its CLI (including the copy bundled with the IDE extension).
+
+To repair only these integrations in an existing installation, without reinstalling binaries or containers:
+
+```powershell
+.\install.exe --configure-only --ides codex,claude,antigravity --transport stdio
+```
 
 1. **Open your project folder** in your AI IDE.
 2. **Open the AI Chat** and type your first prompt:

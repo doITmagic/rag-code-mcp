@@ -82,7 +82,11 @@ func (e *Engine) SetSearchService(srv *search.Service) {
 // NewEngine creates a new Engine with all workspace dependencies wired up.
 // registryPath is the path to the persistent registry file (e.g. ~/.ragcode/registry.json).
 func NewEngine(idx *indexer.Service, srv *search.Service, registryPath string, cfg *config.Config) *Engine {
-	det := detector.New(detector.DefaultOptions())
+	detOpts := detector.DefaultOptions()
+	if cfg != nil {
+		detOpts.ExcludePatterns = cfg.Workspace.ExcludePatterns
+	}
+	det := detector.New(detOpts)
 	branchMgr := branchstate.NewManager()
 
 	var reg *registry.Registry
@@ -143,7 +147,7 @@ func (e *Engine) Config() *config.Config {
 }
 
 // FindAlternativeCandidates wraps detector logic to offer alternative root suggestions internally.
-// Uses the engine's own detector so suggestions honour the same options as detection.
+// Uses the engine's configured detector to ensure consistent AllowedRoots/ExcludePatterns.
 func (e *Engine) FindAlternativeCandidates(root string) []string {
 	return e.detector.FindAlternativeCandidates(root)
 }

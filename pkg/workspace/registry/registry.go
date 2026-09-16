@@ -339,7 +339,7 @@ func (r *Registry) absorbChildren(parentRoot string) []absorbedChild {
 		child := r.entries[id]
 		absorbed = append(absorbed, absorbedChild{Root: child.Root, ParentRoot: parentRoot})
 		delete(r.entries, id)
-		delete(r.indexRoot, strings.ToLower(child.Root))
+		delete(r.indexRoot, strings.ToLower(filepath.Clean(child.Root)))
 		if child.Name != "" {
 			lower := strings.ToLower(child.Name)
 			ids := r.indexName[lower]

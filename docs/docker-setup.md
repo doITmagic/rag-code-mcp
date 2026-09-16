@@ -1,54 +1,89 @@
 # 🐳 Docker Setup for RagCode
 
-This guide explains how to run the RagCode infrastructure (Qdrant + Ollama) using Docker, while leveraging your existing local Ollama models.
+RagCode needs two services: **Qdrant** (vector storage) and **Ollama** (embeddings). The installer can run either of them as a Docker container, and does so with plain `docker run` — there is no `docker-compose.yml` to fetch or maintain.
+
+By default Qdrant runs in Docker and Ollama is expected to be installed on the host. Pass `-ollama=docker` to containerise Ollama as well.
 
 ## Why run Ollama in Docker?
 
-- **Isolation**: Keeps your system clean.
-- **Consistency**: Ensures you run the exact version required.
-- **Integration**: Easy to orchestrate with Qdrant via `docker-compose`.
+- **Isolation**: keeps your system clean.
+- **Consistency**: pins the version RagCode was tested against.
+- **No extra setup**: the installer starts and wires up both containers for you.
 
-## 🚀 The "Smart" Setup (Model Mapping)
+## 🚀 Model mapping — no re-downloading
 
-We have configured `docker-compose.yml` to map your local Ollama models (`~/.ollama`) into the container. This means:
-1. You **don't** need to re-download models.
-2. Models downloaded inside Docker appear on your host.
-3. You save massive amounts of disk space.
+When Ollama runs in Docker, the installer mounts your host model directory into the container:
+
+```bash
+-v ~/.ollama:/root/.ollama
+```
+
+So:
+
+1. You **don't** re-download models you already have.
+2. Models pulled inside the container appear on your host.
+3. You save a lot of disk space.
+
+Use `-models-dir /path/to/models` if your models live somewhere other than `~/.ollama`.
 
 ### Prerequisites
 
-- Docker & Docker Compose installed.
-- **For GPU Support (Recommended):** NVIDIA Container Toolkit installed.
-- Existing models in `~/.ollama` (optional, but recommended).
+- Docker installed and running. (Docker Compose is **not** required.)
+- **For GPU support:** NVIDIA Container Toolkit installed.
+- Existing models in `~/.ollama` — optional, but saves a download.
 
 ### Usage
 
-1. **Start the stack:**
+1. **Start the stack** (both services in Docker, with GPU):
+
    ```bash
-   docker-compose up -d
+   ragcode-installer -ollama=docker -qdrant=docker -gpu
    ```
 
+   Drop `-gpu` to run CPU-only, and `-ollama=docker` if you prefer your host's Ollama.
+
+   On a first install the images have to be downloaded — Ollama's is several GB, so expect a wait. Progress is printed as it downloads.
+
 2. **Verify Ollama is running:**
+
    ```bash
    docker logs ragcode-ollama
    ```
 
-3. **Check available models (inside container):**
+3. **Check available models (inside the container):**
+
    ```bash
    docker exec -it ragcode-ollama ollama list
    ```
-   *You should see all your locally downloaded models here!*
+
+   *You should see the models from your host here.*
 
 4. **Pull a new model (if needed):**
+
    ```bash
    docker exec -it ragcode-ollama ollama pull phi3:medium
    ```
 
+### The images
+
+Both are the official upstream images, unmodified:
+
+| Container | Image |
+| --- | --- |
+| `ragcode-qdrant` | `qdrant/qdrant` |
+| `ragcode-ollama` | `ollama/ollama` |
+
+The `ragcode-` prefix is only the container name, chosen so RagCode does not collide with other projects running Qdrant or Ollama on the same machine.
+
 ### ⚠️ Troubleshooting
 
+**Installer seems stuck on "Starting container"**
+- Older versions downloaded the image silently. Upgrade, or watch progress with `docker pull ollama/ollama` in another terminal.
+
 **"Error: could not connect to ollama"**
-- Ensure port `11434` is not being used by a local Ollama instance.
-- Stop your local Ollama before running the container: `systemctl stop ollama` or `pkill ollama`.
+- Ensure port `11434` is not already in use by a local Ollama instance.
+- Stop the host service before running the container: `systemctl stop ollama` or `pkill ollama`.
 
 **GPU not working**
-- If you don't have an NVIDIA GPU or the container toolkit, remove the `deploy` section from `docker-compose.yml` to run in CPU-only mode (slower).
+- Re-run the installer without `-gpu` for CPU-only mode (slower).
+- GPU mode needs the NVIDIA Container Toolkit; check with `docker run --rm --gpus all nvidia/cuda:12.0-base nvidia-smi`.

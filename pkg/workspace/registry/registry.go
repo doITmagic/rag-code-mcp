@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/doITmagic/rag-code-mcp/pkg/workspace/contract"
+	"github.com/doITmagic/rag-code-mcp/pkg/workspace/watch"
 )
 
 const (
@@ -132,6 +134,13 @@ func (r *Registry) ResolveAlias(ctx context.Context, alias string) (*contract.Wo
 // Upsert confirms a workspace selection and updates timestamps.
 func (r *Registry) Upsert(root, name, client string) (*Entry, error) {
 	var absorbed []absorbedChild
+
+	// Registering a root absorbs every entry beneath it and deletes their
+	// .ragcode state; the home, temp and filesystem roots would take all of
+	// them. Callers should have refused earlier — this is the last guard.
+	if watch.IsInvalidRoot(root) {
+		return nil, fmt.Errorf("refusing to register %q as a workspace root", root)
+	}
 
 	r.mu.Lock()
 

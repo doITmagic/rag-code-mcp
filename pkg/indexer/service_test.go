@@ -161,6 +161,20 @@ func TestIndexItemsUsesBoundedEmbeddingBatches(t *testing.T) {
 	}
 }
 
+func TestSymbolsForFileDropsPackageSiblings(t *testing.T) {
+	target := filepath.Join("workspace", "handler.go")
+	symbols := []parser.Symbol{
+		{Name: "Handler", FilePath: target},
+		{Name: "Sibling", FilePath: filepath.Join("workspace", "service.go")},
+		{Name: "Unknown"},
+	}
+
+	got := symbolsForFile(symbols, target)
+	if len(got) != 1 || got[0].Name != "Handler" {
+		t.Fatalf("symbols = %#v, want only Handler", got)
+	}
+}
+
 type mockStoreDeleteRecreate struct {
 	storage.VectorStore
 

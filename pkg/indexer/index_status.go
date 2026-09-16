@@ -59,6 +59,10 @@ func callerChain(skip, depth int) string {
 
 // hasParentRagcode walks up the directory tree to check if a `.ragcode` folder exists
 // up to 10 levels above the starting root.
+//
+// The install directory (~/.ragcode, holding bin/) is not a workspace and is
+// skipped: counting it made every project under the home directory look
+// nested, so .ragcode was never created for them.
 func hasParentRagcode(root string) bool {
 	dir := root
 	if abs, err := filepath.Abs(dir); err == nil {
@@ -73,6 +77,9 @@ func hasParentRagcode(root string) bool {
 
 		ragcodePath := filepath.Join(dir, ".ragcode")
 		if stat, err := os.Stat(ragcodePath); err == nil && stat.IsDir() {
+			if bin, err := os.Stat(filepath.Join(ragcodePath, "bin")); err == nil && bin.IsDir() {
+				continue // install directory
+			}
 			return true
 		}
 	}

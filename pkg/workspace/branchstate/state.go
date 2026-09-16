@@ -158,7 +158,11 @@ func (m *Manager) Annotate(ctx context.Context, root string, resp *contract.Reso
 	}
 
 	risk := "low"
-	if persisted == nil {
+	if state == nil {
+		// No git metadata (not a repo, or no commits yet): there is no branch
+		// to mismatch against. Persisted is nil here forever, so the generic
+		// rule below would flag "high" on every request.
+	} else if persisted == nil {
 		risk = "high"
 	} else if persisted.LastBranch != state.LastBranch {
 		risk = "high"

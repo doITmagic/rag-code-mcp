@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -110,17 +111,15 @@ type mockDetector struct {
 }
 
 func (m *mockDetector) DetectFromFilePath(ctx context.Context, filePath string) (*contract.WorkspaceCandidate, *contract.ResolveWorkspaceError) {
-	if filePath == "/invalid/path/that/does/not/exist.go" {
+	// Compare with OS separators: callers may make "/a/b" absolute on Windows (C:\a\b).
+	slashed := filepath.ToSlash(filePath)
+	if strings.HasSuffix(slashed, "/invalid/path/that/does/not/exist.go") {
 		return nil, &contract.ResolveWorkspaceError{Message: "failed to detect workspace"}
 	}
 
 	root := m.Root
-	if len(filePath) > 0 && filePath[0] == '/' && !strings.Contains(filePath, "/mock/") {
-		importPath := filePath
-		lastSlash := strings.LastIndex(importPath, "/")
-		if lastSlash > 0 {
-			root = importPath[:lastSlash]
-		}
+	if filepath.IsAbs(filePath) && !strings.Contains(slashed, "/mock/") {
+		root = filepath.Dir(filePath)
 	}
 
 	return &contract.WorkspaceCandidate{

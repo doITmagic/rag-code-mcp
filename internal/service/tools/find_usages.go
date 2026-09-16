@@ -174,7 +174,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 		if resultFilePath != "" && !seenFiles[resultFilePath] {
 			seenFiles[resultFilePath] = true
 			clean := filepath.Clean(resultFilePath)
-			if wctx.Root != "" && strings.HasPrefix(clean, filepath.Clean(wctx.Root)+string(filepath.Separator)) {
+			if wctx.Root != "" && isWithinRoot(wctx.Root, clean) {
 				if info, statErr := os.Stat(clean); statErr == nil {
 					baselineBytes += info.Size()
 				}
@@ -260,4 +260,15 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 		},
 	}
 	return resp.JSON()
+}
+
+// isWithinRoot reports whether path lies inside root. filepath.Rel is used
+// instead of a string prefix check because Windows paths are case-insensitive:
+// a root of "c:\proj" and a result path of "C:\proj\a.go" must still match.
+func isWithinRoot(root, path string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), path)
+	if err != nil || filepath.IsAbs(rel) {
+		return false
+	}
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

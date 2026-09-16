@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -255,17 +256,13 @@ func setupEnvironment() {
 		log("Setting up Qdrant in Docker...")
 		// Remove stale container if it exists (e.g. from previous install)
 		_ = exec.Command("docker", "rm", "-f", "ragcode-qdrant").Run()
-		cmd := exec.Command("docker", "run", "-d",
+		if startContainer("Qdrant", "qdrant/qdrant", []string{
 			"--name", "ragcode-qdrant",
 			"--restart", "always",
 			"-p", "6333:6333",
 			"-p", "6334:6334",
 			"-v", "ragcode-qdrant-data:/qdrant/storage",
-			"qdrant/qdrant")
-		if err := cmd.Run(); err != nil {
-			warn("Could not start Qdrant container (might be already running): " + err.Error())
-		} else {
-			success("Qdrant container started")
+		}) {
 			needsDelay = true
 		}
 	}
@@ -273,20 +270,11 @@ func setupEnvironment() {
 	// Ollama Setup
 	if *ollamaMode == "docker" {
 		log("Setting up Ollama in Docker...")
-		args := []string{"run", "-d", "--name", "ragcode-ollama", "--restart", "always", "-p", "11434:11434", "-v", "ollama-data:/root/.ollama"}
+		args := []string{"--name", "ragcode-ollama", "--restart", "always", "-p", "11434:11434", "-v", "ollama-data:/root/.ollama"}
 		if *gpu {
-			argsWithGPU := make([]string, 0, len(args)+2)
-			argsWithGPU = append(argsWithGPU, args[:2]...)
-			argsWithGPU = append(argsWithGPU, "--gpus", "all")
-			argsWithGPU = append(argsWithGPU, args[2:]...)
-			args = argsWithGPU
+			args = append([]string{"--gpus", "all"}, args...)
 		}
-		args = append(args, "ollama/ollama")
-		cmd := exec.Command("docker", args...)
-		if err := cmd.Run(); err != nil {
-			warn("Could not start Ollama container (might be already running): " + err.Error())
-		} else {
-			success("Ollama container started")
+		if startContainer("Ollama", "ollama/ollama", args) {
 			needsDelay = true
 		}
 	}
@@ -980,4 +968,42 @@ func buildSSEServerEntry(ssePort int) map[string]interface{} {
 	return map[string]interface{}{
 		"url": fmt.Sprintf("http://localhost:%d/mcp", ssePort),
 	}
+}
+
+// startContainer pulls the image if needed, then starts the container.
+//
+// The pull is explicit and its output is attached: `docker run` pulls a missing
+// image implicitly and writes progress to stderr, so discarding it leaves the
+// installer sitting on one line for the whole multi-GB download, looking frozen
+// (issue #58). Returns true when the container was started.
+func startContainer(label, image string, args []string) bool {
+	if !imageAvailable(image) {
+		log(fmt.Sprintf("Downloading image %s — this can take several minutes on a first install, please wait...", image))
+		pull := exec.Command("docker", "pull", image)
+		pull.Stdout = os.Stdout
+		pull.Stderr = os.Stderr
+		if err := pull.Run(); err != nil {
+			warn(fmt.Sprintf("Could not download %s: %v", image, err))
+			return false
+		}
+		success("Downloaded " + image)
+	}
+
+	runArgs := append([]string{"run", "-d"}, args...)
+	runArgs = append(runArgs, image)
+	cmd := exec.Command("docker", runArgs...)
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		warn("Could not start " + label + " container (might be already running): " + err.Error())
+		return false
+	}
+	success(label + " container started")
+	return true
+}
+
+// imageAvailable reports whether the image is already present locally, so a
+// repeat install stays quiet.
+func imageAvailable(image string) bool {
+	out, err := exec.Command("docker", "images", "-q", image).Output()
+	return err == nil && len(bytes.TrimSpace(out)) > 0
 }

@@ -494,6 +494,7 @@ func (s *Service) ensureOllamaAlive(ctx context.Context) error {
 // Includes a circuit breaker: after circuitBreakerThreshold consecutive embed failures,
 // pauses to check/restart Ollama before continuing — avoids wasting retries against a dead service.
 func (s *Service) IndexItems(ctx context.Context, collection string, symbols []parser.Symbol) error {
+	resolveLocalRelations(symbols)
 	if len(symbols) == 0 {
 		return nil
 	}
@@ -580,8 +581,7 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 					vector[i] = float32(v)
 				}
 
-				idKey := fmt.Sprintf("%s:%s:%d:%d", sym.FilePath, sym.Name, sym.StartLine, sym.EndLine)
-				id := fmt.Sprintf("%x", sha256.Sum256([]byte(idKey)))[:32]
+				id := sym.ID
 
 				payload := s.symbolToMap(sym)
 				payload["text"] = embedText
@@ -631,6 +631,50 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 
 	logger.Instance.Debug("Indexed %d symbols into %s", len(allPoints), collection)
 	return nil
+}
+
+// Resolve only unique targets in the same file. Cross-file and dynamic calls
+// retain their context for query-time resolution; never guess an object type.
+func resolveLocalRelations(symbols []parser.Symbol) {
+	byName := make(map[string][]int)
+	byQualified := make(map[string][]int)
+	for i := range symbols {
+		s := &symbols[i]
+		key := fmt.Sprintf("%s:%s:%d:%d", s.FilePath, s.Name, s.StartLine, s.EndLine)
+		if s.QualifiedName != "" {
+			key += ":" + s.QualifiedName
+		}
+		s.ID = fmt.Sprintf("%x", sha256.Sum256([]byte(key)))[:32]
+		byName[s.FilePath+"\x00"+s.Name] = append(byName[s.FilePath+"\x00"+s.Name], i)
+		if s.QualifiedName != "" {
+			byQualified[s.FilePath+"\x00"+s.QualifiedName] = append(byQualified[s.FilePath+"\x00"+s.QualifiedName], i)
+		}
+	}
+	for i := range symbols {
+		s := &symbols[i]
+		for j := range s.Relations {
+			r := &s.Relations[j]
+			if r.Type != parser.RelCalls {
+				continue
+			}
+			r.TargetID, r.Resolution = "", "unresolved"
+			var matches []int
+			if r.TargetQualifiedName != "" {
+				matches = byQualified[s.FilePath+"\x00"+r.TargetQualifiedName]
+			} else if r.Receiver == "" {
+				matches = byName[s.FilePath+"\x00"+r.TargetName]
+			}
+			if len(matches) == 1 {
+				target := symbols[matches[0]]
+				if r.Receiver == "" && target.Type == parser.Method && (s.Language == "php" || s.Language == "javascript" || s.Language == "typescript") {
+					continue
+				}
+				r.TargetID, r.Resolution = target.ID, "resolved"
+			} else if len(matches) > 1 {
+				r.Resolution = "ambiguous"
+			}
+		}
+	}
 }
 
 func (s *Service) symbolToMap(sym parser.Symbol) map[string]interface{} {

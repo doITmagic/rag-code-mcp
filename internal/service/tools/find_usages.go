@@ -86,8 +86,12 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 	}
 
 	// Fan-out to all language collections in parallel — zero embedding
+	targetSymbol, resolution := resolveSymbol(ctx, t.engine, wctx.ID, symbolName, filePath)
+	if resolution == "ambiguous" {
+		return (ToolResponse{Status: "ambiguous", Message: "Multiple symbols match; provide a qualified symbol name or its file_path."}).JSON()
+	}
 	filter := map[string]interface{}{
-		"relations[].target_name": symbolName,
+		"relations[].target_name": shortSymbolName(symbolName),
 	}
 
 	idx := t.engine.GetIndexStatus(wctx.Root)
@@ -154,8 +158,14 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 			if relList, ok := relationsRaw.([]interface{}); ok {
 				for _, relItem := range relList {
 					if rMap, ok := relItem.(map[string]interface{}); ok {
-						if target, _ := rMap["target_name"].(string); target == symbolName {
+						if target, _ := rMap["target_name"].(string); target == shortSymbolName(symbolName) {
 							relType, _ := rMap["type"].(string)
+							if relType == "calls" && targetSymbol != nil {
+								resolved, _ := resolveCall(ctx, t.engine, wctx.ID, result, rMap)
+								if resolved == nil || symbolKey(*resolved) != symbolKey(*targetSymbol) {
+									continue
+								}
+							}
 							if relType == "" {
 								continue
 							}
@@ -169,6 +179,9 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 			}
 		}
 
+		if targetSymbol != nil && len(matchedRelations) == 0 {
+			continue
+		}
 		actualBytes += int64(len(code))
 		// Validate file path is within workspace root before stat
 		if resultFilePath != "" && !seenFiles[resultFilePath] {

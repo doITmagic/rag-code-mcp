@@ -275,7 +275,7 @@ func (ca *CodeAnalyzer) convertToSymbols(fa fileAnalysis) []pkgParser.Symbol {
 			})
 		}
 		for _, call := range fn.Calls {
-			sym.Relations = append(sym.Relations, pkgParser.Relation{TargetName: call, Type: pkgParser.RelCalls})
+			sym.Relations = append(sym.Relations, jsCallRelation(call, ""))
 		}
 
 		symbols = append(symbols, sym)
@@ -340,7 +340,7 @@ func (ca *CodeAnalyzer) convertToSymbols(fa fileAnalysis) []pkgParser.Symbol {
 				},
 			}
 			for _, call := range method.Calls {
-				msym.Relations = append(msym.Relations, pkgParser.Relation{TargetName: call, Type: pkgParser.RelCalls})
+				msym.Relations = append(msym.Relations, jsCallRelation(call, cls.Name))
 			}
 			symbols = append(symbols, msym)
 		}
@@ -415,8 +415,26 @@ func (ca *CodeAnalyzer) convertToSymbols(fa fileAnalysis) []pkgParser.Symbol {
 		if symbols[i].Package == "" {
 			symbols[i].Package = mod
 		}
+		symbols[i].QualifiedName = mod + "." + symbols[i].Name
+		for j := range symbols[i].Relations {
+			r := &symbols[i].Relations[j]
+			if r.TargetQualifiedName != "" {
+				r.TargetQualifiedName = mod + "." + r.TargetQualifiedName
+			}
+		}
 	}
 	return symbols
+}
+
+func jsCallRelation(call, class string) pkgParser.Relation {
+	r := pkgParser.Relation{TargetName: call, Type: pkgParser.RelCalls}
+	if dot := strings.LastIndex(call, "."); dot >= 0 {
+		r.Receiver, r.TargetName = call[:dot], call[dot+1:]
+		if r.Receiver == "this" && class != "" {
+			r.TargetQualifiedName = class + "." + r.TargetName
+		}
+	}
+	return r
 }
 
 // buildFunctionSignature creates a readable function signature

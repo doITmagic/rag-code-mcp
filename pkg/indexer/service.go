@@ -408,6 +408,14 @@ func (s *Service) IndexFile(ctx context.Context, collection, path string, state 
 // triggers an Ollama health check and potential restart before continuing.
 const circuitBreakerThreshold = 2
 
+// Pause between embeds, applied only after a failure. A successful embed is
+// followed immediately by the next one: on a CPU-only embedder a fixed pause
+// costs as much as the call it follows.
+const (
+	embedBackoffStep = 150 * time.Millisecond
+	embedBackoffMax  = 2 * time.Second
+)
+
 // unwrapOllamaProvider extracts the underlying *OllamaLLMProvider from the Provider
 // chain (which may be wrapped in RetryableProvider).
 func unwrapOllamaProvider(p llm.Provider) (*llm.OllamaLLMProvider, bool) {
@@ -539,17 +547,23 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 					consecutiveFailures++
 					logger.Instance.Warn("Embed failed for %s (consecutive failures: %d): %v", sym.Name, consecutiveFailures, err)
 					results <- result{err: fmt.Errorf("failed to embed %s: %w", sym.Name, err)}
+					// Back off only when Ollama is actually struggling. Linear in
+					// the failure count and capped, so a transient error costs
+					// little and a sustained one stops hammering the endpoint.
+					backoff := time.Duration(consecutiveFailures) * embedBackoffStep
+					if backoff > embedBackoffMax {
+						backoff = embedBackoffMax
+					}
+					select {
+					case <-ctx.Done():
+					case <-time.After(backoff):
+					}
 					continue
 				}
 
 				// Success — reset circuit breaker counter and update activity watchdog
 				consecutiveFailures = 0
 				s.lastActivity.Store(time.Now().Unix())
-
-				// Throttle: small pause between embeds to avoid overwhelming Ollama.
-				// 150ms adds ~15s per 100 symbols — negligible vs total indexing time,
-				// but prevents Ollama from freezing under sustained concurrent load.
-				time.Sleep(150 * time.Millisecond)
 
 				vector := make([]float32, len(vector64))
 				for i, v := range vector64 {

@@ -1004,23 +1004,47 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) er
 		state = indexer.NewState()
 	}
 
-	// For language detection for the collection name, we assume the first file's language if not mixed.
-	// This is a bit of a simplification compared to the full scan.
-	lang := "go"
-	if len(files) > 0 {
-		if a := parser.GetByFile(files[0]); a != nil {
-			lang = a.Name()
-		}
-	}
-	collection := wctx.CollectionName(lang)
-
+	// Resolve the collection per file: one watcher batch can mix languages,
+	// and taking the first file's language sent the rest to the wrong one.
 	for _, p := range files {
-		if _, indexErr := e.indexer.IndexFile(ctx, collection, p, state); indexErr != nil {
+		a := parser.GetByFile(p)
+		if a == nil {
+			continue
+		}
+		if _, indexErr := e.indexer.IndexFile(ctx, wctx.CollectionName(a.Name()), p, state); indexErr != nil {
 			logger.Instance.Warn("[IDX] Failed to index %s: %v", filepath.Base(p), indexErr)
 		}
 	}
 
-	return state.Save(statePath)
+	if err := state.Save(statePath); err != nil {
+		return err
+	}
+	e.refreshIndexCounts(wctx.Root)
+	return nil
+}
+
+// refreshIndexCounts recounts files on disk after an incremental run. Watcher
+// changes (adds, edits, deletes) go through IndexFiles, which never touched
+// index_status.json, so deleted files kept being reported as indexed. Once
+// the changed files are processed, everything on disk is indexed.
+func (e *Engine) refreshIndexCounts(root string) {
+	s := indexer.LoadIndexStatus(root)
+	if s == nil {
+		return
+	}
+	var excludePatterns []string
+	if e.config != nil {
+		excludePatterns = e.config.Workspace.ExcludePatterns
+	}
+	counts := e.indexer.CountAllFiles(root, excludePatterns)
+	for lang, ls := range s.Languages {
+		ls.OnDisk = counts.Counts[lang]
+		ls.Processed = ls.OnDisk
+		ls.Changed = 0
+		ls.Breakdown = counts.Breakdowns[lang]
+		s.Languages[lang] = ls
+	}
+	indexer.SaveIndexStatus(root, s)
 }
 
 // IndexWorkspace indexes all files in a workspace.

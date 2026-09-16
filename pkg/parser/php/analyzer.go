@@ -397,6 +397,9 @@ func (v *symbolCollector) StmtFunction(n *ast.StmtFunction) {
 		Parameters: v.extractParameters(n.Params),
 		ReturnType: v.extractTypeNameString(n.ReturnType),
 		FilePath:   v.filePath,
+		StartLine:  n.Position.StartLine,
+		EndLine:    n.Position.EndLine,
+		Code:       extractCodeFromContent(v.fileContent, n.Position.StartLine, n.Position.EndLine),
 	}
 
 	// Extract PHPDoc from FunctionTkn
@@ -939,6 +942,9 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 					EndLine:   method.EndLine,
 					Docstring: method.Description,
 					Code:      method.Code,
+					// php_analyzer derives is_public from this; without it every
+					// private/protected method was indexed as public.
+					Metadata: map[string]any{"visibility": method.Visibility},
 				}
 				// Add calls as relations
 				for _, call := range method.Calls {
@@ -1037,10 +1043,16 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 		// Convert global functions
 		for _, fn := range pkg.Functions {
 			chunk := CodeChunk{
-				Name:     fn.Name,
-				Type:     "function",
-				Language: "php",
-				Package:  fn.Namespace,
+				Name:      fn.Name,
+				Type:      "function",
+				Language:  "php",
+				Package:   fn.Namespace,
+				Signature: fn.Signature,
+				Docstring: fn.Description,
+				FilePath:  fn.FilePath,
+				StartLine: fn.StartLine,
+				EndLine:   fn.EndLine,
+				Code:      fn.Code,
 			}
 			// Add calls as relations
 			for _, call := range fn.Calls {

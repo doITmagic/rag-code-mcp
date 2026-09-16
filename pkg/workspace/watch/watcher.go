@@ -126,6 +126,13 @@ func (fw *FileWatcher) watchLoop() {
 			if event.Op&fsnotify.Chmod == fsnotify.Chmod {
 				continue
 			}
+			// Events for excluded paths still arrive from watched parents: on
+			// Windows, a write inside .ragcode reports ".ragcode" itself on the
+			// root watch. Indexing writes there, so without this every index
+			// run triggered the next one.
+			if fw.isExcludedPath(event.Name) {
+				continue
+			}
 			if event.Op&fsnotify.Create == fsnotify.Create {
 				info, err := os.Stat(event.Name)
 				if err == nil && info.IsDir() {
@@ -198,6 +205,21 @@ func (fw *FileWatcher) Stop() {
 	fw.stopOnce.Do(func() {
 		close(fw.stopChan)
 	})
+}
+
+// isExcludedPath reports whether any directory component of path, relative to
+// the root, is one the watcher skips.
+func (fw *FileWatcher) isExcludedPath(path string) bool {
+	rel, err := filepath.Rel(fw.root, path)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return false
+	}
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part != "." && fw.shouldSkipDir(path, part, false) {
+			return true
+		}
+	}
+	return false
 }
 
 func (fw *FileWatcher) shouldSkipDir(path, base string, isRoot bool) bool {

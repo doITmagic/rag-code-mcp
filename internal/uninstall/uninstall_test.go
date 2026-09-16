@@ -1,6 +1,7 @@
 package uninstall
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -218,5 +219,63 @@ func TestFindWorkspaceRootNeverReturnsHome(t *testing.T) {
 	}
 	if got := findWorkspaceRootFromFilePath(filepath.Join(repo, "pkg", "a.go")); got != repo {
 		t.Fatalf("root = %q, want %q", got, repo)
+	}
+}
+
+func TestRemoveRagcodeFromJSONPreservesOtherSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	original := []byte("\xef\xbb\xbf" + `{"counter":9007199254740993,"mcpServers":{"ragcode":{"command":"old"},"other":{"command":"keep"}},"projects":{"A":{},"a":{}}}`)
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	removeRagcodeFromJSON("test", path)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var cfg map[string]interface{}
+	if err := decoder.Decode(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	servers := cfg["mcpServers"].(map[string]interface{})
+	if servers["ragcode"] != nil || servers["other"].(map[string]interface{})["command"] != "keep" {
+		t.Fatalf("wrong servers: %v", servers)
+	}
+	if cfg["counter"].(json.Number).String() != "9007199254740993" {
+		t.Fatalf("number changed: %v", cfg["counter"])
+	}
+}
+
+func TestUninstallIntegrationPathsMatchInstaller(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
+	home := t.TempDir()
+	paths := resolveIDEPaths(home)
+	if paths["codex"].path != filepath.Join(home, ".codex", "config.toml") {
+		t.Fatal(paths["codex"].path)
+	}
+	if paths["antigravity"].path != filepath.Join(home, ".gemini", "config", "mcp_config.json") {
+		t.Fatal(paths["antigravity"].path)
+	}
+	if paths["claude-cli"].path != filepath.Join(home, ".claude.json") {
+		t.Fatal(paths["claude-cli"].path)
+	}
+}
+
+func TestRemoveCodexEntryPreservesOtherServer(t *testing.T) {
+	if findCodexCLI(t.TempDir()) == "" {
+		t.Skip("Codex CLI required")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	config := "[mcp_servers.other]\ncommand = \"keep\"\n\n[mcp_servers.ragcode]\ncommand = \"remove\"\n"
+	if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	removeCodexEntry(t.TempDir(), path)
+	data, _ := os.ReadFile(path)
+	if bytes.Contains(data, []byte("mcp_servers.ragcode")) || !bytes.Contains(data, []byte("mcp_servers.other")) {
+		t.Fatalf("unexpected config: %s", data)
 	}
 }

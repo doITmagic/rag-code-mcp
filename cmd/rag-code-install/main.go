@@ -33,7 +33,8 @@ var (
 	upgradeFlag   = flag.Bool("upgrade", false, "Upgrade existing installation")
 	uninstallFlag = flag.Bool("uninstall", false, "Uninstall the application")
 	assumeYes     = flag.Bool("y", true, "Automatic yes to prompts (non-interactive)")
-	idesFlag      = flag.String("ides", "auto", "Comma-separated IDE list to configure (auto, vs-code, claude, claude-cli, cursor, windsurf, antigravity, gemini-cli, zed)")
+	idesFlag      = flag.String("ides", "auto", "Comma-separated IDE list to configure (auto, codex, vs-code, claude, claude-cli, cursor, windsurf, antigravity, gemini-cli, zed)")
+	configureOnly = flag.Bool("configure-only", false, "Configure IDE integrations using the installed binary; do not reinstall binaries or services")
 	transportFlag = flag.String("transport", "auto", "MCP transport: 'auto' (SSE if server running, else stdio), 'stdio' (binary), 'sse' (URL)")
 	ssePortFlag   = flag.Int("sse-port", 3000, "Port where rag-code-mcp SSE server listens (used for --transport=sse|auto)")
 )
@@ -63,6 +64,10 @@ func main() {
 
 	installPath := filepath.Join(home, installDirName)
 	binPath := filepath.Join(installPath, binDirName)
+	if *configureOnly {
+		configureIDEs(parseIDESelections(*idesFlag), binPath, resolveTransport(*transportFlag, *ssePortFlag), *ssePortFlag)
+		return
+	}
 
 	// 0. Stop running processes at the target location
 	targetBin := filepath.Join(binPath, "rag-code-mcp")
@@ -652,16 +657,6 @@ func configureIDEs(selected []string, binDir string, transport string, ssePort i
 		log("No IDEs were automatically configured. They may not be installed or use non-standard paths.")
 	}
 
-	// Informational: Codex CLI uses TOML format – cannot be auto-configured
-	codexPath := filepath.Join(home, ".codex")
-	if _, err := os.Stat(codexPath); err == nil {
-		log("OpenAI Codex CLI detected at ~/.codex – requires manual config (TOML format).")
-		log("  Add to ~/.codex/config.toml:")
-		log(`  [mcp_servers.ragcode]`)
-		log(fmt.Sprintf(`  command = "%s"`, binPath))
-		log(`  args = []`)
-	}
-
 	// OpenClaw / NemoClaw Logging
 	openclawPath := filepath.Join(home, ".openclaw")
 	if _, err := os.Stat(openclawPath); err == nil {
@@ -683,6 +678,7 @@ type idePath struct {
 
 func resolveIDEPaths(home string) map[string]idePath {
 	paths := map[string]idePath{
+		"codex": {path: filepath.Join(home, ".codex", "config.toml"), displayName: "OpenAI Codex"},
 		"windsurf": {
 			path:        filepath.Join(home, ".codeium", "windsurf", "mcp_config.json"),
 			displayName: "Windsurf",
@@ -693,7 +689,7 @@ func resolveIDEPaths(home string) map[string]idePath {
 			displayName: "GitHub Copilot CLI",
 		},
 		"antigravity": {
-			path:        filepath.Join(home, ".gemini", "antigravity", "mcp_config.json"),
+			path:        filepath.Join(home, ".gemini", "config", "mcp_config.json"),
 			displayName: "Antigravity",
 		},
 		"mcp-cli": {
@@ -718,6 +714,9 @@ func resolveIDEPaths(home string) map[string]idePath {
 			path:        filepath.Join(home, ".continue", "mcpServers", "ragcode.json"),
 			displayName: "Continue.dev",
 		},
+	}
+	if codexHome := os.Getenv("CODEX_HOME"); codexHome != "" {
+		paths["codex"] = idePath{filepath.Join(codexHome, "config.toml"), "OpenAI Codex"}
 	}
 
 	// Claude Desktop (GUI app) – OS-specific paths
@@ -810,6 +809,9 @@ func normalizeIdeSelection(selected []string) ideSelection {
 			continue
 		}
 		sel.explicit[item] = true
+		if item == "claude" {
+			sel.explicit["claude-cli"] = true
+		}
 	}
 	if len(sel.explicit) == 0 {
 		sel.auto = true
@@ -818,6 +820,9 @@ func normalizeIdeSelection(selected []string) ideSelection {
 }
 
 func updateMCPConfig(ideKey, displayName, path, binPath, transport string, ssePort int) bool {
+	if ideKey == "codex" {
+		return updateCodexConfig(path, binPath, transport, ssePort)
+	}
 	// Special case: Zed Editor uses "context_servers" inside its main settings.json
 	if ideKey == "zed" {
 		return updateZedConfig(displayName, path, binPath, transport, ssePort)
@@ -839,12 +844,27 @@ func updateMCPConfig(ideKey, displayName, path, binPath, transport string, ssePo
 	servers := make(map[string]interface{})
 	if existing, ok := configMap[collectionKey].(map[string]interface{}); ok {
 		servers = existing
+	} else if configMap[collectionKey] != nil {
+		warn(fmt.Sprintf("Skipping %s: %s is not an object", path, collectionKey))
+		return false
 	}
 
+	previous, _ := servers["ragcode"].(map[string]interface{})
 	if transport == "sse" {
 		servers["ragcode"] = buildSSEServerEntry(ssePort)
+		if ideKey == "claude-cli" {
+			servers["ragcode"].(map[string]interface{})["type"] = "http"
+		}
 	} else {
 		servers["ragcode"] = buildMCPServerEntry(ideKey, binPath)
+	}
+	entry := servers["ragcode"].(map[string]interface{})
+	for key, value := range previous {
+		switch key {
+		case "command", "args", "url", "type": // Updated transport fields.
+		default:
+			entry[key] = value
+		}
 	}
 	configMap[collectionKey] = servers
 
@@ -935,14 +955,24 @@ func readJSONConfig(path string) (map[string]interface{}, bool) {
 	configMap := make(map[string]interface{})
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return configMap, true
+		if os.IsNotExist(err) {
+			return configMap, true
+		}
+		warn(fmt.Sprintf("Skipping %s: cannot read config: %v", path, err))
+		return nil, false
 	}
 	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
 	if len(bytes.TrimSpace(data)) == 0 {
 		return configMap, true
 	}
-	if err := json.Unmarshal(data, &configMap); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&configMap); err != nil || configMap == nil {
 		warn(fmt.Sprintf("Skipping %s: existing config is not valid JSON (%v). Add the ragcode server manually.", path, err))
+		return nil, false
+	}
+	if decoder.Decode(new(interface{})) != io.EOF {
+		warn(fmt.Sprintf("Skipping %s: trailing JSON content", path))
 		return nil, false
 	}
 	return configMap, true
@@ -1002,12 +1032,7 @@ func downloadAndExtractLatest() (string, error) {
 func buildMCPServerEntry(ideKey, binPath string) map[string]interface{} {
 	entry := map[string]interface{}{
 		"command": binPath,
-		"args":    []string{},
-		"env": map[string]string{
-			"OLLAMA_BASE_URL": "http://localhost:11434",
-			"OLLAMA_EMBED":    config.StableEmbeddingModel,
-			"QDRANT_URL":      "http://localhost:6333",
-		},
+		"args":    []string{"--config", filepath.Join(filepath.Dir(binPath), "config.yaml")},
 	}
 
 	switch ideKey {

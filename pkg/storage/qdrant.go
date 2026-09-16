@@ -260,7 +260,7 @@ func (s *QdrantStore) interfaceToValue(v interface{}) *qdrant.Value {
 	}
 	switch typed := v.(type) {
 	case string:
-		return qdrant.NewValueString(typed)
+		return qdrant.NewValueString(strings.ToValidUTF8(typed, "�"))
 	case int:
 		return qdrant.NewValueInt(int64(typed))
 	case int64:

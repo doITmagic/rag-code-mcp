@@ -102,6 +102,31 @@ func TestQdrantStoreUpsertPayloadMapping(t *testing.T) {
 	}
 }
 
+func TestQdrantStoreUpsertRepairsInvalidUTF8(t *testing.T) {
+	fake := &fakeQdrantClient{}
+	store := NewQdrantStoreWithClient(fake)
+	points := []Point{{
+		ID:     "123",
+		Vector: []float32{1},
+		Payload: map[string]interface{}{
+			"content": "before\xffafter",
+			"nested":  []interface{}{map[string]interface{}{"name": "bad\xfevalue"}},
+		},
+	}}
+
+	if _, err := store.Upsert(context.Background(), "col", points); err != nil {
+		t.Fatalf("upsert err: %v", err)
+	}
+	payload := fake.upsertRequests[0].Points[0].Payload
+	if got := payload["content"].GetStringValue(); got != "before�after" {
+		t.Fatalf("content = %q", got)
+	}
+	nested := payload["nested"].GetListValue().Values[0].GetStructValue().Fields["name"].GetStringValue()
+	if nested != "bad�value" {
+		t.Fatalf("nested name = %q", nested)
+	}
+}
+
 func TestPointIDToString(t *testing.T) {
 	tests := []struct {
 		name string

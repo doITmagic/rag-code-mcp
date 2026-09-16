@@ -25,6 +25,15 @@ func init() {
 // so we only need to call it once. If packages are empty (no classes/functions parsed),
 // fall back to direct path-based filesystem walk-up.
 func (e *Enricher) IsApplicable(ca *php.CodeAnalyzer, paths []string) bool {
+	// 0. A Blade template is Blade whatever project it sits in: the plain PHP
+	// analyzer extracts nothing from it, so without this it was counted as a
+	// PHP file yet produced no symbols outside a detected Laravel project.
+	for _, p := range paths {
+		if strings.HasSuffix(p, ".blade.php") {
+			return true
+		}
+	}
+
 	// 1. namespace/class-based + cached filesystem walk from parsed packages
 	byPackages := ca.IsLaravelProject()
 	logger.Instance.Debug("[LARAVEL] IsApplicable: ca.IsLaravelProject()=%v for paths=%v", byPackages, paths)

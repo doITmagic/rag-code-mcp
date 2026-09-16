@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/doITmagic/rag-code-mcp/pkg/parser/php"
 )
 
 // writeTempBlade creates a temp .blade.php file inside resources/views/ and returns its path.
@@ -258,5 +260,26 @@ func TestBladeViewName(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("bladeViewName(%q) = %q, want %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+// A .blade.php outside any Laravel project must still be analysed: the
+// extension decides, not the project.
+func TestEnricherAppliesToBladeOutsideLaravel(t *testing.T) {
+	dir := t.TempDir() // no artisan, no composer.json
+	blade := filepath.Join(dir, "show.blade.php")
+	if err := os.WriteFile(blade, []byte("@extends('layouts.app')\n@section('content')x@endsection\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e := &Enricher{adapter: NewAdapter()}
+	if !e.IsApplicable(php.NewCodeAnalyzer(), []string{blade}) {
+		t.Fatal("enricher should apply to a blade file outside Laravel")
+	}
+	plain := filepath.Join(dir, "plain.php")
+	if err := os.WriteFile(plain, []byte("<?php\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if e.IsApplicable(php.NewCodeAnalyzer(), []string{plain}) {
+		t.Fatal("plain php outside Laravel should not trigger the enricher")
 	}
 }

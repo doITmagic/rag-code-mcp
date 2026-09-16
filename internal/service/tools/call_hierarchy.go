@@ -87,6 +87,13 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 	}
 
 	direction, _ := args["direction"].(string)
+	if direction == "" {
+		direction = "incoming"
+	}
+	if direction != "incoming" && direction != "outgoing" {
+		resp := ToolResponse{Status: "error", Error: fmt.Sprintf("direction must be 'incoming' or 'outgoing', got %q", direction)}
+		return resp.JSON()
+	}
 	depthVal := args["depth"]
 	var depth int
 	switch v := depthVal.(type) {

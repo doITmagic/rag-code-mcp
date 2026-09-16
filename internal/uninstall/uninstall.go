@@ -335,7 +335,7 @@ func cleanWorkspaceData(home string) {
 	// Scan roots are derived from: registry parent dirs, Qdrant file_path payloads,
 	// IDE project lists, and a shallow $HOME scan.
 	logMsg("Scanning for any orphaned .ragcode/ directories not covered by registry...")
-	qdrantRoots := extractWorkspaceRootsFromQdrant()
+	qdrantRoots := qdrantRootsFn()
 	scanAndCleanRagcodeDirs(home, append(registryRoots, qdrantRoots...))
 }
 
@@ -440,7 +440,7 @@ func scanAndCleanRagcodeDirs(home string, registryRoots []string) {
 	// Derive parent directories from IDE project lists.
 	// IDEs keep authoritative lists of opened projects in known config files
 	// — much more reliable than guessing folder names.
-	for _, ideRoot := range detectIDEProjectParents(home) {
+	for _, ideRoot := range ideProjectParentsFn(home) {
 		add(ideRoot)
 	}
 
@@ -448,8 +448,15 @@ func scanAndCleanRagcodeDirs(home string, registryRoots []string) {
 	add(home)
 
 	cleaned := 0
+	homeParent := filepath.Dir(filepath.Clean(home))
 	for _, root := range searchRoots {
 		if _, err := os.Stat(root); os.IsNotExist(err) {
+			continue
+		}
+		// Never sweep the parent of $HOME (other users' homes) or a volume
+		// root: a bad derived root must not turn into a machine-wide delete.
+		if clean := filepath.Clean(root); clean == homeParent || filepath.Dir(clean) == clean {
+			warnMsg("Skipping unsafe scan root: " + root)
 			continue
 		}
 
@@ -483,6 +490,9 @@ func scanAndCleanRagcodeDirs(home string, registryRoots []string) {
 					return filepath.SkipDir
 				}
 				if name == ".ragcode" {
+					if isInstallDir(path) {
+						return filepath.SkipDir // the installation, removed separately
+					}
 					if err := os.RemoveAll(path); err != nil {
 						warnMsg(fmt.Sprintf("Failed to remove %s: %v", path, err))
 					} else {
@@ -646,6 +656,14 @@ func detectIDEProjectParents(home string) []string {
 // read its file_path payload field. Then walk upward from that file_path until
 // we find a directory that contains .git or .ragcode — that is the workspace root.
 // We return those roots so the caller can delete their .ragcode/ dirs.
+// qdrantRootsFn and ideProjectParentsFn are the two lookups that leave $HOME
+// (live Qdrant, IDE configs under APPDATA). Tests replace them; a unit test
+// once swept the real machine through them and removed ~/.ragcode.
+var (
+	qdrantRootsFn       = extractWorkspaceRootsFromQdrant
+	ideProjectParentsFn = detectIDEProjectParents
+)
+
 func extractWorkspaceRootsFromQdrant() []string {
 	const qdrantAddr = "http://localhost:6333"
 
@@ -729,10 +747,18 @@ func extractWorkspaceRootsFromQdrant() []string {
 // findWorkspaceRootFromFilePath walks upward from a file path until it finds
 // a directory containing .git or .ragcode — the canonical workspace root markers.
 func findWorkspaceRootFromFilePath(filePath string) string {
+	home, _ := os.UserHomeDir()
 	dir := filepath.Dir(filePath)
 	for {
+		// $HOME is never a workspace: ~/.ragcode is the install dir, and a
+		// stale collection whose project is gone would otherwise walk up to
+		// it and make the whole home tree a cleanup target.
+		if home != "" && filepath.Clean(dir) == filepath.Clean(home) {
+			return ""
+		}
 		for _, marker := range []string{".git", ".ragcode"} {
-			if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
+			p := filepath.Join(dir, marker)
+			if _, err := os.Stat(p); err == nil && !isInstallDir(p) {
 				return dir
 			}
 		}
@@ -743,6 +769,13 @@ func findWorkspaceRootFromFilePath(filePath string) string {
 		dir = parent
 	}
 	return ""
+}
+
+// isInstallDir reports whether a .ragcode directory is the installation
+// (it holds bin/), as opposed to a workspace's cache.
+func isInstallDir(ragcodeDir string) bool {
+	info, err := os.Stat(filepath.Join(ragcodeDir, "bin"))
+	return err == nil && info.IsDir()
 }
 
 func cleanQdrantCollections() {

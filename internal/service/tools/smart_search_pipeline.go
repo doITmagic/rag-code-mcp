@@ -291,7 +291,7 @@ func buildResultsMessage(count int, useCompact, isFallback bool) string {
 	if isFallback {
 		return fmt.Sprintf("⚡ Found %d results via AST fallback with full source code. Indexing in progress — results will improve.", count)
 	}
-	return fmt.Sprintf("🎯 Found %d high-confidence results with full source code.", count)
+	return fmt.Sprintf("Found %d results with full source code.", count)
 }
 
 // serializeResults populates the ToolResponse with either compact or full result data,
@@ -330,9 +330,6 @@ func serializeResults(response *ToolResponse, merged []mergedResult, useCompact,
 
 		validResults = append(validResults, resultToMap(m, !useCompact, query, includeReasons))
 
-		if !useCompact {
-			actualBytes += int64(len(m.content))
-		}
 	}
 
 	// Telemetry: baseline = sum of unique file sizes (deduplicated)
@@ -342,6 +339,10 @@ func serializeResults(response *ToolResponse, merged []mergedResult, useCompact,
 
 	response.Message = buildResultsMessage(len(validResults), useCompact, isFallback)
 	response.Data = validResults
+	if len(validResults) == 0 {
+		response.Status = "no_results"
+		response.Message = "No results remain after filtering missing files."
+	}
 
 	// Proactive stale index warning (now with auto-cleanup note)
 	if len(staleFiles) > 0 {
@@ -356,6 +357,9 @@ func serializeResults(response *ToolResponse, merged []mergedResult, useCompact,
 		}
 	}
 
+	// Count the envelope and metadata as well as source snippets.
+	encoded, _ := response.JSON()
+	actualBytes = int64(len(encoded))
 	response.Context.Telemetry = telemetry.CalculateSavings(baselineBytes, actualBytes)
 	return staleFiles
 }
@@ -370,6 +374,7 @@ func noResultsResponse(query string, meta searchMetadata) (string, error) {
 			DetectionSource: meta.detectionSource,
 			Language:        meta.language,
 			Collection:      meta.collection,
+			SessionMetrics:  telemetry.ReadAggregatedMetrics(meta.workspaceRoot),
 		},
 	}
 	return response.JSON()
@@ -377,7 +382,10 @@ func noResultsResponse(query string, meta searchMetadata) (string, error) {
 
 // recordSearchMetric maps pipeline data to a telemetry.SearchMetric and appends to JSONL.
 func recordSearchMetric(meta searchMetadata, query string, merged []mergedResult, isFallback bool, savings *telemetry.Savings, start time.Time) {
-	source := "vector"
+	source := "hybrid"
+	if meta.collection == "exact" {
+		source = "exact"
+	}
 	if isFallback {
 		source = "fallback"
 	}

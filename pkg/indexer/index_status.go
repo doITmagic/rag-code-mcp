@@ -111,7 +111,9 @@ func cachedHasParentRagcode(root string) bool {
 // The write is atomic: data is written to a temp file first, then renamed into place,
 // so concurrent readers always see a complete JSON file.
 func SaveIndexStatus(workspaceRoot string, status *IndexStatus) {
-	if workspaceRoot == "" || status == nil {
+	// Relative roots resolve against the process cwd and would scatter .ragcode
+	// dirs through the tree; only absolute workspace roots are written to.
+	if !filepath.IsAbs(workspaceRoot) || status == nil {
 		return
 	}
 	dir := filepath.Join(workspaceRoot, ".ragcode")

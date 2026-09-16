@@ -60,7 +60,6 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
-docs/plans/*.md
 
 # Scripts
 scripts/
@@ -82,6 +81,7 @@ worktrees/
 .windsurf/rules/ragcode.md
 .clinerules/ragcode.md
 .roo/rules/ragcode.md
+CLAUDE.md
 
 # Legacy flat rule files written by older versions
 .clauderules

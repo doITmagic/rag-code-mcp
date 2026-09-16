@@ -78,6 +78,12 @@ windsurf_debug_log.txt
 worktrees/
 
 # Auto-generated IDE rule files (auto_create_ide_rules)
+.cursor/rules/ragcode.mdc
+.windsurf/rules/ragcode.md
+.clinerules/ragcode.md
+.roo/rules/ragcode.md
+
+# Legacy flat rule files written by older versions
 .clauderules
 .clinerules
 .cursorrules

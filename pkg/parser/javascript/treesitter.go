@@ -677,8 +677,8 @@ func detectLanguage(filePath string) string {
 	return "javascript"
 }
 
-// collectCalls returns the unqualified names of every call made inside node:
-// `foo()` gives foo, `a.b.c()` gives c, `new Foo()` gives Foo. Nested
+// collectCalls preserves receivers of calls made inside node:
+// `foo()` gives foo, `a.b.c()` gives a.b.c, `new Foo()` gives Foo. Nested
 // function bodies are included, like the Go analyzer's call extraction.
 // Duplicates are dropped; order is source order.
 func collectCalls(node *gotreesitter.Node, source []byte, lang *gotreesitter.Language) []string {
@@ -712,7 +712,7 @@ func collectCalls(node *gotreesitter.Node, source []byte, lang *gotreesitter.Lan
 	return calls
 }
 
-// calleeName reduces a call target to its last identifier.
+// calleeName preserves member receivers for later symbol resolution.
 func calleeName(n *gotreesitter.Node, source []byte, lang *gotreesitter.Language) string {
 	if n == nil {
 		return ""
@@ -721,10 +721,7 @@ func calleeName(n *gotreesitter.Node, source []byte, lang *gotreesitter.Language
 	case "identifier", "property_identifier":
 		return n.Text(source)
 	case "member_expression":
-		// last child is the property (a.b.c → c)
-		if n.ChildCount() > 0 {
-			return calleeName(n.Child(n.ChildCount()-1), source, lang)
-		}
+		return n.Text(source)
 	}
 	return ""
 }

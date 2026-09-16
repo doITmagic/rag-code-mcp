@@ -74,25 +74,31 @@ const (
 
 // Relation describes a connection pointing to another code entity.
 type Relation struct {
-	TargetName string       `json:"target_name"`
-	Type       RelationType `json:"type"`
+	TargetName          string       `json:"target_name"`
+	Type                RelationType `json:"type"`
+	Receiver            string       `json:"receiver,omitempty"`
+	TargetQualifiedName string       `json:"target_qualified_name,omitempty"`
+	TargetID            string       `json:"target_id,omitempty"`
+	Resolution          string       `json:"resolution,omitempty"`
 }
 
 // Symbol represents a generic code entity (function, class, etc.)
 type Symbol struct {
-	Name      string         `json:"name"`
-	Type      SymbolType     `json:"type"`
-	Package   string         `json:"package"`
-	Content   string         `json:"content"`
-	Signature string         `json:"signature"`
-	Docstring string         `json:"docstring"`
-	StartLine int            `json:"start_line"`
-	EndLine   int            `json:"end_line"`
-	FilePath  string         `json:"file_path"`
-	Language  string         `json:"language"`
-	IsPublic  bool           `json:"is_public"` // Whether the symbol is public/exported
-	Relations []Relation     `json:"relations"` // Captured structural dependencies (AST graph)
-	Metadata  map[string]any `json:"metadata"`
+	ID            string         `json:"symbol_id,omitempty"`
+	QualifiedName string         `json:"qualified_name,omitempty"`
+	Name          string         `json:"name"`
+	Type          SymbolType     `json:"type"`
+	Package       string         `json:"package"`
+	Content       string         `json:"content"`
+	Signature     string         `json:"signature"`
+	Docstring     string         `json:"docstring"`
+	StartLine     int            `json:"start_line"`
+	EndLine       int            `json:"end_line"`
+	FilePath      string         `json:"file_path"`
+	Language      string         `json:"language"`
+	IsPublic      bool           `json:"is_public"` // Whether the symbol is public/exported
+	Relations     []Relation     `json:"relations"` // Captured structural dependencies (AST graph)
+	Metadata      map[string]any `json:"metadata"`
 }
 
 // Result is what a parser returns for a given file or directory.

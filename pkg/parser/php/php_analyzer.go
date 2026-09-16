@@ -109,6 +109,11 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 			Relations: chunk.Relations,
 			Metadata:  chunk.Metadata,
 		}
+		qualified, _ := chunk.Metadata["qualified_name"].(string)
+		if qualified == "" {
+			qualified = strings.TrimPrefix(chunk.Package+"\\"+chunk.Name, "\\")
+		}
+		symbols[i].QualifiedName = qualified
 	}
 
 	return &pkgParser.Result{

@@ -44,7 +44,19 @@ func (m *mockVectorStore) ExactSearch(ctx context.Context, collection string, fi
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.ExactSearchFunc != nil {
-		return m.ExactSearchFunc(ctx, collection, filters, limit)
+		results, err := m.ExactSearchFunc(ctx, collection, filters, limit)
+		for _, key := range []string{"name", "qualified_name", "symbol_id"} {
+			if value, ok := filters[key]; ok {
+				var filtered []storage.SearchResult
+				for _, r := range results {
+					if r.Point.Payload[key] == value {
+						filtered = append(filtered, r)
+					}
+				}
+				results = filtered
+			}
+		}
+		return results, err
 	}
 	return nil, nil
 }

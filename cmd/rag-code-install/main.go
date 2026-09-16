@@ -27,6 +27,7 @@ import (
 
 var (
 	ollamaMode    = flag.String("ollama", "local", "Mode for Ollama: 'local' (use existing) or 'docker' (run container)")
+	modelsDir     = flag.String("models-dir", "", "Path to local Ollama models directory (mounted into the Docker container). Defaults to ~/.ollama")
 	qdrantMode    = flag.String("qdrant", "docker", "Mode for Qdrant: 'docker' (run container) or 'remote' (use existing URL)")
 	gpu           = flag.Bool("gpu", true, "Enable GPU support for Docker containers")
 	upgradeFlag   = flag.Bool("upgrade", false, "Upgrade existing installation")
@@ -270,7 +271,18 @@ func setupEnvironment() {
 	// Ollama Setup
 	if *ollamaMode == "docker" {
 		log("Setting up Ollama in Docker...")
-		args := []string{"--name", "ragcode-ollama", "--restart", "always", "-p", "11434:11434", "-v", "ollama-data:/root/.ollama"}
+		// Mount the host model directory rather than a named volume, so models
+		// already pulled on the host are reused instead of downloaded again
+		// (several GB), and anything pulled inside the container shows up on
+		// the host. Falls back to a named volume only if the dir is unusable.
+		modelMount := "ollama-data:/root/.ollama"
+		if dir, err := hostModelsDir(); err == nil {
+			modelMount = dir + ":/root/.ollama"
+		} else {
+			warn("Could not use a local Ollama models dir, falling back to a Docker volume: " + err.Error())
+		}
+
+		args := []string{"--name", "ragcode-ollama", "--restart", "always", "-p", "11434:11434", "-v", modelMount}
 		if *gpu {
 			args = append([]string{"--gpus", "all"}, args...)
 		}
@@ -1006,4 +1018,55 @@ func startContainer(label, image string, args []string) bool {
 func imageAvailable(image string) bool {
 	out, err := exec.Command("docker", "images", "-q", image).Output()
 	return err == nil && len(bytes.TrimSpace(out)) > 0
+}
+
+// hostModelsDir returns the directory to mount at /root/.ollama in the Ollama
+// container: -models-dir when given, otherwise ~/.ollama. The directory is
+// created if missing, so a first install still shares it with the host.
+func hostModelsDir() (string, error) {
+	if dir := *modelsDir; dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return "", err
+		}
+		return dir, nil
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	userDir := filepath.Join(home, ".ollama")
+
+	// Prefer whichever directory already holds models. A package-managed Ollama
+	// runs as its own systemd user and stores models outside $HOME, so defaulting
+	// blindly to ~/.ollama would mount an empty dir and re-download everything.
+	candidates := []string{userDir}
+	if runtime.GOOS == "linux" {
+		// Only Linux installs Ollama as a system service with its own home;
+		// on Windows and macOS the models live under the user profile.
+		candidates = append(candidates, linuxServiceModelDirs...)
+	}
+	for _, dir := range candidates {
+		if hasModels(dir) {
+			return dir, nil
+		}
+	}
+
+	if err := os.MkdirAll(userDir, 0o755); err != nil {
+		return "", err
+	}
+	return userDir, nil
+}
+
+// linuxServiceModelDirs are the locations a service-installed Ollama uses on
+// Linux, where it runs as its own user rather than as the installing user.
+var linuxServiceModelDirs = []string{
+	"/usr/share/ollama/.ollama",
+	"/var/lib/ollama/.ollama",
+}
+
+// hasModels reports whether dir looks like a populated Ollama model store.
+func hasModels(dir string) bool {
+	entries, err := os.ReadDir(filepath.Join(dir, "models"))
+	return err == nil && len(entries) > 0
 }

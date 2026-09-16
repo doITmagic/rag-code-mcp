@@ -295,7 +295,14 @@ func setupEnvironment() {
 			started = startContainer("Ollama", "ollama/ollama", args)
 		}
 		if started {
-			needsDelay = true
+			// A fixed pause is not enough here: with a GPU, Ollama takes ~12s to
+			// initialise CUDA before it answers, and a pull sent earlier fails
+			// with EOF. Poll until it responds instead.
+			needsDelay = false
+			log("Waiting for Ollama to become ready...")
+			if err := waitForOllama("http://localhost:11434", 60*time.Second); err != nil {
+				warn(err.Error())
+			}
 		}
 	}
 
@@ -903,6 +910,21 @@ func updateZedConfig(displayName, path, binPath, transport string, ssePort int) 
 		}
 	}
 	return false
+}
+
+// waitForOllama polls Ollama until it answers or timeout elapses.
+func waitForOllama(baseURL string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		err := healthcheck.PingOllama(baseURL)
+		if err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("ollama did not become ready within %s: %v", timeout, err)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 }
 
 // readJSONConfig loads an existing IDE config. A missing file yields an empty

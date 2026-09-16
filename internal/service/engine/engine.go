@@ -1011,7 +1011,16 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) er
 		if a == nil {
 			continue
 		}
-		if _, indexErr := e.indexer.IndexFile(ctx, wctx.CollectionName(a.Name()), p, state); indexErr != nil {
+		collection := wctx.CollectionName(a.Name())
+		// A deleted file cannot be analysed; drop its vectors instead of
+		// leaving them until the next full run or a search that notices them.
+		if _, statErr := os.Stat(p); os.IsNotExist(statErr) {
+			if err := e.indexer.RemoveFile(ctx, collection, p, state); err != nil {
+				logger.Instance.Warn("[IDX] Failed to remove deleted %s: %v", filepath.Base(p), err)
+			}
+			continue
+		}
+		if _, indexErr := e.indexer.IndexFile(ctx, collection, p, state); indexErr != nil {
 			logger.Instance.Warn("[IDX] Failed to index %s: %v", filepath.Base(p), indexErr)
 		}
 	}

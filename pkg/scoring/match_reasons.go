@@ -23,6 +23,13 @@ type MatchReasons struct {
 func DetectMatchReasons(query, name, signature, content, docstring string) MatchReasons {
 	lower := strings.ToLower(query)
 	tokens := FilterTokens(strings.Fields(lower))
+	relevant := tokens[:0]
+	for _, token := range tokens {
+		if !isSearchStopword(token) {
+			relevant = append(relevant, token)
+		}
+	}
+	tokens = relevant
 	if len(tokens) == 0 {
 		return MatchReasons{}
 	}
@@ -42,5 +49,14 @@ func DetectMatchReasons(query, name, signature, content, docstring string) Match
 		Signature:  containsAny(signature),
 		Content:    containsAny(content),
 		Docstring:  containsAny(docstring),
+	}
+}
+
+func isSearchStopword(token string) bool {
+	switch token {
+	case "and", "for", "from", "how", "into", "that", "the", "this", "what", "when", "where", "with":
+		return true
+	default:
+		return false
 	}
 }

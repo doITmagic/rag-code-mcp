@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
 	"github.com/doITmagic/rag-code-mcp/pkg/telemetry"
 )
 
@@ -49,5 +50,45 @@ func TestSymbolQueryClassification(t *testing.T) {
 		if isSymbolQuery(q) {
 			t.Errorf("semantic query treated as exact: %s", q)
 		}
+	}
+}
+
+func TestDefaultScoreFilterRejectsWeakNeighbours(t *testing.T) {
+	got := applyScoreFilter([]mergedResult{{score: 0.705}, {score: 0.55}}, 0, true)
+	if len(got) != 0 {
+		t.Fatalf("weak semantic neighbours survived: %+v", got)
+	}
+
+	got = applyScoreFilter([]mergedResult{{score: 0.89}, {score: 0.73}, {score: 0.71}}, 0, true)
+	if len(got) != 2 {
+		t.Fatalf("relevant results = %d, want 2", len(got))
+	}
+}
+
+func TestExplicitScoreOverridesDefaultFloor(t *testing.T) {
+	got := applyScoreFilter([]mergedResult{{score: 0.60}}, 0.50, true)
+	if len(got) != 1 {
+		t.Fatalf("explicit min_score should be authoritative: %+v", got)
+	}
+}
+
+func TestDefaultScoreFilterDoesNotApplyToFallback(t *testing.T) {
+	got := applyScoreFilter([]mergedResult{{score: 0.30}}, 0, false)
+	if len(got) != 1 {
+		t.Fatalf("fallback result was filtered: %+v", got)
+	}
+}
+
+func TestNoResultsReportsPartialIndex(t *testing.T) {
+	root := t.TempDir()
+	indexer.SaveIndexStatus(root, &indexer.IndexStatus{StartedAt: "2026-09-17T00:00:00Z"})
+
+	out, err := noResultsResponse("MissingSymbol", searchMetadata{workspaceRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := decode(t, out)
+	if response.Status != "indexing_in_progress" || response.Context.IndexingStatus == nil {
+		t.Fatalf("response=%+v", response)
 	}
 }

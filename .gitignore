@@ -76,3 +76,10 @@ windsurf_debug_log.txt
 # Worktrees
 .worktrees/
 worktrees/
+
+# Auto-generated IDE rule files (auto_create_ide_rules)
+.clauderules
+.clinerules
+.cursorrules
+.roomodes
+.windsurfrules

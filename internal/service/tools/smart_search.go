@@ -50,8 +50,7 @@ func (t *SmartSearchTool) Description() string {
 		"Use 'mode'=\"strict_docs\" when searching for architectural plans or summaries. " +
 		"Use 'mode'=\"all\" or omit for broad scans. " +
 		"Set 'min_score' (0.0-1.0) to filter out low-relevance results. Note: final scores may slightly exceed 1.0 after path-proximity boosting. " +
-		"When omitted, an automatic threshold is applied: " +
-		"if the top result scores above 0.70, results below 40% of the top score are automatically pruned. " +
+		"When omitted, results below 0.72 or 40% of the top score (whichever is higher) are automatically pruned. " +
 		"Set 'include_reasons' to true to include a 'match_reasons' field in each result, explaining which fields " +
 		"(symbol_name, signature, content, docstring) contributed to the match — useful for understanding result relevance."
 }
@@ -79,6 +78,10 @@ const autoScoreThresholdTrigger = 0.70
 
 // autoScoreThresholdRatio: results below topScore * ratio are pruned.
 const autoScoreThresholdRatio = 0.40
+
+// defaultSemanticMinScore rejects weak vector neighbours when callers do not
+// provide an explicit threshold.
+const defaultSemanticMinScore = 0.72
 
 func (t *SmartSearchTool) Register(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
@@ -154,9 +157,10 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 		merged = t.mergeResults(sr.semantic, sr.hybrid, limit)
 	}
 	merged = t.applyFilters(merged, filterConfig{
-		Mode:     input.Mode,
-		MinScore: input.MinScore,
-		FilePath: input.FilePath,
+		Mode:         input.Mode,
+		MinScore:     input.MinScore,
+		FilePath:     input.FilePath,
+		DefaultFloor: !exactSymbol && sr.meta.collection != "fallback",
 	})
 
 	if len(merged) == 0 {

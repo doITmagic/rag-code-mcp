@@ -29,7 +29,7 @@ func TestMissingIdentifierDoesNotBecomeSemanticSuccess(t *testing.T) {
 	for _, tc := range []struct {
 		exact  *bool
 		status string
-	}{{nil, "no_results"}, {&semantic, "success"}} {
+	}{{nil, "no_results"}, {&semantic, "no_results"}} {
 		text, err := tool.Execute(context.Background(), tools.SmartSearchInput{Query: "MissingSymbol", FilePath: path, ExactSymbol: tc.exact, IncludeFullContent: true})
 		if err != nil {
 			t.Fatal(err)
@@ -43,7 +43,7 @@ func TestMissingIdentifierDoesNotBecomeSemanticSuccess(t *testing.T) {
 		}
 	}
 	m := telemetry.ReadAggregatedMetrics(root)
-	if m == nil || m.TotalSearches != 2 || m.SearchesWithResults != 1 {
+	if m == nil || m.TotalSearches != 2 || m.SearchesWithResults != 0 {
 		t.Fatalf("metrics=%+v", m)
 	}
 }

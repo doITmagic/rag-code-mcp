@@ -133,17 +133,18 @@ func (t *SmartSearchTool) runParallelSearch(ctx context.Context, filePath, query
 
 // filterConfig holds parameters for the post-processing pipeline.
 type filterConfig struct {
-	Mode     string
-	MinScore float32
-	FilePath string
+	Mode         string
+	MinScore     float32
+	FilePath     string
+	DefaultFloor bool
 }
 
 // applyFilters runs the full post-processing pipeline on merged results:
-// mode filtering → path scoping → score threshold → doc grouping.
+// mode filtering → score threshold → path scoping → doc grouping.
 func (t *SmartSearchTool) applyFilters(merged []mergedResult, cfg filterConfig) []mergedResult {
 	merged = applyModeFilter(merged, cfg.Mode)
+	merged = applyScoreFilter(merged, cfg.MinScore, cfg.DefaultFloor)
 	merged = applyPathScoping(merged, scoring.ScopeDir(cfg.FilePath))
-	merged = applyScoreFilter(merged, cfg.MinScore)
 	merged = t.groupDocsByTree(merged)
 	return merged
 }
@@ -168,16 +169,19 @@ func applyModeFilter(merged []mergedResult, mode string) []mergedResult {
 }
 
 // applyScoreFilter removes results below the effective minimum score.
-// If minScore is specified, use it directly. Otherwise, apply auto-threshold:
-// when top score > 0.70, prune results below 40% of top score.
-func applyScoreFilter(merged []mergedResult, minScore float32) []mergedResult {
+// If minScore is specified, use it directly. Otherwise, use the default floor
+// or 40% of the top score, whichever is higher.
+func applyScoreFilter(merged []mergedResult, minScore float32, defaultFloor bool) []mergedResult {
 	if len(merged) == 0 {
 		return merged
 	}
 
 	effective := minScore
-	if effective <= 0 && merged[0].score > autoScoreThresholdTrigger {
-		effective = merged[0].score * autoScoreThresholdRatio
+	if effective <= 0 && defaultFloor {
+		effective = defaultSemanticMinScore
+		if relative := merged[0].score * autoScoreThresholdRatio; merged[0].score > autoScoreThresholdTrigger && relative > effective {
+			effective = relative
+		}
 	}
 	if effective <= 0 {
 		return merged
@@ -366,14 +370,22 @@ func serializeResults(response *ToolResponse, merged []mergedResult, useCompact,
 
 // noResultsResponse returns a "no results" JSON response.
 func noResultsResponse(query string, meta searchMetadata) (string, error) {
+	idxStatus := indexer.LoadIndexStatus(meta.workspaceRoot)
+	status := "no_results"
+	message := fmt.Sprintf("🔍 No code results found for query: '%s'", query)
+	if idxStatus != nil && idxStatus.EndedAt == "" {
+		status = "indexing_in_progress"
+		message = fmt.Sprintf("Indexing is still in progress. No match for '%s' was found in the partial index; retry after indexing completes.", query)
+	}
 	response := ToolResponse{
-		Status:  "no_results",
-		Message: fmt.Sprintf("🔍 No code results found for query: '%s'", query),
+		Status:  status,
+		Message: message,
 		Context: ContextMetadata{
 			WorkspaceRoot:   meta.workspaceRoot,
 			DetectionSource: meta.detectionSource,
 			Language:        meta.language,
 			Collection:      meta.collection,
+			IndexingStatus:  idxStatus,
 			SessionMetrics:  telemetry.ReadAggregatedMetrics(meta.workspaceRoot),
 		},
 	}

@@ -933,14 +933,6 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 		iderules.Write(root)
 	}
 
-	// Count active jobs after adding this one — warn if multiple workspaces are indexing
-	// simultaneously (they serialize against each other at Ollama level).
-	var activeCount int
-	e.indexingJobs.Range(func(_, _ any) bool { activeCount++; return true })
-	if activeCount > 1 {
-		logger.Instance.Warn("[IDX] ⚠️ %d workspaces indexing simultaneously — Ollama requests will serialize implicitly (ws=%s)", activeCount, filepath.Base(root))
-	}
-
 	// Preserve existing Languages data on restart so incremental indexing
 	// doesn't show processed=0 to AI consumers. Reset only lifecycle fields.
 	s := indexer.LoadIndexStatus(root)

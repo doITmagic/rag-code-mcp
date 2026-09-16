@@ -36,7 +36,9 @@ func (ca *CodeAnalyzer) Name() string {
 
 // CanHandle returns true if the analyzer supports the given file extension.
 func (ca *CodeAnalyzer) CanHandle(filePath string) bool {
-	return strings.HasSuffix(filePath, ".go") && !strings.HasSuffix(filePath, "_test.go")
+	// _test.go files are included: test code calls the API, so usages and
+	// call hierarchies were blind to it.
+	return strings.HasSuffix(strings.ToLower(filePath), ".go")
 }
 
 // Analyze extracts symbols from a file or directory.
@@ -72,28 +74,60 @@ func (ca *CodeAnalyzer) Analyze(ctx context.Context, path string) (*pkgParser.Re
 }
 
 func (ca *CodeAnalyzer) AnalyzePackage(dir string) (*PackageInfo, error) {
-	// Create a new FileSet for each directory
-	fset := token.NewFileSet()
-
-	// Parse files individually to retain AST bodies
 	files, err := filepath.Glob(filepath.Join(dir, "*.go"))
 	if err != nil {
 		return nil, fmt.Errorf("globbing directory: %w", err)
 	}
+	var src []string
+	for _, f := range files {
+		if !strings.HasSuffix(f, "_test.go") {
+			src = append(src, f)
+		}
+	}
+	return ca.analyzeFiles(dir, src)
+}
 
-	var astFiles []*ast.File
-	fileMap := make(map[string]*ast.File)
-
-	for _, file := range files {
-		if strings.HasSuffix(file, "_test.go") {
+// AnalyzeTestPackages analyzes the _test.go files of dir. They are kept apart
+// from the package proper because external tests (package foo_test) are a
+// different package to go/doc, and grouped by package name for that reason.
+// A directory without tests yields nil.
+func (ca *CodeAnalyzer) AnalyzeTestPackages(dir string) []*PackageInfo {
+	files, _ := filepath.Glob(filepath.Join(dir, "*_test.go"))
+	byPkg := make(map[string][]string)
+	var order []string
+	for _, f := range files {
+		parsed, err := parser.ParseFile(token.NewFileSet(), f, nil, parser.PackageClauseOnly)
+		if err != nil {
 			continue
 		}
+		name := parsed.Name.Name
+		if _, ok := byPkg[name]; !ok {
+			order = append(order, name)
+		}
+		byPkg[name] = append(byPkg[name], f)
+	}
+	var out []*PackageInfo
+	for _, name := range order {
+		if info, err := ca.analyzeFiles(dir, byPkg[name]); err == nil {
+			out = append(out, info)
+		}
+	}
+	return out
+}
+
+// analyzeFiles parses the given files of one package and extracts its API.
+func (ca *CodeAnalyzer) analyzeFiles(dir string, files []string) (*PackageInfo, error) {
+	// Create a new FileSet for each directory
+	fset := token.NewFileSet()
+
+	// Parse files individually to retain AST bodies
+	var astFiles []*ast.File
+	for _, file := range files {
 		f, err := parser.ParseFile(fset, file, nil, parser.ParseComments)
 		if err != nil {
 			continue // Skip files with parse errors
 		}
 		astFiles = append(astFiles, f)
-		fileMap[file] = f
 	}
 
 	if len(astFiles) == 0 {
@@ -103,10 +137,23 @@ func (ca *CodeAnalyzer) AnalyzePackage(dir string) (*PackageInfo, error) {
 	// Build a map from function name -> AST FuncDecl (with Body) BEFORE doc.New()
 	astFuncMap := ca.buildFunctionASTMap(astFiles)
 
-	// Build documentation view (this may modify AST nodes)
-	docPkg, err := doc.NewFromFiles(fset, astFiles, "./", doc.AllDecls|doc.AllMethods)
-	if err != nil {
-		return nil, fmt.Errorf("doc.NewFromFiles: %w", err)
+	// Build documentation view (this may modify AST nodes).
+	// doc.NewFromFiles drops every _test.go file from the package view (it
+	// only mines them for examples), so test groups go through doc.New,
+	// which takes the files as given.
+	var docPkg *doc.Package
+	if len(files) > 0 && strings.HasSuffix(files[0], "_test.go") {
+		astPkg := &ast.Package{Name: astFiles[0].Name.Name, Files: make(map[string]*ast.File, len(astFiles))}
+		for _, f := range astFiles {
+			astPkg.Files[fset.File(f.Pos()).Name()] = f
+		}
+		docPkg = doc.New(astPkg, "./", doc.AllDecls|doc.AllMethods)
+	} else {
+		var err error
+		docPkg, err = doc.NewFromFiles(fset, astFiles, "./", doc.AllDecls|doc.AllMethods)
+		if err != nil {
+			return nil, fmt.Errorf("doc.NewFromFiles: %w", err)
+		}
 	}
 
 	info := &PackageInfo{
@@ -703,21 +750,21 @@ func (ca *CodeAnalyzer) AnalyzePaths(paths []string) ([]CodeChunk, error) {
 				}
 				return nil
 			}
-			if !strings.HasSuffix(d.Name(), ".go") || strings.HasSuffix(d.Name(), "_test.go") {
+			if !strings.HasSuffix(d.Name(), ".go") {
 				return nil
 			}
 			dir := filepath.Dir(path)
 			if visited[dir] {
 				return nil
 			}
-			// mark and analyze the whole package directory
+			// mark and analyze the whole package directory, tests included
 			visited[dir] = true
-			pkgInfo, perr := ca.AnalyzePackage(dir)
-			if perr != nil {
-				// Non-fatal: skip directories without proper Go package
-				return nil
+			if pkgInfo, perr := ca.AnalyzePackage(dir); perr == nil {
+				chunks = append(chunks, convertPackageInfoToChunks(pkgInfo)...)
 			}
-			chunks = append(chunks, convertPackageInfoToChunks(pkgInfo)...)
+			for _, ti := range ca.AnalyzeTestPackages(dir) {
+				chunks = append(chunks, convertPackageInfoToChunks(ti)...)
+			}
 			return nil
 		})
 		if err != nil {

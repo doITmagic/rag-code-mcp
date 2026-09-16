@@ -42,7 +42,9 @@ var _ = Describe("SmartSearchTool (rag_search)", func() {
 				mockStore.SearchCodeOnlyFunc = func(ctx context.Context, col string, q storage.SearchQuery) ([]storage.SearchResult, error) {
 					return []storage.SearchResult{}, nil
 				}
-				resJSON, err := tool.Execute(ctx, tools.SmartSearchInput{Query: "test", FilePath: "main.go"})
+				// A token no file contains: _test.go files are indexed now, so "test"
+				// would be found by the on-disk fallback scan.
+				resJSON, err := tool.Execute(ctx, tools.SmartSearchInput{Query: "zzqxnomatch", FilePath: "main.go"})
 				Expect(err).NotTo(HaveOccurred())
 				var resp tools.ToolResponse
 				Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())

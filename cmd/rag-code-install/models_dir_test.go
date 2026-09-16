@@ -29,6 +29,7 @@ func isolate(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir reads this on Windows
 	orig := linuxServiceModelDirs
 	linuxServiceModelDirs = nil
 	t.Cleanup(func() { linuxServiceModelDirs = orig })

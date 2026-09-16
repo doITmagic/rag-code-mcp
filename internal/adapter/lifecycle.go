@@ -49,9 +49,7 @@ func StartDaemon(binaryPath string, port int, extraArgs ...string) error {
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 
-	if runtime.GOOS != "windows" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	}
+	detach(cmd)
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start daemon: %w", err)

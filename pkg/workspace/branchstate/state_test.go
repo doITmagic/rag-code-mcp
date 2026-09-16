@@ -141,3 +141,19 @@ func TestCompareAndUpdate_UsesCacheTTL(t *testing.T) {
 		t.Fatalf("expected git calls to refresh after TTL expiry")
 	}
 }
+
+// A repo straight after `git init` has no HEAD commit; git exits 128 with
+// "unknown revision". That must read as "no git metadata", not as an invalid
+// workspace, or every tool fails on a brand-new project.
+func TestGitCommand_UnbornHeadIsMetadataUnavailable(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	root := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", root).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	if _, err := gitCommand(context.Background(), root, "rev-parse", "--abbrev-ref", "HEAD"); err != ErrGitMetadataUnavailable {
+		t.Fatalf("got %v, want ErrGitMetadataUnavailable", err)
+	}
+}

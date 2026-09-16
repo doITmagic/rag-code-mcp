@@ -48,7 +48,7 @@ func (a *Analyzer) Name() string {
 
 // CanHandle returns true for .php files.
 func (a *Analyzer) CanHandle(filePath string) bool {
-	return strings.HasSuffix(filePath, ".php")
+	return strings.HasSuffix(strings.ToLower(filePath), ".php")
 }
 
 // Analyze extracts symbols from a file or directory.

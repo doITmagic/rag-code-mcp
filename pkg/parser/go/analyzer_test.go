@@ -249,7 +249,7 @@ var _ = fmt.Sprintf
 		assert.Equal(t, "go", ca.Name())
 		assert.True(t, ca.CanHandle("test.go"))
 		assert.False(t, ca.CanHandle("test.py"))
-		assert.False(t, ca.CanHandle("test_test.go"))
+		assert.True(t, ca.CanHandle("test_test.go")) // tests are indexed too
 	})
 
 	t.Run("Analyze directory", func(t *testing.T) {

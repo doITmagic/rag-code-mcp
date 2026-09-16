@@ -19,6 +19,8 @@ type Component struct {
 	Emits       []string // Emitted events
 	Slots       []string // Named slots
 	Hooks       []string // Lifecycle hooks used
+	Methods     []string // Options API `methods:` keys
+	Computed    []string // Options API `computed:` keys
 	IsExported  bool
 	IsDefault   bool
 	HasTemplate bool

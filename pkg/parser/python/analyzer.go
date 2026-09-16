@@ -30,7 +30,7 @@ func (a *Analyzer) Name() string {
 
 // CanHandle returns true for .py files.
 func (a *Analyzer) CanHandle(filePath string) bool {
-	return strings.HasSuffix(filePath, ".py")
+	return strings.HasSuffix(strings.ToLower(filePath), ".py")
 }
 
 // Analyze extracts symbols from a file or directory.

@@ -53,7 +53,7 @@ var jsExtensions = map[string]bool{
 
 // CanHandle returns true for JS/TS files
 func (ca *CodeAnalyzer) CanHandle(filePath string) bool {
-	ext := filepath.Ext(filePath)
+	ext := strings.ToLower(filepath.Ext(filePath))
 	return jsExtensions[ext]
 }
 
@@ -211,7 +211,8 @@ func (ca *CodeAnalyzer) analyzeVueFile(filePath string, content []byte) (*fileAn
 		})
 	}
 
-	// Map Vue components as class-like symbols
+	// Map Vue components as class-like symbols, and their Options API
+	// methods/computed as functions so they are searchable by name.
 	for _, comp := range vueInfo.Components {
 		fa.Classes = append(fa.Classes, JSClass{
 			Name:       comp.Name,
@@ -219,6 +220,22 @@ func (ca *CodeAnalyzer) analyzeVueFile(filePath string, content []byte) (*fileAn
 			IsExported: comp.IsExported,
 			Docstring:  fmt.Sprintf("Vue component (%s)", comp.Type),
 		})
+		for _, m := range comp.Methods {
+			fa.Functions = append(fa.Functions, JSFunction{
+				Name:      m,
+				FilePath:  filePath,
+				Docstring: fmt.Sprintf("Method of Vue component %s", comp.Name),
+				Metadata:  map[string]any{"component": comp.Name, "vue_kind": "method"},
+			})
+		}
+		for _, c := range comp.Computed {
+			fa.Functions = append(fa.Functions, JSFunction{
+				Name:      c,
+				FilePath:  filePath,
+				Docstring: fmt.Sprintf("Computed property of Vue component %s", comp.Name),
+				Metadata:  map[string]any{"component": comp.Name, "vue_kind": "computed"},
+			})
+		}
 	}
 
 	return fa, nil

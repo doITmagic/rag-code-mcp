@@ -1,6 +1,7 @@
 package vue
 
 import (
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -18,7 +19,9 @@ var (
 	reExportDefault   = regexp.MustCompile(`(?m)^export\s+default\s+\{`)
 	reOptionsProps    = regexp.MustCompile(`(?m)^\s+props\s*:\s*[\[{]`)
 	reOptionsEmits    = regexp.MustCompile(`(?m)^\s+emits\s*:\s*[\[{]`)
-	reComponentName   = regexp.MustCompile(`(?m)^\s+name\s*:\s*['"](\w+)['"]`)
+	// Not anchored to a line start: `export default { name: 'X', ... }` on
+	// one line is common and was falling through to the filename.
+	reComponentName   = regexp.MustCompile(`(?:^|[\s{,])name\s*:\s*['"](\w+)['"]`)
 
 	// Composition API
 	reRef         = regexp.MustCompile(`\bref\s*\(`)
@@ -65,7 +68,7 @@ var (
 	rePluginUse = regexp.MustCompile(`(?m)app\.use\s*\(\s*(\w+)`)
 
 	// Component methods/properties extraction
-	reMethodName = regexp.MustCompile(`(?m)^\s+(\w+)\s*\(`)
+	reMethodName = regexp.MustCompile(`(?m)^\s+(?:async\s+)?(\w+)\s*\(`) // async methods too
 )
 
 // Analyzer detects Vue.js-specific patterns
@@ -177,11 +180,9 @@ func (a *Analyzer) detectSFCComponent(fullSource, scriptContent, filePath string
 	if match := reComponentName.FindStringSubmatch(scriptContent); len(match) > 1 {
 		comp.Name = match[1]
 	} else {
-		// Derive from filename
-		name := strings.TrimSuffix(filePath, ".vue")
-		if idx := strings.LastIndex(name, "/"); idx != -1 {
-			name = name[idx+1:]
-		}
+		// Derive from filename. filepath.Base handles both separators; the
+		// old "/" split left the whole path in on Windows.
+		name := strings.TrimSuffix(filepath.Base(filePath), ".vue")
 		comp.Name = cases.Title(language.English).String(name)
 	}
 
@@ -193,6 +194,8 @@ func (a *Analyzer) detectSFCComponent(fullSource, scriptContent, filePath string
 
 	// Extract lifecycle hooks
 	comp.Hooks = a.extractHooks(scriptContent)
+	comp.Methods = a.extractObjectKeys(scriptContent, "methods")
+	comp.Computed = a.extractObjectKeys(scriptContent, "computed")
 
 	return comp
 }
@@ -221,6 +224,8 @@ func (a *Analyzer) detectComponents(source, filePath string) []Component {
 		comp.Props = a.extractProps(source)
 		comp.Emits = a.extractEmits(source)
 		comp.Hooks = a.extractHooks(source)
+		comp.Methods = a.extractObjectKeys(source, "methods")
+		comp.Computed = a.extractObjectKeys(source, "computed")
 
 		components = append(components, comp)
 	}

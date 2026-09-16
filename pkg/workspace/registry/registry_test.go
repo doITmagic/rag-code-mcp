@@ -34,7 +34,7 @@ func TestRegistryUpsertAndLookup(t *testing.T) {
 	}
 
 	retrieved, ok := r.LookupByID(entry.ID)
-	if !ok || retrieved.Root != "/root/project" {
+	if !ok || retrieved.Root != filepath.Clean("/root/project") {
 		t.Fatalf("lookup by id failed")
 	}
 

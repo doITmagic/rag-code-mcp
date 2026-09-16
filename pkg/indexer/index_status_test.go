@@ -1,10 +1,26 @@
 package indexer
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestIndexStatusJSONOmitsLanguagesWithoutFiles(t *testing.T) {
+	status := IndexStatus{Languages: map[string]LangStatus{
+		"go":     {OnDisk: 12, Processed: 4},
+		"python": {OnDisk: 0, Processed: 0},
+	}}
+
+	b, err := json.Marshal(status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != `{"started_at":"","languages":{"go":{"on_disk":12,"processed":4}}}` {
+		t.Fatalf("unexpected status JSON: %s", b)
+	}
+}
 
 func TestIndexStatusRoundTrip(t *testing.T) {
 	wsRoot := t.TempDir()

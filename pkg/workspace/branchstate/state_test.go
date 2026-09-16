@@ -157,3 +157,16 @@ func TestGitCommand_UnbornHeadIsMetadataUnavailable(t *testing.T) {
 		t.Fatalf("got %v, want ErrGitMetadataUnavailable", err)
 	}
 }
+
+// Without git metadata there is no branch to compare, so Annotate must not
+// report a mismatch risk on every request.
+func TestAnnotate_NoGitIsLowRisk(t *testing.T) {
+	manager := &Manager{clock: time.Now, gitRunner: (&fakeGit{err: ErrGitMetadataUnavailable}).run}
+	resp := &contract.ResolveWorkspaceResponse{}
+	if err := manager.Annotate(context.Background(), t.TempDir(), resp); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if resp.MismatchRisk != "low" {
+		t.Fatalf("risk = %q, want low", resp.MismatchRisk)
+	}
+}

@@ -82,3 +82,33 @@ func TestWriteIsIdempotent(t *testing.T) {
 		t.Error("unchanged content should not be rewritten")
 	}
 }
+
+func TestRemoveOnlyDeletesGeneratedRules(t *testing.T) {
+	root := t.TempDir()
+	Write(root)
+	custom := filepath.Join(root, ".windsurf", "rules", "general.md")
+	if err := os.WriteFile(custom, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	edited := filepath.Join(root, ".roo", "rules", "ragcode.md")
+	if err := os.WriteFile(edited, []byte("user edited"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	Remove(root)
+
+	for _, keep := range []string{custom, edited} {
+		if _, err := os.Stat(keep); err != nil {
+			t.Fatalf("user file removed: %s", keep)
+		}
+	}
+	for _, gone := range []string{
+		filepath.Join(root, ".cursor", "rules", "ragcode.mdc"),
+		filepath.Join(root, ".clinerules", "ragcode.md"),
+		filepath.Join(root, "CLAUDE.md"),
+	} {
+		if _, err := os.Stat(gone); !os.IsNotExist(err) {
+			t.Fatalf("generated file remains: %s", gone)
+		}
+	}
+}

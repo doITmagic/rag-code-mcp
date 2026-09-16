@@ -1,6 +1,7 @@
 package uninstall
 
 import (
+	"bytes"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -12,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/doITmagic/rag-code-mcp/internal/service/iderules"
 )
 
 const (
@@ -199,6 +202,10 @@ func removeFromShellConfig(home, binDir string) {
 func removeFromIDEConfigs(home string) {
 	paths := resolveIDEPaths(home)
 	for key, ide := range paths {
+		if key == "codex" {
+			removeCodexEntry(home, ide.path)
+			continue
+		}
 		if key == "zed" {
 			removeZedRagcodeEntry(ide.displayName, ide.path)
 			continue
@@ -213,8 +220,11 @@ func removeRagcodeFromJSON(displayName, path string) {
 		return
 	}
 
+	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
 	var configMap map[string]interface{}
-	if err := json.Unmarshal(data, &configMap); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&configMap); err != nil || configMap == nil {
 		return
 	}
 
@@ -317,6 +327,7 @@ func cleanWorkspaceData(home string) {
 	// Step 1: direct delete for each workspace known to the registry.
 	if len(registryRoots) > 0 {
 		for _, wsPath := range registryRoots {
+			iderules.Remove(wsPath)
 			ragDir := filepath.Join(wsPath, ".ragcode")
 			if _, err := os.Stat(ragDir); err == nil {
 				if err := os.RemoveAll(ragDir); err != nil {
@@ -473,7 +484,7 @@ func scanAndCleanRagcodeDirs(home string, registryRoots []string) {
 				return nil
 			}
 			rel, _ := filepath.Rel(root, path)
-			
+
 			depth := 0
 			if rel != "." {
 				depth = strings.Count(rel, string(os.PathSeparator)) + 1
@@ -493,6 +504,7 @@ func scanAndCleanRagcodeDirs(home string, registryRoots []string) {
 					if isInstallDir(path) {
 						return filepath.SkipDir // the installation, removed separately
 					}
+					iderules.Remove(filepath.Dir(path))
 					if err := os.RemoveAll(path); err != nil {
 						warnMsg(fmt.Sprintf("Failed to remove %s: %v", path, err))
 					} else {
@@ -590,8 +602,8 @@ func detectIDEProjectParents(home string) []string {
 	// storage.json has {"openedPathsList": {"workspaces3": ["/path", ...]}}
 	type vscodeStorage struct {
 		OpenedPathsList struct {
-			Workspaces  []string `json:"workspaces3"`
-			Folders     []string `json:"workspaceFolder"`
+			Workspaces []string `json:"workspaces3"`
+			Folders    []string `json:"workspaceFolder"`
 		} `json:"openedPathsList"`
 	}
 
@@ -830,20 +842,18 @@ type idePath struct {
 
 func resolveIDEPaths(home string) map[string]idePath {
 	paths := map[string]idePath{
+		"codex": {path: filepath.Join(home, ".codex", "config.toml"), displayName: "OpenAI Codex"},
 		"windsurf": {
 			path:        filepath.Join(home, ".codeium", "windsurf", "mcp_config.json"),
 			displayName: "Windsurf",
 		},
-		"cursor": {
-			path:        filepath.Join(home, ".cursor", "mcp.config.json"),
-			displayName: "Cursor",
-		},
+		"cursor": determineCursorPath(home),
 		"copilot": {
-			path:        filepath.Join(home, ".aitk", "mcp.json"),
-			displayName: "GitHub Copilot",
+			path:        filepath.Join(home, ".copilot", "mcp-config.json"),
+			displayName: "GitHub Copilot CLI",
 		},
 		"antigravity": {
-			path:        filepath.Join(home, ".gemini", "antigravity", "mcp_config.json"),
+			path:        filepath.Join(home, ".gemini", "config", "mcp_config.json"),
 			displayName: "Antigravity",
 		},
 		"mcp-cli": {
@@ -858,6 +868,11 @@ func resolveIDEPaths(home string) map[string]idePath {
 			path:        filepath.Join(home, ".gemini", "settings.json"),
 			displayName: "Gemini CLI",
 		},
+		"openhands": {path: filepath.Join(home, ".openhands", "mcp.json"), displayName: "OpenHands"},
+		"continue":  {path: filepath.Join(home, ".continue", "mcpServers", "ragcode.json"), displayName: "Continue.dev"},
+	}
+	if codexHome := os.Getenv("CODEX_HOME"); codexHome != "" {
+		paths["codex"] = idePath{filepath.Join(codexHome, "config.toml"), "OpenAI Codex"}
 	}
 
 	switch runtime.GOOS {
@@ -884,9 +899,21 @@ func resolveIDEPaths(home string) map[string]idePath {
 
 	if vsPath, ok := determineVSCodePath(home); ok {
 		paths["vs-code"] = vsPath
+		userDir := filepath.Dir(vsPath.path)
+		paths["roo-code"] = idePath{filepath.Join(userDir, "globalStorage", "rooveterinaryinc.roo-cline", "settings", "cline_mcp_settings.json"), "Roo Code (VS Code)"}
+		paths["cline"] = idePath{filepath.Join(userDir, "globalStorage", "saoudrizwan.claude-dev", "settings", "cline_mcp_settings.json"), "Cline (VS Code)"}
 	}
 
 	return paths
+}
+
+func determineCursorPath(home string) idePath {
+	if runtime.GOOS == "windows" {
+		if appData := os.Getenv("APPDATA"); appData != "" {
+			return idePath{filepath.Join(appData, "Cursor", "mcp.json"), "Cursor"}
+		}
+	}
+	return idePath{filepath.Join(home, ".cursor", "mcp.json"), "Cursor"}
 }
 
 func determineVSCodePath(home string) (idePath, bool) {

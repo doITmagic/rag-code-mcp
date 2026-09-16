@@ -1,6 +1,8 @@
 package indexer
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -138,5 +140,44 @@ func TestIndexStatusBreakdownOmitEmpty(t *testing.T) {
 	goStatus := loaded.Languages["go"]
 	if goStatus.Breakdown != nil {
 		t.Errorf("expected nil breakdown for omitempty, got %v", goStatus.Breakdown)
+	}
+}
+
+// ~/.ragcode is the install directory, not a workspace. With it present,
+// every project under home was treated as nested and never got a .ragcode.
+func TestSaveIndexStatusIgnoresInstallDirInHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if err := os.MkdirAll(filepath.Join(home, ".ragcode", "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ws := filepath.Join(home, "projects", "app")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ClearParentRagcodeCache()
+
+	SaveIndexStatus(ws, &IndexStatus{StartedAt: "2025-01-01T00:00:00Z"})
+	if LoadIndexStatus(ws) == nil {
+		t.Fatal("status not written for a project under home")
+	}
+}
+
+// A real parent workspace still blocks creating a nested .ragcode.
+func TestSaveIndexStatusBlockedUnderParentWorkspace(t *testing.T) {
+	parent := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(parent, ".ragcode"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(parent, "sub")
+	if err := os.MkdirAll(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ClearParentRagcodeCache()
+
+	SaveIndexStatus(child, &IndexStatus{StartedAt: "2025-01-01T00:00:00Z"})
+	if _, err := os.Stat(filepath.Join(child, ".ragcode")); !os.IsNotExist(err) {
+		t.Fatal("nested .ragcode was created under a parent workspace")
 	}
 }

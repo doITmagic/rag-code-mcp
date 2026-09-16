@@ -1,0 +1,106 @@
+// Package iderules writes RagCode usage rules into the per-IDE locations each
+// agent actually reads, so an agent working in an indexed workspace knows the
+// tools exist.
+//
+// Every target here is the current convention for its tool. The flat
+// dot-files RagCode used to write (.cursorrules, .windsurfrules, .clauderules)
+// are legacy or, in the case of .clauderules, were never a convention at all.
+package iderules
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/doITmagic/rag-code-mcp/internal/logger"
+)
+
+// body is the shared rule text. Tool names must match the registered MCP tools.
+const body = `# RagCode MCP
+
+This workspace is indexed by RagCode MCP. For anything about the code in it —
+where something lives, what it does, who calls it — query the index instead of
+guessing or grepping blindly.
+
+- ` + "`rag_search`" + ` — semantic + exact search. Start here.
+- ` + "`rag_read_file_context`" + ` — read a file with its symbols and relations.
+- ` + "`rag_find_usages`" + ` — every reference to a symbol.
+- ` + "`rag_call_hierarchy`" + ` — callers and callees of a function.
+- ` + "`rag_list_package_exports`" + ` — the public surface of a package.
+- ` + "`rag_index_workspace`" + ` — (re)index when a search comes back empty.
+
+Pass the absolute ` + "`file_path`" + ` of the file you are working on so the
+right workspace is resolved.
+`
+
+// target is one file to write, with an optional tool-specific front matter.
+type target struct {
+	path        string
+	frontMatter string
+}
+
+var targets = []target{
+	// Cursor: .cursorrules is deprecated in favour of per-rule .mdc files.
+	{filepath.Join(".cursor", "rules", "ragcode.mdc"), "---\ndescription: RagCode MCP semantic code search\nalwaysApply: true\n---\n\n"},
+	// Windsurf: .windsurfrules is legacy; rules live in .windsurf/rules/.
+	{filepath.Join(".windsurf", "rules", "ragcode.md"), "---\ntrigger: always_on\n---\n\n"},
+	// Cline reads .clinerules as either a file or a directory of rules.
+	{filepath.Join(".clinerules", "ragcode.md"), ""},
+	// Roo Code: .roomodes is mode config, not rules; rules go in .roo/rules/.
+	{filepath.Join(".roo", "rules", "ragcode.md"), ""},
+}
+
+// claudeFile is written only when absent: CLAUDE.md belongs to the user, and
+// clobbering it would throw away their own instructions.
+const claudeFile = "CLAUDE.md"
+
+// Write creates the rule files under root. Existing files are rewritten only
+// when their content differs, so an unchanged workspace stays untouched.
+func Write(root string) {
+	for _, t := range targets {
+		write(filepath.Join(root, t.path), t.frontMatter+body)
+	}
+
+	claude := filepath.Join(root, claudeFile)
+	if _, err := os.Stat(claude); os.IsNotExist(err) {
+		write(claude, body)
+	}
+}
+
+func write(path, content string) {
+	if existing, err := os.ReadFile(path); err == nil && string(existing) == content {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		logger.Instance.Warn("[IDE-RULES] cannot create %s: %v", filepath.Dir(path), err)
+		return
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		logger.Instance.Warn("[IDE-RULES] cannot write %s: %v", path, err)
+		return
+	}
+	logger.Instance.Debug("[IDE-RULES] wrote %s", path)
+}
+
+// Legacy lists the flat rule files earlier RagCode versions dropped in the
+// workspace root. They are removed so an agent does not follow stale rules
+// naming tools that no longer exist.
+var Legacy = []string{".cursorrules", ".windsurfrules", ".clinerules", ".clauderules", ".roomodes"}
+
+// RemoveLegacy deletes the legacy rule files, but only the ones RagCode wrote:
+// .clinerules and .roomodes are also valid hand-written config, so a file
+// without the RagCode marker is left alone.
+func RemoveLegacy(root string) {
+	for _, name := range Legacy {
+		path := filepath.Join(root, name)
+		data, err := os.ReadFile(path)
+		if err != nil || !strings.Contains(string(data), "RagCode MCP") {
+			continue
+		}
+		if err := os.Remove(path); err != nil {
+			logger.Instance.Warn("[IDE-RULES] cannot remove legacy %s: %v", path, err)
+			continue
+		}
+		logger.Instance.Info("[IDE-RULES] removed legacy rule file %s", path)
+	}
+}

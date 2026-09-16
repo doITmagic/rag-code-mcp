@@ -13,6 +13,7 @@ import (
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
+	"github.com/doITmagic/rag-code-mcp/internal/service/iderules"
 	"github.com/doITmagic/rag-code-mcp/internal/service/search"
 	"github.com/doITmagic/rag-code-mcp/internal/skills"
 	"github.com/doITmagic/rag-code-mcp/internal/transport"
@@ -917,6 +918,14 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 		return
 	}
 
+	// Rule files are refreshed here rather than on every resolve: this is the
+	// point where the workspace is known to be a real, confirmed root.
+	// Legacy first — an old .clinerules *file* would block the new directory.
+	if e.config == nil || e.config.Workspace.AutoCreateIDERules {
+		iderules.RemoveLegacy(root)
+		iderules.Write(root)
+	}
+
 	// Count active jobs after adding this one — warn if multiple workspaces are indexing
 	// simultaneously (they serialize against each other at Ollama level).
 	var activeCount int
@@ -1100,6 +1109,10 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 		// this is a full re-index (totalFiles >= diskTotal) so we can reset
 		// baseProcessed to 0 and avoid double-counting.
 		firstTick := true
+		// lastStatusWrite throttles status writes by time rather than by file
+		// count: on a slow embedder a count-based gate leaves index_status.json
+		// reading "processed: 0" for minutes while indexing is in fact running.
+		var lastStatusWrite time.Time
 
 		err := e.indexer.IndexWorkspace(ctx, wctx.Root, collection, indexer.Options{
 			Language:        lang,
@@ -1107,10 +1120,11 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 			ExcludePatterns: excludePatterns,
 			Recreate:        recreate,
 			Progress: func(doneFiles, totalFiles int) {
-				// Throttle disk I/O: write every 10 files or on the last file
-				if doneFiles%10 != 0 && doneFiles != totalFiles {
+				// Throttle disk I/O: at most one write every 2s, plus the last file.
+				if doneFiles != totalFiles && time.Since(lastStatusWrite) < 2*time.Second {
 					return
 				}
+				lastStatusWrite = time.Now()
 				// On the first tick, decide if this is a full re-index.
 				// If totalFiles covers all on-disk files, reset base to 0
 				// so we don't double-count the existing Processed value.

@@ -10,15 +10,17 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
+	"github.com/doITmagic/rag-code-mcp/pkg/telemetry"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // SmartSearchTool implements the rag_search MCP tool.
-// It runs both semantic (discovery) and hybrid (exact) searches in parallel,
+// It runs both semantic and hybrid (reranked) searches in parallel,
 // merges results by score, and returns adaptive output (compact vs full)
 // based on result confidence — no manual mode selection needed.
 type SmartSearchTool struct {
@@ -37,10 +39,11 @@ func NewSmartSearchTool(eng *engine.Engine) *SmartSearchTool {
 func (t *SmartSearchTool) Name() string { return "rag_search" }
 func (t *SmartSearchTool) Description() string {
 	return "Intelligent code search that automatically determines the best search strategy. " +
-		"Simply provide your query — the tool runs both semantic and exact searches in parallel, " +
+		"Simply provide your query — the tool combines semantic and hybrid search, " +
 		"merges results by relevance score, and adapts the response format automatically: " +
-		"high-confidence matches return full source code, exploratory results return compact summaries. " +
+		"results return full source code or compact summaries; scores are ranking signals, not confidence probabilities. " +
 		"No need to choose a search mode. Provide 'file_path' for faster workspace detection, or omit it for Auto-Discovery. " +
+		"CamelCase, snake_case and qualified identifiers use exact symbol lookup. Set 'exact_symbol' to override this detection. " +
 		"Set 'include_full_content' to true to force full source code in all results, overriding compact mode. " +
 		"Set 'include_docs' to true to also search project documentation (README, guides, Markdown files) alongside code. " +
 		"Use 'mode'=\"strict_code\" when you ONLY want to see implementation logic exactly (Go, Python, etc) and strictly ignore documentation. " +
@@ -62,6 +65,7 @@ type SmartSearchInput struct {
 	IncludeDocs        bool    `json:"include_docs,omitempty"`
 	IncludeReasons     bool    `json:"include_reasons,omitempty"`
 	Mode               string  `json:"mode,omitempty"`
+	ExactSymbol        *bool   `json:"exact_symbol,omitempty"`
 }
 
 // highConfidenceThreshold: if top result score exceeds this, return full content.
@@ -106,12 +110,49 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 		return "", err
 	}
 
-	sr := t.runParallelSearch(ctx, input.FilePath, query, limit, input.IncludeDocs)
-	if sr.semantic == nil && sr.hybrid == nil {
-		return t.handleSearchError(sr.err, sr.meta.workspaceRoot, sr.meta.workspaceID)
+	exactSymbol := isSymbolQuery(query)
+	if input.ExactSymbol != nil {
+		exactSymbol = *input.ExactSymbol
 	}
-
-	merged := t.mergeResults(sr.semantic, sr.hybrid, limit)
+	var sr parallelSearchResult
+	var merged []mergedResult
+	if exactSymbol {
+		wctx, err := t.engine.DetectContext(ctx, input.FilePath)
+		if err != nil {
+			return "", err
+		}
+		sr.meta = searchMetadata{workspaceRoot: wctx.Root, workspaceID: wctx.ID, collection: "exact", detectionSource: wctx.DetectionSource}
+		exact, err := t.engine.SearchByName(ctx, sr.meta.workspaceID, query, limit)
+		if err != nil {
+			var missing *engine.ErrNoCollectionsFound
+			if errors.As(err, &missing) {
+				return (ToolResponse{Status: "indexing_required", Message: "Index this workspace before exact symbol lookup.", Context: ContextFromWorkspaceWithStatus(wctx, t.engine)}).JSON()
+			}
+			return "", err
+		}
+		if len(exact) == 0 {
+			exact, err = t.engine.ExactSearchPolyglot(ctx, sr.meta.workspaceID, map[string]interface{}{"qualified_name": query}, limit)
+			if err != nil {
+				return "", err
+			}
+		}
+		for i := range exact {
+			exact[i].Score = 1
+		}
+		merged = t.mergeResults(&engine.SearchCodeResult{Results: exact}, nil, limit)
+		for i := range merged {
+			merged[i].source = "exact"
+		}
+	} else {
+		sr = t.runParallelSearch(ctx, input.FilePath, query, limit, input.IncludeDocs)
+		if sr.semantic == nil && sr.hybrid == nil {
+			if sr.err == nil {
+				recordSearchMetric(sr.meta, query, nil, false, nil, t0)
+			}
+			return t.handleSearchError(sr.err, sr.meta.workspaceRoot, sr.meta.workspaceID)
+		}
+		merged = t.mergeResults(sr.semantic, sr.hybrid, limit)
+	}
 	merged = t.applyFilters(merged, filterConfig{
 		Mode:     input.Mode,
 		MinScore: input.MinScore,
@@ -119,6 +160,7 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 	})
 
 	if len(merged) == 0 {
+		recordSearchMetric(sr.meta, query, nil, sr.meta.collection == "fallback", nil, t0)
 		return noResultsResponse(query, sr.meta)
 	}
 
@@ -137,10 +179,36 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 		t.engine.CleanupStaleFiles(sr.meta.workspaceID, staleFiles)
 	}
 
-	// Record metric asynchronously to avoid blocking response
-	go recordSearchMetric(sr.meta, query, merged, isFallback, response.Context.Telemetry, t0)
+	// Count only results actually returned after stale-file filtering.
+	valid := merged[:0]
+	for _, m := range merged {
+		stale := false
+		for _, path := range staleFiles {
+			stale = stale || m.filePath == path
+		}
+		if !stale {
+			valid = append(valid, m)
+		}
+	}
+	recordSearchMetric(sr.meta, query, valid, isFallback, response.Context.Telemetry, t0)
+	response.Context.SessionMetrics = telemetry.ReadAggregatedMetrics(sr.meta.workspaceRoot)
 
 	return response.JSON()
+}
+
+// Plain words remain semantic queries. Code-shaped identifiers use metadata;
+// callers can override this heuristic with exact_symbol.
+func isSymbolQuery(query string) bool {
+	marked := false
+	for i, r := range query {
+		if !(unicode.IsLetter(r) || unicode.IsDigit(r) || strings.ContainsRune("_.$\\:", r)) {
+			return false
+		}
+		if strings.ContainsRune("_.$\\:", r) || (i > 0 && unicode.IsUpper(r)) {
+			marked = true
+		}
+	}
+	return marked
 }
 
 // mergedResult holds a deduplicated result with metadata extracted from payload.

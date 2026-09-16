@@ -145,7 +145,7 @@ func (t *IndexWorkspaceTool) verifyConfirmationToken(wctx *engine.WorkspaceConte
 		t.pendingConfirmations.Store(wctx.Root, ce)
 		response := ToolResponse{
 			Status: "error",
-			Error:  fmt.Sprintf("Invalid confirmation_token. Expected the token returned from the validation step. Please provide 'confirmation_token': '%s'.", ce.Nonce),
+			Error:  "Invalid confirmation_token. Run the tool again without 'confirm' to validate the workspace root and receive a fresh token.",
 		}
 		return response.JSON()
 	}

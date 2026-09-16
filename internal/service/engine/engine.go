@@ -40,6 +40,9 @@ type Engine struct {
 	// indexingJobs tracks active background indexing jobs.
 	// Key: workspace ID, Value: start time
 	indexingJobs sync.Map
+	// indexingSlot keeps workspace indexing sequential. Ollama serializes embed
+	// requests anyway, while parallel workspace scans multiply memory pressure.
+	indexingSlot chan struct{}
 
 	// pendingIndex tracks file changes received while an indexing job is running.
 	// It ensures watcher-triggered incremental indexing is lossless under rapid edits.
@@ -112,13 +115,14 @@ func NewEngine(idx *indexer.Service, srv *search.Service, registryPath string, c
 	}
 
 	return &Engine{
-		indexer:  idx,
-		search:   srv,
-		resolver: res,
-		detector: det,
-		config:   cfg,
-		watchers: watcherMgr,
-		registry: reg,
+		indexer:      idx,
+		search:       srv,
+		resolver:     res,
+		detector:     det,
+		config:       cfg,
+		watchers:     watcherMgr,
+		registry:     reg,
+		indexingSlot: make(chan struct{}, 1),
 
 		pendingFiles:    make(map[string]map[string]struct{}),
 		pendingOverflow: make(map[string]bool),
@@ -955,6 +959,12 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 			// If watcher changes came in while we were indexing, run a follow-up incremental job.
 			e.tryStartPendingIndex(root, id)
 		}()
+
+		if len(e.indexingSlot) > 0 {
+			logger.Instance.Info("[IDX] ⏳ ws=%s queued behind another workspace", filepath.Base(root))
+		}
+		e.indexingSlot <- struct{}{}
+		defer func() { <-e.indexingSlot }()
 
 		ctx := context.Background()
 		var err error

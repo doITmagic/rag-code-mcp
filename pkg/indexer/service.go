@@ -508,7 +508,11 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 		err   error
 	}
 
-	jobs := make(chan parser.Symbol, len(symbols))
+	embedBatchSize := 1
+	if _, ok := s.embedder.(llm.BatchEmbedder); ok {
+		embedBatchSize = 2
+	}
+	jobs := make(chan []parser.Symbol, (len(symbols)+embedBatchSize-1)/embedBatchSize)
 	results := make(chan result, len(symbols))
 
 	var wg sync.WaitGroup
@@ -518,7 +522,7 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 			defer wg.Done()
 			consecutiveFailures := 0
 
-			for sym := range jobs {
+			for batch := range jobs {
 				// Circuit breaker: if we've had consecutive failures, check Ollama before retrying
 				if consecutiveFailures >= circuitBreakerThreshold {
 					// Check context first — if already cancelled, abort immediately
@@ -544,20 +548,22 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 					time.Sleep(2 * time.Second)
 				}
 
-				// Embed text construction
-				embedText := fmt.Sprintf("%s\n%s\n%s\n%s", sym.Package, sym.Name, sym.Signature, sym.Content)
-				if sym.Docstring != "" {
-					embedText = sym.Docstring + "\n" + embedText
+				embedTexts := make([]string, len(batch))
+				for i, sym := range batch {
+					embedTexts[i] = fmt.Sprintf("%s\n%s\n%s\n%s", sym.Package, sym.Name, sym.Signature, sym.Content)
+					if sym.Docstring != "" {
+						embedTexts[i] = sym.Docstring + "\n" + embedTexts[i]
+					}
 				}
 
 				embedCtx, embedCancel := context.WithTimeout(ctx, 30*time.Second)
-				vector64, err := s.embedder.Embed(embedCtx, embedText)
+				vectors64, err := s.embedBatch(embedCtx, embedTexts)
 				embedCancel()
 
 				if err != nil {
 					consecutiveFailures++
-					logger.Instance.Warn("Embed failed for %s (consecutive failures: %d): %v", sym.Name, consecutiveFailures, err)
-					results <- result{err: fmt.Errorf("failed to embed %s: %w", sym.Name, err)}
+					logger.Instance.Warn("Embed failed for batch starting with %s (consecutive failures: %d): %v", batch[0].Name, consecutiveFailures, err)
+					results <- result{err: fmt.Errorf("failed to embed batch starting with %s: %w", batch[0].Name, err)}
 					// Back off only when Ollama is actually struggling. Linear in
 					// the failure count and capped, so a transient error costs
 					// little and a sustained one stops hammering the endpoint.
@@ -576,29 +582,25 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 				consecutiveFailures = 0
 				s.lastActivity.Store(time.Now().Unix())
 
-				vector := make([]float32, len(vector64))
-				for i, v := range vector64 {
-					vector[i] = float32(v)
-				}
-
-				id := sym.ID
-
-				payload := s.symbolToMap(sym)
-				payload["text"] = embedText
-
-				results <- result{
-					point: storage.Point{
-						ID:      id,
-						Vector:  vector,
-						Payload: payload,
-					},
+				for i, sym := range batch {
+					vector := make([]float32, len(vectors64[i]))
+					for j, value := range vectors64[i] {
+						vector[j] = float32(value)
+					}
+					payload := s.symbolToMap(sym)
+					payload["text"] = embedTexts[i]
+					results <- result{point: storage.Point{ID: sym.ID, Vector: vector, Payload: payload}}
 				}
 			}
 		}()
 	}
 
-	for _, sym := range symbols {
-		jobs <- sym
+	for i := 0; i < len(symbols); i += embedBatchSize {
+		end := i + embedBatchSize
+		if end > len(symbols) {
+			end = len(symbols)
+		}
+		jobs <- symbols[i:end]
 	}
 	close(jobs)
 
@@ -613,9 +615,9 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 		allPoints = append(allPoints, res.point)
 	}
 
-	batchSize := 50
-	for i := 0; i < len(allPoints); i += batchSize {
-		end := i + batchSize
+	upsertBatchSize := 50
+	for i := 0; i < len(allPoints); i += upsertBatchSize {
+		end := i + upsertBatchSize
 		if end > len(allPoints) {
 			end = len(allPoints)
 		}
@@ -631,6 +633,25 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 
 	logger.Instance.Debug("Indexed %d symbols into %s", len(allPoints), collection)
 	return nil
+}
+
+func (s *Service) embedBatch(ctx context.Context, texts []string) ([][]float64, error) {
+	if batch, ok := s.embedder.(llm.BatchEmbedder); ok {
+		vectors, err := batch.EmbedBatch(ctx, texts)
+		if err != nil {
+			return nil, err
+		}
+		if len(vectors) != len(texts) {
+			return nil, fmt.Errorf("embedder returned %d vectors for %d inputs", len(vectors), len(texts))
+		}
+		return vectors, nil
+	}
+
+	vector, err := s.embedder.Embed(ctx, texts[0])
+	if err != nil {
+		return nil, err
+	}
+	return [][]float64{vector}, nil
 }
 
 // Resolve only unique targets in the same file. Cross-file and dynamic calls

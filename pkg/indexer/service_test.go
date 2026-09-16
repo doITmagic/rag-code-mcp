@@ -22,6 +22,20 @@ type mockEmbedder struct {
 	embedCount int32
 }
 
+type mockBatchEmbedder struct {
+	mockEmbedder
+	batchCount int32
+}
+
+func (m *mockBatchEmbedder) EmbedBatch(_ context.Context, texts []string) ([][]float64, error) {
+	atomic.AddInt32(&m.batchCount, 1)
+	vectors := make([][]float64, len(texts))
+	for i := range texts {
+		vectors[i] = make([]float64, 1024)
+	}
+	return vectors, nil
+}
+
 func (m *mockEmbedder) Embed(ctx context.Context, text string) ([]float64, error) {
 	atomic.AddInt32(&m.embedCount, 1)
 	return make([]float64, 1024), nil
@@ -124,6 +138,26 @@ func TestCleanupStaleFiles(t *testing.T) {
 
 	if remaining != 1 || !activeExists {
 		t.Errorf("expected 1 remaining file in state (active.go), got %d files", remaining)
+	}
+}
+
+func TestIndexItemsUsesBoundedEmbeddingBatches(t *testing.T) {
+	embedder := &mockBatchEmbedder{}
+	store := &mockStore{}
+	service := NewService(embedder, store)
+	symbols := make([]parser.Symbol, 5)
+	for i := range symbols {
+		symbols[i] = parser.Symbol{ID: fmt.Sprintf("id-%d", i), Name: fmt.Sprintf("Symbol%d", i)}
+	}
+
+	if err := service.IndexItems(context.Background(), "batch-test", symbols); err != nil {
+		t.Fatal(err)
+	}
+	if got := atomic.LoadInt32(&embedder.batchCount); got != 3 {
+		t.Fatalf("batch calls = %d, want 3", got)
+	}
+	if len(store.upsertPoints) != len(symbols) {
+		t.Fatalf("upserted points = %d, want %d", len(store.upsertPoints), len(symbols))
 	}
 }
 

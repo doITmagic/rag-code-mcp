@@ -1095,20 +1095,9 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 		collection := wctx.CollectionName(lang)
 		logger.Instance.Info("[IDX] ws=%s lang=%s ▶ starting (on_disk=%d)", wsName, lang, diskTotal)
 
-		// Capture the already-processed count before this run starts.
-		// For incremental runs (only changed files), we accumulate on top of
-		// whatever was already indexed in Qdrant. For a full re-index
-		// (recreate=true, or all files changed), we reset to 0.
-		// baseProcessed is captured once per language, before the Progress
-		// callback fires, so it's safe to close over it.
-		baseProcessed := s.Languages[lang].Processed
-		if recreate {
-			baseProcessed = 0
-		}
-		// firstTick is used to detect on the first Progress callback whether
-		// this is a full re-index (totalFiles >= diskTotal) so we can reset
-		// baseProcessed to 0 and avoid double-counting.
-		firstTick := true
+		// ticked records whether the indexer reported any progress; it does not
+		// when no file of this language changed.
+		ticked := false
 		// lastStatusWrite throttles status writes by time rather than by file
 		// count: on a slow embedder a count-based gate leaves index_status.json
 		// reading "processed: 0" for minutes while indexing is in fact running.
@@ -1125,25 +1114,25 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 					return
 				}
 				lastStatusWrite = time.Now()
-				// On the first tick, decide if this is a full re-index.
-				// If totalFiles covers all on-disk files, reset base to 0
-				// so we don't double-count the existing Processed value.
-				if firstTick {
-					firstTick = false
-					if diskTotal > 0 && totalFiles >= diskTotal {
-						baseProcessed = 0
-					}
-				}
+				ticked = true
 				ls := s.Languages[lang]
 				ls.OnDisk = diskTotal   // real total files on disk
 				ls.Changed = totalFiles // files that needed re-indexing this run
-				// Cumulative total: for incremental runs add to the existing
-				// DB count; for full re-indexes (base=0) start from scratch.
-				ls.Processed = baseProcessed + doneFiles
+				ls.Processed = processedCount(diskTotal, totalFiles, doneFiles)
 				s.Languages[lang] = ls
 				indexer.SaveIndexStatus(wctx.Root, s)
 			},
 		})
+		if err == nil && !ticked {
+			// Nothing changed: every file on disk is already indexed. Without
+			// this the previous (possibly inflated) count would stick.
+			ls := s.Languages[lang]
+			ls.OnDisk = diskTotal
+			ls.Changed = 0
+			ls.Processed = diskTotal
+			s.Languages[lang] = ls
+			indexer.SaveIndexStatus(wctx.Root, s)
+		}
 		if err != nil {
 			logger.Instance.Error("[IDX] ws=%s lang=%s ❌ failed: %v", wsName, lang, err)
 			indexErrors = append(indexErrors, fmt.Sprintf("%s: %v", lang, err))
@@ -1164,6 +1153,22 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 	}
 
 	return nil
+}
+
+// processedCount is how many of the diskTotal files are indexed partway through
+// a run. The indexer only queues files that are new or changed (totalFiles);
+// every other file on disk is already indexed, so the count is everything
+// except what is still queued. Adding doneFiles to the previous count instead
+// counted a modified file twice and never dropped deleted ones.
+func processedCount(diskTotal, totalFiles, doneFiles int) int {
+	n := diskTotal - (totalFiles - doneFiles)
+	if n < 0 {
+		return 0
+	}
+	if n > diskTotal {
+		return diskTotal
+	}
+	return n
 }
 
 // StopWatchers stops all workspace watchers.

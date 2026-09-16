@@ -143,7 +143,7 @@ func (e *Engine) Config() *config.Config {
 }
 
 // FindAlternativeCandidates wraps detector logic to offer alternative root suggestions internally.
-// Uses the engine's configured detector to ensure consistent AllowedRoots/ExcludePatterns.
+// Uses the engine's own detector so suggestions honour the same options as detection.
 func (e *Engine) FindAlternativeCandidates(root string) []string {
 	return e.detector.FindAlternativeCandidates(root)
 }

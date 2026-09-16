@@ -151,7 +151,11 @@ func (r *Registry) Upsert(root, name, client string) (*Entry, error) {
 		audit := r.audit // capture under lock
 		err := r.save()
 		r.mu.Unlock()
-		r.cleanupAbsorbed(absorbed, audit)
+		// Only destroy absorbed children once the new state is on disk: if save
+		// failed, the persisted registry still references them.
+		if err == nil {
+			r.cleanupAbsorbed(absorbed, audit)
+		}
 		return entry, err
 	}
 
@@ -175,7 +179,11 @@ func (r *Registry) Upsert(root, name, client string) (*Entry, error) {
 	audit := r.audit // capture under lock
 	err := r.save()
 	r.mu.Unlock()
-	r.cleanupAbsorbed(absorbed, audit)
+	// Only destroy absorbed children once the new state is on disk: if save
+	// failed, the persisted registry still references them.
+	if err == nil {
+		r.cleanupAbsorbed(absorbed, audit)
+	}
 	return entry, err
 }
 
@@ -239,7 +247,11 @@ func (r *Registry) PromoteCandidate(ctx context.Context, root, client string, ex
 	audit := r.audit // capture under lock
 	err := r.save()
 	r.mu.Unlock()
-	r.cleanupAbsorbed(absorbed, audit)
+	// Only destroy absorbed children once the new state is on disk: if save
+	// failed, the persisted registry still references them.
+	if err == nil {
+		r.cleanupAbsorbed(absorbed, audit)
+	}
 	return err
 }
 
@@ -400,7 +412,7 @@ func (r *Registry) Cleanup(cutoff time.Time) error {
 	for id, entry := range r.entries {
 		if entry.LastUsedAt.Before(cutoff) {
 			delete(r.entries, id)
-			delete(r.indexRoot, strings.ToLower(entry.Root))
+			delete(r.indexRoot, strings.ToLower(filepath.Clean(entry.Root)))
 			if entry.Name != "" {
 				lower := strings.ToLower(entry.Name)
 				ids := r.indexName[lower]

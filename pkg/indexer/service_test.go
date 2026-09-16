@@ -175,6 +175,19 @@ func TestSymbolsForFileDropsPackageSiblings(t *testing.T) {
 	}
 }
 
+func TestCountAllFilesSkipsCredentials(t *testing.T) {
+	root := t.TempDir()
+	createFile(t, filepath.Join(root, ".env"))
+	createFile(t, filepath.Join(root, "firebase-service-account.json"))
+	createFile(t, filepath.Join(root, "id_ed25519"))
+	createFile(t, filepath.Join(root, "safe.json"))
+
+	result := (&Service{}).CountAllFiles(root, nil)
+	if result.Counts["docs"] != 1 || result.Counts["generic"] != 0 {
+		t.Fatalf("counts = %v, want only one safe docs file", result.Counts)
+	}
+}
+
 type mockStoreDeleteRecreate struct {
 	storage.VectorStore
 

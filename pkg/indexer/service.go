@@ -77,6 +77,7 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 
 	// 2. Scan for changes
 	var changedFiles []string
+	var excludedFiles []string
 	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -95,6 +96,10 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 			}
 			return nil
 		}
+		if shouldSkipFile(path) {
+			excludedFiles = append(excludedFiles, path)
+			return nil
+		}
 
 		info, err := d.Info()
 		if err != nil {
@@ -109,6 +114,16 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 
 	if err != nil {
 		return fmt.Errorf("failed to scan workspace: %w", err)
+	}
+	for _, path := range excludedFiles {
+		a := parser.GetByFile(path)
+		if a == nil || opts.Language != "" && a.Name() != opts.Language {
+			continue
+		}
+		if err := s.store.DeleteByFilter(ctx, collection, "file_path", path); err == nil {
+			state.RemoveFile(path)
+			staleCleaned = true
+		}
 	}
 
 	// 3. Filter files by language and supported parser
@@ -373,8 +388,8 @@ func (s *Service) IndexFile(ctx context.Context, collection, path string, state 
 
 	// Skip minified/vendored files — tree-sitter GLR parsing on dense
 	// machine-generated code can allocate 500MB+ of arena memory.
-	if isMinifiedOrVendored(path) {
-		logger.Instance.Debug("[IDX] Skipping minified/vendored file: %s", filepath.Base(path))
+	if shouldSkipFile(path) {
+		logger.Instance.Debug("[IDX] Skipping excluded file: %s", filepath.Base(path))
 		return 0, nil
 	}
 
@@ -755,6 +770,9 @@ func (s *Service) CountAllFiles(root string, excludePatterns []string) FileCount
 					return filepath.SkipDir
 				}
 			}
+			return nil
+		}
+		if shouldSkipFile(path) {
 			return nil
 		}
 		a := parser.GetByFile(path)

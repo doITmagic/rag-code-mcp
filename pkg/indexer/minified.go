@@ -25,6 +25,31 @@ var minifiedSuffixes = []string{
 	"-min.js", "-min.css",
 }
 
+func shouldSkipFile(path string) bool {
+	return isSensitiveFile(path) || isMinifiedOrVendored(path)
+}
+
+func isSensitiveFile(path string) bool {
+	base := strings.ToLower(filepath.Base(path))
+	if base == ".env" || strings.HasPrefix(base, ".env.") {
+		return true
+	}
+	switch base {
+	case ".npmrc", ".pypirc", "credentials.json", "secret.json", "secrets.json",
+		"google-services.json", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519":
+		return true
+	}
+	if filepath.Ext(base) == ".json" && (strings.Contains(base, "service-account") ||
+		strings.Contains(base, "service_account") || strings.Contains(base, "adminsdk")) {
+		return true
+	}
+	switch filepath.Ext(base) {
+	case ".key", ".pem", ".p12", ".pfx":
+		return true
+	}
+	return false
+}
+
 // isMinifiedOrVendored reports whether path points to machine-generated,
 // bundled, or minified code that should be skipped before tree-sitter parsing.
 //

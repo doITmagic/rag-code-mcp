@@ -404,6 +404,16 @@ func (s *Service) IndexFile(ctx context.Context, collection, path string, state 
 	return len(res.Symbols), nil
 }
 
+// RemoveFile deletes every vector indexed for path and forgets it in state.
+// Used for files that no longer exist on disk.
+func (s *Service) RemoveFile(ctx context.Context, collection, path string, state *State) error {
+	if err := s.store.DeleteByFilter(ctx, collection, "file_path", path); err != nil {
+		return err
+	}
+	state.RemoveFile(path)
+	return nil
+}
+
 // circuitBreakerThreshold is the number of consecutive embed failures that
 // triggers an Ollama health check and potential restart before continuing.
 const circuitBreakerThreshold = 2

@@ -441,3 +441,23 @@ func TestIndexFile_EmbedHang_Timeout(t *testing.T) {
 		t.Fatal("DEADLOCK: IndexFile hung — timeout mechanism failed")
 	}
 }
+
+// A file removed from disk must lose its vectors and its state entry; the
+// watcher path cannot Analyze it, so this is the only way it is cleaned up.
+func TestRemoveFile(t *testing.T) {
+	store := &mockStore{}
+	svc := NewService(&mockEmbedder{}, store)
+	state := NewState()
+	path := filepath.Join(t.TempDir(), "gone.go")
+	state.Files[path] = FileState{}
+
+	if err := svc.RemoveFile(context.Background(), "col", path, state); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.deletedFilters) != 1 || store.deletedFilters[0] != path {
+		t.Fatalf("deleted filters = %v, want [%s]", store.deletedFilters, path)
+	}
+	if _, ok := state.Files[path]; ok {
+		t.Fatal("state still tracks the removed file")
+	}
+}

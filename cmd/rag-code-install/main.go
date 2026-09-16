@@ -440,6 +440,9 @@ func stopRunningProcess(binPath string) {
 				_ = exec.Command("taskkill", "/PID", pidStr).Run()
 				time.Sleep(2 * time.Second)
 				_ = exec.Command("taskkill", "/F", "/PID", pidStr).Run()
+				if !waitForFileRelease(binPath, 5*time.Second) {
+					warn("Timed out waiting for the old executable to be released.")
+				}
 				return
 			}
 
@@ -474,6 +477,9 @@ func stopRunningProcess(binPath string) {
 		_ = exec.Command("taskkill", "/IM", filepath.Base(binPath)).Run()
 		time.Sleep(1 * time.Second)
 		_ = exec.Command("taskkill", "/F", "/IM", filepath.Base(binPath)).Run()
+		if !waitForFileRelease(binPath, 5*time.Second) {
+			warn("Timed out waiting for the old executable to be released.")
+		}
 		return
 	}
 
@@ -485,6 +491,24 @@ func stopRunningProcess(binPath string) {
 	_ = exec.Command("pkill", "-9", "-f", binPath).Run()
 
 	time.Sleep(500 * time.Millisecond)
+}
+
+func waitForFileRelease(path string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		file, err := os.OpenFile(path, os.O_WRONLY, 0)
+		if err == nil {
+			file.Close()
+			return true
+		}
+		if os.IsNotExist(err) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func copyFile(src, dst string) error {

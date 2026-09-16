@@ -207,19 +207,24 @@ func (fw *FileWatcher) Stop() {
 	})
 }
 
-// isExcludedPath reports whether any directory component of path, relative to
-// the root, is one the watcher skips.
+// isExcludedPath reports whether path, relative to the root, lies under a
+// directory the watcher skips, or names an excluded directory itself. The
+// hidden-name rule applies to directory components only: the indexer skips
+// hidden directories but does index hidden files (.goreleaser.yaml), so an
+// edit to one must still trigger a reindex.
 func (fw *FileWatcher) isExcludedPath(path string) bool {
 	rel, err := filepath.Rel(fw.root, path)
 	if err != nil || strings.HasPrefix(rel, "..") {
 		return false
 	}
-	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+	parts := strings.Split(rel, string(filepath.Separator))
+	for _, part := range parts[:len(parts)-1] {
 		if part != "." && fw.shouldSkipDir(path, part, false) {
 			return true
 		}
 	}
-	return false
+	_, excluded := fw.exclude[strings.ToLower(parts[len(parts)-1])]
+	return excluded
 }
 
 func (fw *FileWatcher) shouldSkipDir(path, base string, isRoot bool) bool {

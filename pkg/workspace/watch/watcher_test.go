@@ -21,6 +21,9 @@ func TestIsExcludedPath(t *testing.T) {
 		filepath.Join(root, "sub", "node_modules", "x", "a.js"):  true,
 		filepath.Join(root, ".git", "index"):                     true,
 		filepath.Join(root, "main.go"):                           false,
+		filepath.Join(root, ".goreleaser.yaml"):                  false, // hidden file: indexed
+		filepath.Join(root, "sub", ".eslintrc.js"):               false,
+		filepath.Join(root, ".github", "ci.yml"):                 true, // hidden dir: not indexed
 		filepath.Join(root, "internal", "service", "engine.go"):  false,
 		filepath.Join(filepath.Dir(root), "outside", ".ragcode"): false,
 	}

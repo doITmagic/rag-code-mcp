@@ -664,6 +664,11 @@ func (s *Service) CountAllFiles(root string, excludePatterns []string) FileCount
 
 		// Track per-extension breakdown
 		ext := strings.ToLower(filepath.Ext(path))
+		if ext == "" {
+			// Extension-less files (Dockerfile, Gemfile, Makefile) would all
+			// collapse into a single "" key; use the basename instead.
+			ext = strings.ToLower(filepath.Base(path))
+		}
 		if result.Breakdowns[lang] == nil {
 			result.Breakdowns[lang] = make(map[string]int)
 		}

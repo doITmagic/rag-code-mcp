@@ -282,11 +282,19 @@ func setupEnvironment() {
 			warn("Could not use a local Ollama models dir, falling back to a Docker volume: " + err.Error())
 		}
 
+		_ = exec.Command("docker", "rm", "-f", "ragcode-ollama").Run()
 		args := []string{"--name", "ragcode-ollama", "--restart", "always", "-p", "11434:11434", "-v", modelMount}
-		if *gpu {
-			args = append([]string{"--gpus", "all"}, args...)
+		started := *gpu && startContainer("Ollama", "ollama/ollama", append([]string{"--gpus", "all"}, args...))
+		if *gpu && !started {
+			// No usable GPU (e.g. no NVIDIA adapter under WSL): the failed run
+			// leaves a "Created" container behind, so remove it and use CPU.
+			warn("Could not start Ollama with GPU, retrying on CPU...")
+			_ = exec.Command("docker", "rm", "-f", "ragcode-ollama").Run()
 		}
-		if startContainer("Ollama", "ollama/ollama", args) {
+		if !started {
+			started = startContainer("Ollama", "ollama/ollama", args)
+		}
+		if started {
 			needsDelay = true
 		}
 	}

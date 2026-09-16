@@ -106,6 +106,7 @@ func TestExtractWorkspaceRoots_V2SkipsEmptyRoots(t *testing.T) {
 func TestCleanWorkspaceData_WithV2Registry(t *testing.T) {
 	// Create a temp "home" directory
 	home := t.TempDir()
+	isolate(t)
 
 	// Create fake .ragcode install dir with registry
 	installDir := filepath.Join(home, ".ragcode")
@@ -158,5 +159,64 @@ func TestCleanWorkspaceData_WithV2Registry(t *testing.T) {
 	// proj3/.ragcode should be gone too (cleaned by fallback scan)
 	if _, err := os.Stat(filepath.Join(proj3, ".ragcode")); !os.IsNotExist(err) {
 		t.Errorf("proj3/.ragcode should have been removed by fallback scan")
+	}
+}
+
+// isolate keeps cleanWorkspaceData inside the test's temp dirs: without it
+// the sweep queried the live Qdrant and the real IDE configs and deleted
+// .ragcode directories on the developer's machine, ~/.ragcode included.
+func isolate(t *testing.T) {
+	t.Helper()
+	origQ, origI := qdrantRootsFn, ideProjectParentsFn
+	qdrantRootsFn = func() []string { return nil }
+	ideProjectParentsFn = func(string) []string { return nil }
+	t.Cleanup(func() { qdrantRootsFn, ideProjectParentsFn = origQ, origI })
+	t.Setenv("APPDATA", t.TempDir())
+}
+
+// A .ragcode holding bin/ is the installation, never workspace cache: the
+// sweep must leave it alone even when it sits under a scan root.
+func TestScanSkipsInstallDirAndUnsafeRoots(t *testing.T) {
+	isolate(t)
+	home := t.TempDir()
+	install := filepath.Join(home, ".ragcode")
+	if err := os.MkdirAll(filepath.Join(install, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ws := filepath.Join(home, "projects", "app")
+	if err := os.MkdirAll(filepath.Join(ws, ".ragcode"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// registry root under home → its parent (home/projects) is scanned; home
+	// itself is scanned at depth 1; home's parent must be refused.
+	scanAndCleanRagcodeDirs(home, []string{ws, filepath.Join(filepath.Dir(home), "x", "y")})
+
+	if _, err := os.Stat(filepath.Join(install, "bin")); err != nil {
+		t.Fatal("install dir was removed by the sweep")
+	}
+	if _, err := os.Stat(filepath.Join(ws, ".ragcode")); !os.IsNotExist(err) {
+		t.Fatal("workspace .ragcode should have been removed")
+	}
+}
+
+// A file whose project is gone must not resolve to $HOME via the install
+// dir marker.
+func TestFindWorkspaceRootNeverReturnsHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if err := os.MkdirAll(filepath.Join(home, ".ragcode", "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := findWorkspaceRootFromFilePath(filepath.Join(home, "gone", "project", "main.go")); got != "" {
+		t.Fatalf("root = %q, want none", got)
+	}
+	repo := filepath.Join(home, "code", "repo")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := findWorkspaceRootFromFilePath(filepath.Join(repo, "pkg", "a.go")); got != repo {
+		t.Fatalf("root = %q, want %q", got, repo)
 	}
 }

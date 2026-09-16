@@ -248,7 +248,10 @@ func gitCommand(ctx context.Context, root string, args ...string) (string, error
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		text := strings.ToLower(string(out))
-		if strings.Contains(text, "not a git repository") {
+		// A fresh `git init` has no HEAD commit yet ("unknown revision"): there
+		// is no branch state to track, which is not a reason to reject the
+		// workspace.
+		if strings.Contains(text, "not a git repository") || strings.Contains(text, "unknown revision") {
 			return "", ErrGitMetadataUnavailable
 		}
 		return "", err

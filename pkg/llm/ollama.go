@@ -168,28 +168,46 @@ func (p *OllamaLLMProvider) Warmup(ctx context.Context) error {
 // Sets keep_alive to prevent Ollama from unloading the model between requests
 // (critical when other programs compete for Ollama's model slots).
 func (p *OllamaLLMProvider) Embed(ctx context.Context, text string) ([]float64, error) {
+	vectors, err := p.EmbedBatch(ctx, []string{text})
+	if err != nil {
+		return nil, err
+	}
+	return vectors[0], nil
+}
+
+// EmbedBatch generates embeddings for multiple texts in one Ollama request.
+func (p *OllamaLLMProvider) EmbedBatch(ctx context.Context, texts []string) ([][]float64, error) {
+	if len(texts) == 0 {
+		return nil, nil
+	}
 	resp, err := p.client.Embed(ctx, &api.EmbedRequest{
 		Model:     p.embedName,
-		Input:     text,
+		Input:     texts,
 		KeepAlive: &p.keepAlive,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("ollama embed failed: %w", err)
 	}
 
-	if len(resp.Embeddings) == 0 || len(resp.Embeddings[0]) == 0 {
-		return nil, fmt.Errorf("empty embedding returned for model %s", p.embedName)
+	if len(resp.Embeddings) != len(texts) {
+		return nil, fmt.Errorf("ollama returned %d embeddings for %d inputs", len(resp.Embeddings), len(texts))
 	}
 
-	// Convert float32 to float64
-	raw := resp.Embeddings[0]
-	result := make([]float64, len(raw))
-	for i, v := range raw {
-		result[i] = float64(v)
+	result := make([][]float64, len(resp.Embeddings))
+	for i, raw := range resp.Embeddings {
+		if len(raw) == 0 {
+			return nil, fmt.Errorf("empty embedding returned for input %d using model %s", i, p.embedName)
+		}
+		result[i] = make([]float64, len(raw))
+		for j, value := range raw {
+			result[i][j] = float64(value)
+		}
 	}
 
 	return result, nil
 }
+
+var _ BatchEmbedder = (*OllamaLLMProvider)(nil)
 
 // GetEmbeddingDimension returns the dimension of the embedding model.
 // Strategy:

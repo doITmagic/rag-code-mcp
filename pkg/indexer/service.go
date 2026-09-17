@@ -386,8 +386,7 @@ func (s *Service) IndexFile(ctx context.Context, collection, path string, state 
 		return 0, nil
 	}
 
-	// Skip minified/vendored files — tree-sitter GLR parsing on dense
-	// machine-generated code can allocate 500MB+ of arena memory.
+	// Skip generated, low-value, and minified files before parsing/embedding.
 	if shouldSkipFile(path) {
 		logger.Instance.Debug("[IDX] Skipping excluded file: %s", filepath.Base(path))
 		return 0, nil

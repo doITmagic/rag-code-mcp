@@ -175,16 +175,29 @@ func TestSymbolsForFileDropsPackageSiblings(t *testing.T) {
 	}
 }
 
-func TestCountAllFilesSkipsCredentials(t *testing.T) {
+func TestCountAllFilesSkipsLowValueFiles(t *testing.T) {
 	root := t.TempDir()
-	createFile(t, filepath.Join(root, ".env"))
 	createFile(t, filepath.Join(root, "firebase-service-account.json"))
-	createFile(t, filepath.Join(root, "id_ed25519"))
+	createFile(t, filepath.Join(root, "package-lock.json"))
 	createFile(t, filepath.Join(root, "safe.json"))
 
 	result := (&Service{}).CountAllFiles(root, nil)
-	if result.Counts["docs"] != 1 || result.Counts["generic"] != 0 {
-		t.Fatalf("counts = %v, want only one safe docs file", result.Counts)
+	if result.Counts["docs"] != 2 {
+		t.Fatalf("counts = %v, want both non-lock JSON files", result.Counts)
+	}
+
+	for path, want := range map[string]bool{
+		".env":                          false,
+		"firebase-service-account.json": false,
+		".npmrc":                        true,
+		"id_ed25519":                    true,
+		"certificate.pem":               true,
+		"package-lock.json":             true,
+		"go.sum":                        true,
+	} {
+		if got := shouldSkipFile(path); got != want {
+			t.Errorf("shouldSkipFile(%q) = %v, want %v", path, got, want)
+		}
 	}
 }
 

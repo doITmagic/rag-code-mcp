@@ -116,6 +116,9 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 		return fmt.Errorf("failed to scan workspace: %w", err)
 	}
 	for _, path := range excludedFiles {
+		if _, ok := state.GetFileState(path); !ok {
+			continue
+		}
 		a := parser.GetByFile(path)
 		if a == nil || opts.Language != "" && a.Name() != opts.Language {
 			continue

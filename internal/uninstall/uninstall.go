@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/service/iderules"
+	"github.com/doITmagic/rag-code-mcp/internal/utils"
 )
 
 const (
@@ -62,6 +63,7 @@ func RunUninstall() {
 
 	// Legacy paths
 	legacyPaths := []string{
+		utils.RagCodeHome(),
 		filepath.Join(home, ".local", "share", "ragcode"),
 		filepath.Join(home, ".local", "state", "ragcode"),
 	}
@@ -316,12 +318,11 @@ func removeDockerResources() {
 }
 
 func cleanWorkspaceData(home string) {
-	registryPath := filepath.Join(home, installDirName, "registry.json")
-
 	var registryRoots []string
-	data, err := os.ReadFile(registryPath)
-	if err == nil {
-		registryRoots = extractWorkspaceRoots(data)
+	for _, registryPath := range []string{utils.GetRegistryPath(), filepath.Join(home, installDirName, "registry.json")} {
+		if data, err := os.ReadFile(registryPath); err == nil {
+			registryRoots = append(registryRoots, extractWorkspaceRoots(data)...)
+		}
 	}
 
 	// Step 1: direct delete for each workspace known to the registry.

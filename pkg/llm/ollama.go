@@ -25,6 +25,7 @@ type OllamaLLMProvider struct {
 	embedName string
 	cachedDim uint64
 	dimOnce   sync.Once
+	warmupMu  sync.Mutex
 	keepAlive api.Duration
 }
 
@@ -138,6 +139,8 @@ func (p *OllamaLLMProvider) GenerateStream(_ context.Context, _ string, _ ...Gen
 // Call this at startup to avoid cold-start timeouts on the first embed request.
 // Uses a generous 2-minute timeout since model loading can be slow.
 func (p *OllamaLLMProvider) Warmup(ctx context.Context) error {
+	p.warmupMu.Lock()
+	defer p.warmupMu.Unlock()
 	logger.Instance.Info("🔥 Warming up Ollama model '%s' (pre-loading into memory)...", p.embedName)
 	warmupCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()

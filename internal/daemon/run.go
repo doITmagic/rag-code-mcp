@@ -125,9 +125,6 @@ func Run(rcfg RunConfig) error {
 	}
 	provider := llm.NewRetryableProvider(ollamaProvider, 3, 30*time.Second)
 
-	if err := ollamaProvider.Warmup(context.Background()); err != nil {
-		logger.Instance.Warn("Ollama warmup failed (model may cold-start on first embed): %v", err)
-	}
 	logger.Instance.Info("LLM provider ready: embed=%s (retries=3, timeout=30s, keep_alive=30m)", cfg.LLM.OllamaEmbed)
 
 	// ── Vector Store ──
@@ -273,6 +270,11 @@ func Run(rcfg RunConfig) error {
 		Handler: mcpHandler,
 		OnReady: func() {
 			logger.Instance.Info("Daemon ready — port=%d", rcfg.HTTPPort)
+			go func() {
+				if err := ollamaProvider.Warmup(context.Background()); err != nil {
+					logger.Instance.Warn("Ollama warmup failed (model may cold-start on first embed): %v", err)
+				}
+			}()
 		},
 	})
 

@@ -2,8 +2,12 @@ package iderules
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/doITmagic/rag-code-mcp/internal/generatedfile"
 )
 
 func TestWriteCreatesCurrentLocations(t *testing.T) {
@@ -20,6 +24,53 @@ func TestWriteCreatesCurrentLocations(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(root, want)); err != nil {
 			t.Errorf("missing %s: %v", want, err)
 		}
+	}
+}
+
+func TestGeneratedRulesLocallyIgnoredAndUserEditsPreserved(t *testing.T) {
+	root := t.TempDir()
+	if out, err := exec.Command("git", "-C", root, "init").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	Write(root)
+	path := filepath.Join(root, "CLAUDE.md")
+	if !IsGenerated(path) {
+		t.Fatal("generated rule not recognized")
+	}
+	marked, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(marked), "ragcode:generated sha256=") {
+		t.Fatalf("generated marker missing: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", root, "status", "--porcelain").CombinedOutput(); err != nil || len(out) != 0 {
+		t.Fatalf("generated files pollute status: %v %s", err, out)
+	}
+	edited := filepath.Join(root, ".cursor", "rules", "ragcode.mdc")
+	editedData, err := os.ReadFile(edited)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(edited, append(editedData, []byte("\nmy instructions")...), 0600); err != nil {
+		t.Fatal(err)
+	}
+	old := filepath.Join(root, ".roo", "rules", "ragcode.md")
+	oldBody := "old generated rule"
+	if err := os.WriteFile(old, []byte(generatedfile.Marker(oldBody)+oldBody), 0600); err != nil {
+		t.Fatal(err)
+	}
+	Write(root)
+	if IsGenerated(edited) {
+		t.Fatal("user edits overwritten")
+	}
+	if data, err := os.ReadFile(old); err != nil || strings.Contains(string(data), oldBody) || !IsGenerated(old) {
+		t.Fatalf("old generated rule not upgraded: %v", err)
+	}
+	Remove(root)
+	if data, err := os.ReadFile(edited); err != nil || !strings.HasSuffix(string(data), "my instructions") {
+		t.Fatalf("user edits lost: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, ".git", "info", "exclude"))
+	if err != nil || strings.Contains(string(data), "BEGIN RagCode") {
+		t.Fatalf("local exclusions not removed: %v", err)
 	}
 }
 

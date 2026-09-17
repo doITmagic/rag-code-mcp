@@ -57,21 +57,28 @@ func NewService(embedder llm.Provider, store storage.VectorStore) *Service {
 
 // IndexWorkspace performs a full or incremental index of a workspace.
 func (s *Service) IndexWorkspace(ctx context.Context, root string, collection string, opts Options) error {
-	statePath := filepath.Join(root, ".ragcode", "state.json")
+	if err := os.Remove(filepath.Join(root, ".ragcode", "state.json")); err != nil && !os.IsNotExist(err) {
+		logger.Instance.Warn("Failed to remove legacy index state for %s: %v", root, err)
+	}
+	statePath := StatePath(root, collection)
 	state, err := LoadState(statePath)
 	if err != nil {
 		logger.Instance.Warn("Failed to load index state for %s: %v", root, err)
 		state = NewState()
 	}
 
-	if opts.Recreate {
-		logger.Instance.Info("Recreate flag set, ignoring existing state for %s", root)
+	collectionExists, err := s.store.CollectionExists(ctx, collection)
+	if err != nil {
+		return fmt.Errorf("check collection: %w", err)
+	}
+	if opts.Recreate || !collectionExists {
+		logger.Instance.Info("Rebuilding state for collection %s (recreate=%t, exists=%t)", collection, opts.Recreate, collectionExists)
 		state = NewState()
 	}
 
 	// 1. Proactive stale vector cleanup for deleted files and directories
 	var staleCleaned bool
-	if !opts.Recreate {
+	if !opts.Recreate && collectionExists {
 		staleCleaned = s.cleanupStaleFiles(ctx, root, collection, state, opts.Language)
 	}
 

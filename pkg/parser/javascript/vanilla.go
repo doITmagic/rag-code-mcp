@@ -70,7 +70,7 @@ func ExtractFunctions(source string, filePath string) []JSFunction {
 			IsAsync:    isAsync,
 			IsExported: exported,
 			IsDefault:  isDefault,
-			Docstring:  findJSDocBefore(jsdocs, match[0]),
+			Docstring:  findJSDocBefore(source, jsdocs, match[0]),
 			FilePath:   filePath,
 			StartLine:  line,
 			EndLine:    endLine,
@@ -97,7 +97,7 @@ func ExtractFunctions(source string, filePath string) []JSFunction {
 			IsAsync:    isAsync,
 			IsExported: exported,
 			IsDefault:  isDefault,
-			Docstring:  findJSDocBefore(jsdocs, match[0]),
+			Docstring:  findJSDocBefore(source, jsdocs, match[0]),
 			FilePath:   filePath,
 			StartLine:  line,
 			EndLine:    endLine,
@@ -150,7 +150,7 @@ func ExtractClasses(source string, filePath string) []JSClass {
 			IsExported: exported,
 			IsDefault:  isDefault,
 			IsAbstract: isAbstract,
-			Docstring:  findJSDocBefore(jsdocs, match[0]),
+			Docstring:  findJSDocBefore(source, jsdocs, match[0]),
 			FilePath:   filePath,
 			StartLine:  line,
 			EndLine:    endLine,
@@ -192,7 +192,7 @@ func ExtractTSInterfaces(source string, filePath string) []TSInterface {
 			Extends:    extends,
 			Properties: properties,
 			IsExported: exported,
-			Docstring:  findJSDocBefore(jsdocs, match[0]),
+			Docstring:  findJSDocBefore(source, jsdocs, match[0]),
 			FilePath:   filePath,
 			StartLine:  line,
 			EndLine:    endLine,
@@ -529,13 +529,16 @@ func extractJSDocPositions(source string) []jsdocPosition {
 }
 
 // findJSDocBefore finds the JSDoc comment immediately preceding the given offset
-func findJSDocBefore(jsdocs []jsdocPosition, offset int) string {
+func findJSDocBefore(source string, jsdocs []jsdocPosition, offset int) string {
 	for _, jsdoc := range jsdocs {
+		if jsdoc.end > offset {
+			continue
+		}
 		// JSDoc must end close to the target (within whitespace/newlines)
 		between := strings.TrimSpace(strings.ReplaceAll(
-			strings.ReplaceAll(source_between(jsdoc.end, offset), "\n", ""),
+			strings.ReplaceAll(source[jsdoc.end:offset], "\n", ""),
 			"\r", ""))
-		if between == "" && jsdoc.end <= offset {
+		if between == "" {
 			// Clean up JSDoc content
 			lines := strings.Split(jsdoc.content, "\n")
 			var cleaned []string
@@ -552,21 +555,4 @@ func findJSDocBefore(jsdocs []jsdocPosition, offset int) string {
 		}
 	}
 	return ""
-}
-
-// source_between is a placeholder — actual implementation uses source slicing
-// This is called with absolute positions, but we need the source string.
-// We'll handle this in the analyzer by pre-storing source.
-var sourceCache string
-
-func source_between(start, end int) string {
-	if start >= 0 && end <= len(sourceCache) && start <= end {
-		return sourceCache[start:end]
-	}
-	return ""
-}
-
-// SetSourceCache sets the source code for JSDoc lookup
-func SetSourceCache(source string) {
-	sourceCache = source
 }

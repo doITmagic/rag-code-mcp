@@ -26,21 +26,22 @@ var minifiedSuffixes = []string{
 }
 
 func shouldSkipFile(path string) bool {
-	return isSensitiveFile(path) || isMinifiedOrVendored(path)
+	return isLowValueConfigOrKeyMaterial(path) || isGeneratedLockfile(path) || isMinifiedOrVendored(path)
 }
 
-func isSensitiveFile(path string) bool {
+func isGeneratedLockfile(path string) bool {
+	switch strings.ToLower(filepath.Base(path)) {
+	case "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml",
+		"go.sum", "composer.lock", "poetry.lock", "pipfile.lock", "cargo.lock":
+		return true
+	}
+	return false
+}
+
+func isLowValueConfigOrKeyMaterial(path string) bool {
 	base := strings.ToLower(filepath.Base(path))
-	if base == ".env" || strings.HasPrefix(base, ".env.") {
-		return true
-	}
 	switch base {
-	case ".npmrc", ".pypirc", "credentials.json", "secret.json", "secrets.json",
-		"google-services.json", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519":
-		return true
-	}
-	if filepath.Ext(base) == ".json" && (strings.Contains(base, "service-account") ||
-		strings.Contains(base, "service_account") || strings.Contains(base, "adminsdk")) {
+	case ".npmrc", ".pypirc", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519":
 		return true
 	}
 	switch filepath.Ext(base) {

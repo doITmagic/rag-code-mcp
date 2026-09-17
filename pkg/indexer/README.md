@@ -8,8 +8,10 @@ The indexer ensures:
 - **Change Detection**: Track file modification times and sizes to identify exactly what needs re-indexing.
 - **Incremental Updates**: Only process new or modified files, drastically reducing token usage and processing time.
 - **Batch Processing**: Optimize database performance by batching vector upsert operations.
-- **State Persistence**: Maintain a `.ragcode/state.json` file per workspace to preserve indexing context across sessions.
+- **State Persistence**: Maintain one `.ragcode/state-<collection-hash>.json` per branch/language collection.
 - **Metadata Management**: Properly tag each indexed chunk with file paths, package names, and symbol types.
+
+Upgrade note: the former shared `.ragcode/state.json` cannot be assigned safely to a branch collection. It is removed on the first indexing run, which performs one full reindex for each collection.
 
 ---
 
@@ -17,7 +19,7 @@ The indexer ensures:
 
 ```mermaid
 graph TD
-    A[Workspace Root] --> B[Load .ragcode/state.json]
+    A[Workspace Root] --> B[Load collection-specific state]
     B --> C[filepath.WalkDir]
     C --> D{File Changed?}
     D -- No --> E[Skip File]
@@ -26,14 +28,14 @@ graph TD
     G --> H[Delete Old Points]
     H --> I[Upsert New Points]
     I --> J[Update File State]
-    E & J --> K[Save .ragcode/state.json]
+    E & J --> K[Save collection-specific state]
 ```
 
 ---
 
 ## 🏗️ Package Structure
 
-*   **state.go**: Manages the mapping of file paths to their modification snapshots in `state.json`.
+*   **state.go**: Manages collection-specific file modification snapshots.
 *   **service.go**: Main orchestrator that implements the high-level `IndexWorkspace` and `IndexFile` operations.
 
 ---
@@ -66,12 +68,12 @@ type Options struct {
 ## 🔄 Indexing Workflow
 
 ### Scenario 1: Initial Indexing
-- No `state.json` exists.
+- No collection-specific state exists.
 - All supported files are analyzed and embedded.
-- Full `state.json` is generated.
+- Full collection-specific state is generated.
 
 ### Scenario 2: Incremental Run (Minor Change)
-- `state.json` is loaded.
+- The collection-specific state is loaded.
 - 1000 files scanned, only 1 file modified.
 - `Indexer` deletes only the points related to that 1 file from the database.
 - Only the 1 file is analyzed and sent to Ollama/OpenAI.

@@ -9,6 +9,14 @@ import (
 	"github.com/doITmagic/rag-code-mcp/pkg/telemetry"
 )
 
+// responseIsError propagates application failures to the MCP envelope.
+func responseIsError(result string) bool {
+	var response struct {
+		Status string `json:"status"`
+	}
+	return json.Unmarshal([]byte(result), &response) == nil && response.Status == "error"
+}
+
 // ToolResponse defines the standard JSON structure for all RagCode MCP tools.
 type ToolResponse struct {
 	Status  string          `json:"status"`            // "success", "error", "indexing_started", "no_results"
@@ -32,6 +40,17 @@ type ContextMetadata struct {
 
 // JSON returns the marshaled JSON string of the response.
 func (r ToolResponse) JSON() (string, error) {
+	// Every tool serialises through here, so an inferred workspace is flagged
+	// uniformly instead of only by the two tools that remembered to call
+	// SetFallbackWarning. An existing warning (branch mismatch) is kept.
+	if r.Warning == "" {
+		r.SetFallbackWarning(r.Context.DetectionSource == "registry_fallback")
+	}
+	// Completed progress is historical noise in normal tool responses. Active
+	// or failed indexing remains visible because it affects result completeness.
+	if status := r.Context.IndexingStatus; status != nil && status.EndedAt != "" && status.Error == "" {
+		r.Context.IndexingStatus = nil
+	}
 	b, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("marshal response: %w", err)

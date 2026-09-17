@@ -56,3 +56,10 @@ func TestDetectMatchReasonsNoMatch(t *testing.T) {
 		t.Error("payment not in any field, expected all false")
 	}
 }
+
+func TestDetectMatchReasonsIgnoresStopwords(t *testing.T) {
+	r := DetectMatchReasons("quantum encryption for penguins", "ComputeTax", "", "calculate tax for invoices", "")
+	if r.SymbolName || r.Signature || r.Content || r.Docstring {
+		t.Fatalf("stopword-only overlap must not count as a match: %+v", r)
+	}
+}

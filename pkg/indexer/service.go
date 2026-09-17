@@ -57,20 +57,34 @@ func NewService(embedder llm.Provider, store storage.VectorStore) *Service {
 
 // IndexWorkspace performs a full or incremental index of a workspace.
 func (s *Service) IndexWorkspace(ctx context.Context, root string, collection string, opts Options) error {
-	statePath := filepath.Join(root, ".ragcode", "state.json")
+	if err := os.Remove(filepath.Join(root, ".ragcode", "state.json")); err != nil && !os.IsNotExist(err) {
+		logger.Instance.Warn("Failed to remove legacy index state for %s: %v", root, err)
+	}
+	statePath := StatePath(root, collection)
 	state, err := LoadState(statePath)
 	if err != nil {
 		logger.Instance.Warn("Failed to load index state for %s: %v", root, err)
 		state = NewState()
 	}
 
-	if opts.Recreate {
-		logger.Instance.Info("Recreate flag set, ignoring existing state for %s", root)
+	collectionExists, err := s.store.CollectionExists(ctx, collection)
+	if err != nil {
+		return fmt.Errorf("check collection: %w", err)
+	}
+	if opts.Recreate || !collectionExists {
+		logger.Instance.Info("Rebuilding state for collection %s (recreate=%t, exists=%t)", collection, opts.Recreate, collectionExists)
 		state = NewState()
 	}
 
-	// 1. Scan for changes
+	// 1. Proactive stale vector cleanup for deleted files and directories
+	var staleCleaned bool
+	if !opts.Recreate && collectionExists {
+		staleCleaned = s.cleanupStaleFiles(ctx, root, collection, state, opts.Language)
+	}
+
+	// 2. Scan for changes
 	var changedFiles []string
+	var excludedFiles []string
 	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -78,7 +92,7 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 		if d.IsDir() {
 			name := d.Name()
 			// Basic exclusion
-			if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" {
+			if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" || name == "tmp" {
 				return filepath.SkipDir
 			}
 			// User exclusion
@@ -87,6 +101,10 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 					return filepath.SkipDir
 				}
 			}
+			return nil
+		}
+		if shouldSkipFile(path) {
+			excludedFiles = append(excludedFiles, path)
 			return nil
 		}
 
@@ -104,8 +122,21 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 	if err != nil {
 		return fmt.Errorf("failed to scan workspace: %w", err)
 	}
+	for _, path := range excludedFiles {
+		if _, ok := state.GetFileState(path); !ok {
+			continue
+		}
+		a := parser.GetByFile(path)
+		if a == nil || opts.Language != "" && a.Name() != opts.Language {
+			continue
+		}
+		if err := s.store.DeleteByFilter(ctx, collection, "file_path", path); err == nil {
+			state.RemoveFile(path)
+			staleCleaned = true
+		}
+	}
 
-	// 2. Filter files by language and supported parser
+	// 3. Filter files by language and supported parser
 	var filteredFiles []string
 	for _, p := range changedFiles {
 		a := parser.GetByFile(p)
@@ -120,11 +151,16 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 	changedFiles = filteredFiles
 
 	if len(changedFiles) == 0 {
+		if staleCleaned {
+			if saveErr := state.Save(statePath); saveErr != nil {
+				logger.Instance.Warn("Failed to save state after stale cleanup in %s: %v", root, saveErr)
+			}
+		}
 		logger.Instance.Debug("No changes detected in %s (Language: %s)", root, opts.Language)
 		return nil
 	}
 
-	// 3. Ensure collection exists ONLY if we have files to index
+	// 4. Ensure collection exists ONLY if we have files to index
 	if opts.Recreate {
 		logger.Instance.Info("Dropping collection %s for recreation", collection)
 		if err := s.deleteCollectionForRecreate(ctx, collection); err != nil {
@@ -360,10 +396,9 @@ func (s *Service) IndexFile(ctx context.Context, collection, path string, state 
 		return 0, nil
 	}
 
-	// Skip minified/vendored files — tree-sitter GLR parsing on dense
-	// machine-generated code can allocate 500MB+ of arena memory.
-	if isMinifiedOrVendored(path) {
-		logger.Instance.Debug("[IDX] Skipping minified/vendored file: %s", filepath.Base(path))
+	// Skip generated, low-value, and minified files before parsing/embedding.
+	if shouldSkipFile(path) {
+		logger.Instance.Debug("[IDX] Skipping excluded file: %s", filepath.Base(path))
 		return 0, nil
 	}
 
@@ -372,6 +407,7 @@ func (s *Service) IndexFile(ctx context.Context, collection, path string, state 
 		logger.Instance.Error("Analyze failed for %s: %v", path, err)
 		return 0, fmt.Errorf("analyze failed: %w", err)
 	}
+	res.Symbols = symbolsForFile(res.Symbols, path)
 
 	// Remove old points for this file if we are updating
 	if err := s.store.DeleteByFilter(ctx, collection, "file_path", path); err != nil {
@@ -393,9 +429,39 @@ func (s *Service) IndexFile(ctx context.Context, collection, path string, state 
 	return len(res.Symbols), nil
 }
 
+func symbolsForFile(symbols []parser.Symbol, path string) []parser.Symbol {
+	target := filepath.Clean(path)
+	filtered := symbols[:0]
+	for _, symbol := range symbols {
+		candidate := filepath.Clean(symbol.FilePath)
+		if candidate == target || runtime.GOOS == "windows" && strings.EqualFold(candidate, target) {
+			filtered = append(filtered, symbol)
+		}
+	}
+	return filtered
+}
+
+// RemoveFile deletes every vector indexed for path and forgets it in state.
+// Used for files that no longer exist on disk.
+func (s *Service) RemoveFile(ctx context.Context, collection, path string, state *State) error {
+	if err := s.store.DeleteByFilter(ctx, collection, "file_path", path); err != nil {
+		return err
+	}
+	state.RemoveFile(path)
+	return nil
+}
+
 // circuitBreakerThreshold is the number of consecutive embed failures that
 // triggers an Ollama health check and potential restart before continuing.
 const circuitBreakerThreshold = 2
+
+// Pause between embeds, applied only after a failure. A successful embed is
+// followed immediately by the next one: on a CPU-only embedder a fixed pause
+// costs as much as the call it follows.
+const (
+	embedBackoffStep = 150 * time.Millisecond
+	embedBackoffMax  = 2 * time.Second
+)
 
 // unwrapOllamaProvider extracts the underlying *OllamaLLMProvider from the Provider
 // chain (which may be wrapped in RetryableProvider).
@@ -465,6 +531,7 @@ func (s *Service) ensureOllamaAlive(ctx context.Context) error {
 // Includes a circuit breaker: after circuitBreakerThreshold consecutive embed failures,
 // pauses to check/restart Ollama before continuing — avoids wasting retries against a dead service.
 func (s *Service) IndexItems(ctx context.Context, collection string, symbols []parser.Symbol) error {
+	resolveLocalRelations(symbols)
 	if len(symbols) == 0 {
 		return nil
 	}
@@ -478,7 +545,11 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 		err   error
 	}
 
-	jobs := make(chan parser.Symbol, len(symbols))
+	embedBatchSize := 1
+	if _, ok := s.embedder.(llm.BatchEmbedder); ok {
+		embedBatchSize = 2
+	}
+	jobs := make(chan []parser.Symbol, (len(symbols)+embedBatchSize-1)/embedBatchSize)
 	results := make(chan result, len(symbols))
 
 	var wg sync.WaitGroup
@@ -488,7 +559,7 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 			defer wg.Done()
 			consecutiveFailures := 0
 
-			for sym := range jobs {
+			for batch := range jobs {
 				// Circuit breaker: if we've had consecutive failures, check Ollama before retrying
 				if consecutiveFailures >= circuitBreakerThreshold {
 					// Check context first — if already cancelled, abort immediately
@@ -514,20 +585,33 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 					time.Sleep(2 * time.Second)
 				}
 
-				// Embed text construction
-				embedText := fmt.Sprintf("%s\n%s\n%s\n%s", sym.Package, sym.Name, sym.Signature, sym.Content)
-				if sym.Docstring != "" {
-					embedText = sym.Docstring + "\n" + embedText
+				embedTexts := make([]string, len(batch))
+				for i, sym := range batch {
+					embedTexts[i] = fmt.Sprintf("%s\n%s\n%s\n%s", sym.Package, sym.Name, sym.Signature, sym.Content)
+					if sym.Docstring != "" {
+						embedTexts[i] = sym.Docstring + "\n" + embedTexts[i]
+					}
 				}
 
 				embedCtx, embedCancel := context.WithTimeout(ctx, 30*time.Second)
-				vector64, err := s.embedder.Embed(embedCtx, embedText)
+				vectors64, err := s.embedBatch(embedCtx, embedTexts)
 				embedCancel()
 
 				if err != nil {
 					consecutiveFailures++
-					logger.Instance.Warn("Embed failed for %s (consecutive failures: %d): %v", sym.Name, consecutiveFailures, err)
-					results <- result{err: fmt.Errorf("failed to embed %s: %w", sym.Name, err)}
+					logger.Instance.Warn("Embed failed for batch starting with %s (consecutive failures: %d): %v", batch[0].Name, consecutiveFailures, err)
+					results <- result{err: fmt.Errorf("failed to embed batch starting with %s: %w", batch[0].Name, err)}
+					// Back off only when Ollama is actually struggling. Linear in
+					// the failure count and capped, so a transient error costs
+					// little and a sustained one stops hammering the endpoint.
+					backoff := time.Duration(consecutiveFailures) * embedBackoffStep
+					if backoff > embedBackoffMax {
+						backoff = embedBackoffMax
+					}
+					select {
+					case <-ctx.Done():
+					case <-time.After(backoff):
+					}
 					continue
 				}
 
@@ -535,35 +619,25 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 				consecutiveFailures = 0
 				s.lastActivity.Store(time.Now().Unix())
 
-				// Throttle: small pause between embeds to avoid overwhelming Ollama.
-				// 150ms adds ~15s per 100 symbols — negligible vs total indexing time,
-				// but prevents Ollama from freezing under sustained concurrent load.
-				time.Sleep(150 * time.Millisecond)
-
-				vector := make([]float32, len(vector64))
-				for i, v := range vector64 {
-					vector[i] = float32(v)
-				}
-
-				idKey := fmt.Sprintf("%s:%s:%d:%d", sym.FilePath, sym.Name, sym.StartLine, sym.EndLine)
-				id := fmt.Sprintf("%x", sha256.Sum256([]byte(idKey)))[:32]
-
-				payload := s.symbolToMap(sym)
-				payload["text"] = embedText
-
-				results <- result{
-					point: storage.Point{
-						ID:      id,
-						Vector:  vector,
-						Payload: payload,
-					},
+				for i, sym := range batch {
+					vector := make([]float32, len(vectors64[i]))
+					for j, value := range vectors64[i] {
+						vector[j] = float32(value)
+					}
+					payload := s.symbolToMap(sym)
+					payload["text"] = embedTexts[i]
+					results <- result{point: storage.Point{ID: sym.ID, Vector: vector, Payload: payload}}
 				}
 			}
 		}()
 	}
 
-	for _, sym := range symbols {
-		jobs <- sym
+	for i := 0; i < len(symbols); i += embedBatchSize {
+		end := i + embedBatchSize
+		if end > len(symbols) {
+			end = len(symbols)
+		}
+		jobs <- symbols[i:end]
 	}
 	close(jobs)
 
@@ -578,9 +652,9 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 		allPoints = append(allPoints, res.point)
 	}
 
-	batchSize := 50
-	for i := 0; i < len(allPoints); i += batchSize {
-		end := i + batchSize
+	upsertBatchSize := 50
+	for i := 0; i < len(allPoints); i += upsertBatchSize {
+		end := i + upsertBatchSize
 		if end > len(allPoints) {
 			end = len(allPoints)
 		}
@@ -598,6 +672,69 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 	return nil
 }
 
+func (s *Service) embedBatch(ctx context.Context, texts []string) ([][]float64, error) {
+	if batch, ok := s.embedder.(llm.BatchEmbedder); ok {
+		vectors, err := batch.EmbedBatch(ctx, texts)
+		if err != nil {
+			return nil, err
+		}
+		if len(vectors) != len(texts) {
+			return nil, fmt.Errorf("embedder returned %d vectors for %d inputs", len(vectors), len(texts))
+		}
+		return vectors, nil
+	}
+
+	vector, err := s.embedder.Embed(ctx, texts[0])
+	if err != nil {
+		return nil, err
+	}
+	return [][]float64{vector}, nil
+}
+
+// Resolve only unique targets in the same file. Cross-file and dynamic calls
+// retain their context for query-time resolution; never guess an object type.
+func resolveLocalRelations(symbols []parser.Symbol) {
+	byName := make(map[string][]int)
+	byQualified := make(map[string][]int)
+	for i := range symbols {
+		s := &symbols[i]
+		key := fmt.Sprintf("%s:%s:%d:%d", s.FilePath, s.Name, s.StartLine, s.EndLine)
+		if s.QualifiedName != "" {
+			key += ":" + s.QualifiedName
+		}
+		s.ID = fmt.Sprintf("%x", sha256.Sum256([]byte(key)))[:32]
+		byName[s.FilePath+"\x00"+s.Name] = append(byName[s.FilePath+"\x00"+s.Name], i)
+		if s.QualifiedName != "" {
+			byQualified[s.FilePath+"\x00"+s.QualifiedName] = append(byQualified[s.FilePath+"\x00"+s.QualifiedName], i)
+		}
+	}
+	for i := range symbols {
+		s := &symbols[i]
+		for j := range s.Relations {
+			r := &s.Relations[j]
+			if r.Type != parser.RelCalls {
+				continue
+			}
+			r.TargetID, r.Resolution = "", "unresolved"
+			var matches []int
+			if r.TargetQualifiedName != "" {
+				matches = byQualified[s.FilePath+"\x00"+r.TargetQualifiedName]
+			} else if r.Receiver == "" {
+				matches = byName[s.FilePath+"\x00"+r.TargetName]
+			}
+			if len(matches) == 1 {
+				target := symbols[matches[0]]
+				if r.Receiver == "" && target.Type == parser.Method && (s.Language == "php" || s.Language == "javascript" || s.Language == "typescript") {
+					continue
+				}
+				r.TargetID, r.Resolution = target.ID, "resolved"
+			} else if len(matches) > 1 {
+				r.Resolution = "ambiguous"
+			}
+		}
+	}
+}
+
 func (s *Service) symbolToMap(sym parser.Symbol) map[string]interface{} {
 	data, _ := json.Marshal(sym)
 	var res map[string]interface{}
@@ -612,19 +749,29 @@ func (s *Service) symbolToMap(sym parser.Symbol) map[string]interface{} {
 	return res
 }
 
+// FileCountResult holds the results of a file count scan:
+// per-language totals and per-extension breakdowns within each language.
+type FileCountResult struct {
+	Counts     map[string]int            // langName → total count
+	Breakdowns map[string]map[string]int // langName → (extension → count)
+}
+
 // CountAllFiles counts files per language in root using a single WalkDir pass,
 // applying the same directory exclusion rules as IndexWorkspace.
-// It returns a map[langName]count that can be used to pre-populate progress
-// totals before indexing begins, avoiding O(languages × files) traversals.
-func (s *Service) CountAllFiles(root string, excludePatterns []string) map[string]int {
-	counts := make(map[string]int)
+// It returns a FileCountResult with per-language totals and per-extension
+// breakdowns, used to pre-populate progress totals before indexing begins.
+func (s *Service) CountAllFiles(root string, excludePatterns []string) FileCountResult {
+	result := FileCountResult{
+		Counts:     make(map[string]int),
+		Breakdowns: make(map[string]map[string]int),
+	}
 	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
 		if d.IsDir() {
 			name := d.Name()
-			if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" {
+			if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" || name == "tmp" {
 				return filepath.SkipDir
 			}
 			for _, p := range excludePatterns {
@@ -634,12 +781,85 @@ func (s *Service) CountAllFiles(root string, excludePatterns []string) map[strin
 			}
 			return nil
 		}
+		if shouldSkipFile(path) {
+			return nil
+		}
 		a := parser.GetByFile(path)
 		if a == nil {
 			return nil
 		}
-		counts[a.Name()]++
+		lang := a.Name()
+		result.Counts[lang]++
+
+		// Track per-extension breakdown
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext == "" {
+			// Extension-less files (Dockerfile, Gemfile, Makefile) would all
+			// collapse into a single "" key; use the basename instead.
+			ext = strings.ToLower(filepath.Base(path))
+		}
+		if result.Breakdowns[lang] == nil {
+			result.Breakdowns[lang] = make(map[string]int)
+		}
+		result.Breakdowns[lang][ext]++
+
 		return nil
 	})
-	return counts
+	return result
+}
+
+// cleanupStaleFiles detects deleted files or directories, cleans up their vectors from Qdrant,
+// and updates the local index state. If targetLanguage is non-empty, only files matching that parser
+// language are removed from state and cleaned from this collection.
+func (s *Service) cleanupStaleFiles(ctx context.Context, root, collection string, state *State, targetLanguage string) bool {
+	staleFiles := CollectStaleFiles(state)
+	if len(staleFiles) == 0 {
+		return false
+	}
+
+	// Filter stale files to only those matching targetLanguage (if specified)
+	if targetLanguage != "" {
+		var matched []string
+		for _, f := range staleFiles {
+			a := parser.GetByFile(f)
+			if a != nil && a.Name() == targetLanguage {
+				matched = append(matched, f)
+			}
+		}
+		staleFiles = matched
+	}
+
+	if len(staleFiles) == 0 {
+		return false
+	}
+
+	dirPrefixes, individualFiles := GroupByDeletedRoot(staleFiles, root)
+
+	// 1. Bulk delete for entire deleted directories
+	for prefix, files := range dirPrefixes {
+		deleted, err := s.store.DeleteByPrefix(ctx, collection, "file_path", prefix)
+		if err != nil {
+			logger.Instance.Warn("[IDX] Prefix delete failed for %s: %v, falling back to per-file delete", prefix, err)
+			for _, path := range files {
+				if delErr := s.store.DeleteByFilter(ctx, collection, "file_path", path); delErr != nil {
+					logger.Instance.Warn("[IDX] Failed to delete points for stale file %s: %v", path, delErr)
+				}
+			}
+		} else if deleted > 0 {
+			logger.Instance.Info("[IDX] 🧹 Bulk-deleted %d vectors under deleted directory: %s", deleted, prefix)
+		}
+		for _, path := range files {
+			state.RemoveFile(path)
+		}
+	}
+
+	// 2. Individual file deletions
+	for _, path := range individualFiles {
+		if err := s.store.DeleteByFilter(ctx, collection, "file_path", path); err != nil {
+			logger.Instance.Warn("[IDX] Failed to delete points for stale file %s: %v", path, err)
+		}
+		state.RemoveFile(path)
+	}
+
+	return true
 }

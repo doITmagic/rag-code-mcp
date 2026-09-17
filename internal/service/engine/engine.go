@@ -13,6 +13,7 @@ import (
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
+	"github.com/doITmagic/rag-code-mcp/internal/service/iderules"
 	"github.com/doITmagic/rag-code-mcp/internal/service/search"
 	"github.com/doITmagic/rag-code-mcp/internal/skills"
 	"github.com/doITmagic/rag-code-mcp/internal/transport"
@@ -32,12 +33,16 @@ type Engine struct {
 	indexer  *indexer.Service
 	search   *search.Service
 	resolver *resolver.Resolver
+	detector *detector.Detector
 	config   *config.Config
 	watchers *watch.Manager
 
 	// indexingJobs tracks active background indexing jobs.
 	// Key: workspace ID, Value: start time
 	indexingJobs sync.Map
+	// indexingSlot keeps workspace indexing sequential. Ollama serializes embed
+	// requests anyway, while parallel workspace scans multiply memory pressure.
+	indexingSlot chan struct{}
 
 	// pendingIndex tracks file changes received while an indexing job is running.
 	// It ensures watcher-triggered incremental indexing is lossless under rapid edits.
@@ -81,7 +86,11 @@ func (e *Engine) SetSearchService(srv *search.Service) {
 // NewEngine creates a new Engine with all workspace dependencies wired up.
 // registryPath is the path to the persistent registry file (e.g. ~/.ragcode/registry.json).
 func NewEngine(idx *indexer.Service, srv *search.Service, registryPath string, cfg *config.Config) *Engine {
-	det := detector.New(detector.DefaultOptions())
+	detOpts := detector.DefaultOptions()
+	if cfg != nil {
+		detOpts.ExcludePatterns = cfg.Workspace.ExcludePatterns
+	}
+	det := detector.New(detOpts)
 	branchMgr := branchstate.NewManager()
 
 	var reg *registry.Registry
@@ -106,12 +115,14 @@ func NewEngine(idx *indexer.Service, srv *search.Service, registryPath string, c
 	}
 
 	return &Engine{
-		indexer:  idx,
-		search:   srv,
-		resolver: res,
-		config:   cfg,
-		watchers: watcherMgr,
-		registry: reg,
+		indexer:      idx,
+		search:       srv,
+		resolver:     res,
+		detector:     det,
+		config:       cfg,
+		watchers:     watcherMgr,
+		registry:     reg,
+		indexingSlot: make(chan struct{}, 1),
 
 		pendingFiles:    make(map[string]map[string]struct{}),
 		pendingOverflow: make(map[string]bool),
@@ -140,6 +151,12 @@ func (e *Engine) Config() *config.Config {
 	return e.config
 }
 
+// FindAlternativeCandidates wraps detector logic to offer alternative root suggestions internally.
+// Uses the engine's configured detector to ensure consistent AllowedRoots/ExcludePatterns.
+func (e *Engine) FindAlternativeCandidates(root string) []string {
+	return e.detector.FindAlternativeCandidates(root)
+}
+
 // WorkspaceContext provides information about a detected workspace.
 type WorkspaceContext struct {
 	Root            string
@@ -164,19 +181,43 @@ func (w *WorkspaceContext) CollectionName(lang string) string {
 
 // DetectFromParams resolves workspace context from a tool args map.
 // Reads file_path, workspace_root, or workspace keys (in that priority order).
+// Routes workspace_root through the explicit workspace root path for correct
+// resolver semantics (ReasonExplicitWorkspaceRoot, confidence 1.0).
 func (e *Engine) DetectFromParams(ctx context.Context, params map[string]interface{}) (*WorkspaceContext, error) {
-	for _, key := range []string{"file_path", "workspace_root", "workspace"} {
-		if v, ok := params[key].(string); ok && strings.TrimSpace(v) != "" {
-			return e.DetectContext(ctx, v)
-		}
+	// Check file_path first (highest specificity)
+	if v, ok := params["file_path"].(string); ok && strings.TrimSpace(v) != "" {
+		return e.DetectContext(ctx, v)
+	}
+	// workspace_root should route through the explicit root path
+	if v, ok := params["workspace_root"].(string); ok && strings.TrimSpace(v) != "" {
+		return e.DetectContextAsRoot(ctx, v, true)
+	}
+	// workspace alias
+	if v, ok := params["workspace"].(string); ok && strings.TrimSpace(v) != "" {
+		return e.DetectContext(ctx, v)
 	}
 	return e.DetectContext(ctx, "")
+}
+
+type resolvedWorkspaceKey struct{}
+
+type resolvedWorkspace struct {
+	path      string
+	workspace *WorkspaceContext
+}
+
+// WithResolvedWorkspace shares one resolution across the searches of a request.
+func WithResolvedWorkspace(ctx context.Context, path string, workspace *WorkspaceContext) context.Context {
+	return context.WithValue(ctx, resolvedWorkspaceKey{}, resolvedWorkspace{path, workspace})
 }
 
 // DetectContext resolves the workspace context for a given path using the full resolver cascade.
 // If path is empty, it falls back to the last active workspace from the registry.
 // Results are cached with a 5s TTL to avoid redundant resolver invocations.
 func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceContext, error) {
+	if resolved, ok := ctx.Value(resolvedWorkspaceKey{}).(resolvedWorkspace); ok && resolved.path == path {
+		return resolved.workspace, nil
+	}
 	// Log incoming detection request for debugging workspace resolution
 	hintFromCtx := transport.GetWorkspaceHint(ctx)
 	logger.Instance.Info("[WS-DETECT] ▶ DetectContext called: path=%q, X-Workspace-Hint=%q", path, hintFromCtx)
@@ -258,7 +299,10 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 
 	// If the resolver applied a more specific override (e.g. nested_workspace_override),
 	// surface it so the agent can see exactly what happened in the response.
-	if resp.PathResolutionSource != "" && resp.PathResolutionSource != source {
+	// A registry fallback is passed to the resolver as an explicit root, so
+	// its "workspace_root" is not more specific — keep the fallback label,
+	// which is what triggers the fallback warning in tool responses.
+	if resp.PathResolutionSource != "" && resp.PathResolutionSource != source && source != "registry_fallback" {
 		wctx.DetectionSource = resp.PathResolutionSource
 		logger.Instance.Info("[DAEMON] [WS-DETECT] ◀ Resolver override: source changed %s → %s (root: %s)",
 			source, resp.PathResolutionSource, wctx.Root)
@@ -296,6 +340,67 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 			wctx:   wctx,
 			expiry: time.Now().Add(detectionCacheTTL),
 		})
+	}
+
+	return wctx, nil
+}
+
+// DetectContextAsRoot resolves workspace context using an explicit workspace root path.
+// Unlike DetectContext (which routes through req.FilePath → marker detection),
+// this method uses req.WorkspaceRoot which the resolver treats as a trusted,
+// pre-validated root with ReasonExplicitWorkspaceRoot and confidence 1.0.
+//
+// triggerAutoIndex controls whether background indexing is auto-triggered:
+//   - true  → normal connect behavior (sets connectTriggered, starts indexing)
+//   - false → pure validation (resolve only, no indexing side effects)
+func (e *Engine) DetectContextAsRoot(ctx context.Context, root string, triggerAutoIndex bool) (*WorkspaceContext, error) {
+	if strings.TrimSpace(root) == "" {
+		return e.DetectContext(ctx, "")
+	}
+
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve workspace root path: %w", err)
+	}
+
+	logger.Instance.Info("[WS-DETECT] ▶ DetectContextAsRoot called: root=%q triggerAutoIndex=%v", abs, triggerAutoIndex)
+
+	req := contract.ResolveWorkspaceRequest{
+		WorkspaceRoot: abs,
+	}
+
+	resp, wsErr := e.resolver.Resolve(ctx, req)
+	if wsErr != nil {
+		return nil, fmt.Errorf("workspace root resolution failed: %s", wsErr.Message)
+	}
+
+	wctx := &WorkspaceContext{
+		Root:            resp.ResolvedRoot,
+		ID:              resp.WorkspaceID,
+		Branch:          resp.Branch,
+		WorktreeID:      resp.WorktreeID,
+		MismatchRisk:    resp.MismatchRisk,
+		DetectionSource: "explicit_workspace_root",
+		ReindexRequired: resp.ReindexRequired,
+		HeadSHA:         resp.HeadSHA,
+	}
+
+	if resp.PathResolutionSource != "" && resp.PathResolutionSource != "workspace_root" {
+		wctx.DetectionSource = resp.PathResolutionSource
+	}
+
+	logger.Instance.Info("[DAEMON] [WS-DETECT] ◀ Resolved via root: root=%s, id=%s, branch=%s, source=%s",
+		wctx.Root, wctx.ID, wctx.Branch, wctx.DetectionSource)
+
+	transport.SetResponseHeader(ctx, "X-Resolved-Workspace", wctx.Root)
+
+	if triggerAutoIndex {
+		if e.config == nil || e.config.Workspace.AutoIndex {
+			if _, triggered := e.connectTriggered.LoadOrStore(wctx.ID, true); !triggered {
+				logger.Instance.Info("[DAEMON] [WS-DETECT] Auto-triggering incremental index for workspace: %s", wctx.Root)
+				e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+			}
+		}
 	}
 
 	return wctx, nil
@@ -615,7 +720,7 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 	}
 
 	logger.Instance.Debug("[TIMER] SearchCode TOTAL=%v (detect=%v embed=%v fanout=%v)",
-		time.Since(t0), t1.Sub(t0), t2.Sub(t1), time.Since(t3))
+		time.Since(t0), t1.Sub(t0), t3.Sub(t2), time.Since(t3))
 
 	return &SearchCodeResult{
 		Results:         all,
@@ -629,7 +734,7 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 }
 
 // HybridSearchCode detects the workspace and performing a high-precision hybrid search.
-func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText string, limit int) (*SearchCodeResult, error) {
+func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText string, limit int, includeDocs bool) (*SearchCodeResult, error) {
 	wctx, err := e.DetectContext(ctx, filePath)
 	if err != nil {
 		return nil, err
@@ -642,20 +747,33 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 	}
 
 	collection := wctx.CollectionName(lang)
-
-	exists, err := e.search.CollectionExists(ctx, collection)
-	if err != nil {
-		return nil, fmt.Errorf("failed to check collection: %w", err)
+	type target struct {
+		collection  string
+		includeDocs bool
+	}
+	targets := []target{{collection: collection, includeDocs: lang == "docs"}}
+	if includeDocs && lang != "docs" {
+		targets = append(targets, target{collection: wctx.CollectionName("docs"), includeDocs: true})
+	}
+	available := targets[:0]
+	for _, target := range targets {
+		exists, err := e.search.CollectionExists(ctx, target.collection)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check collection: %w", err)
+		}
+		if exists {
+			available = append(available, target)
+		}
 	}
 
-	if !exists {
+	if len(available) == 0 {
 		// Trigger background indexing but do NOT block — SmartSearch runs
 		// SearchCode (with fan-out) in parallel and will provide results
 		// from any available language collections.
 		if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); !alreadyRunning {
 			e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 		}
-		logger.Instance.Info("[IDX] ws=%s HybridSearch: collection %s not found — returning empty (indexing in background)", filepath.Base(wctx.Root), collection)
+		logger.Instance.Info("[IDX] ws=%s HybridSearch: requested collections not found — returning empty (indexing in background)", filepath.Base(wctx.Root))
 		return nil, nil
 	}
 
@@ -666,9 +784,17 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 		}
 	}
 
-	results, err := e.search.HybridSearch(ctx, collection, queryText, limit)
-	if err != nil {
-		return nil, fmt.Errorf("hybrid search failed: %w", err)
+	var results []storage.SearchResult
+	for _, target := range available {
+		found, err := e.search.HybridSearch(ctx, target.collection, queryText, limit, target.includeDocs)
+		if err != nil {
+			return nil, fmt.Errorf("hybrid search failed: %w", err)
+		}
+		results = append(results, found...)
+	}
+	sort.Slice(results, func(i, j int) bool { return results[i].Score > results[j].Score })
+	if limit > 0 && len(results) > limit {
+		results = results[:limit]
 	}
 
 	return &SearchCodeResult{
@@ -835,12 +961,12 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 		return
 	}
 
-	// Count active jobs after adding this one — warn if multiple workspaces are indexing
-	// simultaneously (they serialize against each other at Ollama level).
-	var activeCount int
-	e.indexingJobs.Range(func(_, _ any) bool { activeCount++; return true })
-	if activeCount > 1 {
-		logger.Instance.Warn("[IDX] ⚠️ %d workspaces indexing simultaneously — Ollama requests will serialize implicitly (ws=%s)", activeCount, filepath.Base(root))
+	// Rule files are refreshed here rather than on every resolve: this is the
+	// point where the workspace is known to be a real, confirmed root.
+	// Legacy first — an old .clinerules *file* would block the new directory.
+	if e.config == nil || e.config.Workspace.AutoCreateIDERules {
+		iderules.RemoveLegacy(root)
+		iderules.Write(root)
 	}
 
 	// Preserve existing Languages data on restart so incremental indexing
@@ -861,6 +987,14 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 			// If watcher changes came in while we were indexing, run a follow-up incremental job.
 			e.tryStartPendingIndex(root, id)
 		}()
+
+		if len(e.indexingSlot) > 0 {
+			logger.Instance.Info("[IDX] ⏳ ws=%s queued behind another workspace", filepath.Base(root))
+		}
+		e.indexingSlot <- struct{}{}
+		defer func() { <-e.indexingSlot }()
+		s.StartedAt = time.Now().UTC().Format(time.RFC3339)
+		indexer.SaveIndexStatus(root, s)
 
 		ctx := context.Background()
 		var err error
@@ -907,29 +1041,79 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) er
 		return err
 	}
 
-	statePath := filepath.Join(wctx.Root, ".ragcode", "state.json")
-	state, err := indexer.LoadState(statePath)
-	if err != nil {
-		state = indexer.NewState()
-	}
+	states := make(map[string]*indexer.State)
 
-	// For language detection for the collection name, we assume the first file's language if not mixed.
-	// This is a bit of a simplification compared to the full scan.
-	lang := "go"
-	if len(files) > 0 {
-		if a := parser.GetByFile(files[0]); a != nil {
-			lang = a.Name()
-		}
-	}
-	collection := wctx.CollectionName(lang)
-
+	// Resolve the collection per file: one watcher batch can mix languages,
+	// and taking the first file's language sent the rest to the wrong one.
 	for _, p := range files {
+		a := parser.GetByFile(p)
+		if a == nil {
+			continue
+		}
+		collection := wctx.CollectionName(a.Name())
+		state := states[collection]
+		if state == nil {
+			exists, err := e.search.CollectionExists(ctx, collection)
+			if err != nil {
+				return err
+			}
+			if !exists {
+				return e.IndexWorkspace(ctx, root, false)
+			}
+			statePath := indexer.StatePath(wctx.Root, collection)
+			if _, err := os.Stat(statePath); os.IsNotExist(err) {
+				return e.IndexWorkspace(ctx, root, false)
+			}
+			state, err = indexer.LoadState(statePath)
+			if err != nil {
+				return err
+			}
+			states[collection] = state
+		}
+		// A deleted file cannot be analysed; drop its vectors instead of
+		// leaving them until the next full run or a search that notices them.
+		if _, statErr := os.Stat(p); os.IsNotExist(statErr) {
+			if err := e.indexer.RemoveFile(ctx, collection, p, state); err != nil {
+				logger.Instance.Warn("[IDX] Failed to remove deleted %s: %v", filepath.Base(p), err)
+			}
+			continue
+		}
 		if _, indexErr := e.indexer.IndexFile(ctx, collection, p, state); indexErr != nil {
 			logger.Instance.Warn("[IDX] Failed to index %s: %v", filepath.Base(p), indexErr)
 		}
 	}
 
-	return state.Save(statePath)
+	for collection, state := range states {
+		if err := state.Save(indexer.StatePath(wctx.Root, collection)); err != nil {
+			return err
+		}
+	}
+	e.refreshIndexCounts(wctx.Root)
+	return nil
+}
+
+// refreshIndexCounts recounts files on disk after an incremental run. Watcher
+// changes (adds, edits, deletes) go through IndexFiles, which never touched
+// index_status.json, so deleted files kept being reported as indexed. Once
+// the changed files are processed, everything on disk is indexed.
+func (e *Engine) refreshIndexCounts(root string) {
+	s := indexer.LoadIndexStatus(root)
+	if s == nil {
+		return
+	}
+	var excludePatterns []string
+	if e.config != nil {
+		excludePatterns = e.config.Workspace.ExcludePatterns
+	}
+	counts := e.indexer.CountAllFiles(root, excludePatterns)
+	for lang, ls := range s.Languages {
+		ls.OnDisk = counts.Counts[lang]
+		ls.Processed = ls.OnDisk
+		ls.Changed = 0
+		ls.Breakdown = counts.Breakdowns[lang]
+		s.Languages[lang] = ls
+	}
+	indexer.SaveIndexStatus(root, s)
 }
 
 // IndexWorkspace indexes all files in a workspace.
@@ -966,12 +1150,12 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 	// This gives us the real on_disk totals for accurate progress reporting,
 	// instead of using len(changedFiles) which only reflects modified files.
 	fileCounts := e.indexer.CountAllFiles(wctx.Root, excludePatterns)
-	logger.Instance.Info("[IDX] ws=%s file counts: %v", wsName, fileCounts)
+	logger.Instance.Info("[IDX] ws=%s file counts: %v (breakdowns: %v)", wsName, fileCounts.Counts, fileCounts.Breakdowns)
 
 	// Sort languages by file count descending so the dominant language is indexed
 	// first and AI search works immediately for the most relevant code.
 	sort.Slice(languages, func(i, j int) bool {
-		return fileCounts[languages[i]] > fileCounts[languages[j]]
+		return fileCounts.Counts[languages[i]] > fileCounts.Counts[languages[j]]
 	})
 	logger.Instance.Info("[IDX] ws=%s indexing order: %v", wsName, languages)
 
@@ -986,34 +1170,31 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 	if s.Languages == nil {
 		s.Languages = make(map[string]indexer.LangStatus)
 	}
-	// Pre-populate real on_disk counts so languages with 0 changed files still appear.
+	// Pre-populate real on_disk counts and extension breakdowns so languages
+	// with 0 changed files still appear, and consumers see sub-type detail.
 	for _, l := range languages {
 		entry := s.Languages[l]
-		entry.OnDisk = fileCounts[l]
+		entry.OnDisk = fileCounts.Counts[l]
+		if bd, ok := fileCounts.Breakdowns[l]; ok {
+			entry.Breakdown = bd
+		}
 		s.Languages[l] = entry
 	}
 	indexer.SaveIndexStatus(wctx.Root, s)
 
 	var indexErrors []string
 	for _, lang := range languages {
-		diskTotal := fileCounts[lang]
+		diskTotal := fileCounts.Counts[lang]
 		collection := wctx.CollectionName(lang)
 		logger.Instance.Info("[IDX] ws=%s lang=%s ▶ starting (on_disk=%d)", wsName, lang, diskTotal)
 
-		// Capture the already-processed count before this run starts.
-		// For incremental runs (only changed files), we accumulate on top of
-		// whatever was already indexed in Qdrant. For a full re-index
-		// (recreate=true, or all files changed), we reset to 0.
-		// baseProcessed is captured once per language, before the Progress
-		// callback fires, so it's safe to close over it.
-		baseProcessed := s.Languages[lang].Processed
-		if recreate {
-			baseProcessed = 0
-		}
-		// firstTick is used to detect on the first Progress callback whether
-		// this is a full re-index (totalFiles >= diskTotal) so we can reset
-		// baseProcessed to 0 and avoid double-counting.
-		firstTick := true
+		// ticked records whether the indexer reported any progress; it does not
+		// when no file of this language changed.
+		ticked := false
+		// lastStatusWrite throttles status writes by time rather than by file
+		// count: on a slow embedder a count-based gate leaves index_status.json
+		// reading "processed: 0" for minutes while indexing is in fact running.
+		var lastStatusWrite time.Time
 
 		err := e.indexer.IndexWorkspace(ctx, wctx.Root, collection, indexer.Options{
 			Language:        lang,
@@ -1021,29 +1202,30 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 			ExcludePatterns: excludePatterns,
 			Recreate:        recreate,
 			Progress: func(doneFiles, totalFiles int) {
-				// Throttle disk I/O: write every 10 files or on the last file
-				if doneFiles%10 != 0 && doneFiles != totalFiles {
+				// Throttle disk I/O: at most one write every 2s, plus the last file.
+				if doneFiles != totalFiles && time.Since(lastStatusWrite) < 2*time.Second {
 					return
 				}
-				// On the first tick, decide if this is a full re-index.
-				// If totalFiles covers all on-disk files, reset base to 0
-				// so we don't double-count the existing Processed value.
-				if firstTick {
-					firstTick = false
-					if diskTotal > 0 && totalFiles >= diskTotal {
-						baseProcessed = 0
-					}
-				}
+				lastStatusWrite = time.Now()
+				ticked = true
 				ls := s.Languages[lang]
 				ls.OnDisk = diskTotal   // real total files on disk
 				ls.Changed = totalFiles // files that needed re-indexing this run
-				// Cumulative total: for incremental runs add to the existing
-				// DB count; for full re-indexes (base=0) start from scratch.
-				ls.Processed = baseProcessed + doneFiles
+				ls.Processed = processedCount(diskTotal, totalFiles, doneFiles)
 				s.Languages[lang] = ls
 				indexer.SaveIndexStatus(wctx.Root, s)
 			},
 		})
+		if err == nil && !ticked {
+			// Nothing changed: every file on disk is already indexed. Without
+			// this the previous (possibly inflated) count would stick.
+			ls := s.Languages[lang]
+			ls.OnDisk = diskTotal
+			ls.Changed = 0
+			ls.Processed = diskTotal
+			s.Languages[lang] = ls
+			indexer.SaveIndexStatus(wctx.Root, s)
+		}
 		if err != nil {
 			logger.Instance.Error("[IDX] ws=%s lang=%s ❌ failed: %v", wsName, lang, err)
 			indexErrors = append(indexErrors, fmt.Sprintf("%s: %v", lang, err))
@@ -1064,6 +1246,22 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 	}
 
 	return nil
+}
+
+// processedCount is how many of the diskTotal files are indexed partway through
+// a run. The indexer only queues files that are new or changed (totalFiles);
+// every other file on disk is already indexed, so the count is everything
+// except what is still queued. Adding doneFiles to the previous count instead
+// counted a modified file twice and never dropped deleted ones.
+func processedCount(diskTotal, totalFiles, doneFiles int) int {
+	n := diskTotal - (totalFiles - doneFiles)
+	if n < 0 {
+		return 0
+	}
+	if n > diskTotal {
+		return diskTotal
+	}
+	return n
 }
 
 // StopWatchers stops all workspace watchers.

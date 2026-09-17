@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
 )
@@ -17,6 +18,8 @@ func init() {
 type Analyzer struct {
 	mdParser *MarkdownParser
 	tsParser *TreeSitterParser
+	// ponytail: one lock matches the shared parsers; use per-call parsers only if parallel parsing becomes faster.
+	mu sync.Mutex
 }
 
 func NewAnalyzer() *Analyzer {
@@ -28,6 +31,8 @@ func NewAnalyzer() *Analyzer {
 
 // ReleaseResources drops cached tree-sitter parsers so the GC can reclaim arena memory.
 func (a *Analyzer) ReleaseResources() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.tsParser != nil {
 		a.tsParser.ReleaseResources()
 	}
@@ -52,6 +57,9 @@ func (a *Analyzer) CanHandle(path string) bool {
 }
 
 func (a *Analyzer) Analyze(ctx context.Context, path string) (*parser.Result, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read file %s: %w", path, err)

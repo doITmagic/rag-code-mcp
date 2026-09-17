@@ -60,7 +60,6 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
-docs/plans/*.md
 
 # Scripts
 scripts/
@@ -76,3 +75,17 @@ windsurf_debug_log.txt
 # Worktrees
 .worktrees/
 worktrees/
+
+# Auto-generated IDE rule files (auto_create_ide_rules)
+.cursor/rules/ragcode.mdc
+.windsurf/rules/ragcode.md
+.clinerules/ragcode.md
+.roo/rules/ragcode.md
+CLAUDE.md
+
+# Legacy flat rule files written by older versions
+.clauderules
+.clinerules
+.cursorrules
+.roomodes
+.windsurfrules

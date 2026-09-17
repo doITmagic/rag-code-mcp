@@ -49,9 +49,7 @@ func StartDaemon(binaryPath string, port int, extraArgs ...string) error {
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 
-	if runtime.GOOS != "windows" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	}
+	detach(cmd)
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start daemon: %w", err)
@@ -63,12 +61,14 @@ func StartDaemon(binaryPath string, port int, extraArgs ...string) error {
 	return waitForDaemon(port)
 }
 
-// waitForDaemon polls the daemon health endpoint until ready (max 10s).
+// waitForDaemon polls the daemon health endpoint until ready (max 60s): on a cold
+// start the daemon only listens after the embedding model is loaded, which
+// takes well over 10s on CPU.
 func waitForDaemon(port int) error {
 	url := fmt.Sprintf("http://127.0.0.1:%d/health", port)
 	client := &http.Client{Timeout: 2 * time.Second}
 
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 120; i++ {
 		resp, err := client.Get(url)
 		if err == nil {
 			resp.Body.Close()
@@ -79,7 +79,7 @@ func waitForDaemon(port int) error {
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	return fmt.Errorf("daemon did not become ready within 10s (port: %d)", port)
+	return fmt.Errorf("daemon did not become ready within 60s (port: %d)", port)
 }
 
 // StopDaemon sends a termination signal to the daemon process via its TCP health endpoint PID.

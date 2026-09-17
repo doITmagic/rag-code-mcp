@@ -28,6 +28,12 @@ type Provider interface {
 	Name() string
 }
 
+// BatchEmbedder is an optional provider capability used by the indexer to
+// reduce HTTP round trips without requiring every Provider to support batches.
+type BatchEmbedder interface {
+	EmbedBatch(ctx context.Context, texts []string) ([][]float64, error)
+}
+
 // GenerateOptions contains options for text generation
 type GenerateOptions struct {
 	Temperature   float64
@@ -128,6 +134,33 @@ func (r *RetryableProvider) Embed(ctx context.Context, text string) ([]float64, 
 	return result, err
 }
 
+// EmbedBatch generates multiple embeddings with the same retry policy.
+func (r *RetryableProvider) EmbedBatch(ctx context.Context, texts []string) ([][]float64, error) {
+	batch, ok := r.provider.(BatchEmbedder)
+	if !ok {
+		result := make([][]float64, len(texts))
+		for i, text := range texts {
+			vector, err := r.Embed(ctx, text)
+			if err != nil {
+				return nil, err
+			}
+			result[i] = vector
+		}
+		return result, nil
+	}
+
+	var result [][]float64
+	err := utils.Retry(r.maxRetries, time.Second, func() error {
+		timeoutCtx, cancel := context.WithTimeout(ctx, r.timeout)
+		defer cancel()
+
+		var err error
+		result, err = batch.EmbedBatch(timeoutCtx, texts)
+		return err
+	})
+	return result, err
+}
+
 // Name returns the provider name
 func (r *RetryableProvider) Name() string {
 	return r.provider.Name()
@@ -139,6 +172,7 @@ func (r *RetryableProvider) GetEmbeddingDimension() uint64 {
 }
 
 var _ Provider = (*RetryableProvider)(nil)
+var _ BatchEmbedder = (*RetryableProvider)(nil)
 var _ io.Closer = (*RetryableProvider)(nil)
 
 // Close implements io.Closer

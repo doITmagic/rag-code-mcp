@@ -197,9 +197,10 @@ func (ca *CodeAnalyzer) analyzeFile(path string) ([]CodeChunk, error) {
 	}
 
 	title := strings.TrimSpace(doc.Find("title").First().Text())
+	elements := ca.buildElements(doc, path)
 	sections := ca.buildSections(doc, path, title)
 	if len(sections) > 0 {
-		return sections, nil
+		return append(sections, elements...), nil
 	}
 
 	// Fallback: treat entire body as a single chunk.
@@ -231,7 +232,64 @@ func (ca *CodeAnalyzer) analyzeFile(path string) ([]CodeChunk, error) {
 	if title != "" {
 		chunk.Metadata = map[string]any{"page_title": title}
 	}
-	return []CodeChunk{chunk}, nil
+	return append([]CodeChunk{chunk}, elements...), nil
+}
+
+// maxElementChunks bounds the per-file element symbols; a generated page can
+// carry thousands of classed nodes.
+const maxElementChunks = 200
+
+// buildElements emits one chunk per element that carries an id, or a class
+// not seen before in the file, so a page can be found by the hooks its CSS
+// and JS use (#checkout-form, .price-badge) and not only by its prose.
+func (ca *CodeAnalyzer) buildElements(doc *goquery.Document, path string) []CodeChunk {
+	var chunks []CodeChunk
+	seen := make(map[string]bool)
+	doc.Find("[id],[class]").EachWithBreak(func(_ int, sel *goquery.Selection) bool {
+		tag := goquery.NodeName(sel)
+		id := strings.TrimSpace(sel.AttrOr("id", ""))
+		class := strings.TrimSpace(sel.AttrOr("class", ""))
+		name := id
+		if name == "" {
+			name = tag + "." + strings.Fields(class)[0]
+		}
+		if seen[name] {
+			return true
+		}
+		seen[name] = true
+
+		text := normalizeWhitespace(sel.Text())
+		if len(text) > 300 {
+			text = text[:300] + "…"
+		}
+		sig := "<" + tag
+		if id != "" {
+			sig += fmt.Sprintf(" id=%q", id)
+		}
+		if class != "" {
+			sig += fmt.Sprintf(" class=%q", class)
+		}
+		sig += ">"
+		metadata := map[string]any{"tag": tag}
+		if id != "" {
+			metadata["html_id"] = id
+		}
+		if class != "" {
+			metadata["class"] = class
+		}
+		chunks = append(chunks, CodeChunk{
+			Type:      "element",
+			Name:      name,
+			Language:  "html",
+			FilePath:  path,
+			Signature: sig,
+			Docstring: text,
+			Content:   sig + text,
+			Metadata:  metadata,
+		})
+		return len(chunks) < maxElementChunks
+	})
+	return chunks
 }
 
 func (ca *CodeAnalyzer) buildSections(doc *goquery.Document, path, pageTitle string) []CodeChunk {

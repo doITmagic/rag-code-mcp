@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser/javascript/vue"
@@ -19,6 +20,8 @@ func init() {
 // CodeAnalyzer implements parser.Analyzer for JavaScript/TypeScript
 type CodeAnalyzer struct {
 	tsParser *TreeSitterParser
+	// ponytail: one lock matches the shared parser; use per-call parsers only if parallel parsing becomes faster.
+	mu sync.Mutex
 }
 
 // NewCodeAnalyzer creates a new JS/TS code analyzer
@@ -30,6 +33,8 @@ func NewCodeAnalyzer() *CodeAnalyzer {
 
 // ReleaseResources drops cached tree-sitter parsers so the GC can reclaim arena memory.
 func (ca *CodeAnalyzer) ReleaseResources() {
+	ca.mu.Lock()
+	defer ca.mu.Unlock()
 	if ca.tsParser != nil {
 		ca.tsParser.ReleaseResources()
 	}
@@ -53,12 +58,15 @@ var jsExtensions = map[string]bool{
 
 // CanHandle returns true for JS/TS files
 func (ca *CodeAnalyzer) CanHandle(filePath string) bool {
-	ext := filepath.Ext(filePath)
+	ext := strings.ToLower(filepath.Ext(filePath))
 	return jsExtensions[ext]
 }
 
 // Analyze extracts symbols from a file or directory
 func (ca *CodeAnalyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result, error) {
+	ca.mu.Lock()
+	defer ca.mu.Unlock()
+
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, err
@@ -162,7 +170,6 @@ func (ca *CodeAnalyzer) analyzeFile(filePath string) (*fileAnalysis, error) {
 
 	// Fallback to regex-based extraction
 	source := string(content)
-	SetSourceCache(source)
 
 	ext := filepath.Ext(filePath)
 	lang := "javascript"
@@ -211,7 +218,8 @@ func (ca *CodeAnalyzer) analyzeVueFile(filePath string, content []byte) (*fileAn
 		})
 	}
 
-	// Map Vue components as class-like symbols
+	// Map Vue components as class-like symbols, and their Options API
+	// methods/computed as functions so they are searchable by name.
 	for _, comp := range vueInfo.Components {
 		fa.Classes = append(fa.Classes, JSClass{
 			Name:       comp.Name,
@@ -219,6 +227,22 @@ func (ca *CodeAnalyzer) analyzeVueFile(filePath string, content []byte) (*fileAn
 			IsExported: comp.IsExported,
 			Docstring:  fmt.Sprintf("Vue component (%s)", comp.Type),
 		})
+		for _, m := range comp.Methods {
+			fa.Functions = append(fa.Functions, JSFunction{
+				Name:      m,
+				FilePath:  filePath,
+				Docstring: fmt.Sprintf("Method of Vue component %s", comp.Name),
+				Metadata:  map[string]any{"component": comp.Name, "vue_kind": "method"},
+			})
+		}
+		for _, c := range comp.Computed {
+			fa.Functions = append(fa.Functions, JSFunction{
+				Name:      c,
+				FilePath:  filePath,
+				Docstring: fmt.Sprintf("Computed property of Vue component %s", comp.Name),
+				Metadata:  map[string]any{"component": comp.Name, "vue_kind": "computed"},
+			})
+		}
 	}
 
 	return fa, nil
@@ -256,6 +280,9 @@ func (ca *CodeAnalyzer) convertToSymbols(fa fileAnalysis) []pkgParser.Symbol {
 				TargetName: imp.Source,
 				Type:       pkgParser.RelDependency,
 			})
+		}
+		for _, call := range fn.Calls {
+			sym.Relations = append(sym.Relations, jsCallRelation(call, ""))
 		}
 
 		symbols = append(symbols, sym)
@@ -301,11 +328,12 @@ func (ca *CodeAnalyzer) convertToSymbols(fa fileAnalysis) []pkgParser.Symbol {
 		// Class methods as separate symbols
 		for _, method := range cls.Methods {
 			methodSig := fmt.Sprintf("%s.%s(%s)", cls.Name, method.Name, strings.Join(method.Params, ", "))
-			symbols = append(symbols, pkgParser.Symbol{
+			msym := pkgParser.Symbol{
 				Name:      fmt.Sprintf("%s.%s", cls.Name, method.Name),
 				Type:      pkgParser.Method,
 				Signature: methodSig,
 				Docstring: method.Docstring,
+				Content:   method.Code,
 				StartLine: method.StartLine,
 				EndLine:   method.EndLine,
 				FilePath:  cls.FilePath,
@@ -317,7 +345,11 @@ func (ca *CodeAnalyzer) convertToSymbols(fa fileAnalysis) []pkgParser.Symbol {
 					"visibility": method.Visibility,
 					"class":      cls.Name,
 				},
-			})
+			}
+			for _, call := range method.Calls {
+				msym.Relations = append(msym.Relations, jsCallRelation(call, cls.Name))
+			}
+			symbols = append(symbols, msym)
 		}
 	}
 
@@ -330,6 +362,7 @@ func (ca *CodeAnalyzer) convertToSymbols(fa fileAnalysis) []pkgParser.Symbol {
 
 		symbols = append(symbols, pkgParser.Symbol{
 			Name:      iface.Name,
+			Content:   iface.Code,
 			Type:      pkgParser.Interface,
 			Signature: sig,
 			Docstring: iface.Docstring,
@@ -382,7 +415,33 @@ func (ca *CodeAnalyzer) convertToSymbols(fa fileAnalysis) []pkgParser.Symbol {
 		})
 	}
 
+	// JS has no package clause; like the Python analyzer, use the module
+	// name (file stem) so rag_list_package_exports can address a file.
+	mod := strings.TrimSuffix(filepath.Base(fa.FilePath), filepath.Ext(fa.FilePath))
+	for i := range symbols {
+		if symbols[i].Package == "" {
+			symbols[i].Package = mod
+		}
+		symbols[i].QualifiedName = mod + "." + symbols[i].Name
+		for j := range symbols[i].Relations {
+			r := &symbols[i].Relations[j]
+			if r.TargetQualifiedName != "" {
+				r.TargetQualifiedName = mod + "." + r.TargetQualifiedName
+			}
+		}
+	}
 	return symbols
+}
+
+func jsCallRelation(call, class string) pkgParser.Relation {
+	r := pkgParser.Relation{TargetName: call, Type: pkgParser.RelCalls}
+	if dot := strings.LastIndex(call, "."); dot >= 0 {
+		r.Receiver, r.TargetName = call[:dot], call[dot+1:]
+		if r.Receiver == "this" && class != "" {
+			r.TargetQualifiedName = class + "." + r.TargetName
+		}
+	}
+	return r
 }
 
 // buildFunctionSignature creates a readable function signature

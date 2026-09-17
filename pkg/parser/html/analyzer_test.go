@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -53,10 +55,17 @@ func TestHTMLAnalyzer_Comprehensive(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "html", res.Language)
 
-		require.Len(t, res.Symbols, 4) // H1, H2, H3, H2
+		// Section symbols only; id/class elements are covered in elements_test.go.
+		var sections []pkgParser.Symbol
+		for _, s := range res.Symbols {
+			if s.Type != "element" {
+				sections = append(sections, s)
+			}
+		}
+		require.Len(t, sections, 4) // H1, H2, H3, H2
 
 		symbols := make(map[string]int)
-		for _, s := range res.Symbols {
+		for _, s := range sections {
 			symbols[s.Name]++
 		}
 

@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/doITmagic/rag-code-mcp/internal/generatedfile"
 )
 
 // maxAvgLineLen is the average-line-length threshold above which a file
@@ -23,6 +25,44 @@ var minifiedSuffixes = []string{
 	".bundle.js", ".bundle.css", ".bundle.mjs",
 	".packed.js", ".chunk.js", ".chunk.css",
 	"-min.js", "-min.css",
+}
+
+func shouldSkipFile(path string) bool {
+	return isLowValueConfigOrKeyMaterial(path) || isGeneratedLockfile(path) || isGeneratedIDERule(path) || isMinifiedOrVendored(path)
+}
+
+func isGeneratedIDERule(path string) bool {
+	slashPath := filepath.ToSlash(path)
+	known := filepath.Base(path) == "CLAUDE.md" || strings.HasSuffix(slashPath, "/.cursor/rules/ragcode.mdc") ||
+		strings.HasSuffix(slashPath, "/.windsurf/rules/ragcode.md") || strings.HasSuffix(slashPath, "/.clinerules/ragcode.md") ||
+		strings.HasSuffix(slashPath, "/.roo/rules/ragcode.md")
+	if !known {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	return err == nil && generatedfile.Valid(string(data))
+}
+
+func isGeneratedLockfile(path string) bool {
+	switch strings.ToLower(filepath.Base(path)) {
+	case "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml",
+		"go.sum", "composer.lock", "poetry.lock", "pipfile.lock", "cargo.lock":
+		return true
+	}
+	return false
+}
+
+func isLowValueConfigOrKeyMaterial(path string) bool {
+	base := strings.ToLower(filepath.Base(path))
+	switch base {
+	case ".npmrc", ".pypirc", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519":
+		return true
+	}
+	switch filepath.Ext(base) {
+	case ".key", ".pem", ".p12", ".pfx":
+		return true
+	}
+	return false
 }
 
 // isMinifiedOrVendored reports whether path points to machine-generated,

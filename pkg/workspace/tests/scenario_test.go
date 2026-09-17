@@ -131,7 +131,8 @@ func TestResolverScenarios(t *testing.T) {
 				return
 			}
 
-			if resp.ResolvedRoot != tt.expectRoot {
+			// Roots are normalized to OS separators, so compare cleaned paths.
+			if filepath.Clean(resp.ResolvedRoot) != filepath.Clean(tt.expectRoot) {
 				t.Fatalf("expected root %s, got %s", tt.expectRoot, resp.ResolvedRoot)
 			}
 			if tt.expectReason != "" && resp.Reason != tt.expectReason {

@@ -104,12 +104,16 @@ func TestPHPRelations_MethodCalls(t *testing.T) {
 	res, err := NewAnalyzer().Analyze(context.Background(), f)
 	require.NoError(t, err)
 
-	// Calls appear on the class-level chunk (aggregated from methods)
+	// Calls belong to the method, not its containing class.
 	article := findPHPSymbol(res.Symbols, "Article")
 	require.NotNil(t, article, "Article class symbol must exist")
 
-	assert.True(t, hasPHPRelation(article.Relations, "validate", pkgParser.RelCalls),
-		"Article should have calls→validate relation; got %v", article.Relations)
+	assert.False(t, hasPHPRelation(article.Relations, "validate", pkgParser.RelCalls))
+	save := findPHPSymbol(res.Symbols, "save")
+	require.NotNil(t, save)
+	assert.True(t, hasPHPRelation(save.Relations, "validate", pkgParser.RelCalls))
+	assert.Equal(t, "Article", save.Metadata["class"])
+	assert.Equal(t, "App\\Article::save", save.QualifiedName)
 }
 
 func TestPHPRelations_TypesAreCanonical(t *testing.T) {

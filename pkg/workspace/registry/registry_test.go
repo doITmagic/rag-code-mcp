@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"os"
 	"context"
 	"path/filepath"
 	"strings"
@@ -34,7 +35,7 @@ func TestRegistryUpsertAndLookup(t *testing.T) {
 	}
 
 	retrieved, ok := r.LookupByID(entry.ID)
-	if !ok || retrieved.Root != "/root/project" {
+	if !ok || retrieved.Root != filepath.Clean("/root/project") {
 		t.Fatalf("lookup by id failed")
 	}
 
@@ -151,5 +152,24 @@ func TestFeedbackAndPromotion(t *testing.T) {
 
 	if len(sink.events) < 2 {
 		t.Fatalf("expected audit events for feedback + promotion")
+	}
+}
+
+// Registering the home directory would absorb every workspace under it and
+// delete their .ragcode state, so Upsert must refuse it outright.
+func TestRegistryRefusesHomeRoot(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip(err)
+	}
+	r, err := New(filepath.Join(t.TempDir(), "registry.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Upsert(home, "home", "test"); err == nil {
+		t.Fatal("expected refusal for home dir")
+	}
+	if _, ok := r.LookupByRoot(home); ok {
+		t.Fatal("home dir was registered")
 	}
 }

@@ -142,7 +142,7 @@ func (r *Resolver) handleWorkspaceRoot(ctx context.Context, root string) (*contr
 	}
 	r.log(ctx, "workspace_root", map[string]any{"root": root, "source": "workspace_root"})
 	candidate := &contract.WorkspaceCandidate{Root: root, Reason: contract.ReasonExplicitWorkspaceRoot, Source: "workspace_root", Confidence: 1.0}
-	
+
 	r.applyNestedOverride(ctx, candidate)
 	return r.finalize(ctx, candidate)
 }

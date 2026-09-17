@@ -397,6 +397,9 @@ func (v *symbolCollector) StmtFunction(n *ast.StmtFunction) {
 		Parameters: v.extractParameters(n.Params),
 		ReturnType: v.extractTypeNameString(n.ReturnType),
 		FilePath:   v.filePath,
+		StartLine:  n.Position.StartLine,
+		EndLine:    n.Position.EndLine,
+		Code:       extractCodeFromContent(v.fileContent, n.Position.StartLine, n.Position.EndLine),
 	}
 
 	// Extract PHPDoc from FunctionTkn
@@ -909,13 +912,6 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 				chunk.Relations = append(chunk.Relations, pkgParser.Relation{TargetName: alias, Type: pkgParser.RelUsesType})
 			}
 
-			// Add method and its relations
-			for _, method := range class.Methods {
-				for _, call := range method.Calls {
-					chunk.Relations = append(chunk.Relations, pkgParser.Relation{TargetName: call.Method, Type: pkgParser.RelCalls})
-				}
-			}
-
 			// Add a simple class signature similar to Go type summaries
 			chunk.Signature = buildClassSignature(class)
 
@@ -939,10 +935,26 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 					EndLine:   method.EndLine,
 					Docstring: method.Description,
 					Code:      method.Code,
+					// php_analyzer derives is_public from this; without it every
+					// private/protected method was indexed as public.
+					Metadata: map[string]any{"visibility": method.Visibility, "class": class.Name, "qualified_name": class.FullName + "::" + method.Name},
 				}
 				// Add calls as relations
 				for _, call := range method.Calls {
-					methodChunk.Relations = append(methodChunk.Relations, pkgParser.Relation{TargetName: call.Method, Type: pkgParser.RelCalls})
+					rel := pkgParser.Relation{TargetName: call.Method, Type: pkgParser.RelCalls, Receiver: call.Object}
+					if call.Object == "this" || call.Object == "self" {
+						rel.TargetQualifiedName = class.FullName + "::" + call.Method
+					}
+					if call.Static && call.Object != "self" && call.Object != "static" && call.Object != "parent" {
+						owner := call.Object
+						if imported, ok := class.Imports[owner]; ok {
+							owner = imported
+						} else if !strings.HasPrefix(owner, "\\") && class.Namespace != "" {
+							owner = class.Namespace + "\\" + owner
+						}
+						rel.TargetQualifiedName = strings.TrimPrefix(owner, "\\") + "::" + call.Method
+					}
+					methodChunk.Relations = append(methodChunk.Relations, rel)
 				}
 				chunks = append(chunks, methodChunk)
 			}
@@ -958,6 +970,7 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 					FilePath:  class.FilePath,
 					StartLine: prop.StartLine,
 					EndLine:   prop.EndLine,
+					Metadata:  map[string]any{"class": class.Name, "visibility": prop.Visibility, "qualified_name": class.FullName + "::$" + prop.Name},
 					Docstring: prop.Description,
 				}
 				chunks = append(chunks, propChunk)
@@ -971,6 +984,10 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 					Language:  "php",
 					Package:   class.Namespace,
 					Signature: fmt.Sprintf("%s const %s", constant.Visibility, constant.Name),
+					FilePath:  class.FilePath,
+					StartLine: constant.StartLine,
+					EndLine:   constant.EndLine,
+					Metadata:  map[string]any{"class": class.Name, "visibility": constant.Visibility, "qualified_name": class.FullName + "::" + constant.Name},
 				}
 				chunks = append(chunks, constChunk)
 			}
@@ -1037,14 +1054,20 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 		// Convert global functions
 		for _, fn := range pkg.Functions {
 			chunk := CodeChunk{
-				Name:     fn.Name,
-				Type:     "function",
-				Language: "php",
-				Package:  fn.Namespace,
+				Name:      fn.Name,
+				Type:      "function",
+				Language:  "php",
+				Package:   fn.Namespace,
+				Signature: fn.Signature,
+				Docstring: fn.Description,
+				FilePath:  fn.FilePath,
+				StartLine: fn.StartLine,
+				EndLine:   fn.EndLine,
+				Code:      fn.Code,
 			}
 			// Add calls as relations
 			for _, call := range fn.Calls {
-				chunk.Relations = append(chunk.Relations, pkgParser.Relation{TargetName: call.Method, Type: pkgParser.RelCalls})
+				chunk.Relations = append(chunk.Relations, pkgParser.Relation{TargetName: call.Method, Type: pkgParser.RelCalls, Receiver: call.Object})
 			}
 			chunks = append(chunks, chunk)
 		}
@@ -1143,6 +1166,7 @@ func (v *symbolCollector) walkExpr(expr ast.Vertex, calls *[]MethodCall) {
 	switch node := expr.(type) {
 	case *ast.ExprMethodCall:
 		call := MethodCall{}
+		call.Object = "<dynamic>"
 		if varNode, ok := node.Var.(*ast.ExprVariable); ok {
 			if nameNode, ok := varNode.Name.(*ast.Identifier); ok {
 				call.Object = strings.TrimPrefix(string(nameNode.Value), "$")
@@ -1173,6 +1197,7 @@ func (v *symbolCollector) walkExpr(expr ast.Vertex, calls *[]MethodCall) {
 		}
 	case *ast.ExprStaticCall:
 		call := MethodCall{}
+		call.Static = true
 		call.Object = v.extractName(node.Class)
 		if methodNode, ok := node.Call.(*ast.Identifier); ok {
 			call.Method = string(methodNode.Value)

@@ -149,7 +149,7 @@ func TestRealPackage_IndexerSignatures(t *testing.T) {
 		{"IndexWorkspace", []string{"IndexWorkspace", "root", "collection", "Options", "error"}},
 		{"IndexFile", []string{"IndexFile", "collection", "path", "State", "int", "error"}},
 		{"IndexItems", []string{"IndexItems", "collection", "error"}},
-		{"CountAllFiles", []string{"CountAllFiles", "root", "excludePatterns", "map"}},
+		{"CountAllFiles", []string{"CountAllFiles", "root", "excludePatterns", "FileCountResult"}},
 		// BUG-003 fixed — check constructor signatures too
 		{"NewService", []string{"NewService", "Service"}},
 		{"LoadState", []string{"LoadState", "path", "State", "error"}},
@@ -249,7 +249,7 @@ var _ = fmt.Sprintf
 		assert.Equal(t, "go", ca.Name())
 		assert.True(t, ca.CanHandle("test.go"))
 		assert.False(t, ca.CanHandle("test.py"))
-		assert.False(t, ca.CanHandle("test_test.go"))
+		assert.True(t, ca.CanHandle("test_test.go")) // tests are indexed too
 	})
 
 	t.Run("Analyze directory", func(t *testing.T) {

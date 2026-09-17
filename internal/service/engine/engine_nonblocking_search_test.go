@@ -12,6 +12,7 @@ import (
 	"github.com/doITmagic/rag-code-mcp/pkg/workspace/resolver"
 
 	// Register parsers so parser.SupportedLanguages() returns non-empty.
+	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/docs"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/go"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/python"
 )
@@ -220,7 +221,7 @@ func TestHybridSearchCodeReturnsNilWhenCollectionMissing(t *testing.T) {
 	eng2 := newEngineCountingLLM(store, llmProvider)
 	eng2.SetResolver(resolver.New(resolver.Dependencies{Detector: &mockDirDetector{root: rootDir}}))
 
-	result, err := eng2.HybridSearchCode(context.Background(), "test.go", "find something", 10)
+	result, err := eng2.HybridSearchCode(context.Background(), "test.go", "find something", 10, false)
 
 	// Should NOT return an error — should return nil, nil
 	if err != nil {
@@ -282,7 +283,7 @@ func TestHybridSearchCodeStillWorksWhenCollectionExists(t *testing.T) {
 	eng2 := newEngineCountingLLM(store, llmProvider)
 	eng2.SetResolver(resolver.New(resolver.Dependencies{Detector: &mockDetector{}}))
 
-	result, err := eng2.HybridSearchCode(context.Background(), "test.go", "find something", 10)
+	result, err := eng2.HybridSearchCode(context.Background(), "test.go", "find something", 10, false)
 	if err != nil {
 		t.Fatalf("HybridSearchCode failed: %v", err)
 	}
@@ -310,9 +311,40 @@ func TestHybridSearchCodeStillWorksWhenCollectionExists(t *testing.T) {
 // search.Service.HybridSearch delegates to SearchCodeOnly, so we override that.
 type hybridSearchStore struct {
 	multiLangStore
-	hybridResults []storage.SearchResult
+	hybridResults           []storage.SearchResult
+	fullResultsByCollection map[string][]storage.SearchResult
+}
+
+func TestHybridSearchCodeIncludesDocsCollection(t *testing.T) {
+	llmProvider := &countingLLM{}
+	probe := newEngineCountingLLM(&testStore{existing: map[string]bool{}}, llmProvider)
+	wctx, err := probe.DetectContext(context.Background(), "test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	goColl := CollectionNameFor(wctx.ID, "go")
+	docsColl := CollectionNameFor(wctx.ID, "docs")
+	store := &hybridSearchStore{
+		multiLangStore: multiLangStore{testStore: testStore{existing: map[string]bool{goColl: true, docsColl: true}}},
+		hybridResults:  []storage.SearchResult{{Score: 0.80, Point: storage.Point{ID: "code"}}},
+		fullResultsByCollection: map[string][]storage.SearchResult{
+			docsColl: {{Score: 0.66, Point: storage.Point{ID: "docs", Payload: map[string]interface{}{"content": "refund policy"}}}},
+		},
+	}
+	eng := newEngineCountingLLM(store, llmProvider)
+	result, err := eng.HybridSearchCode(context.Background(), "test.go", "refund policy", 10, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result == nil || len(result.Results) != 2 || result.Results[0].Point.ID != "docs" {
+		t.Fatalf("hybrid results = %+v", result)
+	}
 }
 
 func (s *hybridSearchStore) SearchCodeOnly(_ context.Context, _ string, _ storage.SearchQuery) ([]storage.SearchResult, error) {
 	return s.hybridResults, nil
+}
+
+func (s *hybridSearchStore) Search(_ context.Context, collection string, _ storage.SearchQuery) ([]storage.SearchResult, error) {
+	return s.fullResultsByCollection[collection], nil
 }

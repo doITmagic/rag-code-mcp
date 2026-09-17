@@ -145,6 +145,7 @@ type FunctionInfo struct {
 
 // MethodCall represents a method or function call found in code
 type MethodCall struct {
+	Static bool     `json:"static,omitempty"`
 	Object string   `json:"object,omitempty"` // Variable name ($this, $variable)
 	Method string   `json:"method"`           // Method or function name
 	Args   []string `json:"args,omitempty"`   // Arguments

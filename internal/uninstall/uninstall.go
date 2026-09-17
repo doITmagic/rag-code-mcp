@@ -1,6 +1,7 @@
 package uninstall
 
 import (
+	"bytes"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -12,6 +13,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/doITmagic/rag-code-mcp/internal/service/iderules"
+	"github.com/doITmagic/rag-code-mcp/internal/utils"
 )
 
 const (
@@ -59,6 +63,7 @@ func RunUninstall() {
 
 	// Legacy paths
 	legacyPaths := []string{
+		utils.RagCodeHome(),
 		filepath.Join(home, ".local", "share", "ragcode"),
 		filepath.Join(home, ".local", "state", "ragcode"),
 	}
@@ -199,6 +204,10 @@ func removeFromShellConfig(home, binDir string) {
 func removeFromIDEConfigs(home string) {
 	paths := resolveIDEPaths(home)
 	for key, ide := range paths {
+		if key == "codex" {
+			removeCodexEntry(home, ide.path)
+			continue
+		}
 		if key == "zed" {
 			removeZedRagcodeEntry(ide.displayName, ide.path)
 			continue
@@ -213,8 +222,11 @@ func removeRagcodeFromJSON(displayName, path string) {
 		return
 	}
 
+	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
 	var configMap map[string]interface{}
-	if err := json.Unmarshal(data, &configMap); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&configMap); err != nil || configMap == nil {
 		return
 	}
 
@@ -306,17 +318,17 @@ func removeDockerResources() {
 }
 
 func cleanWorkspaceData(home string) {
-	registryPath := filepath.Join(home, installDirName, "registry.json")
-
 	var registryRoots []string
-	data, err := os.ReadFile(registryPath)
-	if err == nil {
-		registryRoots = extractWorkspaceRoots(data)
+	for _, registryPath := range []string{utils.GetRegistryPath(), filepath.Join(home, installDirName, "registry.json")} {
+		if data, err := os.ReadFile(registryPath); err == nil {
+			registryRoots = append(registryRoots, extractWorkspaceRoots(data)...)
+		}
 	}
 
 	// Step 1: direct delete for each workspace known to the registry.
 	if len(registryRoots) > 0 {
 		for _, wsPath := range registryRoots {
+			iderules.Remove(wsPath)
 			ragDir := filepath.Join(wsPath, ".ragcode")
 			if _, err := os.Stat(ragDir); err == nil {
 				if err := os.RemoveAll(ragDir); err != nil {
@@ -335,7 +347,7 @@ func cleanWorkspaceData(home string) {
 	// Scan roots are derived from: registry parent dirs, Qdrant file_path payloads,
 	// IDE project lists, and a shallow $HOME scan.
 	logMsg("Scanning for any orphaned .ragcode/ directories not covered by registry...")
-	qdrantRoots := extractWorkspaceRootsFromQdrant()
+	qdrantRoots := qdrantRootsFn()
 	scanAndCleanRagcodeDirs(home, append(registryRoots, qdrantRoots...))
 }
 
@@ -440,7 +452,7 @@ func scanAndCleanRagcodeDirs(home string, registryRoots []string) {
 	// Derive parent directories from IDE project lists.
 	// IDEs keep authoritative lists of opened projects in known config files
 	// — much more reliable than guessing folder names.
-	for _, ideRoot := range detectIDEProjectParents(home) {
+	for _, ideRoot := range ideProjectParentsFn(home) {
 		add(ideRoot)
 	}
 
@@ -448,8 +460,15 @@ func scanAndCleanRagcodeDirs(home string, registryRoots []string) {
 	add(home)
 
 	cleaned := 0
+	homeParent := filepath.Dir(filepath.Clean(home))
 	for _, root := range searchRoots {
 		if _, err := os.Stat(root); os.IsNotExist(err) {
+			continue
+		}
+		// Never sweep the parent of $HOME (other users' homes) or a volume
+		// root: a bad derived root must not turn into a machine-wide delete.
+		if clean := filepath.Clean(root); clean == homeParent || filepath.Dir(clean) == clean {
+			warnMsg("Skipping unsafe scan root: " + root)
 			continue
 		}
 
@@ -466,7 +485,7 @@ func scanAndCleanRagcodeDirs(home string, registryRoots []string) {
 				return nil
 			}
 			rel, _ := filepath.Rel(root, path)
-			
+
 			depth := 0
 			if rel != "." {
 				depth = strings.Count(rel, string(os.PathSeparator)) + 1
@@ -483,6 +502,10 @@ func scanAndCleanRagcodeDirs(home string, registryRoots []string) {
 					return filepath.SkipDir
 				}
 				if name == ".ragcode" {
+					if isInstallDir(path) {
+						return filepath.SkipDir // the installation, removed separately
+					}
+					iderules.Remove(filepath.Dir(path))
 					if err := os.RemoveAll(path); err != nil {
 						warnMsg(fmt.Sprintf("Failed to remove %s: %v", path, err))
 					} else {
@@ -580,8 +603,8 @@ func detectIDEProjectParents(home string) []string {
 	// storage.json has {"openedPathsList": {"workspaces3": ["/path", ...]}}
 	type vscodeStorage struct {
 		OpenedPathsList struct {
-			Workspaces  []string `json:"workspaces3"`
-			Folders     []string `json:"workspaceFolder"`
+			Workspaces []string `json:"workspaces3"`
+			Folders    []string `json:"workspaceFolder"`
 		} `json:"openedPathsList"`
 	}
 
@@ -646,6 +669,14 @@ func detectIDEProjectParents(home string) []string {
 // read its file_path payload field. Then walk upward from that file_path until
 // we find a directory that contains .git or .ragcode — that is the workspace root.
 // We return those roots so the caller can delete their .ragcode/ dirs.
+// qdrantRootsFn and ideProjectParentsFn are the two lookups that leave $HOME
+// (live Qdrant, IDE configs under APPDATA). Tests replace them; a unit test
+// once swept the real machine through them and removed ~/.ragcode.
+var (
+	qdrantRootsFn       = extractWorkspaceRootsFromQdrant
+	ideProjectParentsFn = detectIDEProjectParents
+)
+
 func extractWorkspaceRootsFromQdrant() []string {
 	const qdrantAddr = "http://localhost:6333"
 
@@ -729,10 +760,18 @@ func extractWorkspaceRootsFromQdrant() []string {
 // findWorkspaceRootFromFilePath walks upward from a file path until it finds
 // a directory containing .git or .ragcode — the canonical workspace root markers.
 func findWorkspaceRootFromFilePath(filePath string) string {
+	home, _ := os.UserHomeDir()
 	dir := filepath.Dir(filePath)
 	for {
+		// $HOME is never a workspace: ~/.ragcode is the install dir, and a
+		// stale collection whose project is gone would otherwise walk up to
+		// it and make the whole home tree a cleanup target.
+		if home != "" && filepath.Clean(dir) == filepath.Clean(home) {
+			return ""
+		}
 		for _, marker := range []string{".git", ".ragcode"} {
-			if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
+			p := filepath.Join(dir, marker)
+			if _, err := os.Stat(p); err == nil && !isInstallDir(p) {
 				return dir
 			}
 		}
@@ -743,6 +782,13 @@ func findWorkspaceRootFromFilePath(filePath string) string {
 		dir = parent
 	}
 	return ""
+}
+
+// isInstallDir reports whether a .ragcode directory is the installation
+// (it holds bin/), as opposed to a workspace's cache.
+func isInstallDir(ragcodeDir string) bool {
+	info, err := os.Stat(filepath.Join(ragcodeDir, "bin"))
+	return err == nil && info.IsDir()
 }
 
 func cleanQdrantCollections() {
@@ -797,20 +843,18 @@ type idePath struct {
 
 func resolveIDEPaths(home string) map[string]idePath {
 	paths := map[string]idePath{
+		"codex": {path: filepath.Join(home, ".codex", "config.toml"), displayName: "OpenAI Codex"},
 		"windsurf": {
 			path:        filepath.Join(home, ".codeium", "windsurf", "mcp_config.json"),
 			displayName: "Windsurf",
 		},
-		"cursor": {
-			path:        filepath.Join(home, ".cursor", "mcp.config.json"),
-			displayName: "Cursor",
-		},
+		"cursor": determineCursorPath(home),
 		"copilot": {
-			path:        filepath.Join(home, ".aitk", "mcp.json"),
-			displayName: "GitHub Copilot",
+			path:        filepath.Join(home, ".copilot", "mcp-config.json"),
+			displayName: "GitHub Copilot CLI",
 		},
 		"antigravity": {
-			path:        filepath.Join(home, ".gemini", "antigravity", "mcp_config.json"),
+			path:        filepath.Join(home, ".gemini", "config", "mcp_config.json"),
 			displayName: "Antigravity",
 		},
 		"mcp-cli": {
@@ -825,6 +869,11 @@ func resolveIDEPaths(home string) map[string]idePath {
 			path:        filepath.Join(home, ".gemini", "settings.json"),
 			displayName: "Gemini CLI",
 		},
+		"openhands": {path: filepath.Join(home, ".openhands", "mcp.json"), displayName: "OpenHands"},
+		"continue":  {path: filepath.Join(home, ".continue", "mcpServers", "ragcode.json"), displayName: "Continue.dev"},
+	}
+	if codexHome := os.Getenv("CODEX_HOME"); codexHome != "" {
+		paths["codex"] = idePath{filepath.Join(codexHome, "config.toml"), "OpenAI Codex"}
 	}
 
 	switch runtime.GOOS {
@@ -851,9 +900,21 @@ func resolveIDEPaths(home string) map[string]idePath {
 
 	if vsPath, ok := determineVSCodePath(home); ok {
 		paths["vs-code"] = vsPath
+		userDir := filepath.Dir(vsPath.path)
+		paths["roo-code"] = idePath{filepath.Join(userDir, "globalStorage", "rooveterinaryinc.roo-cline", "settings", "cline_mcp_settings.json"), "Roo Code (VS Code)"}
+		paths["cline"] = idePath{filepath.Join(userDir, "globalStorage", "saoudrizwan.claude-dev", "settings", "cline_mcp_settings.json"), "Cline (VS Code)"}
 	}
 
 	return paths
+}
+
+func determineCursorPath(home string) idePath {
+	if runtime.GOOS == "windows" {
+		if appData := os.Getenv("APPDATA"); appData != "" {
+			return idePath{filepath.Join(appData, "Cursor", "mcp.json"), "Cursor"}
+		}
+	}
+	return idePath{filepath.Join(home, ".cursor", "mcp.json"), "Cursor"}
 }
 
 func determineVSCodePath(home string) (idePath, bool) {

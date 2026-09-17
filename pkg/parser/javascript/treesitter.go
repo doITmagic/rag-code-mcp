@@ -1,6 +1,7 @@
 package javascript
 
 import (
+	"bytes"
 	"strings"
 	"sync"
 
@@ -126,6 +127,9 @@ func (p *TreeSitterParser) extractFunction(node *gotreesitter.Node, source []byt
 		FilePath:  filePath,
 		StartLine: int(node.StartPoint().Row) + 1,
 		EndLine:   int(node.EndPoint().Row) + 1,
+		Code:      node.Text(source),
+		Calls:     collectCalls(node, source, lang),
+		Docstring: jsDocBefore(source, node.StartByte()),
 	}
 
 	for i := 0; i < node.ChildCount(); i++ {
@@ -150,6 +154,7 @@ func (p *TreeSitterParser) extractClass(node *gotreesitter.Node, source []byte, 
 		FilePath:  filePath,
 		StartLine: int(node.StartPoint().Row) + 1,
 		EndLine:   int(node.EndPoint().Row) + 1,
+		Code:      node.Text(source),
 	}
 
 	for i := 0; i < node.ChildCount(); i++ {
@@ -227,6 +232,8 @@ func (p *TreeSitterParser) extractClassMethods(bodyNode *gotreesitter.Node, sour
 			StartLine:  int(child.StartPoint().Row) + 1,
 			EndLine:    int(child.EndPoint().Row) + 1,
 			Visibility: "public",
+			Code:       child.Text(source),
+			Calls:      collectCalls(child, source, lang),
 		}
 
 		for j := 0; j < child.ChildCount(); j++ {
@@ -335,6 +342,7 @@ func (p *TreeSitterParser) processExportStatement(node *gotreesitter.Node, sourc
 			if fn != nil {
 				fn.IsExported = true
 				fn.IsDefault = isDefault
+				fn.Docstring = jsDocBefore(source, node.StartByte())
 				fa.Functions = append(fa.Functions, *fn)
 			}
 
@@ -351,6 +359,7 @@ func (p *TreeSitterParser) processExportStatement(node *gotreesitter.Node, sourc
 			for j := range fns {
 				fns[j].IsExported = true
 				fns[j].IsDefault = isDefault
+				fns[j].Docstring = jsDocBefore(source, node.StartByte())
 			}
 			fa.Functions = append(fa.Functions, fns...)
 
@@ -464,12 +473,31 @@ func (p *TreeSitterParser) extractArrowFromDeclaration(node *gotreesitter.Node, 
 					FilePath:  filePath,
 					StartLine: int(node.StartPoint().Row) + 1,
 					EndLine:   int(node.EndPoint().Row) + 1,
+					Code:      text,
+					Calls:     collectCalls(child, source, lang),
+					Docstring: jsDocBefore(source, node.StartByte()),
 				})
 			}
 		}
 	}
 
 	return fns
+}
+
+func jsDocBefore(source []byte, offset uint32) string {
+	if int(offset) > len(source) {
+		return ""
+	}
+	prefix := source[:offset]
+	end := bytes.LastIndex(prefix, []byte("*/"))
+	if end < 0 || strings.TrimSpace(string(prefix[end+2:])) != "" {
+		return ""
+	}
+	start := bytes.LastIndex(prefix[:end], []byte("/**"))
+	if start < 0 {
+		return ""
+	}
+	return cleanJSDoc(string(prefix[start+3 : end]))
 }
 
 func (p *TreeSitterParser) extractImport(node *gotreesitter.Node, source []byte, lang *gotreesitter.Language) *JSImport {
@@ -531,6 +559,7 @@ func (p *TreeSitterParser) extractInterface(node *gotreesitter.Node, source []by
 		FilePath:  filePath,
 		StartLine: int(node.StartPoint().Row) + 1,
 		EndLine:   int(node.EndPoint().Row) + 1,
+		Code:      node.Text(source),
 	}
 
 	for i := 0; i < node.ChildCount(); i++ {
@@ -667,4 +696,53 @@ func detectLanguage(filePath string) string {
 		return "typescript"
 	}
 	return "javascript"
+}
+
+// collectCalls preserves receivers of calls made inside node:
+// `foo()` gives foo, `a.b.c()` gives a.b.c, `new Foo()` gives Foo. Nested
+// function bodies are included, like the Go analyzer's call extraction.
+// Duplicates are dropped; order is source order.
+func collectCalls(node *gotreesitter.Node, source []byte, lang *gotreesitter.Language) []string {
+	var calls []string
+	seen := make(map[string]bool)
+	var walk func(n *gotreesitter.Node)
+	walk = func(n *gotreesitter.Node) {
+		if n == nil {
+			return
+		}
+		switch n.Type(lang) {
+		case "call_expression", "new_expression":
+			// call: the callee is the first child; new: skip the `new` keyword.
+			callee := ""
+			for i := 0; i < n.ChildCount(); i++ {
+				if c := n.Child(i); c != nil && c.Type(lang) != "new" {
+					callee = calleeName(c, source, lang)
+					break
+				}
+			}
+			if callee != "" && !seen[callee] {
+				seen[callee] = true
+				calls = append(calls, callee)
+			}
+		}
+		for i := 0; i < n.ChildCount(); i++ {
+			walk(n.Child(i))
+		}
+	}
+	walk(node)
+	return calls
+}
+
+// calleeName preserves member receivers for later symbol resolution.
+func calleeName(n *gotreesitter.Node, source []byte, lang *gotreesitter.Language) string {
+	if n == nil {
+		return ""
+	}
+	switch n.Type(lang) {
+	case "identifier", "property_identifier":
+		return n.Text(source)
+	case "member_expression":
+		return n.Text(source)
+	}
+	return ""
 }

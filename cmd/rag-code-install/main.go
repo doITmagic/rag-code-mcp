@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -26,12 +27,14 @@ import (
 
 var (
 	ollamaMode    = flag.String("ollama", "local", "Mode for Ollama: 'local' (use existing) or 'docker' (run container)")
+	modelsDir     = flag.String("models-dir", "", "Path to local Ollama models directory (mounted into the Docker container). Defaults to ~/.ollama")
 	qdrantMode    = flag.String("qdrant", "docker", "Mode for Qdrant: 'docker' (run container) or 'remote' (use existing URL)")
 	gpu           = flag.Bool("gpu", true, "Enable GPU support for Docker containers")
 	upgradeFlag   = flag.Bool("upgrade", false, "Upgrade existing installation")
 	uninstallFlag = flag.Bool("uninstall", false, "Uninstall the application")
 	assumeYes     = flag.Bool("y", true, "Automatic yes to prompts (non-interactive)")
-	idesFlag      = flag.String("ides", "auto", "Comma-separated IDE list to configure (auto, vs-code, claude, claude-cli, cursor, windsurf, antigravity, gemini-cli, zed)")
+	idesFlag      = flag.String("ides", "auto", "Comma-separated IDE list to configure (auto, codex, vs-code, claude, claude-cli, cursor, windsurf, antigravity, gemini-cli, zed)")
+	configureOnly = flag.Bool("configure-only", false, "Configure IDE integrations using the installed binary; do not reinstall binaries or services")
 	transportFlag = flag.String("transport", "auto", "MCP transport: 'auto' (SSE if server running, else stdio), 'stdio' (binary), 'sse' (URL)")
 	ssePortFlag   = flag.Int("sse-port", 3000, "Port where rag-code-mcp SSE server listens (used for --transport=sse|auto)")
 )
@@ -61,6 +64,10 @@ func main() {
 
 	installPath := filepath.Join(home, installDirName)
 	binPath := filepath.Join(installPath, binDirName)
+	if *configureOnly {
+		configureIDEs(parseIDESelections(*idesFlag), binPath, resolveTransport(*transportFlag, *ssePortFlag), *ssePortFlag)
+		return
+	}
 
 	// 0. Stop running processes at the target location
 	targetBin := filepath.Join(binPath, "rag-code-mcp")
@@ -255,17 +262,13 @@ func setupEnvironment() {
 		log("Setting up Qdrant in Docker...")
 		// Remove stale container if it exists (e.g. from previous install)
 		_ = exec.Command("docker", "rm", "-f", "ragcode-qdrant").Run()
-		cmd := exec.Command("docker", "run", "-d",
+		if startContainer("Qdrant", "qdrant/qdrant:v1.19.1", []string{
 			"--name", "ragcode-qdrant",
 			"--restart", "always",
 			"-p", "6333:6333",
 			"-p", "6334:6334",
 			"-v", "ragcode-qdrant-data:/qdrant/storage",
-			"qdrant/qdrant")
-		if err := cmd.Run(); err != nil {
-			warn("Could not start Qdrant container (might be already running): " + err.Error())
-		} else {
-			success("Qdrant container started")
+		}) {
 			needsDelay = true
 		}
 	}
@@ -273,21 +276,38 @@ func setupEnvironment() {
 	// Ollama Setup
 	if *ollamaMode == "docker" {
 		log("Setting up Ollama in Docker...")
-		args := []string{"run", "-d", "--name", "ragcode-ollama", "--restart", "always", "-p", "11434:11434", "-v", "ollama-data:/root/.ollama"}
-		if *gpu {
-			argsWithGPU := make([]string, 0, len(args)+2)
-			argsWithGPU = append(argsWithGPU, args[:2]...)
-			argsWithGPU = append(argsWithGPU, "--gpus", "all")
-			argsWithGPU = append(argsWithGPU, args[2:]...)
-			args = argsWithGPU
-		}
-		args = append(args, "ollama/ollama")
-		cmd := exec.Command("docker", args...)
-		if err := cmd.Run(); err != nil {
-			warn("Could not start Ollama container (might be already running): " + err.Error())
+		// Mount the host model directory rather than a named volume, so models
+		// already pulled on the host are reused instead of downloaded again
+		// (several GB), and anything pulled inside the container shows up on
+		// the host. Falls back to a named volume only if the dir is unusable.
+		modelMount := "ollama-data:/root/.ollama"
+		if dir, err := hostModelsDir(); err == nil {
+			modelMount = dir + ":/root/.ollama"
 		} else {
-			success("Ollama container started")
-			needsDelay = true
+			warn("Could not use a local Ollama models dir, falling back to a Docker volume: " + err.Error())
+		}
+
+		_ = exec.Command("docker", "rm", "-f", "ragcode-ollama").Run()
+		args := []string{"--name", "ragcode-ollama", "--restart", "always", "-p", "11434:11434", "-v", modelMount}
+		started := *gpu && startContainer("Ollama", "ollama/ollama", append([]string{"--gpus", "all"}, args...))
+		if *gpu && !started {
+			// No usable GPU (e.g. no NVIDIA adapter under WSL): the failed run
+			// leaves a "Created" container behind, so remove it and use CPU.
+			warn("Could not start Ollama with GPU, retrying on CPU...")
+			_ = exec.Command("docker", "rm", "-f", "ragcode-ollama").Run()
+		}
+		if !started {
+			started = startContainer("Ollama", "ollama/ollama", args)
+		}
+		if started {
+			// A fixed pause is not enough here: with a GPU, Ollama takes ~12s to
+			// initialise CUDA before it answers, and a pull sent earlier fails
+			// with EOF. Poll until it responds instead.
+			needsDelay = false
+			log("Waiting for Ollama to become ready...")
+			if err := waitForOllama("http://localhost:11434", 60*time.Second); err != nil {
+				warn(err.Error())
+			}
 		}
 	}
 
@@ -420,6 +440,9 @@ func stopRunningProcess(binPath string) {
 				_ = exec.Command("taskkill", "/PID", pidStr).Run()
 				time.Sleep(2 * time.Second)
 				_ = exec.Command("taskkill", "/F", "/PID", pidStr).Run()
+				if !waitForFileRelease(binPath, 5*time.Second) {
+					warn("Timed out waiting for the old executable to be released.")
+				}
 				return
 			}
 
@@ -454,6 +477,9 @@ func stopRunningProcess(binPath string) {
 		_ = exec.Command("taskkill", "/IM", filepath.Base(binPath)).Run()
 		time.Sleep(1 * time.Second)
 		_ = exec.Command("taskkill", "/F", "/IM", filepath.Base(binPath)).Run()
+		if !waitForFileRelease(binPath, 5*time.Second) {
+			warn("Timed out waiting for the old executable to be released.")
+		}
 		return
 	}
 
@@ -465,6 +491,24 @@ func stopRunningProcess(binPath string) {
 	_ = exec.Command("pkill", "-9", "-f", binPath).Run()
 
 	time.Sleep(500 * time.Millisecond)
+}
+
+func waitForFileRelease(path string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		file, err := os.OpenFile(path, os.O_WRONLY, 0)
+		if err == nil {
+			file.Close()
+			return true
+		}
+		if os.IsNotExist(err) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func copyFile(src, dst string) error {
@@ -637,14 +681,17 @@ func configureIDEs(selected []string, binDir string, transport string, ssePort i
 		log("No IDEs were automatically configured. They may not be installed or use non-standard paths.")
 	}
 
-	// Informational: Codex CLI uses TOML format – cannot be auto-configured
-	codexPath := filepath.Join(home, ".codex")
-	if _, err := os.Stat(codexPath); err == nil {
-		log("OpenAI Codex CLI detected at ~/.codex – requires manual config (TOML format).")
-		log("  Add to ~/.codex/config.toml:")
-		log(`  [mcp_servers.ragcode]`)
-		log(fmt.Sprintf(`  command = "%s"`, binPath))
-		log(`  args = []`)
+	// OpenClaw / NemoClaw Logging
+	openclawPath := filepath.Join(home, ".openclaw")
+	if _, err := os.Stat(openclawPath); err == nil {
+		log("OpenClaw detected at ~/.openclaw – requires manual config.")
+		log(fmt.Sprintf(`  Run: openclaw mcp set ragcode "%s"`, binPath))
+	}
+
+	nemoclawPath := filepath.Join(home, ".nemoclaw")
+	if _, err := os.Stat(nemoclawPath); err == nil {
+		log("NemoClaw sandbox detected – requires manual policy config.")
+		log("  Please refer to NVIDIA OpenShell documentation to map the MCP tool.")
 	}
 }
 
@@ -655,20 +702,18 @@ type idePath struct {
 
 func resolveIDEPaths(home string) map[string]idePath {
 	paths := map[string]idePath{
+		"codex": {path: filepath.Join(home, ".codex", "config.toml"), displayName: "OpenAI Codex"},
 		"windsurf": {
 			path:        filepath.Join(home, ".codeium", "windsurf", "mcp_config.json"),
 			displayName: "Windsurf",
 		},
-		"cursor": {
-			path:        filepath.Join(home, ".cursor", "mcp.config.json"),
-			displayName: "Cursor",
-		},
+		"cursor": determineCursorPath(home),
 		"copilot": {
-			path:        filepath.Join(home, ".aitk", "mcp.json"),
-			displayName: "GitHub Copilot",
+			path:        filepath.Join(home, ".copilot", "mcp-config.json"),
+			displayName: "GitHub Copilot CLI",
 		},
 		"antigravity": {
-			path:        filepath.Join(home, ".gemini", "antigravity", "mcp_config.json"),
+			path:        filepath.Join(home, ".gemini", "config", "mcp_config.json"),
 			displayName: "Antigravity",
 		},
 		"mcp-cli": {
@@ -685,6 +730,17 @@ func resolveIDEPaths(home string) map[string]idePath {
 			path:        filepath.Join(home, ".gemini", "settings.json"),
 			displayName: "Gemini CLI",
 		},
+		"openhands": {
+			path:        filepath.Join(home, ".openhands", "mcp.json"),
+			displayName: "OpenHands",
+		},
+		"continue": {
+			path:        filepath.Join(home, ".continue", "mcpServers", "ragcode.json"),
+			displayName: "Continue.dev",
+		},
+	}
+	if codexHome := os.Getenv("CODEX_HOME"); codexHome != "" {
+		paths["codex"] = idePath{filepath.Join(codexHome, "config.toml"), "OpenAI Codex"}
 	}
 
 	// Claude Desktop (GUI app) – OS-specific paths
@@ -711,31 +767,39 @@ func resolveIDEPaths(home string) map[string]idePath {
 		paths["zed"] = idePath{filepath.Join(home, ".config", "zed", "settings.json"), "Zed Editor"}
 	}
 
-	// VS Code (modern copilot mcp.json)
-	if vsPath, ok := determineVSCodePath(home); ok {
-		paths["vs-code"] = vsPath
+	// VS Code (Copilot & popular extensions like Roo Code, Cline)
+	if vsCodeUserDir, ok := getVSCodeUserDir(home); ok {
+		paths["vs-code"] = idePath{path: filepath.Join(vsCodeUserDir, "mcp.json"), displayName: "VS Code (Copilot)"}
+		paths["roo-code"] = idePath{path: filepath.Join(vsCodeUserDir, "globalStorage", "rooveterinaryinc.roo-cline", "settings", "cline_mcp_settings.json"), displayName: "Roo Code (VS Code)"}
+		paths["cline"] = idePath{path: filepath.Join(vsCodeUserDir, "globalStorage", "saoudrizwan.claude-dev", "settings", "cline_mcp_settings.json"), displayName: "Cline (VS Code)"}
 	}
 
 	return paths
 }
 
-func determineVSCodePath(home string) (idePath, bool) {
-	var userDir string
+func determineCursorPath(home string) idePath {
+	if runtime.GOOS == "windows" {
+		appData := os.Getenv("APPDATA")
+		if appData != "" {
+			return idePath{path: filepath.Join(appData, "Cursor", "mcp.json"), displayName: "Cursor"}
+		}
+	}
+	return idePath{path: filepath.Join(home, ".cursor", "mcp.json"), displayName: "Cursor"}
+}
+
+func getVSCodeUserDir(home string) (string, bool) {
 	switch runtime.GOOS {
 	case "windows":
 		appData := os.Getenv("APPDATA")
 		if appData == "" {
-			return idePath{}, false
+			return "", false
 		}
-		userDir = filepath.Join(appData, "Code", "User")
+		return filepath.Join(appData, "Code", "User"), true
 	case "darwin":
-		userDir = filepath.Join(home, "Library", "Application Support", "Code", "User")
+		return filepath.Join(home, "Library", "Application Support", "Code", "User"), true
 	default:
-		userDir = filepath.Join(home, ".config", "Code", "User")
+		return filepath.Join(home, ".config", "Code", "User"), true
 	}
-
-	newPath := filepath.Join(userDir, "mcp.json") // modern copilot mcp standard
-	return idePath{path: newPath, displayName: "VS Code"}, true
 }
 
 type ideSelection struct {
@@ -769,6 +833,9 @@ func normalizeIdeSelection(selected []string) ideSelection {
 			continue
 		}
 		sel.explicit[item] = true
+		if item == "claude" {
+			sel.explicit["claude-cli"] = true
+		}
 	}
 	if len(sel.explicit) == 0 {
 		sel.auto = true
@@ -777,18 +844,17 @@ func normalizeIdeSelection(selected []string) ideSelection {
 }
 
 func updateMCPConfig(ideKey, displayName, path, binPath, transport string, ssePort int) bool {
+	if ideKey == "codex" {
+		return updateCodexConfig(path, binPath, transport, ssePort)
+	}
 	// Special case: Zed Editor uses "context_servers" inside its main settings.json
 	if ideKey == "zed" {
 		return updateZedConfig(displayName, path, binPath, transport, ssePort)
 	}
 
-	configMap := make(map[string]interface{})
-
-	// Read existing
-	if data, err := os.ReadFile(path); err == nil {
-		if err := json.Unmarshal(data, &configMap); err != nil {
-			warn(fmt.Sprintf("Failed to parse existing MCP config %s: %v", path, err))
-		}
+	configMap, ok := readJSONConfig(path)
+	if !ok {
+		return false
 	}
 
 	collectionKey := "mcpServers"
@@ -802,12 +868,27 @@ func updateMCPConfig(ideKey, displayName, path, binPath, transport string, ssePo
 	servers := make(map[string]interface{})
 	if existing, ok := configMap[collectionKey].(map[string]interface{}); ok {
 		servers = existing
+	} else if configMap[collectionKey] != nil {
+		warn(fmt.Sprintf("Skipping %s: %s is not an object", path, collectionKey))
+		return false
 	}
 
+	previous, _ := servers["ragcode"].(map[string]interface{})
 	if transport == "sse" {
 		servers["ragcode"] = buildSSEServerEntry(ssePort)
+		if ideKey == "claude-cli" {
+			servers["ragcode"].(map[string]interface{})["type"] = "http"
+		}
 	} else {
 		servers["ragcode"] = buildMCPServerEntry(ideKey, binPath)
+	}
+	entry := servers["ragcode"].(map[string]interface{})
+	for key, value := range previous {
+		switch key {
+		case "command", "args", "url", "type": // Updated transport fields.
+		default:
+			entry[key] = value
+		}
 	}
 	configMap[collectionKey] = servers
 
@@ -827,12 +908,9 @@ func updateMCPConfig(ideKey, displayName, path, binPath, transport string, ssePo
 // live under "context_servers" in the main settings.json.
 // SSE mode: Zed supports HTTP MCP servers via the "url" field inside "command".
 func updateZedConfig(displayName, path, binPath, transport string, ssePort int) bool {
-	configMap := make(map[string]interface{})
-
-	if data, err := os.ReadFile(path); err == nil {
-		if err := json.Unmarshal(data, &configMap); err != nil {
-			warn(fmt.Sprintf("Failed to parse existing Zed config %s: %v", path, err))
-		}
+	configMap, ok := readJSONConfig(path)
+	if !ok {
+		return false
 	}
 
 	contextServers := make(map[string]interface{})
@@ -842,7 +920,7 @@ func updateZedConfig(displayName, path, binPath, transport string, ssePort int) 
 
 	var ragcodeEntry map[string]interface{}
 	if transport == "sse" {
-		// Zed Streamable HTTP: endpoint /mcp, fără sesiuni
+		// Zed Streamable HTTP: /mcp endpoint, no sessions
 		ragcodeEntry = map[string]interface{}{
 			"command": map[string]interface{}{
 				"url": fmt.Sprintf("http://localhost:%d/mcp", ssePort),
@@ -876,6 +954,52 @@ func updateZedConfig(displayName, path, binPath, transport string, ssePort int) 
 		}
 	}
 	return false
+}
+
+// waitForOllama polls Ollama until it answers or timeout elapses.
+func waitForOllama(baseURL string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		err := healthcheck.PingOllama(baseURL)
+		if err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("ollama did not become ready within %s: %v", timeout, err)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// readJSONConfig loads an existing IDE config. A missing file yields an empty
+// map. A file that exists but does not parse is reported and ok is false, so
+// the caller skips it instead of overwriting the user's other settings. A UTF-8
+// BOM (written by many Windows tools) is tolerated.
+func readJSONConfig(path string) (map[string]interface{}, bool) {
+	configMap := make(map[string]interface{})
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return configMap, true
+		}
+		warn(fmt.Sprintf("Skipping %s: cannot read config: %v", path, err))
+		return nil, false
+	}
+	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
+	if len(bytes.TrimSpace(data)) == 0 {
+		return configMap, true
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&configMap); err != nil || configMap == nil {
+		warn(fmt.Sprintf("Skipping %s: existing config is not valid JSON (%v). Add the ragcode server manually.", path, err))
+		return nil, false
+	}
+	if decoder.Decode(new(interface{})) != io.EOF {
+		warn(fmt.Sprintf("Skipping %s: trailing JSON content", path))
+		return nil, false
+	}
+	return configMap, true
 }
 
 func downloadAndExtractLatest() (string, error) {
@@ -932,12 +1056,7 @@ func downloadAndExtractLatest() (string, error) {
 func buildMCPServerEntry(ideKey, binPath string) map[string]interface{} {
 	entry := map[string]interface{}{
 		"command": binPath,
-		"args":    []string{},
-		"env": map[string]string{
-			"OLLAMA_BASE_URL": "http://localhost:11434",
-			"OLLAMA_EMBED":    config.StableEmbeddingModel,
-			"QDRANT_URL":      "http://localhost:6333",
-		},
+		"args":    []string{"--config", filepath.Join(filepath.Dir(binPath), "config.yaml")},
 	}
 
 	switch ideKey {
@@ -949,9 +1068,98 @@ func buildMCPServerEntry(ideKey, binPath string) map[string]interface{} {
 }
 
 // buildSSEServerEntry builds the Streamable HTTP (stateless) MCP server entry.
-// Agentul trimite POST direct la /mcp — fără sesiuni, fără sessionid.
+// The agent POSTs straight to /mcp — no sessions, no sessionid.
 func buildSSEServerEntry(ssePort int) map[string]interface{} {
 	return map[string]interface{}{
 		"url": fmt.Sprintf("http://localhost:%d/mcp", ssePort),
 	}
+}
+
+// startContainer pulls the image if needed, then starts the container.
+//
+// The pull is explicit and its output is attached: `docker run` pulls a missing
+// image implicitly and writes progress to stderr, so discarding it leaves the
+// installer sitting on one line for the whole multi-GB download, looking frozen
+// (issue #58). Returns true when the container was started.
+func startContainer(label, image string, args []string) bool {
+	if !imageAvailable(image) {
+		log(fmt.Sprintf("Downloading image %s — this can take several minutes on a first install, please wait...", image))
+		pull := exec.Command("docker", "pull", image)
+		pull.Stdout = os.Stdout
+		pull.Stderr = os.Stderr
+		if err := pull.Run(); err != nil {
+			warn(fmt.Sprintf("Could not download %s: %v", image, err))
+			return false
+		}
+		success("Downloaded " + image)
+	}
+
+	runArgs := append([]string{"run", "-d"}, args...)
+	runArgs = append(runArgs, image)
+	cmd := exec.Command("docker", runArgs...)
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		warn("Could not start " + label + " container (might be already running): " + err.Error())
+		return false
+	}
+	success(label + " container started")
+	return true
+}
+
+// imageAvailable reports whether the image is already present locally, so a
+// repeat install stays quiet.
+func imageAvailable(image string) bool {
+	out, err := exec.Command("docker", "images", "-q", image).Output()
+	return err == nil && len(bytes.TrimSpace(out)) > 0
+}
+
+// hostModelsDir returns the directory to mount at /root/.ollama in the Ollama
+// container: -models-dir when given, otherwise ~/.ollama. The directory is
+// created if missing, so a first install still shares it with the host.
+func hostModelsDir() (string, error) {
+	if dir := *modelsDir; dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return "", err
+		}
+		return dir, nil
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	userDir := filepath.Join(home, ".ollama")
+
+	// Prefer whichever directory already holds models. A package-managed Ollama
+	// runs as its own systemd user and stores models outside $HOME, so defaulting
+	// blindly to ~/.ollama would mount an empty dir and re-download everything.
+	candidates := []string{userDir}
+	if runtime.GOOS == "linux" {
+		// Only Linux installs Ollama as a system service with its own home;
+		// on Windows and macOS the models live under the user profile.
+		candidates = append(candidates, linuxServiceModelDirs...)
+	}
+	for _, dir := range candidates {
+		if hasModels(dir) {
+			return dir, nil
+		}
+	}
+
+	if err := os.MkdirAll(userDir, 0o755); err != nil {
+		return "", err
+	}
+	return userDir, nil
+}
+
+// linuxServiceModelDirs are the locations a service-installed Ollama uses on
+// Linux, where it runs as its own user rather than as the installing user.
+var linuxServiceModelDirs = []string{
+	"/usr/share/ollama/.ollama",
+	"/var/lib/ollama/.ollama",
+}
+
+// hasModels reports whether dir looks like a populated Ollama model store.
+func hasModels(dir string) bool {
+	entries, err := os.ReadDir(filepath.Join(dir, "models"))
+	return err == nil && len(entries) > 0
 }

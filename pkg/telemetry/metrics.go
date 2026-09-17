@@ -29,7 +29,10 @@ var mu sync.Mutex
 // AppendSearchMetric appends a single metric line to {workspaceRoot}/.ragcode/search_metrics.jsonl.
 // Thread-safe via mutex. Fails silently (logs nothing) to avoid impacting tool response times.
 func AppendSearchMetric(workspaceRoot string, m SearchMetric) {
-	if workspaceRoot == "" {
+	// A relative root would resolve against whatever the process cwd happens to
+	// be, scattering .ragcode dirs through the tree (tests running in their own
+	// package directory did exactly that).
+	if !filepath.IsAbs(workspaceRoot) {
 		return
 	}
 
@@ -47,7 +50,13 @@ func AppendSearchMetric(workspaceRoot string, m SearchMetric) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	_ = os.MkdirAll(dir, 0o755)
+	// Never create .ragcode here. Metrics are a side-channel: if the workspace
+	// was never indexed there is nothing to annotate, and creating the dir on
+	// a mis-resolved root plants a false workspace marker (.ragcode is what
+	// the detector looks for).
+	if info, statErr := os.Stat(dir); statErr != nil || !info.IsDir() {
+		return
+	}
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return

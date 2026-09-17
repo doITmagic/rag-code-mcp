@@ -13,7 +13,8 @@ import (
 
 	"github.com/doITmagic/rag-code-mcp/pkg/llm"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
-	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/go" // register Go analyzer
+	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/docs" // register JSON analyzer
+	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/go"   // register Go analyzer
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 	. "github.com/onsi/gomega"
 )
@@ -198,6 +199,37 @@ func TestCountAllFilesSkipsLowValueFiles(t *testing.T) {
 		if got := shouldSkipFile(path); got != want {
 			t.Errorf("shouldSkipFile(%q) = %v, want %v", path, got, want)
 		}
+	}
+}
+
+func TestIndexWorkspaceDeletesExcludedFileOnlyWhenTracked(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "package-lock.json")
+	createFile(t, path)
+	store := &mockStore{}
+	service := NewService(&mockEmbedder{}, store)
+
+	if err := service.IndexWorkspace(context.Background(), root, "docs", Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.deletedFilters) != 0 {
+		t.Fatalf("untracked exclusion caused deletes: %v", store.deletedFilters)
+	}
+
+	state := NewState()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.UpdateFile(path, info)
+	if err := state.Save(filepath.Join(root, ".ragcode", "state.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.IndexWorkspace(context.Background(), root, "docs", Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.deletedFilters) != 1 || store.deletedFilters[0] != path {
+		t.Fatalf("tracked exclusion deletes = %v, want [%s]", store.deletedFilters, path)
 	}
 }
 

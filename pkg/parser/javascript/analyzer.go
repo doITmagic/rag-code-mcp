@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser/javascript/vue"
@@ -19,6 +20,8 @@ func init() {
 // CodeAnalyzer implements parser.Analyzer for JavaScript/TypeScript
 type CodeAnalyzer struct {
 	tsParser *TreeSitterParser
+	// ponytail: one lock matches the shared parser; use per-call parsers only if parallel parsing becomes faster.
+	mu sync.Mutex
 }
 
 // NewCodeAnalyzer creates a new JS/TS code analyzer
@@ -30,6 +33,8 @@ func NewCodeAnalyzer() *CodeAnalyzer {
 
 // ReleaseResources drops cached tree-sitter parsers so the GC can reclaim arena memory.
 func (ca *CodeAnalyzer) ReleaseResources() {
+	ca.mu.Lock()
+	defer ca.mu.Unlock()
 	if ca.tsParser != nil {
 		ca.tsParser.ReleaseResources()
 	}
@@ -59,6 +64,9 @@ func (ca *CodeAnalyzer) CanHandle(filePath string) bool {
 
 // Analyze extracts symbols from a file or directory
 func (ca *CodeAnalyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result, error) {
+	ca.mu.Lock()
+	defer ca.mu.Unlock()
+
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, err
@@ -162,7 +170,6 @@ func (ca *CodeAnalyzer) analyzeFile(filePath string) (*fileAnalysis, error) {
 
 	// Fallback to regex-based extraction
 	source := string(content)
-	SetSourceCache(source)
 
 	ext := filepath.Ext(filePath)
 	lang := "javascript"

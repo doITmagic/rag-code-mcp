@@ -1,6 +1,8 @@
 package javascript
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 )
 
@@ -23,7 +25,6 @@ async function fetchData(url) {
     return res.json();
 }
 `
-	SetSourceCache(source)
 	fns := ExtractFunctions(source, "test.js")
 
 	if len(fns) != 4 {
@@ -78,7 +79,6 @@ export default const handler = async (req, res) => {
     res.send("ok");
 }
 `
-	SetSourceCache(source)
 	fns := ExtractFunctions(source, "test.js")
 
 	if len(fns) < 2 {
@@ -126,7 +126,6 @@ class SimpleClass {
     }
 }
 `
-	SetSourceCache(source)
 	classes := ExtractClasses(source, "test.ts")
 
 	if len(classes) != 2 {
@@ -172,7 +171,6 @@ export abstract class Repository extends Base implements Readable, Writable {
     abstract find(id: string): Promise<Entity>;
 }
 `
-	SetSourceCache(source)
 	classes := ExtractClasses(source, "test.ts")
 
 	if len(classes) != 1 {
@@ -201,7 +199,6 @@ interface Config {
     port: number;
 }
 `
-	SetSourceCache(source)
 	interfaces := ExtractTSInterfaces(source, "test.ts")
 
 	if len(interfaces) != 2 {
@@ -240,7 +237,6 @@ export type UserID = string;
 type Status = 'active' | 'inactive' | 'banned';
 export type Handler = (req: Request, res: Response) => void;
 `
-	SetSourceCache(source)
 	types := ExtractTSTypeAliases(source, "test.ts")
 
 	if len(types) != 3 {
@@ -277,7 +273,6 @@ const enum Color {
     Blue,
 }
 `
-	SetSourceCache(source)
 	enums := ExtractTSEnums(source, "test.ts")
 
 	if len(enums) != 2 {
@@ -462,5 +457,34 @@ func TestFindClosingBrace(t *testing.T) {
 	result = findClosingBrace(lines, 1)
 	if result != 4 {
 		t.Errorf("expected line 4, got %d", result)
+	}
+}
+
+func TestConcurrentJSDocExtractionIsSourceScoped(t *testing.T) {
+	var wg sync.WaitGroup
+	errs := make(chan error, 16)
+	for i := 0; i < cap(errs); i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			doc := fmt.Sprintf("documentation %d", i)
+			source := fmt.Sprintf("/** %s */\nfunction function%d() {}", doc, i)
+			functions := ExtractFunctions(source, "test.js")
+			if len(functions) != 1 || functions[0].Docstring != doc {
+				errs <- fmt.Errorf("source %d returned %#v", i, functions)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+}
+
+func TestJSDocDoesNotLookForward(t *testing.T) {
+	functions := ExtractFunctions("function a(){}\n/** doc */\nfunction b(){}", "test.js")
+	if len(functions) != 2 || functions[0].Docstring != "" || functions[1].Docstring != "doc" {
+		t.Fatalf("unexpected docstrings: %#v", functions)
 	}
 }

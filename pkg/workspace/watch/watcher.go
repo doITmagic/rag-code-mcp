@@ -195,7 +195,7 @@ func (fw *FileWatcher) triggerDebouncedIndex() {
 		if err := fw.onChange(ctx, fw.root, files); err != nil {
 			logger.Instance.Error("Auto-reindexing failed: %v", err)
 		} else {
-			logger.Instance.Info("✅ Auto-reindexing complete for %s", fw.root)
+			logger.Instance.Info("Reindex request accepted for %s", fw.root)
 		}
 	})
 }

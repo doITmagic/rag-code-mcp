@@ -52,10 +52,11 @@ func (m *mockEmbedder) GetEmbeddingDimension() uint64 { return 1024 }
 
 type mockStore struct {
 	storage.VectorStore
-	upsertPoints    []storage.Point
-	deletedPrefixes []string
-	deletedFilters  []string
-	mu              sync.Mutex
+	upsertPoints      []storage.Point
+	deletedPrefixes   []string
+	deletedFilters    []string
+	collectionMissing bool
+	mu                sync.Mutex
 }
 
 func (m *mockStore) Upsert(ctx context.Context, collection string, points []storage.Point) (*storage.UpdateResult, error) {
@@ -66,10 +67,11 @@ func (m *mockStore) Upsert(ctx context.Context, collection string, points []stor
 }
 
 func (m *mockStore) CollectionExists(ctx context.Context, collection string) (bool, error) {
-	return true, nil
+	return !m.collectionMissing, nil
 }
 
 func (m *mockStore) CreateCollection(ctx context.Context, collection string, dimension int) error {
+	m.collectionMissing = false
 	return nil
 }
 
@@ -176,6 +178,44 @@ func TestSymbolsForFileDropsPackageSiblings(t *testing.T) {
 	}
 }
 
+func TestIndexStateIsolatedByCollection(t *testing.T) {
+	root := t.TempDir()
+	legacy := filepath.Join(root, ".ragcode", "state.json")
+	if err := os.MkdirAll(filepath.Dir(legacy), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacy, []byte(`{"files":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "source.go"), []byte("package sample\nfunc ComputeInvoiceTotal() {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store := &mockStore{}
+	svc := NewService(&mockEmbedder{}, store)
+	for i, collection := range []string{"main-go", "feature-go", "main-go"} {
+		before := len(store.upsertPoints)
+		if err := svc.IndexWorkspace(context.Background(), root, collection, Options{Language: "go"}); err != nil {
+			t.Fatal(err)
+		}
+		added := len(store.upsertPoints) - before
+		if i < 2 && added == 0 || i == 2 && added != 0 {
+			t.Fatalf("collection %s: indexed %d", collection, added)
+		}
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("legacy state was not removed: %v", err)
+	}
+	// A restored state file must not suppress rebuilding a deleted collection.
+	store.collectionMissing = true
+	before := len(store.upsertPoints)
+	if err := svc.IndexWorkspace(context.Background(), root, "main-go", Options{Language: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.upsertPoints) == before || store.collectionMissing {
+		t.Fatal("missing collection not rebuilt from unchanged files")
+	}
+}
+
 func TestCountAllFilesSkipsLowValueFiles(t *testing.T) {
 	root := t.TempDir()
 	createFile(t, filepath.Join(root, "firebase-service-account.json"))
@@ -222,7 +262,7 @@ func TestIndexWorkspaceDeletesExcludedFileOnlyWhenTracked(t *testing.T) {
 		t.Fatal(err)
 	}
 	state.UpdateFile(path, info)
-	if err := state.Save(filepath.Join(root, ".ragcode", "state.json")); err != nil {
+	if err := state.Save(StatePath(root, "docs")); err != nil {
 		t.Fatal(err)
 	}
 	if err := service.IndexWorkspace(context.Background(), root, "docs", Options{}); err != nil {

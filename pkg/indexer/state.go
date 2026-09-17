@@ -1,13 +1,20 @@
 package indexer
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 )
+
+// StatePath binds snapshots to a collection, including its branch and language.
+func StatePath(root, collection string) string {
+	return filepath.Join(root, ".ragcode", fmt.Sprintf("state-%x.json", sha256.Sum256([]byte(collection))))
+}
 
 // FileState represents the state of a single file in the index.
 type FileState struct {

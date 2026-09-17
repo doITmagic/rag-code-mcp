@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/doITmagic/rag-code-mcp/internal/generatedfile"
 )
 
 // maxAvgLineLen is the average-line-length threshold above which a file
@@ -26,7 +28,19 @@ var minifiedSuffixes = []string{
 }
 
 func shouldSkipFile(path string) bool {
-	return isLowValueConfigOrKeyMaterial(path) || isGeneratedLockfile(path) || isMinifiedOrVendored(path)
+	return isLowValueConfigOrKeyMaterial(path) || isGeneratedLockfile(path) || isGeneratedIDERule(path) || isMinifiedOrVendored(path)
+}
+
+func isGeneratedIDERule(path string) bool {
+	slashPath := filepath.ToSlash(path)
+	known := filepath.Base(path) == "CLAUDE.md" || strings.HasSuffix(slashPath, "/.cursor/rules/ragcode.mdc") ||
+		strings.HasSuffix(slashPath, "/.windsurf/rules/ragcode.md") || strings.HasSuffix(slashPath, "/.clinerules/ragcode.md") ||
+		strings.HasSuffix(slashPath, "/.roo/rules/ragcode.md")
+	if !known {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	return err == nil && generatedfile.Valid(string(data))
 }
 
 func isGeneratedLockfile(path string) bool {

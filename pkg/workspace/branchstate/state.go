@@ -163,7 +163,7 @@ func (m *Manager) Annotate(ctx context.Context, root string, resp *contract.Reso
 		// to mismatch against. Persisted is nil here forever, so the generic
 		// rule below would flag "high" on every request.
 	} else if persisted == nil {
-		risk = "high"
+		risk = "low"
 	} else if persisted.LastBranch != state.LastBranch {
 		risk = "high"
 	} else if persisted.LastHeadSHA != state.LastHeadSHA {

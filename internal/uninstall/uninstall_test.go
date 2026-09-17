@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"testing"
+
+	"github.com/doITmagic/rag-code-mcp/internal/utils"
 )
 
 func TestExtractWorkspaceRoots_V2(t *testing.T) {
@@ -173,6 +175,33 @@ func isolate(t *testing.T) {
 	ideProjectParentsFn = func(string) []string { return nil }
 	t.Cleanup(func() { qdrantRootsFn, ideProjectParentsFn = origQ, origI })
 	t.Setenv("APPDATA", t.TempDir())
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
+}
+
+func TestCleanupReadsCanonicalRegistry(t *testing.T) {
+	isolate(t)
+	home, workspace := t.TempDir(), t.TempDir()
+	cache := filepath.Join(workspace, ".ragcode")
+	if err := os.MkdirAll(cache, 0755); err != nil {
+		t.Fatal(err)
+	}
+	registry := utils.GetRegistryPath()
+	if err := os.MkdirAll(filepath.Dir(registry), 0755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(map[string]interface{}{"version": "v2", "entries": []map[string]string{{"root": workspace}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(registry, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanWorkspaceData(home)
+	if _, err := os.Stat(cache); !os.IsNotExist(err) {
+		t.Fatalf("canonical registry workspace not cleaned: %v", err)
+	}
 }
 
 // A .ragcode holding bin/ is the installation, never workspace cache: the

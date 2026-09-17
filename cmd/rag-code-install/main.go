@@ -262,7 +262,7 @@ func setupEnvironment() {
 		log("Setting up Qdrant in Docker...")
 		// Remove stale container if it exists (e.g. from previous install)
 		_ = exec.Command("docker", "rm", "-f", "ragcode-qdrant").Run()
-		if startContainer("Qdrant", "qdrant/qdrant", []string{
+		if startContainer("Qdrant", "qdrant/qdrant:v1.19.1", []string{
 			"--name", "ragcode-qdrant",
 			"--restart", "always",
 			"-p", "6333:6333",

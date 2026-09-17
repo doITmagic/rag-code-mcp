@@ -1,6 +1,7 @@
 package javascript
 
 import (
+	"bytes"
 	"strings"
 	"sync"
 
@@ -128,6 +129,7 @@ func (p *TreeSitterParser) extractFunction(node *gotreesitter.Node, source []byt
 		EndLine:   int(node.EndPoint().Row) + 1,
 		Code:      node.Text(source),
 		Calls:     collectCalls(node, source, lang),
+		Docstring: jsDocBefore(source, node.StartByte()),
 	}
 
 	for i := 0; i < node.ChildCount(); i++ {
@@ -340,6 +342,7 @@ func (p *TreeSitterParser) processExportStatement(node *gotreesitter.Node, sourc
 			if fn != nil {
 				fn.IsExported = true
 				fn.IsDefault = isDefault
+				fn.Docstring = jsDocBefore(source, node.StartByte())
 				fa.Functions = append(fa.Functions, *fn)
 			}
 
@@ -356,6 +359,7 @@ func (p *TreeSitterParser) processExportStatement(node *gotreesitter.Node, sourc
 			for j := range fns {
 				fns[j].IsExported = true
 				fns[j].IsDefault = isDefault
+				fns[j].Docstring = jsDocBefore(source, node.StartByte())
 			}
 			fa.Functions = append(fa.Functions, fns...)
 
@@ -471,12 +475,29 @@ func (p *TreeSitterParser) extractArrowFromDeclaration(node *gotreesitter.Node, 
 					EndLine:   int(node.EndPoint().Row) + 1,
 					Code:      text,
 					Calls:     collectCalls(child, source, lang),
+					Docstring: jsDocBefore(source, node.StartByte()),
 				})
 			}
 		}
 	}
 
 	return fns
+}
+
+func jsDocBefore(source []byte, offset uint32) string {
+	if int(offset) > len(source) {
+		return ""
+	}
+	prefix := source[:offset]
+	end := bytes.LastIndex(prefix, []byte("*/"))
+	if end < 0 || strings.TrimSpace(string(prefix[end+2:])) != "" {
+		return ""
+	}
+	start := bytes.LastIndex(prefix[:end], []byte("/**"))
+	if start < 0 {
+		return ""
+	}
+	return cleanJSDoc(string(prefix[start+3 : end]))
 }
 
 func (p *TreeSitterParser) extractImport(node *gotreesitter.Node, source []byte, lang *gotreesitter.Language) *JSImport {

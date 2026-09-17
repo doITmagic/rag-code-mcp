@@ -539,20 +539,23 @@ func findJSDocBefore(source string, jsdocs []jsdocPosition, offset int) string {
 			strings.ReplaceAll(source[jsdoc.end:offset], "\n", ""),
 			"\r", ""))
 		if between == "" {
-			// Clean up JSDoc content
-			lines := strings.Split(jsdoc.content, "\n")
-			var cleaned []string
-			for _, line := range lines {
-				line = strings.TrimSpace(line)
-				line = strings.TrimPrefix(line, "* ")
-				line = strings.TrimPrefix(line, "*")
-				line = strings.TrimSpace(line)
-				if line != "" {
-					cleaned = append(cleaned, line)
-				}
-			}
-			return strings.Join(cleaned, " ")
+			return cleanJSDoc(jsdoc.content)
 		}
 	}
 	return ""
+}
+
+func cleanJSDoc(content string) string {
+	lines := strings.Split(content, "\n")
+	cleaned := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		line = strings.TrimPrefix(line, "* ")
+		line = strings.TrimPrefix(line, "*")
+		line = strings.TrimSpace(line)
+		if line != "" {
+			cleaned = append(cleaned, line)
+		}
+	}
+	return strings.Join(cleaned, " ")
 }

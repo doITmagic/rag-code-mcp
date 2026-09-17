@@ -51,6 +51,31 @@ export async function fetchData(url) {
 	}
 }
 
+func TestTreeSitter_ExportedFunctionsKeepJSDoc(t *testing.T) {
+	source := []byte(`/** Adds an item to the cart. */
+export async function addToCart(item) { return item; }
+
+/** Applies a coupon code. */
+export const applyCouponCode = (code) => code;
+`)
+	fa, err := NewTreeSitterParser().ParseFile(source, "cart.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"addToCart": "Adds an item to the cart.", "applyCouponCode": "Applies a coupon code."}
+	for _, fn := range fa.Functions {
+		if doc, ok := want[fn.Name]; ok {
+			if fn.Docstring != doc {
+				t.Errorf("%s docstring = %q, want %q", fn.Name, fn.Docstring, doc)
+			}
+			delete(want, fn.Name)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing exported functions: %v", want)
+	}
+}
+
 func TestTreeSitter_ParseClasses(t *testing.T) {
 	source := []byte(`
 export class UserService extends BaseService {

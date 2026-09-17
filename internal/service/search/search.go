@@ -142,13 +142,19 @@ func (s *Service) InvalidateCollectionCache(collection string) {
 }
 
 // HybridSearch combines semantic search with basic lexical re-ranking.
-func (s *Service) HybridSearch(ctx context.Context, collection string, queryText string, limit int) ([]storage.SearchResult, error) {
+func (s *Service) HybridSearch(ctx context.Context, collection string, queryText string, limit int, includeDocs bool) ([]storage.SearchResult, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
 	// 1. Get semantic candidates
 	fetchLimit := int(math.Max(float64(limit*5), 10))
-	candidates, err := s.SearchCodeOnly(ctx, collection, queryText, fetchLimit)
+	var candidates []storage.SearchResult
+	var err error
+	if includeDocs {
+		candidates, err = s.Search(ctx, collection, queryText, fetchLimit)
+	} else {
+		candidates, err = s.SearchCodeOnly(ctx, collection, queryText, fetchLimit)
+	}
 	if err != nil {
 		return nil, err
 	}

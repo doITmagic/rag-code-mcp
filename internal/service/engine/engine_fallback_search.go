@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
+	"github.com/doITmagic/rag-code-mcp/internal/service/iderules"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
 	"github.com/doITmagic/rag-code-mcp/pkg/scoring"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
@@ -100,6 +101,10 @@ func (e *Engine) FallbackDirectSearch(ctx context.Context, workspaceRoot, query 
 					return filepath.SkipDir
 				}
 			}
+			return nil
+		}
+
+		if iderules.IsGenerated(path) {
 			return nil
 		}
 

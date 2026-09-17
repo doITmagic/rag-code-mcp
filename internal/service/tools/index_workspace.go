@@ -87,6 +87,7 @@ func (t *IndexWorkspaceTool) Register(server *mcp.Server) {
 
 		logger.Instance.Info("rag_index_workspace completed in %v", time.Since(start))
 		return &mcp.CallToolResult{
+			IsError: responseIsError(result),
 			Content: []mcp.Content{&mcp.TextContent{Text: result}},
 		}, nil, nil
 	})

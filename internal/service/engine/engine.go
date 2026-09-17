@@ -199,10 +199,25 @@ func (e *Engine) DetectFromParams(ctx context.Context, params map[string]interfa
 	return e.DetectContext(ctx, "")
 }
 
+type resolvedWorkspaceKey struct{}
+
+type resolvedWorkspace struct {
+	path      string
+	workspace *WorkspaceContext
+}
+
+// WithResolvedWorkspace shares one resolution across the searches of a request.
+func WithResolvedWorkspace(ctx context.Context, path string, workspace *WorkspaceContext) context.Context {
+	return context.WithValue(ctx, resolvedWorkspaceKey{}, resolvedWorkspace{path, workspace})
+}
+
 // DetectContext resolves the workspace context for a given path using the full resolver cascade.
 // If path is empty, it falls back to the last active workspace from the registry.
 // Results are cached with a 5s TTL to avoid redundant resolver invocations.
 func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceContext, error) {
+	if resolved, ok := ctx.Value(resolvedWorkspaceKey{}).(resolvedWorkspace); ok && resolved.path == path {
+		return resolved.workspace, nil
+	}
 	// Log incoming detection request for debugging workspace resolution
 	hintFromCtx := transport.GetWorkspaceHint(ctx)
 	logger.Instance.Info("[WS-DETECT] ▶ DetectContext called: path=%q, X-Workspace-Hint=%q", path, hintFromCtx)
@@ -705,7 +720,7 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 	}
 
 	logger.Instance.Debug("[TIMER] SearchCode TOTAL=%v (detect=%v embed=%v fanout=%v)",
-		time.Since(t0), t1.Sub(t0), t2.Sub(t1), time.Since(t3))
+		time.Since(t0), t1.Sub(t0), t3.Sub(t2), time.Since(t3))
 
 	return &SearchCodeResult{
 		Results:         all,
@@ -719,7 +734,7 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 }
 
 // HybridSearchCode detects the workspace and performing a high-precision hybrid search.
-func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText string, limit int) (*SearchCodeResult, error) {
+func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText string, limit int, includeDocs bool) (*SearchCodeResult, error) {
 	wctx, err := e.DetectContext(ctx, filePath)
 	if err != nil {
 		return nil, err
@@ -732,20 +747,33 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 	}
 
 	collection := wctx.CollectionName(lang)
-
-	exists, err := e.search.CollectionExists(ctx, collection)
-	if err != nil {
-		return nil, fmt.Errorf("failed to check collection: %w", err)
+	type target struct {
+		collection  string
+		includeDocs bool
+	}
+	targets := []target{{collection: collection, includeDocs: lang == "docs"}}
+	if includeDocs && lang != "docs" {
+		targets = append(targets, target{collection: wctx.CollectionName("docs"), includeDocs: true})
+	}
+	available := targets[:0]
+	for _, target := range targets {
+		exists, err := e.search.CollectionExists(ctx, target.collection)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check collection: %w", err)
+		}
+		if exists {
+			available = append(available, target)
+		}
 	}
 
-	if !exists {
+	if len(available) == 0 {
 		// Trigger background indexing but do NOT block — SmartSearch runs
 		// SearchCode (with fan-out) in parallel and will provide results
 		// from any available language collections.
 		if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); !alreadyRunning {
 			e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 		}
-		logger.Instance.Info("[IDX] ws=%s HybridSearch: collection %s not found — returning empty (indexing in background)", filepath.Base(wctx.Root), collection)
+		logger.Instance.Info("[IDX] ws=%s HybridSearch: requested collections not found — returning empty (indexing in background)", filepath.Base(wctx.Root))
 		return nil, nil
 	}
 
@@ -756,9 +784,17 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 		}
 	}
 
-	results, err := e.search.HybridSearch(ctx, collection, queryText, limit)
-	if err != nil {
-		return nil, fmt.Errorf("hybrid search failed: %w", err)
+	var results []storage.SearchResult
+	for _, target := range available {
+		found, err := e.search.HybridSearch(ctx, target.collection, queryText, limit, target.includeDocs)
+		if err != nil {
+			return nil, fmt.Errorf("hybrid search failed: %w", err)
+		}
+		results = append(results, found...)
+	}
+	sort.Slice(results, func(i, j int) bool { return results[i].Score > results[j].Score })
+	if limit > 0 && len(results) > limit {
+		results = results[:limit]
 	}
 
 	return &SearchCodeResult{
@@ -957,6 +993,8 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 		}
 		e.indexingSlot <- struct{}{}
 		defer func() { <-e.indexingSlot }()
+		s.StartedAt = time.Now().UTC().Format(time.RFC3339)
+		indexer.SaveIndexStatus(root, s)
 
 		ctx := context.Background()
 		var err error
@@ -1003,11 +1041,7 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) er
 		return err
 	}
 
-	statePath := filepath.Join(wctx.Root, ".ragcode", "state.json")
-	state, err := indexer.LoadState(statePath)
-	if err != nil {
-		state = indexer.NewState()
-	}
+	states := make(map[string]*indexer.State)
 
 	// Resolve the collection per file: one watcher batch can mix languages,
 	// and taking the first file's language sent the rest to the wrong one.
@@ -1017,6 +1051,25 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) er
 			continue
 		}
 		collection := wctx.CollectionName(a.Name())
+		state := states[collection]
+		if state == nil {
+			exists, err := e.search.CollectionExists(ctx, collection)
+			if err != nil {
+				return err
+			}
+			if !exists {
+				return e.IndexWorkspace(ctx, root, false)
+			}
+			statePath := indexer.StatePath(wctx.Root, collection)
+			if _, err := os.Stat(statePath); os.IsNotExist(err) {
+				return e.IndexWorkspace(ctx, root, false)
+			}
+			state, err = indexer.LoadState(statePath)
+			if err != nil {
+				return err
+			}
+			states[collection] = state
+		}
 		// A deleted file cannot be analysed; drop its vectors instead of
 		// leaving them until the next full run or a search that notices them.
 		if _, statErr := os.Stat(p); os.IsNotExist(statErr) {
@@ -1030,8 +1083,10 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) er
 		}
 	}
 
-	if err := state.Save(statePath); err != nil {
-		return err
+	for collection, state := range states {
+		if err := state.Save(indexer.StatePath(wctx.Root, collection)); err != nil {
+			return err
+		}
 	}
 	e.refreshIndexCounts(wctx.Root)
 	return nil

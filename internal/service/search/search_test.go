@@ -219,7 +219,7 @@ func TestHybridSearchCorrectness(t *testing.T) {
 	// doc1: score = 0.9*0.6 + 0 = 0.54
 	// Expected order: doc2 (0.76), doc1 (0.54), doc3 (0.28)
 
-	results, err := svc.HybridSearch(context.Background(), "col", "test logic", 2)
+	results, err := svc.HybridSearch(context.Background(), "col", "test logic", 2, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestHybridSearchZeroLimit(t *testing.T) {
 	store := &mockVectorStore{}
 	svc := NewService(emb, store)
 
-	results, err := svc.HybridSearch(context.Background(), "col", "test logic", 0)
+	results, err := svc.HybridSearch(context.Background(), "col", "test logic", 0, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

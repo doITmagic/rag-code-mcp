@@ -62,6 +62,11 @@ type parallelSearchResult struct {
 // runParallelSearch executes semantic and hybrid searches concurrently,
 // collects results, and extracts workspace metadata.
 func (t *SmartSearchTool) runParallelSearch(ctx context.Context, filePath, query string, limit int, includeDocs bool) parallelSearchResult {
+	workspace, err := t.engine.DetectContext(ctx, filePath)
+	if err != nil {
+		return parallelSearchResult{err: err}
+	}
+	ctx = engine.WithResolvedWorkspace(ctx, filePath, workspace)
 	type searchResult struct {
 		label   string
 		result  *engine.SearchCodeResult
@@ -84,7 +89,7 @@ func (t *SmartSearchTool) runParallelSearch(ctx context.Context, filePath, query
 	go func() {
 		defer wg.Done()
 		t0 := time.Now()
-		res, err := t.engine.HybridSearchCode(ctx, filePath, query, limit)
+		res, err := t.engine.HybridSearchCode(ctx, filePath, query, limit, includeDocs)
 		results <- searchResult{label: "hybrid", result: res, err: err, elapsed: time.Since(t0)}
 	}()
 
@@ -140,11 +145,11 @@ type filterConfig struct {
 }
 
 // applyFilters runs the full post-processing pipeline on merged results:
-// mode filtering → score threshold → path scoping → doc grouping.
+// mode filtering → path scoping → score threshold → doc grouping.
 func (t *SmartSearchTool) applyFilters(merged []mergedResult, cfg filterConfig) []mergedResult {
 	merged = applyModeFilter(merged, cfg.Mode)
-	merged = applyScoreFilter(merged, cfg.MinScore, cfg.DefaultFloor)
 	merged = applyPathScoping(merged, scoring.ScopeDir(cfg.FilePath))
+	merged = applyScoreFilter(merged, cfg.MinScore, cfg.DefaultFloor)
 	merged = t.groupDocsByTree(merged)
 	return merged
 }
@@ -179,7 +184,11 @@ func applyScoreFilter(merged []mergedResult, minScore float32, defaultFloor bool
 	effective := minScore
 	if effective <= 0 && defaultFloor {
 		effective = defaultSemanticMinScore
-		if relative := merged[0].score * autoScoreThresholdRatio; merged[0].score > autoScoreThresholdTrigger && relative > effective {
+		topScore := float32(0)
+		for _, m := range merged {
+			topScore = max(topScore, m.score, m.rawScore)
+		}
+		if relative := topScore * autoScoreThresholdRatio; topScore > autoScoreThresholdTrigger && relative > effective {
 			effective = relative
 		}
 	}
@@ -189,7 +198,7 @@ func applyScoreFilter(merged []mergedResult, minScore float32, defaultFloor bool
 
 	var filtered []mergedResult
 	for _, m := range merged {
-		if m.score >= effective {
+		if max(m.score, m.rawScore) >= effective {
 			filtered = append(filtered, m)
 		}
 	}

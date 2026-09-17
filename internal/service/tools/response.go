@@ -9,6 +9,14 @@ import (
 	"github.com/doITmagic/rag-code-mcp/pkg/telemetry"
 )
 
+// responseIsError propagates application failures to the MCP envelope.
+func responseIsError(result string) bool {
+	var response struct {
+		Status string `json:"status"`
+	}
+	return json.Unmarshal([]byte(result), &response) == nil && response.Status == "error"
+}
+
 // ToolResponse defines the standard JSON structure for all RagCode MCP tools.
 type ToolResponse struct {
 	Status  string          `json:"status"`            // "success", "error", "indexing_started", "no_results"

@@ -138,6 +138,7 @@ var _ = Describe("Health Metrics & Index Status", func() {
 			resJSON, err := tool.Execute(ctx, tools.SmartSearchInput{
 				Query:    "func",
 				FilePath: "main.go",
+				MinScore: 0.1, // Exercise stale filtering independently of the relevance floor.
 			})
 			Expect(err).NotTo(HaveOccurred())
 

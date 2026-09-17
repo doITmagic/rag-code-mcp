@@ -67,6 +67,7 @@ func (t *ReadFileContextTool) Register(server *mcp.Server) {
 		logger.Instance.Info("rag_read_file_context completed in %v", time.Since(start))
 		logger.Instance.Debug("rag_read_file_context result size (bytes): %d", len(result))
 		return &mcp.CallToolResult{
+			IsError: responseIsError(result),
 			Content: []mcp.Content{&mcp.TextContent{Text: result}},
 		}, nil, nil
 	})

@@ -58,6 +58,7 @@ func (t *ServerInfoTool) Register(server *mcp.Server) {
 		}
 
 		return &mcp.CallToolResult{
+			IsError: responseIsError(result),
 			Content: []mcp.Content{&mcp.TextContent{Text: result}},
 		}, nil, nil
 	})

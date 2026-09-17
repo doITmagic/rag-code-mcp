@@ -103,6 +103,35 @@ var _ = Describe("SmartSearchTool (rag_search)", func() {
 				data := resp.Data.([]interface{})
 				Expect(data).To(HaveLen(1))
 			})
+
+			It("falls back for inferred identifiers but keeps explicit exact lookup strict", func() {
+				result, err := tool.Execute(ctx, tools.SmartSearchInput{Query: "apply_vat", FilePath: tmpFile.Name()})
+				Expect(err).NotTo(HaveOccurred())
+				var resp tools.ToolResponse
+				Expect(json.Unmarshal([]byte(result), &resp)).To(Succeed())
+				Expect(resp.Status).To(Equal("success"))
+				exact := true
+				result, err = tool.Execute(ctx, tools.SmartSearchInput{Query: "apply_vat", FilePath: tmpFile.Name(), ExactSymbol: &exact})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(json.Unmarshal([]byte(result), &resp)).To(Succeed())
+				Expect(resp.Status).To(Equal("no_results"))
+			})
+
+			It("finds a single-word symbol by name before semantic search", func() {
+				mockStore.ExactSearchFunc = func(_ context.Context, _ string, filters map[string]interface{}, _ int) ([]storage.SearchResult, error) {
+					if filters["name"] != "Marker" {
+						return nil, nil
+					}
+					return []storage.SearchResult{{Score: 1, Point: storage.Point{ID: "marker", Payload: map[string]interface{}{
+						"name": "Marker", "content": "func Marker() {}", "file_path": tmpFile.Name(), "type": "function",
+					}}}}, nil
+				}
+				result, err := tool.Execute(ctx, tools.SmartSearchInput{Query: "Marker", FilePath: tmpFile.Name()})
+				Expect(err).NotTo(HaveOccurred())
+				var resp tools.ToolResponse
+				Expect(json.Unmarshal([]byte(result), &resp)).To(Succeed())
+				Expect(resp.Status).To(Equal("success"))
+			})
 		})
 	})
 })

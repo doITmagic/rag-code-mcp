@@ -55,6 +55,7 @@ func (t *CheckUpdateTool) Register(server *mcp.Server) {
 		}
 		logger.Instance.Info("rag_check_update completed in %v", time.Since(start))
 		return &mcp.CallToolResult{
+			IsError: responseIsError(result),
 			Content: []mcp.Content{&mcp.TextContent{Text: result}},
 		}, nil, nil
 	})
@@ -126,6 +127,7 @@ func (t *ApplyUpdateTool) Register(server *mcp.Server) {
 		}
 		logger.Instance.Info("rag_apply_update completed in %v", time.Since(start))
 		return &mcp.CallToolResult{
+			IsError: responseIsError(result),
 			Content: []mcp.Content{&mcp.TextContent{Text: result}},
 		}, nil, nil
 	})

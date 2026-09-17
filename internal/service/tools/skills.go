@@ -52,6 +52,7 @@ func (t *ListSkillsTool) Register(server *mcp.Server) {
 		}
 		logger.Instance.Info("rag_list_skills completed in %v", time.Since(start))
 		return &mcp.CallToolResult{
+			IsError: responseIsError(result),
 			Content: []mcp.Content{&mcp.TextContent{Text: result}},
 		}, nil, nil
 	})
@@ -165,6 +166,7 @@ func (t *InstallSkillTool) Register(server *mcp.Server) {
 		}
 		logger.Instance.Info("rag_install_skill completed in %v", time.Since(start))
 		return &mcp.CallToolResult{
+			IsError: responseIsError(result),
 			Content: []mcp.Content{&mcp.TextContent{Text: result}},
 		}, nil, nil
 	})
@@ -210,7 +212,7 @@ func (t *InstallSkillTool) Execute(ctx context.Context, args map[string]interfac
 		Status:  "success",
 		Context: ContextFromWorkspaceWithStatus(wctx, t.engine),
 	}
-	response.SetFallbackWarning(source != "explicit_file_path")
+	response.SetFallbackWarning(source == "registry_fallback")
 
 	if installErr != nil {
 		response.Status = "error"

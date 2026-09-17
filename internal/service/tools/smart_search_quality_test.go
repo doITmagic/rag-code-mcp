@@ -41,12 +41,12 @@ func TestEmptySearchIsCounted(t *testing.T) {
 }
 
 func TestSymbolQueryClassification(t *testing.T) {
-	for _, q := range []string{"CalculateOspreyDiscount", "heron_helper", "IbexCart.add", "App\\A::validate"} {
+	for _, q := range []string{"CalculateOspreyDiscount", "heron_helper", "IbexCart.add", "App\\A::validate", "Marker", "Write", "discount"} {
 		if !isSymbolQuery(q) {
 			t.Errorf("not detected: %s", q)
 		}
 	}
-	for _, q := range []string{"discount", "find total calculation", "how does A work?"} {
+	for _, q := range []string{"123", "find total calculation", "how does A work?"} {
 		if isSymbolQuery(q) {
 			t.Errorf("semantic query treated as exact: %s", q)
 		}
@@ -62,6 +62,34 @@ func TestDefaultScoreFilterRejectsWeakNeighbours(t *testing.T) {
 	got = applyScoreFilter([]mergedResult{{score: 0.89}, {score: 0.73}, {score: 0.71}}, 0, true)
 	if len(got) != 2 {
 		t.Fatalf("relevant results = %d, want 2", len(got))
+	}
+}
+
+func TestProximityAppliedBeforeScoreFloor(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "source.go")
+	got := (&SmartSearchTool{}).applyFilters([]mergedResult{{filePath: path, symbolType: "function", score: 0.71}}, filterConfig{FilePath: path, DefaultFloor: true})
+	if len(got) != 1 || got[0].score < 0.81 {
+		t.Fatalf("adjusted result lost: %+v", got)
+	}
+}
+
+func TestDistantProximityOnlyAffectsRanking(t *testing.T) {
+	root := t.TempDir()
+	scope := filepath.Join(root, "internal", "service", "tools", "search.go")
+	result := filepath.Join(root, "pkg", "parser", "javascript", "analyzer.go")
+	got := (&SmartSearchTool{}).applyFilters([]mergedResult{{filePath: result, symbolType: "function", score: 0.85, rawScore: 0.85}}, filterConfig{FilePath: scope, DefaultFloor: true})
+	if len(got) != 1 || got[0].score >= got[0].rawScore {
+		t.Fatalf("distant relevant result lost or not penalized: %+v", got)
+	}
+	weak := (&SmartSearchTool{}).applyFilters([]mergedResult{{filePath: result, symbolType: "function", score: 0.70, rawScore: 0.70}}, filterConfig{FilePath: scope, DefaultFloor: true})
+	if len(weak) != 0 {
+		t.Fatalf("weak distant result survived: %+v", weak)
+	}
+}
+
+func TestMCPApplicationErrorFlag(t *testing.T) {
+	if !responseIsError(`{"status":"error","error":"invalid token"}`) || responseIsError(`{"status":"success"}`) {
+		t.Fatal("incorrect MCP error flag")
 	}
 }
 

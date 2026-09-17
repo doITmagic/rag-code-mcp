@@ -101,6 +101,7 @@ func (t *SmartSearchTool) Register(server *mcp.Server) {
 
 		logger.Instance.Info("rag_search completed in %v", time.Since(start))
 		return &mcp.CallToolResult{
+			IsError: responseIsError(result),
 			Content: []mcp.Content{&mcp.TextContent{Text: result}},
 		}, nil, nil
 	})
@@ -125,15 +126,18 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 			return "", err
 		}
 		sr.meta = searchMetadata{workspaceRoot: wctx.Root, workspaceID: wctx.ID, collection: "exact", detectionSource: wctx.DetectionSource}
+		ctx = engine.WithResolvedWorkspace(ctx, input.FilePath, wctx)
 		exact, err := t.engine.SearchByName(ctx, sr.meta.workspaceID, query, limit)
 		if err != nil {
 			var missing *engine.ErrNoCollectionsFound
-			if errors.As(err, &missing) {
+			if errors.As(err, &missing) && input.ExactSymbol != nil && *input.ExactSymbol {
 				return (ToolResponse{Status: "indexing_required", Message: "Index this workspace before exact symbol lookup.", Context: ContextFromWorkspaceWithStatus(wctx, t.engine)}).JSON()
 			}
-			return "", err
+			if !errors.As(err, &missing) {
+				return "", err
+			}
 		}
-		if len(exact) == 0 {
+		if len(exact) == 0 && err == nil {
 			exact, err = t.engine.ExactSearchPolyglot(ctx, sr.meta.workspaceID, map[string]interface{}{"qualified_name": query}, limit)
 			if err != nil {
 				return "", err
@@ -146,7 +150,9 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 		for i := range merged {
 			merged[i].source = "exact"
 		}
-	} else {
+	}
+	if !exactSymbol || len(merged) == 0 && input.ExactSymbol == nil {
+		exactSymbol = false
 		sr = t.runParallelSearch(ctx, input.FilePath, query, limit, input.IncludeDocs)
 		if sr.semantic == nil && sr.hybrid == nil {
 			if sr.err == nil {
@@ -200,25 +206,25 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 	return response.JSON()
 }
 
-// Plain words remain semantic queries. Code-shaped identifiers use metadata;
-// callers can override this heuristic with exact_symbol.
+// Single identifiers use exact lookup first, then semantic fallback. Callers
+// can override this heuristic with exact_symbol.
 func isSymbolQuery(query string) bool {
-	marked := false
 	for i, r := range query {
 		if !(unicode.IsLetter(r) || unicode.IsDigit(r) || strings.ContainsRune("_.$\\:", r)) {
 			return false
 		}
-		if strings.ContainsRune("_.$\\:", r) || (i > 0 && unicode.IsUpper(r)) {
-			marked = true
+		if i == 0 && unicode.IsDigit(r) {
+			return false
 		}
 	}
-	return marked
+	return query != ""
 }
 
 // mergedResult holds a deduplicated result with metadata extracted from payload.
 type mergedResult struct {
 	id         string
 	score      float32
+	rawScore   float32
 	filePath   string
 	name       string
 	symbolType string
@@ -245,14 +251,16 @@ func (t *SmartSearchTool) mergeResults(semantic, hybrid *engine.SearchCodeResult
 				existing.source = "both"
 				if r.Score > existing.score {
 					existing.score = r.Score
+					existing.rawScore = r.Score
 				}
 				continue
 			}
 
 			m := &mergedResult{
-				id:     id,
-				score:  r.Score,
-				source: source,
+				id:       id,
+				score:    r.Score,
+				rawScore: r.Score,
+				source:   source,
 			}
 
 			// Extract payload fields
@@ -277,11 +285,11 @@ func (t *SmartSearchTool) mergeResults(semantic, hybrid *engine.SearchCodeResult
 			if v, ok := r.Point.Payload["content"].(string); ok {
 				m.content = v
 			}
-			if v, ok := r.Point.Payload["start_line"].(float64); ok {
-				m.startLine = int(v)
+			if v, ok := parseLineArg(r.Point.Payload["start_line"]); ok {
+				m.startLine = v
 			}
-			if v, ok := r.Point.Payload["end_line"].(float64); ok {
-				m.endLine = int(v)
+			if v, ok := parseLineArg(r.Point.Payload["end_line"]); ok {
+				m.endLine = v
 			}
 
 			seen[id] = m

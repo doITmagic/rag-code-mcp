@@ -302,6 +302,8 @@ RagCode MCP is open source software licensed under the **[MIT License](./LICENSE
 
 ⭐ **[Star us on GitHub](https://github.com/doITmagic/rag-code-mcp)** if RagCode helps your workflow!
 
+Built and maintained by **[DO IT MAGIC SOFTWARE](https://doitmagic.ro/)**, custom software and applied AI from Pitești, Romania.
+
 **Questions?** [Open an Issue](https://github.com/doITmagic/rag-code-mcp/issues) • [Read the Docs](./QUICKSTART.md) • [Join Discussions](https://github.com/doITmagic/rag-code-mcp/discussions)
 
 </div>

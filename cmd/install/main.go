@@ -821,11 +821,35 @@ func startDockerContainer(name, image string, args []string, env []string) {
 	}
 	runArgs = append(runArgs, image)
 
+	// Pull explicitly, with output attached. `docker run` would pull the image
+	// implicitly, but its progress goes to stderr — discarded here, leaving the
+	// installer looking frozen for as long as the download takes. The Ollama
+	// image is several GB, so that is minutes at best (issue #58).
+	if !imageAvailable(image) {
+		log(fmt.Sprintf("Downloading image %s — this can take several minutes on a first install, please wait...", image))
+		pull := exec.Command("docker", "pull", image)
+		pull.Stdout = os.Stdout
+		pull.Stderr = os.Stderr
+		if err := pull.Run(); err != nil {
+			fail(fmt.Sprintf("Failed to download image %s: %v", image, err))
+		}
+		success(fmt.Sprintf("Downloaded %s", image))
+	}
+
 	log(fmt.Sprintf("Starting container %s...", name))
-	if err := exec.Command("docker", runArgs...).Run(); err != nil {
+	run := exec.Command("docker", runArgs...)
+	run.Stderr = os.Stderr
+	if err := run.Run(); err != nil {
 		fail(fmt.Sprintf("Failed to start %s: %v", name, err))
 	}
 	success(fmt.Sprintf("Started %s", name))
+}
+
+// imageAvailable reports whether the image is already present locally, so an
+// install that has nothing to download stays quiet.
+func imageAvailable(image string) bool {
+	out, err := exec.Command("docker", "images", "-q", image).Output()
+	return err == nil && len(bytes.TrimSpace(out)) > 0
 }
 
 func waitForService(name, url string) {

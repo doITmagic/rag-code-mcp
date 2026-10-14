@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -219,12 +220,14 @@ func Run(rcfg RunConfig) error {
 	mcpMux := http.NewServeMux()
 	mcpMux.Handle("/mcp", streamableHandler)
 
-	// Profiling endpoints
-	mcpMux.HandleFunc("/debug/pprof/", pprof.Index)
-	mcpMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	mcpMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	mcpMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	mcpMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	// Profiling endpoints (only mounted in debug mode or when explicitly enabled)
+	if strings.EqualFold(cfg.Logging.Level, "debug") || os.Getenv("RAGCODE_ENABLE_PPROF") == "1" {
+		mcpMux.HandleFunc("/debug/pprof/", pprof.Index)
+		mcpMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		mcpMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		mcpMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		mcpMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	}
 
 	// Middleware: sticky workspace + response writer injection.
 	//

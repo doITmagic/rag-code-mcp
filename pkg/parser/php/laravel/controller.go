@@ -78,7 +78,7 @@ func (a *ControllerAnalyzer) extractController(class php.ClassInfo) Controller {
 
 // isApiController checks if controller is API-specific
 func (a *ControllerAnalyzer) isApiController(class php.ClassInfo) bool {
-	slashPath := filepath.ToSlash(class.FilePath)
+	slashPath := strings.ReplaceAll(filepath.ToSlash(class.FilePath), "\\", "/")
 	return strings.Contains(class.Namespace, "\\Api") ||
 		strings.Contains(class.Namespace, "\\API") ||
 		strings.HasSuffix(class.Name, "ApiController") ||

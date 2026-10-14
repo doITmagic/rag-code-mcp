@@ -304,12 +304,10 @@ func (info *UpdateInfo) DownloadAndVerify(ctx context.Context, destPath string) 
 	assetName := getAssetName(info.AssetURL)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.Contains(line, assetName) {
-			parts := strings.Fields(line)
-			if len(parts) > 0 {
-				expectedHash = parts[0]
-				break
-			}
+		parts := strings.Fields(line)
+		if len(parts) >= 2 && strings.TrimPrefix(parts[1], "*") == assetName {
+			expectedHash = parts[0]
+			break
 		}
 	}
 

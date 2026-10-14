@@ -9,12 +9,11 @@ relations/
 # Binaries
 /cmd/agent-runner/agent-runner
 /rag-code-mcp
-test-*
+/test-*
 bin/
 tests/e2e/bin/
 /rag-code-install
 index-all
-rag-code-mcp
 
 # Test programs
 cmd/test-*/
@@ -65,7 +64,6 @@ temp/
 scripts/
 .ragcode/
 .agent/
-.trello.json
 build-binaries.sh
 
 # Debug logs

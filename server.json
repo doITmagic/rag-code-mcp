@@ -1,7 +1,7 @@
 {
   "name": "ragcode",
-  "version": "2.1.26",
-  "description": "Semantic code intelligence using RAG (Retrieval-Augmented Generation). Supports Go, PHP, Python, JavaScript/HTML. Provides semantic search, call hierarchies, usage finding, and automatic IDE configuration. Compatible with Windsurf, Cursor, Antigravity, Claude Desktop, Gemini CLI, Zed, and VS Code + GitHub Copilot.",
+  "version": "2.1.110",
+  "description": "Semantic code intelligence using RAG (Retrieval-Augmented Generation). Supports Go (and Go Templates), PHP (Laravel, Blade, WordPress, WooCommerce, Oxygen Builder), Python, JavaScript/TypeScript (React/JSX/TSX, Vue SFC), HTML/CSS/SCSS, and Markdown/JSON/YAML docs. Provides semantic search, call hierarchies, usage finding, and automatic IDE configuration. Compatible with Windsurf, Cursor, Antigravity, Claude Desktop, Gemini CLI, Zed, and VS Code + GitHub Copilot.",
   "homepage": "https://github.com/doITmagic/rag-code-mcp",
   "license": "MIT",
   "runtime": "binary",
@@ -17,8 +17,8 @@
   },
   "capabilities": {
     "tools": true,
-    "resources": false,
-    "prompts": false,
+    "resources": true,
+    "prompts": true,
     "sampling": false
   },
   "dependencies": {
@@ -39,10 +39,6 @@
       "description": "Intelligent code search that automatically determines the best strategy (semantic + exact). Returns full source code for high-confidence matches, compact summaries for exploratory results."
     },
     {
-      "name": "rag_search_code",
-      "description": "Comprehensive code search with explicit mode control: 'discovery' (semantic/conceptual) or 'exact' (hybrid BM25 + vector). Supports graph context expansion — auto-fetches related definitions."
-    },
-    {
       "name": "rag_find_usages",
       "description": "Find where a specific class, function, or type is used across the codebase using the Code Graph (AST relations). Returns exact code chunks, files, and line numbers."
     },
@@ -52,7 +48,7 @@
     },
     {
       "name": "rag_list_package_exports",
-      "description": "List all public functions, classes, and types in a package/module. Returns structured list with symbol names, types, and signatures. Works for Go packages, PHP namespaces, Python modules."
+      "description": "List all public functions, classes, and types in a package/module. Returns structured list with symbol names, types, and signatures. Works for Go packages, PHP namespaces, Python modules, and JS/TS/Vue modules."
     },
     {
       "name": "rag_read_file_context",
@@ -60,7 +56,7 @@
     },
     {
       "name": "rag_index_workspace",
-      "description": "Indexes or reindexes a workspace for semantic code search. Instead of abstract paths, you MUST explicitly provide the absolute 'workspace_root' directory. The tool first validates the root and returns early. Then, you submit a second call with 'confirm': true to actually lock-in the registry root and start the background indexing."
+      "description": "Indexes or reindexes a workspace for semantic code search. Instead of abstract paths, you MUST explicitly provide the absolute 'workspace_root' directory. The tool first validates the root and returns a 'confirmation_token'. Then, you submit a second call with 'confirm': true and the returned 'confirmation_token' to lock-in the registry root and start background indexing."
     },
     {
       "name": "rag_list_skills",

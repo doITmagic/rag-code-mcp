@@ -43,7 +43,7 @@ Rule of the session: **report → ask → wait for approval** before any edit/co
 - [x] **HIGH** `PromoteCandidate` (`registry.go:200`) lacks `IsInvalidRoot` guard that `Upsert` has (:141), and `Resolver.finalize` (`resolver.go:351`) lacked `IsInvalidRoot` guard when `RootValidator == nil`. Fixed in both `PromoteCandidate` and `Resolver.finalize` (`TestRegistryRefusesHomeRoot`, `TestResolveWorkspaceRootRefusesInvalidRoot`).
 - [x] **HIGH** Registry `save()` (`registry.go:490`) plain `os.WriteFile`, no temp+rename. Fixed: `save()` now writes atomically via `os.CreateTemp` + `os.Rename`.
 - [x] **LOW** Audit sink called under lock in `PromoteCandidate` (:248) and `RecordFeedback` (:536). Fixed: `audit.Record` moved outside `r.mu.Lock()`.
-- [ ] **MEDIUM** `read_file_context.go:89` `filepath.Abs(filePath)` resolves relative paths against daemon CWD, not `wctx.Root`.
+- [x] **MEDIUM** `read_file_context.go:89` `filepath.Abs(filePath)` resolves relative paths against daemon CWD, not `wctx.Root`. Fixed: resolves relative `file_path` against `wctx.Root` when the file exists on disk before falling back to `filepath.Abs`.
 - [x] **MEDIUM** `pkg/indexer/stale.go:22` `FindDeletedRoot` loops forever on Windows for missing drive/share (`filepath.Dir("X:\\") == "X:\\"`); comparison case-sensitive. Fixed: stop when `filepath.Dir(dirClean) == dirClean` and use `strings.EqualFold` on Windows.
 - [x] **LOW** `detector.go:341` AllowedRoots check case-sensitive on Windows. Fixed: `ensureAllowed` uses `strings.EqualFold` / `strings.ToLower` on Windows.
 - [x] Added tests: `cleanupAbsorbed`, detector vs home with `.claude`, `.github` paths, same-tier nesting, AllowedRoots boundary, `IsInvalidRoot` case-insensitivity, `Resolver.finalize` invalid root refusal.
@@ -122,15 +122,15 @@ Idea to evaluate: make (3)/(4) non-indexing (resolve-only or error "pass workspa
 - [x] **MEDIUM** `pkg/indexer/service.go:99,777`: `exclude_patterns` documented as globs in `config.go:192`, matched as exact dir-name equality in indexer/counter (`matchesExcludePatterns` now supports dir names, relative paths, trailing slashes, and globs).
 - [x] **MEDIUM** `pkg/indexer/minified.go:76,113`: `exceedsLineDensity` (>500 chars/line, no minimum size or extension check) classifies compact single-line JSON/YAML files (e.g. 600-byte `openapi.json`) as minified and excludes/deletes them. Fixed: `.json`/`.yaml`/`.yml` under 4 KiB are not classified as minified (`TestMinified_DoesNotSkipSmallCompactJSON`).
 - [x] **LOW** `pkg/indexer/service.go:106,784`: `WalkDir` calls `shouldSkipFile` (which opens and reads up to 256 KiB via `exceedsLineDensity`) on every file before checking `parser.GetByFile`. Fixed: `parser.GetByFile` and language filter run before `shouldSkipFile`.
-- [ ] **LOW** `internal/service/engine/engine_fallback_search.go:239`: `FallbackDirectSearch` hashes `file:name:start:end` (without `QualifiedName`), whereas `pkg/indexer/service.go:701` includes `QualifiedName` → duplicate results when `smart_search` merges vector + fallback hits.
+- [x] **LOW** `internal/service/engine/engine_fallback_search.go:239`: `FallbackDirectSearch` hashes `file:name:start:end` (without `QualifiedName`), whereas `pkg/indexer/service.go:701` includes `QualifiedName` → duplicate results when `smart_search` merges vector + fallback hits. Fixed.
 - [x] **LOW** `pkg/parser/generic/analyzer.go:44`: `.env` is indexed, but `.env.local` / `.env.example` / `.env.production` are skipped because `filepath.Ext` returns `.local` / `.example`. Fixed.
 
 ## 7. Docs / hygiene / CI
 
-- [ ] `server.json:42`, `llms.txt:63`, `llms-full.txt:837-934`, `cmd/mcp-http-client-test/main.go:165` list non-existent tools: `rag_search_code`, `rag_get_function_details`, `rag_find_type_definition`, `rag_find_implementations`, `rag_search_docs`, `rag_get_code_context`. `doc_index_workspace.md`, `llms-full.txt:732` omit required `confirmation_token`. Regenerate from registered tools.
-- [ ] `server.json` version stuck at 2.1.26 (code 2.1.110): `release.yml` pushes to main with `|| echo "Failed to push"`. Fail loudly or open PR.
-- [ ] `.gitignore:17` `rag-code-mcp` unanchored → ignores any new file in `cmd/rag-code-mcp/`; `:12` `test-*` too broad. Use `/rag-code-mcp`, `/test-*`.
-- [ ] `build-binaries.yml` force-adds ignored `bin/`, auto-PRs binaries, fails on fork PRs. Remove (goreleaser ships binaries).
+- [x] `server.json:42`, `llms.txt:63`, `llms-full.txt:837-934`, `cmd/mcp-http-client-test/main.go:165` list non-existent tools: `rag_search_code`, `rag_get_function_details`, `rag_find_type_definition`, `rag_find_implementations`, `rag_search_docs`, `rag_get_code_context`. `doc_index_workspace.md`, `llms-full.txt:732` omit required `confirmation_token`. Regenerated and updated with full language/framework support (Go/GoTemplates, PHP/Laravel/Blade/WordPress/WooCommerce/Oxygen Builder, JS/TS/React/Vue, Python, HTML/CSS/SCSS, Docs).
+- [x] `server.json` version stuck at 2.1.26 (code 2.1.110): `release.yml` pushes to main with `|| echo "Failed to push"`. Fixed: bumped `server.json` to `2.1.110` and removed `|| echo "Failed to push"` in `release.yml`.
+- [x] `.gitignore:17` `rag-code-mcp` unanchored → ignores any new file in `cmd/rag-code-mcp/`; `:12` `test-*` too broad. Fixed: anchored `/rag-code-mcp` and `/test-*`, removed duplicate `.trello.json`.
+- [x] `build-binaries.yml` force-adds ignored `bin/`, auto-PRs binaries, fails on fork PRs. Fixed: removed `.github/workflows/build-binaries.yml` (goreleaser ships binaries).
 - [ ] `rebuild.sh` bumps patch version on every build (→ 2.1.110), Unix-only.
 - [ ] Dead code: `rag_server_info` never registered; registry candidates/feedback path; `SetAuditSink`; stale comment `service.go:257`; `pkg/workspace/*/TASKS.md`.
 

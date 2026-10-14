@@ -1,81 +1,26 @@
-# HTML Parser
+# HTML & Go Template Parser (`pkg/parser/html`)
 
-The `html` package provides an analyzer for **HTML** documents, specializing in content segmentation into logical sections based on the header hierarchy.
+The `html` package provides semantic analysis for **HTML** documents (`.html`, `.htm`) and **Go Templates** (`.tmpl`, `.gotmpl`, `.gohtml`, `.tpl`).
 
-## 🎯 Objectives
+## 🎯 Extracted Symbols
 
-Unlike a programming language parser, the HTML analyzer focuses on the semantic structure of the document to facilitate the indexing of relevant text chunks.
-
-### Extracted Symbols:
-1.  **Page Title**: Extracted from the `<title>` tag.
-2.  **Sections (Headings)**: Any text residing under `h1` - `h6` tags.
-3.  **Code Blocks**: Identifies and groups `<pre>` and `<code>` tags found within sections.
-4.  **HTML Attributes**: Captures `id` and `class` attributes for precise referencing.
-
----
-
-## 📊 Data Flow
-
-```mermaid
-graph TD
-    A[Source Files .html / .htm] --> B[HTML Analyzer]
-    B --> C[GoQuery DOM Parsing]
-    C --> D[Heading Hierarchy Analysis]
-    D --> E[Section Segmentation]
-    E --> F[pkgParser.Result]
-```
+1. **HTML Documents (`analyzer.go`)**:
+   - Extracts `<title>`, meta descriptions, and semantic sections based on heading hierarchy (`<h1>`–`<h6>`) and landmark tags (`<header>`, `<nav>`, `<main>`, `<section>`, `<article>`, `<aside>`, `<footer>`).
+   - Strips inline `<script>`, `<style>`, and `<noscript>` content before building prose chunks so code is not mixed into document text.
+   - Extracts interactive/identifiable DOM elements (`id`, `class`, `<form>`, `<dialog>`, `<template>`), custom web components, and external asset links.
+2. **Go Templates (`gotemplate/analyzer.go`)**:
+   - Parses `html/template` and `text/template` directives left-to-right across lines:
+     - `{{define "name"}} ... {{end}}`
+     - `{{block "name" pipeline}} ... {{end}}`
+     - `{{template "name" pipeline}}` (partials/includes)
+     - `{{range $i, $v := .Items}} ... {{end}}` and `{{with ...}} ... {{end}}`
+     - Custom template comments `{{/* ... */}}` attached as docstrings to `define`/`block` symbols.
 
 ---
 
 ## 🏗️ Package Structure
 
-*   `types.go`: Defines `CodeChunk` for HTML segments.
-*   `analyzer.go`: Implements DOM navigation and segmentation logic.
-*   `analyzer_test.go`: Tests accurate extraction of titles and content blocks.
-
----
-
-## 🔍 Extraction Example
-
-### HTML Source Code:
-```html
-<title>API Guide</title>
-<h1 id="intro">Introduction</h1>
-<p>This is a guide.</p>
-<pre><code>curl -X GET ...</code></pre>
-```
-
-### Result (Symbol Metadata):
-| Field | Value |
-|------|---------|
-| `Name` | `"Introduction"` |
-| `Type` | `"type"` (Section) |
-| `Metadata.heading_level` | `1` |
-| `Metadata.html_id` | `"intro"` |
-| `Docstring` | `"This is a guide."` |
-| `Content` | `Full content + code block` |
-
----
-
-## 💻 Usage
-
-```go
-import (
-    "context"
-    "github.com/doITmagic/rag-code-mcp/pkg/parser"
-    _ "github.com/doITmagic/rag-code-mcp/pkg/parser/html"
-)
-
-func main() {
-    analyzer := parser.GetByName("html")
-    result, err := analyzer.Analyze(context.Background(), "./docs")
-    // ... process segments
-}
-```
-
----
-
-## 📋 Technical Notes
-
-*   **Smart Segmentation**: A section includes all content from a header until the next header of the same or higher level.
-*   **Normalization**: Multiple whitespaces and empty lines are cleaned to optimize embeddings.
+- `html_analyzer.go`: Implements `parser.Analyzer` and routes `.html`/`.htm` and Go template files.
+- `analyzer.go`: GoQuery DOM analyzer for HTML structure, headings, forms, and web components.
+- `gotemplate/analyzer.go`: Dedicated Go template block, partial, and pipeline analyzer.
+- `types.go`: Data structures for HTML sections, elements, and template blocks.

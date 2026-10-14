@@ -1,87 +1,37 @@
-# JavaScript & TypeScript Parser
+# JavaScript, TypeScript, React & Vue Parser (`pkg/parser/javascript`)
 
-The `javascript` package implements a code analyzer for the **JavaScript** and **TypeScript** ecosystem, covering `.js`, `.ts`, `.jsx`, and `.tsx` files. It utilizes Tree-sitter (planned) or regex-based analyzers to extract core structures of modern web applications.
+The `javascript` package implements an AST-based analyzer for **JavaScript** (`.js`, `.mjs`, `.cjs`), **TypeScript** (`.ts`), **React JSX/TSX** (`.jsx`, `.tsx`), and **Vue Single-File Components** (`.vue`), powered by **Tree-sitter** (`gotreesitter`) and a dedicated Vue SFC parser.
 
-## 🎯 Objectives
+## 🎯 Extracted Symbols
 
-The analyzer is optimized to understand the modular structure of JavaScript and the rigorous typing of TypeScript.
-
-### Extracted Symbols:
-1.  **Functions**: Classic declarations (`function`) and `Arrow Functions`.
-2.  **Classes & Methods**: Support for OOP in JS/TS, including constructors and asynchronous methods.
-3.  **React Components**: Identifies functional and class components in JSX/TSX files.
-4.  **Types & Interfaces**: Extracts TypeScript type definitions for semantic context.
-5.  **Modules**: Manages `import` and `export` to determine dependencies.
-
----
-
-## 📊 Data Flow
-
-```mermaid
-graph TD
-    A[Files .js / .ts / .tsx] --> B[JS Parser Registry]
-    B --> C[Tree-sitter / Regex Engine]
-    C --> D[TS Type Extraction]
-    D --> E[React Component Analysis]
-    E --> F[pkgParser.Result]
-```
+1. **Functions & Arrow Functions**:
+   - Named declarations (`function foo()`, `export default function()`), anonymous default exports (named after the file stem), generator functions, and `const`/`let` arrow/function expressions (including `React.memo` and `React.forwardRef` wrappers).
+2. **React Components & Hooks**:
+   - Detects PascalCase functional and class components in `.jsx`/`.tsx`/`.js`/`.ts`, extracts props and React hooks (`useState`, `useEffect`, custom `use*` hooks).
+3. **Classes & Abstract Classes**:
+   - Extracts `class` and `abstract class` declarations, constructors, methods, getters/setters, inheritance (`extends`), `implements` clauses, and JSDoc comments on classes and methods.
+4. **TypeScript Types, Interfaces & Enums**:
+   - Extracts `interface` declarations (properties, method signatures, `extends`), `type` aliases (`type ID = string | number`), and `enum` declarations (including initialized members `enum_assignment`).
+5. **Vue Single-File Components (`vue/`)**:
+   - Parses `.vue` files (`<template>`, `<script>`, `<script setup>`, `<style>`).
+   - Supports both **Options API** (`data`, `props`, `computed`, `methods`, `watch`, lifecycle hooks) and **Composition API** (`<script setup>`, `defineProps`, `defineEmits`, `defineExpose`, custom composables `use*`).
 
 ---
 
 ## 🏗️ Package Structure
 
-*   `types.go`: Data structures for UI components and JS functions.
-*   `analyzer.go`: Implements the `parser.Analyzer` interface.
-*   `README.md`: Documentation and implementation roadmap.
+- `analyzer.go`: Implements `parser.Analyzer` and coordinates JS/TS and Vue analysis.
+- `treesitter.go`: Tree-sitter AST parser for JS, TS, JSX, and TSX (`gotreesitter`).
+- `vue/analyzer.go`: Vue SFC parser for Options API and `<script setup>` Composition API.
+- `types.go`: Symbol and AST metadata structures (`FileAnalysis`, `FunctionInfo`, `ClassInfo`, `InterfaceInfo`, `TypeAliasInfo`, `EnumInfo`).
 
 ---
 
-## 🔍 Extraction Example
+## 📋 Supported Technologies
 
-### TypeScript Source Code (React):
-```tsx
-interface Props { name: string; }
-
-/** Displays the user's profile. */
-export const UserProfile = ({ name }: Props) => {
-    return <div>{name}</div>;
-};
-```
-
-### Result (Symbol Metadata):
-| Field | Value |
-|------|---------|
-| `Name` | `"UserProfile"` |
-| `Type` | `"function"` |
-| `Metadata.is_component` | `true` |
-| `Metadata.props` | `["name"]` |
-| `Docstring` | `"Displays the user's profile."` |
-
----
-
-## 💻 Usage
-
-```go
-import (
-    "context"
-    "github.com/doITmagic/rag-code-mcp/pkg/parser"
-    _ "github.com/doITmagic/rag-code-mcp/pkg/parser/javascript"
-)
-
-func main() {
-    analyzer := parser.GetByName("javascript")
-    result, err := analyzer.Analyze(context.Background(), "./src")
-    // ... process components
-}
-```
-
----
-
-## 📋 Roadmap & Frameworks
-
-| Technology | Status | Notes |
-|------------|--------|------|
-| **Pure JS/TS** | ✅ Active | Functions, Classes, Types. |
-| **React** | 🔄 In Progress | Props & Hooks extraction. |
-| **Vue / Svelte** | 📅 Planned | Support for single-file component formats. |
-| **NestJS** | 📅 Planned | Decorator analysis and Dependency Injection. |
+| Technology | Status | Details |
+|------------|--------|---------|
+| **JavaScript (ES6+)** | ✅ Production | Functions, classes, default/named exports, JSDoc, CommonJS & ES modules. |
+| **TypeScript (`.ts`, `.tsx`)** | ✅ Production | Tree-sitter AST: interfaces, type aliases, enums, generics, abstract classes, decorators. |
+| **React (`.jsx`, `.tsx`)** | ✅ Production | Functional & class components, `memo`/`forwardRef` wrappers, props, hooks. |
+| **Vue (`.vue` SFC)** | ✅ Production | `<script setup>` Composition API, Options API, props, emits, custom composables. |

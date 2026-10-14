@@ -132,6 +132,105 @@ var _ = Describe("SmartSearchTool (rag_search)", func() {
 				Expect(json.Unmarshal([]byte(result), &resp)).To(Succeed())
 				Expect(resp.Status).To(Equal("success"))
 			})
+
+			It("blends exact and semantic results for plain lowercase single-word discovery queries", func() {
+				mockStore.ExactSearchFunc = func(_ context.Context, _ string, filters map[string]interface{}, _ int) ([]storage.SearchResult, error) {
+					if filters["name"] != "router" {
+						return nil, nil
+					}
+					return []storage.SearchResult{{Score: 1, Point: storage.Point{ID: "exact-router", Payload: map[string]interface{}{
+						"name": "router", "content": "var router = NewRouter()", "file_path": tmpFile.Name(), "type": "variable",
+					}}}}, nil
+				}
+				mockStore.SearchCodeOnlyFunc = func(ctx context.Context, col string, q storage.SearchQuery) ([]storage.SearchResult, error) {
+					return []storage.SearchResult{
+						{
+							Score: 0.88,
+							Point: storage.Point{
+								ID: "exact-router",
+								Payload: map[string]interface{}{
+									"name":      "router",
+									"content":   "var router = NewRouter()",
+									"file_path": tmpFile.Name(),
+									"type":      "variable",
+								},
+							},
+						},
+						{
+							Score: 0.85,
+							Point: storage.Point{
+								ID: "sem-register-routes",
+								Payload: map[string]interface{}{
+									"name":      "RegisterRoutes",
+									"content":   "func RegisterRoutes(r *Router) {}",
+									"file_path": tmpFile.Name(),
+									"type":      "function",
+								},
+							},
+						},
+					}, nil
+				}
+				result, err := tool.Execute(ctx, tools.SmartSearchInput{Query: "router", FilePath: tmpFile.Name()})
+				Expect(err).NotTo(HaveOccurred())
+				var resp tools.ToolResponse
+				Expect(json.Unmarshal([]byte(result), &resp)).To(Succeed())
+				Expect(resp.Status).To(Equal("success"))
+				data, ok := resp.Data.([]interface{})
+				Expect(ok).To(BeTrue())
+				Expect(data).To(HaveLen(2))
+				first := data[0].(map[string]interface{})
+				second := data[1].(map[string]interface{})
+				Expect(first["name"]).To(Equal("router"))
+				Expect(second["name"]).To(Equal("RegisterRoutes"))
+			})
+
+			It("retains up to top 3 soft fallback results in [0.55, 0.72) when no results pass default floor", func() {
+				mockStore.SearchCodeOnlyFunc = func(ctx context.Context, col string, q storage.SearchQuery) ([]storage.SearchResult, error) {
+					return []storage.SearchResult{
+						{
+							Score: 0.70,
+							Point: storage.Point{ID: "s1", Payload: map[string]interface{}{
+								"name": "CheckPermission", "content": "func CheckPermission() {}", "file_path": tmpFile.Name(), "type": "function",
+							}},
+						},
+						{
+							Score: 0.65,
+							Point: storage.Point{ID: "s2", Payload: map[string]interface{}{
+								"name": "InspectHeader", "content": "func InspectHeader() {}", "file_path": tmpFile.Name(), "type": "function",
+							}},
+						},
+						{
+							Score: 0.60,
+							Point: storage.Point{ID: "s3", Payload: map[string]interface{}{
+								"name": "ReadCookie", "content": "func ReadCookie() {}", "file_path": tmpFile.Name(), "type": "function",
+							}},
+						},
+						{
+							Score: 0.58,
+							Point: storage.Point{ID: "s4", Payload: map[string]interface{}{
+								"name": "LoadProfile", "content": "type LoadProfile struct{}", "file_path": tmpFile.Name(), "type": "struct",
+							}},
+						},
+						{
+							Score: 0.45,
+							Point: storage.Point{ID: "s5", Payload: map[string]interface{}{
+								"name": "UnrelatedHelper", "content": "func UnrelatedHelper() {}", "file_path": tmpFile.Name(), "type": "function",
+							}},
+						},
+					}, nil
+				}
+				result, err := tool.Execute(ctx, tools.SmartSearchInput{Query: "how token authentication works", FilePath: "main.go"})
+				Expect(err).NotTo(HaveOccurred())
+				var resp tools.ToolResponse
+				Expect(json.Unmarshal([]byte(result), &resp)).To(Succeed())
+				Expect(resp.Status).To(Equal("success"))
+				data, ok := resp.Data.([]interface{})
+				Expect(ok).To(BeTrue())
+				Expect(data).To(HaveLen(3))
+				Expect(data[0].(map[string]interface{})["name"]).To(Equal("CheckPermission"))
+				Expect(data[1].(map[string]interface{})["name"]).To(Equal("InspectHeader"))
+				Expect(data[2].(map[string]interface{})["name"]).To(Equal("ReadCookie"))
+			})
 		})
 	})
 })

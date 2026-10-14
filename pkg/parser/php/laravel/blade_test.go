@@ -1,6 +1,7 @@
 package laravel
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -164,6 +165,108 @@ func TestBladeAnalyzer_Props(t *testing.T) {
 	}
 }
 
+func TestBladeAnalyzer_MultilineProps(t *testing.T) {
+	dir := t.TempDir()
+	fp := writeTempBlade(t, dir, "components/modal.blade.php",
+		`@props([
+    'title',
+    'color' => 'blue',
+    'dismissible' => false,
+])
+<div>{{ $title }}</div>`)
+
+	ba := NewBladeAnalyzer()
+	templates := ba.Analyze([]string{fp})
+
+	if len(templates) != 1 {
+		t.Fatalf("expected 1 template, got %d", len(templates))
+	}
+	want := []string{"title", "color", "dismissible"}
+	got := templates[0].Props
+	if len(got) != len(want) {
+		t.Fatalf("Props = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("Props[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestBladeAnalyzer_MultipleDirectivesOnSameLine(t *testing.T) {
+	dir := t.TempDir()
+	fp := writeTempBlade(t, dir, "pages/inline.blade.php",
+		`@extends('layouts.app') @section('title', 'Home') @include('partials.nav') @yield('hero') <x-alert /> <x-forms.input />`)
+
+	ba := NewBladeAnalyzer()
+	templates := ba.Analyze([]string{fp})
+
+	if len(templates) != 1 {
+		t.Fatalf("expected 1 template, got %d", len(templates))
+	}
+	tpl := templates[0]
+	if tpl.Extends != "layouts.app" {
+		t.Errorf("Extends = %q, want 'layouts.app'", tpl.Extends)
+	}
+	if len(tpl.Sections) != 2 {
+		t.Errorf("expected 2 sections (section + yield), got %d: %+v", len(tpl.Sections), tpl.Sections)
+	}
+	if len(tpl.Includes) != 3 {
+		t.Errorf("expected 3 includes (1 include + 2 x-components), got %d: %+v", len(tpl.Includes), tpl.Includes)
+	}
+}
+
+func TestBladeAnalyzer_IncludeVariantsAndXComponents(t *testing.T) {
+	dir := t.TempDir()
+	fp := writeTempBlade(t, dir, "pages/variants.blade.php",
+		`@includeIf('partials.optional')
+@includeWhen($isAdmin, 'partials.admin')
+@includeUnless($isGuest, 'partials.member')
+@includeFirst(['custom.header', 'partials.header'])
+<x-alert type="error">
+  <x-slot:heading>Error</x-slot:heading>
+  <x-forms.input name="email" />
+</x-alert>
+@livewire('user-profile')`)
+
+	ba := NewBladeAnalyzer()
+	templates := ba.Analyze([]string{fp})
+
+	if len(templates) != 1 {
+		t.Fatalf("expected 1 template, got %d", len(templates))
+	}
+	tpl := templates[0]
+
+	viewNames := map[string]string{}
+	for _, inc := range tpl.Includes {
+		viewNames[inc.ViewName] = inc.Type
+	}
+
+	expectedIncludes := map[string]string{
+		"partials.optional": "include",
+		"partials.admin":    "include",
+		"partials.member":   "include",
+		"custom.header":     "include",
+		"partials.header":   "include",
+		"alert":             "component",
+		"forms.input":       "component",
+		"user-profile":      "livewire",
+	}
+	for name, wantType := range expectedIncludes {
+		gotType, ok := viewNames[name]
+		if !ok {
+			t.Errorf("missing expected include/component %q in %+v", name, tpl.Includes)
+			continue
+		}
+		if gotType != wantType {
+			t.Errorf("include %q type = %q, want %q", name, gotType, wantType)
+		}
+	}
+	if _, hasSlot := viewNames["slot"]; hasSlot {
+		t.Errorf("<x-slot> should not be recorded as a component")
+	}
+}
+
 func TestBladeAnalyzer_EmptyFile(t *testing.T) {
 	dir := t.TempDir()
 	fp := writeTempBlade(t, dir, "empty.blade.php", "")
@@ -281,5 +384,14 @@ func TestEnricherAppliesToBladeOutsideLaravel(t *testing.T) {
 	}
 	if e.IsApplicable(php.NewCodeAnalyzer(), []string{plain}) {
 		t.Fatal("plain php outside Laravel should not trigger the enricher")
+	}
+
+	// Verify end-to-end php.NewAnalyzer().Analyze produces a blade_template symbol
+	res, err := php.NewAnalyzer().Analyze(context.Background(), blade)
+	if err != nil {
+		t.Fatalf("Analyze standalone blade failed: %v", err)
+	}
+	if len(res.Symbols) != 1 || string(res.Symbols[0].Type) != "blade_template" {
+		t.Fatalf("expected 1 blade_template symbol for standalone .blade.php, got %+v", res.Symbols)
 	}
 }

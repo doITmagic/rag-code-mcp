@@ -88,6 +88,8 @@ type LLMConfig struct {
 	MaxTokens        int           `yaml:"max_tokens"`
 	Timeout          time.Duration `yaml:"timeout"`
 	MaxRetries       int           `yaml:"max_retries"`
+	EmbedBatchSize   int           `yaml:"embed_batch_size"` // Number of texts per batch embedding call (default: 8)
+	EmbedWorkers     int           `yaml:"embed_workers"`    // Number of concurrent embedding workers (default: 1)
 
 	// Deprecated (kept for backward compatibility)
 	BaseURL    string `yaml:"base_url"`    // Legacy: use OllamaBaseURL
@@ -156,6 +158,8 @@ type RagCodeConfig struct {
 	Include        []string `yaml:"include"`          // glob include patterns
 	Exclude        []string `yaml:"exclude"`          // glob exclude patterns
 	SearchLimit    int      `yaml:"search_limit"`     // default limit for search results (default: 10)
+	EmbedBatchSize int      `yaml:"embed_batch_size"` // optional: batch size for embedding calls
+	EmbedWorkers   int      `yaml:"embed_workers"`    // optional: concurrent embedding workers
 }
 
 // DocsConfig contains configuration for Markdown documentation indexing
@@ -230,6 +234,12 @@ type WorkspaceConfig struct {
 	// WatchDebounce configures debounce duration for filesystem events.
 	// Example: 5s
 	WatchDebounce time.Duration `yaml:"watch_debounce"`
+
+	// EmbedBatchSize configures the number of symbols embedded per batch request.
+	EmbedBatchSize int `yaml:"embed_batch_size"`
+
+	// EmbedWorkers configures the number of concurrent embedding workers.
+	EmbedWorkers int `yaml:"embed_workers"`
 }
 
 // SkillsConfig contains configuration for multi-source skill repositories

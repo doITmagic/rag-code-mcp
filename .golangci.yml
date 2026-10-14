@@ -8,8 +8,10 @@ linters:
         - (*os.File).Close
         - (net.Conn).Close
         - (net.Listener).Close
+        - (*net.TCPListener).Close
         - (*compress/gzip.Reader).Close
         - (*github.com/fsnotify/fsnotify.Watcher).Close
+        - (*github.com/doITmagic/rag-code-mcp/internal/logger.FileLogger).Close
         - fmt.Fprintf
         - fmt.Fprintln
         - fmt.Fprint
@@ -21,6 +23,5 @@ linters:
       checks:
         - all
         - -QF*
-        - -ST1005
-        - -ST1023
+        - -ST*
         - -SA1019

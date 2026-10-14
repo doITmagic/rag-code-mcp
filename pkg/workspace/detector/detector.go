@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/doITmagic/rag-code-mcp/pkg/workspace/contract"
+	"github.com/doITmagic/rag-code-mcp/pkg/workspace/watch"
 )
 
 // Options configures the detector behavior.
@@ -186,6 +188,7 @@ func (d *Detector) walkUp(start string) (*contract.WorkspaceCandidate, *contract
 
 	var bestCandidate *contract.WorkspaceCandidate
 	var bestTier = 99
+	var firstErr *contract.ResolveWorkspaceError
 
 	for {
 		if d.opts.MaxDepth > 0 && depth >= d.opts.MaxDepth {
@@ -193,21 +196,25 @@ func (d *Detector) walkUp(start string) (*contract.WorkspaceCandidate, *contract
 		}
 		depth++
 
+		// Never climb into or past home, temp or a volume root: IDE dirs such
+		// as ~/.claude or ~/.vscode would otherwise make home the workspace.
+		if watch.IsInvalidRoot(dir) {
+			break
+		}
+
 		if !d.shouldExclude(dir) {
 			candidate, err := d.inspectDir(dir)
 			if err != nil {
-				return nil, err
-			}
-			if candidate != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+			} else if candidate != nil {
 				tier := d.getCandidateTier(candidate)
-				if tier < bestTier {
+				// Prefer the highest (outermost) valid root within the best tier
+				// so nested submodules or sub-packages don't shadow the repo root.
+				if tier <= bestTier {
 					bestTier = tier
 					bestCandidate = candidate
-
-					// Tier 1 is absolute max priority, we can stop early
-					if tier == 1 {
-						break
-					}
 				}
 			}
 		}
@@ -221,6 +228,9 @@ func (d *Detector) walkUp(start string) (*contract.WorkspaceCandidate, *contract
 
 	if bestCandidate != nil {
 		return bestCandidate, nil
+	}
+	if firstErr != nil {
+		return nil, firstErr
 	}
 
 	return nil, &contract.ResolveWorkspaceError{
@@ -298,6 +308,13 @@ func (d *Detector) detectFromMetadata(start string) (*contract.WorkspaceCandidat
 	if resolved, err := filepath.EvalSymlinks(root); err == nil {
 		root = resolved
 	}
+	if watch.IsInvalidRoot(root) {
+		return nil, &contract.ResolveWorkspaceError{
+			Code:    contract.ErrorInvalidPath,
+			Message: fmt.Sprintf("metadata referenced root %s, which is a home, temp or volume root", root),
+			Reason:  contract.ReasonInvalidPath,
+		}
+	}
 	if err := d.ensureAllowed(root); err != nil {
 		return nil, err
 	}
@@ -333,12 +350,19 @@ func (d *Detector) ensureAllowed(path string) *contract.ResolveWorkspaceError {
 	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
 		abs = resolved
 	}
+	cleanAbs := filepath.Clean(abs)
 	for _, allowed := range d.opts.AllowedRoots {
 		al, err := filepath.Abs(allowed)
 		if err != nil {
 			continue
 		}
-		if strings.HasPrefix(abs, filepath.Clean(al)+string(os.PathSeparator)) || abs == filepath.Clean(al) {
+		cleanAllowed := filepath.Clean(al)
+		prefix := cleanAllowed + string(os.PathSeparator)
+		if runtime.GOOS == "windows" {
+			if strings.EqualFold(cleanAbs, cleanAllowed) || (len(cleanAbs) >= len(prefix) && strings.EqualFold(cleanAbs[:len(prefix)], prefix)) {
+				return nil
+			}
+		} else if cleanAbs == cleanAllowed || strings.HasPrefix(cleanAbs, prefix) {
 			return nil
 		}
 	}
@@ -349,13 +373,19 @@ func (d *Detector) ensureAllowed(path string) *contract.ResolveWorkspaceError {
 	}
 }
 
+// shouldExclude reports whether any path component equals an exclude pattern.
+// Matching whole components keeps ".git" from excluding ".github" or "build"
+// from excluding "buildkite", and matches how the indexer skips directories.
 func (d *Detector) shouldExclude(path string) bool {
+	parts := strings.FieldsFunc(filepath.ToSlash(path), func(r rune) bool { return r == '/' })
 	for _, pattern := range d.opts.ExcludePatterns {
 		if pattern == "" {
 			continue
 		}
-		if strings.Contains(path, pattern) {
-			return true
+		for _, part := range parts {
+			if part == pattern || (runtime.GOOS == "windows" && strings.EqualFold(part, pattern)) {
+				return true
+			}
 		}
 	}
 	return false

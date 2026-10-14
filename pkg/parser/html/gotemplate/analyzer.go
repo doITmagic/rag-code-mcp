@@ -13,13 +13,13 @@ import (
 // Regex patterns for Go template directives.
 var (
 	reDefine   = regexp.MustCompile(`\{\{-?\s*define\s+"([^"]+)"\s*-?\}\}`)
-	reBlock    = regexp.MustCompile(`\{\{-?\s*block\s+"([^"]+)"\s*(\.[\w.]*)?\s*-?\}\}`)
-	reTemplate = regexp.MustCompile(`\{\{-?\s*template\s+"([^"]+)"\s*(\.[\w.]*)?\s*-?\}\}`)
-	reRange    = regexp.MustCompile(`\{\{-?\s*range\s+(\.[\w.]+)\s*-?\}\}`)
+	reBlock    = regexp.MustCompile(`\{\{-?\s*block\s+"([^"]+)"(?:\s+(.*?))?\s*-?\}\}`)
+	reTemplate = regexp.MustCompile(`\{\{-?\s*template\s+"([^"]+)"(?:\s+(.*?))?\s*-?\}\}`)
+	reRange    = regexp.MustCompile(`\{\{-?\s*range\s+(.+?)\s*-?\}\}`)
 	reIf       = regexp.MustCompile(`\{\{-?\s*if\s+(.+?)\s*-?\}\}`)
 	reElseIf   = regexp.MustCompile(`\{\{-?\s*else\s+if\s+(.+?)\s*-?\}\}`)
 	reElse     = regexp.MustCompile(`\{\{-?\s*else\s*-?\}\}`)
-	reWith     = regexp.MustCompile(`\{\{-?\s*with\s+(\.[\w.]+)\s*-?\}\}`)
+	reWith     = regexp.MustCompile(`\{\{-?\s*with\s+(.+?)\s*-?\}\}`)
 	reEnd      = regexp.MustCompile(`\{\{-?\s*end\s*-?\}\}`)
 	reComment  = regexp.MustCompile(`\{\{/\*.*?\*/\}\}`)
 	// Matches any Go template action: {{ ... }}
@@ -89,111 +89,124 @@ func (a *GoTemplateAnalyzer) analyzeFile(filePath string) (GoTemplate, error) {
 		lineNum++
 		line := scanner.Text()
 
-		// Comments (can be multiline in theory, but we handle single-line here)
-		if matches := reComment.FindAllString(line, -1); len(matches) > 0 {
-			tpl.Comments = append(tpl.Comments, matches...)
-		}
-
-		// {{ define "name" }}
-		if m := reDefine.FindStringSubmatch(line); m != nil {
-			tpl.Defines = append(tpl.Defines, DefineDirective{
-				Name: m[1],
-				Line: lineNum,
-			})
-			stack = append(stack, openBlock{kind: "define", idx: len(tpl.Defines) - 1})
-		}
-
-		// {{ block "name" pipeline }}
-		if m := reBlock.FindStringSubmatch(line); m != nil {
-			pipeline := strings.TrimSpace(m[2])
-			tpl.Blocks = append(tpl.Blocks, BlockDirective{
-				Name:     m[1],
-				Pipeline: pipeline,
-				Line:     lineNum,
-			})
-			stack = append(stack, openBlock{kind: "block", idx: len(tpl.Blocks) - 1})
-		}
-
-		// {{ template "name" pipeline }}
-		if m := reTemplate.FindStringSubmatch(line); m != nil {
-			pipeline := strings.TrimSpace(m[2])
-			tpl.TemplateIncludes = append(tpl.TemplateIncludes, TemplateInclude{
-				Name:     m[1],
-				Pipeline: pipeline,
-				Line:     lineNum,
-			})
-		}
-
-		// {{ range .Variable }}
-		if m := reRange.FindStringSubmatch(line); m != nil {
-			tpl.Ranges = append(tpl.Ranges, RangeDirective{
-				Variable: m[1],
-				Line:     lineNum,
-			})
-			stack = append(stack, openBlock{kind: "range", idx: len(tpl.Ranges) - 1})
-		}
-
-		// {{ if .Condition }}
-		if m := reIf.FindStringSubmatch(line); m != nil {
-			tpl.Conditionals = append(tpl.Conditionals, ConditionalDirective{
-				Condition: strings.TrimSpace(m[1]),
-				Line:      lineNum,
-			})
-			stack = append(stack, openBlock{kind: "if", idx: len(tpl.Conditionals) - 1})
-		}
-
-		// {{ else if .Cond }} — must check BEFORE bare {{ else }}
-		// NOTE: else-if does NOT push a new stack entry because Go templates
-		// use a single {{ end }} for the entire if/else-if/else chain.
-		if m := reElseIf.FindStringSubmatch(line); m != nil {
-			// Mark HasElse on the current if
-			for i := len(stack) - 1; i >= 0; i-- {
-				if stack[i].kind == "if" {
-					tpl.Conditionals[stack[i].idx].HasElse = true
-					break
-				}
+		// Process all actions on the line in left-to-right order so inline blocks
+		// and multiple {{ end }} directives maintain an accurate openBlock stack.
+		for _, action := range reAction.FindAllString(line, -1) {
+			if reComment.MatchString(action) {
+				tpl.Comments = append(tpl.Comments, action)
+				continue
 			}
-			// Record the else-if branch as a conditional (for metadata)
-			// but do NOT push onto stack — no extra {{ end }} expected.
-			tpl.Conditionals = append(tpl.Conditionals, ConditionalDirective{
-				Condition: strings.TrimSpace(m[1]),
-				Line:      lineNum,
-				HasElse:   true, // part of an else-if chain
-			})
-		} else if reElse.MatchString(line) {
-			// {{ else }} — bare else without condition
-			for i := len(stack) - 1; i >= 0; i-- {
-				if stack[i].kind == "if" {
-					tpl.Conditionals[stack[i].idx].HasElse = true
-					break
-				}
+
+			// {{ define "name" }}
+			if m := reDefine.FindStringSubmatch(action); m != nil {
+				tpl.Defines = append(tpl.Defines, DefineDirective{
+					Name: m[1],
+					Line: lineNum,
+				})
+				stack = append(stack, openBlock{kind: "define", idx: len(tpl.Defines) - 1})
+				continue
 			}
-		}
 
-		// {{ with .Pipeline }}
-		if m := reWith.FindStringSubmatch(line); m != nil {
-			tpl.WithBlocks = append(tpl.WithBlocks, WithDirective{
-				Pipeline: m[1],
-				Line:     lineNum,
-			})
-			stack = append(stack, openBlock{kind: "with", idx: len(tpl.WithBlocks) - 1})
-		}
+			// {{ block "name" pipeline }}
+			if m := reBlock.FindStringSubmatch(action); m != nil {
+				pipeline := strings.TrimSpace(m[2])
+				tpl.Blocks = append(tpl.Blocks, BlockDirective{
+					Name:     m[1],
+					Pipeline: pipeline,
+					Line:     lineNum,
+				})
+				stack = append(stack, openBlock{kind: "block", idx: len(tpl.Blocks) - 1})
+				continue
+			}
 
-		// {{ end }}
-		if reEnd.MatchString(line) && len(stack) > 0 {
-			top := stack[len(stack)-1]
-			stack = stack[:len(stack)-1]
-			switch top.kind {
-			case "define":
-				tpl.Defines[top.idx].EndLine = lineNum
-			case "block":
-				tpl.Blocks[top.idx].EndLine = lineNum
-			case "range":
-				tpl.Ranges[top.idx].EndLine = lineNum
-			case "if":
-				tpl.Conditionals[top.idx].EndLine = lineNum
-			case "with":
-				tpl.WithBlocks[top.idx].EndLine = lineNum
+			// {{ template "name" pipeline }}
+			if m := reTemplate.FindStringSubmatch(action); m != nil {
+				pipeline := strings.TrimSpace(m[2])
+				tpl.TemplateIncludes = append(tpl.TemplateIncludes, TemplateInclude{
+					Name:     m[1],
+					Pipeline: pipeline,
+					Line:     lineNum,
+				})
+				continue
+			}
+
+			// {{ range pipeline }}
+			if m := reRange.FindStringSubmatch(action); m != nil {
+				tpl.Ranges = append(tpl.Ranges, RangeDirective{
+					Variable: strings.TrimSpace(m[1]),
+					Line:     lineNum,
+				})
+				stack = append(stack, openBlock{kind: "range", idx: len(tpl.Ranges) - 1})
+				continue
+			}
+
+			// {{ if .Condition }}
+			if m := reIf.FindStringSubmatch(action); m != nil {
+				tpl.Conditionals = append(tpl.Conditionals, ConditionalDirective{
+					Condition: strings.TrimSpace(m[1]),
+					Line:      lineNum,
+				})
+				stack = append(stack, openBlock{kind: "if", idx: len(tpl.Conditionals) - 1})
+				continue
+			}
+
+			// {{ else if .Cond }} — must check BEFORE bare {{ else }}
+			// NOTE: else-if does NOT push a new stack entry because Go templates
+			// use a single {{ end }} for the entire if/else-if/else chain.
+			if m := reElseIf.FindStringSubmatch(action); m != nil {
+				for i := len(stack) - 1; i >= 0; i-- {
+					if stack[i].kind == "if" {
+						tpl.Conditionals[stack[i].idx].HasElse = true
+						break
+					}
+				}
+				tpl.Conditionals = append(tpl.Conditionals, ConditionalDirective{
+					Condition: strings.TrimSpace(m[1]),
+					Line:      lineNum,
+					HasElse:   true,
+				})
+				continue
+			}
+
+			if reElse.MatchString(action) {
+				for i := len(stack) - 1; i >= 0; i-- {
+					if stack[i].kind == "if" {
+						tpl.Conditionals[stack[i].idx].HasElse = true
+						break
+					}
+				}
+				continue
+			}
+
+			// {{ with pipeline }}
+			if m := reWith.FindStringSubmatch(action); m != nil {
+				tpl.WithBlocks = append(tpl.WithBlocks, WithDirective{
+					Pipeline: strings.TrimSpace(m[1]),
+					Line:     lineNum,
+				})
+				stack = append(stack, openBlock{kind: "with", idx: len(tpl.WithBlocks) - 1})
+				continue
+			}
+
+			// {{ end }}
+			if reEnd.MatchString(action) {
+				if len(stack) > 0 {
+					top := stack[len(stack)-1]
+					stack = stack[:len(stack)-1]
+					switch top.kind {
+					case "define":
+						tpl.Defines[top.idx].EndLine = lineNum
+					case "block":
+						tpl.Blocks[top.idx].EndLine = lineNum
+					case "range":
+						tpl.Ranges[top.idx].EndLine = lineNum
+					case "if":
+						tpl.Conditionals[top.idx].EndLine = lineNum
+					case "with":
+						tpl.WithBlocks[top.idx].EndLine = lineNum
+					}
+				}
+				continue
 			}
 		}
 

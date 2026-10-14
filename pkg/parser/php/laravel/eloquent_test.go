@@ -2,6 +2,7 @@ package laravel
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/doITmagic/rag-code-mcp/pkg/parser/php"
@@ -74,10 +75,9 @@ class User extends Model
 `
 
 	// Create temp file
-	tmpFile := "/tmp/test_user_model.php"
+	tmpFile := filepath.Join(t.TempDir(), "test_user_model.php")
 	err := os.WriteFile(tmpFile, []byte(phpCode), 0644)
 	assert.NoError(t, err)
-	defer os.Remove(tmpFile)
 
 	// Analyze PHP file
 	analyzer := php.NewCodeAnalyzer()
@@ -210,10 +210,9 @@ class UserService
 }
 `
 
-	tmpFile := "/tmp/test_user_service.php"
+	tmpFile := filepath.Join(t.TempDir(), "test_user_service.php")
 	err := os.WriteFile(tmpFile, []byte(phpCode), 0644)
 	assert.NoError(t, err)
-	defer os.Remove(tmpFile)
 
 	analyzer := php.NewCodeAnalyzer()
 	_, err = analyzer.AnalyzeFile(tmpFile)
@@ -241,10 +240,9 @@ class Post extends Model
 }
 `
 
-	tmpFile := "/tmp/test_post_model.php"
+	tmpFile := filepath.Join(t.TempDir(), "test_post_model.php")
 	err := os.WriteFile(tmpFile, []byte(phpCode), 0644)
 	assert.NoError(t, err)
-	defer os.Remove(tmpFile)
 
 	analyzer := php.NewCodeAnalyzer()
 	_, err = analyzer.AnalyzeFile(tmpFile)

@@ -170,7 +170,7 @@ func (ca *CodeAnalyzer) parsePHPSource(content []byte) (ast.Vertex, []*errors.Er
 	var parserErrors []*errors.Error
 
 	rootNode, err := parser.Parse(content, conf.Config{
-		Version: &version.Version{Major: 8, Minor: 0},
+		Version: &version.Version{Major: 8, Minor: 1},
 		ErrorHandlerFunc: func(e *errors.Error) {
 			parserErrors = append(parserErrors, e)
 		},
@@ -209,22 +209,45 @@ func (v *symbolCollector) StmtUse(n *ast.StmtUseList) {
 	for _, use := range n.Uses {
 		if useNode, ok := use.(*ast.StmtUse); ok {
 			name := v.extractName(useNode.Use)
-			var alias string
-			if useNode.Alias != nil {
-				if aliasIdent, ok := useNode.Alias.(*ast.Identifier); ok {
-					alias = string(aliasIdent.Value)
-				}
-			} else {
-				// If no alias, use the last part of the name
-				parts := strings.Split(name, "\\")
-				if len(parts) > 0 {
-					alias = parts[len(parts)-1]
-				}
-			}
-			if alias != "" {
-				v.imports[alias] = name
-			}
+			v.registerImport(name, useNode.Alias)
 		}
+	}
+}
+
+// StmtGroupUse handles group use declarations: use A\B\{X, Y as Z};
+func (v *symbolCollector) StmtGroupUse(n *ast.StmtGroupUseList) {
+	if v.imports == nil {
+		v.imports = make(map[string]string)
+	}
+
+	prefix := strings.TrimSuffix(v.extractName(n.Prefix), "\\")
+	for _, use := range n.Uses {
+		if useNode, ok := use.(*ast.StmtUse); ok {
+			subName := strings.TrimPrefix(v.extractName(useNode.Use), "\\")
+			name := subName
+			if prefix != "" {
+				name = prefix + "\\" + subName
+			}
+			v.registerImport(name, useNode.Alias)
+		}
+	}
+}
+
+func (v *symbolCollector) registerImport(name string, aliasVertex ast.Vertex) {
+	var alias string
+	if aliasVertex != nil {
+		if aliasIdent, ok := aliasVertex.(*ast.Identifier); ok {
+			alias = string(aliasIdent.Value)
+		}
+	} else {
+		// If no alias, use the last part of the name
+		parts := strings.Split(name, "\\")
+		if len(parts) > 0 {
+			alias = parts[len(parts)-1]
+		}
+	}
+	if alias != "" {
+		v.imports[alias] = name
 	}
 }
 
@@ -251,6 +274,8 @@ func (v *symbolCollector) StmtClass(n *ast.StmtClass) {
 		Methods:    []MethodInfo{},
 		Properties: []PropertyInfo{},
 		Constants:  []ConstantInfo{},
+		IsAbstract: v.hasModifier(n.Modifiers, "abstract"),
+		IsFinal:    v.hasModifier(n.Modifiers, "final"),
 		FilePath:   v.filePath,
 		StartLine:  n.Position.StartLine,
 		EndLine:    n.Position.EndLine,
@@ -268,11 +293,15 @@ func (v *symbolCollector) StmtClass(n *ast.StmtClass) {
 		classInfo.Code = extractCodeFromContent(v.fileContent, n.Position.StartLine, endLine)
 	}
 
-	// Extract PHPDoc comment from ClassTkn
-	if n.ClassTkn != nil {
-		phpDoc := extractPHPDocFromToken(n.ClassTkn)
-		classInfo.Description = phpDoc.Description
+	// Extract PHPDoc comment from modifiers, attributes, or ClassTkn
+	phpDoc := v.extractPHPDocFromModifiers(n.Modifiers)
+	if !hasPHPDocContent(phpDoc) {
+		phpDoc = v.extractPHPDocFromAttrGroups(n.AttrGroups)
 	}
+	if !hasPHPDocContent(phpDoc) && n.ClassTkn != nil {
+		phpDoc = extractPHPDocFromToken(n.ClassTkn)
+	}
+	classInfo.Description = phpDoc.Description
 
 	// Extract extends
 	if n.Extends != nil {
@@ -309,6 +338,98 @@ func (v *symbolCollector) StmtClass(n *ast.StmtClass) {
 	v.currentClass = nil
 }
 
+// StmtEnum handles PHP 8.1 enum declarations
+func (v *symbolCollector) StmtEnum(n *ast.StmtEnum) {
+	enumName := v.extractIdentifier(n.Name)
+	if enumName == "" {
+		return
+	}
+
+	pkgName := v.analyzer.currentNamespace
+	if pkgName == "" {
+		pkgName = "global"
+	}
+
+	pkg := v.analyzer.getOrCreatePackage(pkgName)
+
+	classInfo := &ClassInfo{
+		Name:       enumName,
+		Namespace:  pkgName,
+		FullName:   v.buildFullName(enumName),
+		Methods:    []MethodInfo{},
+		Properties: []PropertyInfo{},
+		Constants:  []ConstantInfo{},
+		FilePath:   v.filePath,
+		StartLine:  n.Position.StartLine,
+		EndLine:    n.Position.EndLine,
+		Imports:    v.copyImports(),
+	}
+
+	if v.fileContent != nil && n.Position != nil {
+		endLine := n.Position.EndLine
+		maxLines := 50
+		if endLine-n.Position.StartLine > maxLines {
+			endLine = n.Position.StartLine + maxLines
+		}
+		classInfo.Code = extractCodeFromContent(v.fileContent, n.Position.StartLine, endLine)
+	}
+
+	phpDoc := v.extractPHPDocFromAttrGroups(n.AttrGroups)
+	if !hasPHPDocContent(phpDoc) && n.EnumTkn != nil {
+		phpDoc = extractPHPDocFromToken(n.EnumTkn)
+	}
+	classInfo.Description = phpDoc.Description
+
+	if n.Implements != nil {
+		for _, iface := range n.Implements {
+			classInfo.Implements = append(classInfo.Implements, v.extractName(iface))
+		}
+	}
+
+	v.currentClass = classInfo
+
+	if n.Stmts != nil {
+		for _, stmt := range n.Stmts {
+			traverser.NewTraverser(v).Traverse(stmt)
+		}
+	}
+
+	pkg.Classes = append(pkg.Classes, *classInfo)
+	v.currentClass = nil
+}
+
+// EnumCase handles PHP 8.1 enum case declarations inside an enum
+func (v *symbolCollector) EnumCase(n *ast.EnumCase) {
+	if v.currentClass == nil {
+		return
+	}
+
+	caseName := v.extractIdentifier(n.Name)
+	if caseName == "" {
+		return
+	}
+
+	phpDoc := v.extractPHPDocFromAttrGroups(n.AttrGroups)
+	if !hasPHPDocContent(phpDoc) && n.CaseTkn != nil {
+		phpDoc = extractPHPDocFromToken(n.CaseTkn)
+	}
+
+	constInfo := ConstantInfo{
+		Name:        caseName,
+		Value:       v.extractConstValue(n.Expr),
+		Description: phpDoc.Description,
+		Visibility:  "public",
+		ClassName:   v.currentClass.Name,
+		FilePath:    v.filePath,
+	}
+	if n.Position != nil {
+		constInfo.StartLine = n.Position.StartLine
+		constInfo.EndLine = n.Position.EndLine
+	}
+
+	v.currentClass.Constants = append(v.currentClass.Constants, constInfo)
+}
+
 // StmtClassMethod handles method declarations
 func (v *symbolCollector) StmtClassMethod(n *ast.StmtClassMethod) {
 	if v.currentClass == nil {
@@ -339,8 +460,14 @@ func (v *symbolCollector) StmtClassMethod(n *ast.StmtClassMethod) {
 		methodInfo.Code = extractCodeFromContent(v.fileContent, n.Position.StartLine, n.Position.EndLine)
 	}
 
-	// Extract PHPDoc from modifiers
+	// Extract PHPDoc from modifiers, attributes, or FunctionTkn
 	phpDoc := v.extractPHPDocFromModifiers(n.Modifiers)
+	if !hasPHPDocContent(phpDoc) {
+		phpDoc = v.extractPHPDocFromAttrGroups(n.AttrGroups)
+	}
+	if !hasPHPDocContent(phpDoc) && n.FunctionTkn != nil {
+		phpDoc = extractPHPDocFromToken(n.FunctionTkn)
+	}
 	methodInfo.Description = phpDoc.Description
 	methodInfo.Signature = v.buildMethodSignature(methodName, n.Params, n.ReturnType, v.extractVisibility(n.Modifiers))
 
@@ -402,18 +529,19 @@ func (v *symbolCollector) StmtFunction(n *ast.StmtFunction) {
 		Code:       extractCodeFromContent(v.fileContent, n.Position.StartLine, n.Position.EndLine),
 	}
 
-	// Extract PHPDoc from FunctionTkn
-	if n.FunctionTkn != nil {
-		phpDoc := extractPHPDocFromToken(n.FunctionTkn)
-		funcInfo.Description = phpDoc.Description
-		funcInfo.Signature = v.buildMethodSignature(funcName, n.Params, n.ReturnType, "")
+	// Extract PHPDoc from attributes or FunctionTkn
+	phpDoc := v.extractPHPDocFromAttrGroups(n.AttrGroups)
+	if !hasPHPDocContent(phpDoc) && n.FunctionTkn != nil {
+		phpDoc = extractPHPDocFromToken(n.FunctionTkn)
+	}
+	funcInfo.Description = phpDoc.Description
+	funcInfo.Signature = v.buildMethodSignature(funcName, n.Params, n.ReturnType, "")
 
-		if len(phpDoc.Returns) > 0 {
-			funcInfo.Returns = convertPHPDocToReturnInfo(phpDoc.Returns)
-		} else if funcInfo.ReturnType != "" {
-			funcInfo.Returns = []ReturnInfo{
-				{Type: funcInfo.ReturnType, Description: ""},
-			}
+	if len(phpDoc.Returns) > 0 {
+		funcInfo.Returns = convertPHPDocToReturnInfo(phpDoc.Returns)
+	} else if funcInfo.ReturnType != "" {
+		funcInfo.Returns = []ReturnInfo{
+			{Type: funcInfo.ReturnType, Description: ""},
 		}
 	}
 
@@ -444,8 +572,11 @@ func (v *symbolCollector) StmtPropertyList(n *ast.StmtPropertyList) {
 		typeName = v.extractTypeNameString(n.Type)
 	}
 
-	// Extract PHPDoc from modifiers
+	// Extract PHPDoc from modifiers or attributes
 	phpDoc := v.extractPHPDocFromModifiers(n.Modifiers)
+	if !hasPHPDocContent(phpDoc) {
+		phpDoc = v.extractPHPDocFromAttrGroups(n.AttrGroups)
+	}
 
 	// Use @var type if no type hint
 	if typeName == "" && phpDoc.VarType != "" {
@@ -493,6 +624,12 @@ func (v *symbolCollector) StmtClassConstList(n *ast.StmtClassConstList) {
 				Type:       "", // PHP constants don't have explicit types
 				Value:      v.extractConstValue(stmtConst.Expr),
 				Visibility: visibility,
+				ClassName:  v.currentClass.Name,
+				FilePath:   v.filePath,
+			}
+			if stmtConst.Position != nil {
+				constInfo.StartLine = stmtConst.Position.StartLine
+				constInfo.EndLine = stmtConst.Position.EndLine
 			}
 
 			v.currentClass.Constants = append(v.currentClass.Constants, constInfo)
@@ -517,16 +654,29 @@ func (v *symbolCollector) StmtInterface(n *ast.StmtInterface) {
 	interfaceInfo := InterfaceInfo{
 		Name:      interfaceName,
 		Namespace: pkgName,
+		FullName:  v.buildFullName(interfaceName),
 		Methods:   []MethodInfo{},
 		Extends:   []string{},
 		FilePath:  v.filePath,
+		StartLine: n.Position.StartLine,
+		EndLine:   n.Position.EndLine,
 	}
 
-	// Extract PHPDoc from InterfaceTkn
-	if n.InterfaceTkn != nil {
-		phpDoc := extractPHPDocFromToken(n.InterfaceTkn)
-		interfaceInfo.Description = phpDoc.Description
+	if v.fileContent != nil && n.Position != nil {
+		endLine := n.Position.EndLine
+		maxLines := 50
+		if endLine-n.Position.StartLine > maxLines {
+			endLine = n.Position.StartLine + maxLines
+		}
+		interfaceInfo.Code = extractCodeFromContent(v.fileContent, n.Position.StartLine, endLine)
 	}
+
+	// Extract PHPDoc from attributes or InterfaceTkn
+	phpDoc := v.extractPHPDocFromAttrGroups(n.AttrGroups)
+	if !hasPHPDocContent(phpDoc) && n.InterfaceTkn != nil {
+		phpDoc = extractPHPDocFromToken(n.InterfaceTkn)
+	}
+	interfaceInfo.Description = phpDoc.Description
 
 	// Extract extends (interfaces can extend multiple interfaces)
 	if n.Extends != nil {
@@ -541,6 +691,10 @@ func (v *symbolCollector) StmtInterface(n *ast.StmtInterface) {
 		Namespace: pkgName,
 		FullName:  v.buildFullName(interfaceName),
 		Methods:   []MethodInfo{},
+		Constants: []ConstantInfo{},
+		FilePath:  v.filePath,
+		StartLine: n.Position.StartLine,
+		EndLine:   n.Position.EndLine,
 	}
 
 	// Traverse child nodes to collect methods
@@ -550,8 +704,9 @@ func (v *symbolCollector) StmtInterface(n *ast.StmtInterface) {
 		}
 	}
 
-	// Transfer collected methods to interface
+	// Transfer collected methods and constants to interface
 	interfaceInfo.Methods = v.currentClass.Methods
+	interfaceInfo.Constants = v.currentClass.Constants
 
 	// Add interface to package
 	pkg.Interfaces = append(pkg.Interfaces, interfaceInfo)
@@ -577,16 +732,29 @@ func (v *symbolCollector) StmtTrait(n *ast.StmtTrait) {
 	traitInfo := TraitInfo{
 		Name:       traitName,
 		Namespace:  pkgName,
+		FullName:   v.buildFullName(traitName),
 		Methods:    []MethodInfo{},
 		Properties: []PropertyInfo{},
 		FilePath:   v.filePath,
+		StartLine:  n.Position.StartLine,
+		EndLine:    n.Position.EndLine,
 	}
 
-	// Extract PHPDoc from TraitTkn
-	if n.TraitTkn != nil {
-		phpDoc := extractPHPDocFromToken(n.TraitTkn)
-		traitInfo.Description = phpDoc.Description
+	if v.fileContent != nil && n.Position != nil {
+		endLine := n.Position.EndLine
+		maxLines := 50
+		if endLine-n.Position.StartLine > maxLines {
+			endLine = n.Position.StartLine + maxLines
+		}
+		traitInfo.Code = extractCodeFromContent(v.fileContent, n.Position.StartLine, endLine)
 	}
+
+	// Extract PHPDoc from attributes or TraitTkn
+	phpDoc := v.extractPHPDocFromAttrGroups(n.AttrGroups)
+	if !hasPHPDocContent(phpDoc) && n.TraitTkn != nil {
+		phpDoc = extractPHPDocFromToken(n.TraitTkn)
+	}
+	traitInfo.Description = phpDoc.Description
 
 	// Store current trait (reuse currentClass mechanism)
 	v.currentClass = &ClassInfo{
@@ -595,6 +763,9 @@ func (v *symbolCollector) StmtTrait(n *ast.StmtTrait) {
 		FullName:   v.buildFullName(traitName),
 		Methods:    []MethodInfo{},
 		Properties: []PropertyInfo{},
+		FilePath:   v.filePath,
+		StartLine:  n.Position.StartLine,
+		EndLine:    n.Position.EndLine,
 	}
 
 	// Traverse child nodes to collect methods and properties
@@ -629,14 +800,40 @@ func (v *symbolCollector) copyImports() map[string]string {
 
 // Helper methods for symbol extraction
 
-// extractPHPDocFromModifiers extracts PHPDoc from method/property modifiers
+func hasPHPDocContent(phpDoc *PHPDocInfo) bool {
+	if phpDoc == nil {
+		return false
+	}
+	return phpDoc.Description != "" || len(phpDoc.Params) > 0 || len(phpDoc.Returns) > 0 || phpDoc.VarType != ""
+}
+
+// extractPHPDocFromAttrGroups extracts PHPDoc from attribute groups (#[...])
+func (v *symbolCollector) extractPHPDocFromAttrGroups(attrGroups []ast.Vertex) *PHPDocInfo {
+	for _, ag := range attrGroups {
+		if attrGroup, ok := ag.(*ast.AttributeGroup); ok && attrGroup.OpenAttributeTkn != nil {
+			phpDoc := extractPHPDocFromToken(attrGroup.OpenAttributeTkn)
+			if hasPHPDocContent(phpDoc) {
+				return phpDoc
+			}
+		}
+	}
+	return &PHPDocInfo{
+		Params:   []ParamDoc{},
+		Returns:  []ReturnDoc{},
+		Throws:   []string{},
+		See:      []string{},
+		Examples: []string{},
+	}
+}
+
+// extractPHPDocFromModifiers extracts PHPDoc from method/property/class modifiers
 func (v *symbolCollector) extractPHPDocFromModifiers(modifiers []ast.Vertex) *PHPDocInfo {
 	// Check all modifiers - first modifier usually has PHPDoc in FreeFloating
 	for _, mod := range modifiers {
 		if identifier, ok := mod.(*ast.Identifier); ok {
 			if identifier.IdentifierTkn != nil {
 				phpDoc := extractPHPDocFromToken(identifier.IdentifierTkn)
-				if phpDoc.Description != "" || len(phpDoc.Params) > 0 || len(phpDoc.Returns) > 0 {
+				if hasPHPDocContent(phpDoc) {
 					return phpDoc
 				}
 			}
@@ -829,6 +1026,22 @@ func (v *symbolCollector) extractTypeName(node ast.Vertex) string {
 		return string(n.Value)
 	case *ast.Nullable:
 		return "?" + v.extractTypeName(n.Expr)
+	case *ast.Union:
+		parts := make([]string, 0, len(n.Types))
+		for _, t := range n.Types {
+			if name := v.extractTypeName(t); name != "" {
+				parts = append(parts, name)
+			}
+		}
+		return strings.Join(parts, "|")
+	case *ast.Intersection:
+		parts := make([]string, 0, len(n.Types))
+		for _, t := range n.Types {
+			if name := v.extractTypeName(t); name != "" {
+				parts = append(parts, name)
+			}
+		}
+		return strings.Join(parts, "&")
 	}
 	return ""
 }
@@ -987,6 +1200,7 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 					FilePath:  class.FilePath,
 					StartLine: constant.StartLine,
 					EndLine:   constant.EndLine,
+					Docstring: constant.Description,
 					Metadata:  map[string]any{"class": class.Name, "visibility": constant.Visibility, "qualified_name": class.FullName + "::" + constant.Name},
 				}
 				chunks = append(chunks, constChunk)
@@ -996,21 +1210,35 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 		// Convert interfaces
 		for _, iface := range pkg.Interfaces {
 			chunk := CodeChunk{
-				Name:     iface.Name,
-				Type:     "interface",
-				Language: "php",
-				Package:  iface.Namespace,
+				Name:      iface.Name,
+				Type:      "interface",
+				Language:  "php",
+				Package:   iface.Namespace,
+				FilePath:  iface.FilePath,
+				StartLine: iface.StartLine,
+				EndLine:   iface.EndLine,
+				Docstring: iface.Description,
+				Code:      iface.Code,
 			}
 			chunks = append(chunks, chunk)
 
 			// Add chunks for interface methods
 			for _, method := range iface.Methods {
+				sig := method.Signature
+				if sig == "" {
+					sig = fmt.Sprintf("function %s()", method.Name)
+				}
 				methodChunk := CodeChunk{
 					Name:      method.Name,
 					Type:      "method",
 					Language:  "php",
 					Package:   iface.Namespace,
-					Signature: fmt.Sprintf("function %s()", method.Name),
+					Signature: sig,
+					FilePath:  iface.FilePath,
+					StartLine: method.StartLine,
+					EndLine:   method.EndLine,
+					Docstring: method.Description,
+					Code:      method.Code,
 				}
 				chunks = append(chunks, methodChunk)
 			}
@@ -1019,21 +1247,35 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 		// Convert traits
 		for _, trait := range pkg.Traits {
 			chunk := CodeChunk{
-				Name:     trait.Name,
-				Type:     "trait",
-				Language: "php",
-				Package:  trait.Namespace,
+				Name:      trait.Name,
+				Type:      "trait",
+				Language:  "php",
+				Package:   trait.Namespace,
+				FilePath:  trait.FilePath,
+				StartLine: trait.StartLine,
+				EndLine:   trait.EndLine,
+				Docstring: trait.Description,
+				Code:      trait.Code,
 			}
 			chunks = append(chunks, chunk)
 
 			// Add chunks for trait methods
 			for _, method := range trait.Methods {
+				sig := method.Signature
+				if sig == "" {
+					sig = fmt.Sprintf("%s function %s()", method.Visibility, method.Name)
+				}
 				methodChunk := CodeChunk{
 					Name:      method.Name,
 					Type:      "method",
 					Language:  "php",
 					Package:   trait.Namespace,
-					Signature: fmt.Sprintf("%s function %s()", method.Visibility, method.Name),
+					Signature: sig,
+					FilePath:  trait.FilePath,
+					StartLine: method.StartLine,
+					EndLine:   method.EndLine,
+					Docstring: method.Description,
+					Code:      method.Code,
 				}
 				chunks = append(chunks, methodChunk)
 			}
@@ -1045,7 +1287,11 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 					Type:      "property",
 					Language:  "php",
 					Package:   trait.Namespace,
-					Signature: fmt.Sprintf("%s %s $%s", prop.Visibility, prop.Type, prop.Name),
+					Signature: fmt.Sprintf("%s %s %s", prop.Visibility, prop.Type, prop.Name),
+					FilePath:  trait.FilePath,
+					StartLine: prop.StartLine,
+					EndLine:   prop.EndLine,
+					Docstring: prop.Description,
 				}
 				chunks = append(chunks, propChunk)
 			}
@@ -1226,6 +1472,22 @@ func (v *symbolCollector) walkExpr(expr ast.Vertex, calls *[]MethodCall) {
 	}
 }
 
+func resolveClassName(name string, imports map[string]string) string {
+	trimmed := strings.TrimPrefix(name, "\\")
+	if imports != nil {
+		if resolved, ok := imports[trimmed]; ok {
+			return strings.TrimPrefix(resolved, "\\")
+		}
+		if idx := strings.Index(trimmed, "\\"); idx > 0 {
+			prefix := trimmed[:idx]
+			if resolved, ok := imports[prefix]; ok {
+				return strings.TrimPrefix(resolved, "\\") + trimmed[idx:]
+			}
+		}
+	}
+	return trimmed
+}
+
 // IsLaravelProject detects if the analyzed code is from a Laravel project
 func (ca *CodeAnalyzer) IsLaravelProject() bool {
 	// 1. Quick check: namespace/class-based detection from parsed packages
@@ -1236,10 +1498,9 @@ func (ca *CodeAnalyzer) IsLaravelProject() bool {
 			return true
 		}
 		for _, class := range pkg.Classes {
-			if class.Extends == "Model" ||
-				class.Extends == "Controller" ||
-				class.Extends == "Authenticatable" ||
-				strings.Contains(class.Extends, "Illuminate\\") {
+			resolvedExtends := resolveClassName(class.Extends, class.Imports)
+			if strings.HasPrefix(resolvedExtends, "Illuminate\\") ||
+				strings.Contains(resolvedExtends, "Illuminate\\") {
 				return true
 			}
 		}
@@ -1323,13 +1584,23 @@ func (ca *CodeAnalyzer) addLaravelMetadata(chunk *CodeChunk, class *ClassInfo, p
 		chunk.Metadata = make(map[string]any)
 	}
 
-	// Add basic Laravel detection metadata
-	if class.Extends == "Model" || class.Extends == "Authenticatable" {
-		chunk.Metadata["framework"] = "laravel"
-		chunk.Metadata["laravel_type"] = "model"
-	} else if strings.Contains(class.Extends, "Controller") {
-		chunk.Metadata["framework"] = "laravel"
-		chunk.Metadata["laravel_type"] = "controller"
+	resolvedExtends := resolveClassName(class.Extends, class.Imports)
+	isIlluminate := strings.HasPrefix(resolvedExtends, "Illuminate\\") || strings.Contains(resolvedExtends, "Illuminate\\")
+	isLaravelFS := class.FilePath != "" && ca.isLaravelByFilesystem(class.FilePath)
+	isLaravelNS := strings.HasPrefix(pkg.Namespace, "App\\Models") || strings.HasPrefix(pkg.Namespace, "App\\Http\\Controllers")
+
+	// Only treat Extends as immediate proof of Laravel if resolvedExtends contains Illuminate\,
+	// or if we have Laravel namespace/filesystem confirmation and Extends wasn't imported from a non-Illuminate namespace.
+	if isIlluminate || ((isLaravelFS || isLaravelNS) && resolvedExtends == strings.TrimPrefix(class.Extends, "\\")) {
+		if class.Extends == "Model" || class.Extends == "Authenticatable" ||
+			strings.HasSuffix(resolvedExtends, "\\Model") || strings.HasSuffix(resolvedExtends, "\\Authenticatable") ||
+			resolvedExtends == "Illuminate\\Foundation\\Auth\\User" {
+			chunk.Metadata["framework"] = "laravel"
+			chunk.Metadata["laravel_type"] = "model"
+		} else if strings.Contains(resolvedExtends, "Controller") {
+			chunk.Metadata["framework"] = "laravel"
+			chunk.Metadata["laravel_type"] = "controller"
+		}
 	}
 }
 

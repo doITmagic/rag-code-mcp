@@ -1,6 +1,7 @@
 package wordpress
 
 import (
+	"os"
 	"testing"
 
 	"github.com/VKCOM/php-parser/pkg/ast"
@@ -334,3 +335,61 @@ do_action('woocommerce_checkout_process');
 		t.Errorf("expected accepted_args 2, got %d", hooks[1].AcceptedArgs)
 	}
 }
+
+func TestHookAnalyzer_DynamicHookNamesAndConcatCallbacks(t *testing.T) {
+	code := `<?php
+namespace MyPlugin;
+
+add_action("save_post_{$type}", __NAMESPACE__ . '\on_save', 10, 2);
+`
+	root := parsePHP(t, code)
+	analyzer := NewHookAnalyzer()
+	hooks := analyzer.AnalyzeHooksFromAST(root, "test.php")
+
+	if len(hooks) != 1 {
+		t.Fatalf("expected 1 hook, got %d", len(hooks))
+	}
+	if hooks[0].Name != "save_post_{$type}" {
+		t.Errorf("expected hook name 'save_post_{$type}', got %q", hooks[0].Name)
+	}
+	if hooks[0].Callback != `__NAMESPACE__\on_save` {
+		t.Errorf("expected callback '__NAMESPACE__\\on_save', got %q", hooks[0].Callback)
+	}
+}
+
+func TestHookAnalyzer_NoPhantomHooksFromEmptyCallArgs(t *testing.T) {
+	tmpDir := t.TempDir()
+	pluginFile := tmpDir + "/plugin.php"
+	code := `<?php
+/**
+ * Plugin Name: Phantom Hook Test
+ */
+function register_my_hooks() {
+    add_action('init', 'my_callback');
+}
+`
+	if err := os.WriteFile(pluginFile, []byte(code), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	wpAnalyzer := NewAnalyzer()
+	chunks, err := wpAnalyzer.AnalyzePaths([]string{tmpDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hookCount := 0
+	for _, ch := range chunks {
+		if ch.Type == "wp_hook" {
+			hookCount++
+			if ch.Name == "action()" || ch.StartLine == 0 {
+				t.Errorf("unexpected phantom hook chunk: %+v", ch)
+			}
+		}
+	}
+	if hookCount != 1 {
+		t.Errorf("expected exactly 1 wp_hook chunk, got %d", hookCount)
+	}
+}
+
+

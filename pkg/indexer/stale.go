@@ -3,6 +3,7 @@ package indexer
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -17,8 +18,9 @@ func FindDeletedRoot(filePath, workspaceRoot string) string {
 
 	for {
 		dirClean := filepath.Clean(dir)
-		// Stop if we've reached the workspace root or filesystem root
-		if dirClean == wsClean || dirClean == "/" || dirClean == "." {
+		sameRoot := dirClean == wsClean || (runtime.GOOS == "windows" && strings.EqualFold(dirClean, wsClean))
+		// Stop if we've reached the workspace root or filesystem/volume root
+		if sameRoot || dirClean == "/" || dirClean == "." || filepath.Dir(dirClean) == dirClean {
 			break
 		}
 
@@ -38,7 +40,11 @@ func FindDeletedRoot(filePath, workspaceRoot string) string {
 // IsDirectoryDeletion returns true if the deleted root is a directory path
 // (i.e., a parent directory was deleted, not just the individual file).
 func IsDirectoryDeletion(deletedRoot, originalFile string) bool {
-	return filepath.Clean(deletedRoot) != filepath.Clean(originalFile)
+	c1, c2 := filepath.Clean(deletedRoot), filepath.Clean(originalFile)
+	if runtime.GOOS == "windows" {
+		return !strings.EqualFold(c1, c2)
+	}
+	return c1 != c2
 }
 
 // CollectStaleFiles iterates State.Files and returns paths

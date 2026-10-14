@@ -201,6 +201,9 @@ func (r *Registry) PromoteCandidate(ctx context.Context, root, client string, ex
 	if !executionSucceeded || strings.TrimSpace(root) == "" {
 		return nil
 	}
+	if watch.IsInvalidRoot(root) {
+		return fmt.Errorf("refusing to promote %q as a workspace root", root)
+	}
 
 	var absorbed []absorbedChild
 
@@ -243,19 +246,21 @@ func (r *Registry) PromoteCandidate(ctx context.Context, root, client string, ex
 		}
 	}
 
+	candCount := candidate.Count
 	delete(r.candidates, normalized)
 	r.metrics.CandidatesPromoted++
-	r.audit.Record(ctx, "registry.candidate_promoted", map[string]any{
-		"root":                cleanRoot,
-		"client":              client,
-		"execution_succeeded": executionSucceeded,
-		"candidate_count":     candidate.Count,
-	})
 
 	absorbed = r.absorbChildren(cleanRoot)
 	audit := r.audit // capture under lock
 	err := r.save()
 	r.mu.Unlock()
+
+	audit.Record(ctx, "registry.candidate_promoted", map[string]any{
+		"root":                cleanRoot,
+		"client":              client,
+		"execution_succeeded": executionSucceeded,
+		"candidate_count":     candCount,
+	})
 	// Only destroy absorbed children once the new state is on disk: if save
 	// failed, the persisted registry still references them.
 	if err == nil {
@@ -374,8 +379,8 @@ func (r *Registry) absorbChildren(parentRoot string) []absorbedChild {
 func (r *Registry) cleanupAbsorbed(absorbed []absorbedChild, audit AuditSink) {
 	for _, child := range absorbed {
 		ragcodeDir := filepath.Join(child.Root, ".ragcode")
-		if err := os.RemoveAll(ragcodeDir); err != nil {
-			logger.Instance.Warn("[REGISTRY] Failed to remove .ragcode dir for absorbed child %s: %v", child.Root, err)
+		if err := removeRagcodeOwnedFiles(ragcodeDir); err != nil {
+			logger.Instance.Warn("[REGISTRY] Failed to remove .ragcode state for absorbed child %s: %v", child.Root, err)
 			audit.Record(context.Background(), "registry.child_cleanup_failed", map[string]any{
 				"child_root": child.Root,
 				"error":      err.Error(),
@@ -387,6 +392,40 @@ func (r *Registry) cleanupAbsorbed(absorbed []absorbedChild, audit AuditSink) {
 			"parent_root": child.ParentRoot,
 		})
 	}
+}
+
+// removeRagcodeOwnedFiles deletes RagCode state/status/metrics files inside
+// ragcodeDir and removes the directory itself if it becomes empty, preserving
+// any user-authored files such as .ragcode/root.
+func removeRagcodeOwnedFiles(ragcodeDir string) error {
+	entries, err := os.ReadDir(ragcodeDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	remaining := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if !entry.IsDir() && (name == "index_status.json" ||
+			name == "branch_state.json" ||
+			name == "search_metrics.jsonl" ||
+			name == "state.json" ||
+			(strings.HasPrefix(name, "state-") && strings.HasSuffix(name, ".json"))) {
+			if rmErr := os.Remove(filepath.Join(ragcodeDir, name)); rmErr != nil && !os.IsNotExist(rmErr) {
+				return rmErr
+			}
+			continue
+		}
+		remaining++
+	}
+	if remaining == 0 {
+		if rmErr := os.Remove(ragcodeDir); rmErr != nil && !os.IsNotExist(rmErr) {
+			return rmErr
+		}
+	}
+	return nil
 }
 
 // LookupByName returns entries matching the provided name.
@@ -499,14 +538,33 @@ func (r *Registry) save() error {
 		store.Candidates = append(store.Candidates, cand)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(r.path), 0o755); err != nil {
+	dir := filepath.Dir(r.path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	payload, err := json.MarshalIndent(store, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(r.path, payload, 0o644)
+	tmp, err := os.CreateTemp(dir, ".registry-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(payload); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, r.path); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 // RecordFeedback captures IDE suggestions for future promotion.
@@ -516,7 +574,6 @@ func (r *Registry) RecordFeedback(ctx context.Context, feedback *contract.PathFe
 	}
 
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	root := strings.ToLower(filepath.Clean(feedback.SuggestedPath))
 	cand, ok := r.candidates[root]
@@ -528,18 +585,23 @@ func (r *Registry) RecordFeedback(ctx context.Context, feedback *contract.PathFe
 	}
 
 	cand.Count++
+	count := cand.Count
 	cand.LastSeenAt = r.clock()
 	if feedback.Reason != "" {
 		cand.Reason = feedback.Reason
 	}
 	r.metrics.FeedbackIngested++
-	r.audit.Record(ctx, "registry.feedback_ingested", map[string]any{
+	audit := r.audit
+	err := r.save()
+	r.mu.Unlock()
+
+	audit.Record(ctx, "registry.feedback_ingested", map[string]any{
 		"suggested_path": feedback.SuggestedPath,
 		"reason":         feedback.Reason,
-		"count":          cand.Count,
+		"count":          count,
 	})
 
-	return r.save()
+	return err
 }
 
 func hashRoot(root string) string {

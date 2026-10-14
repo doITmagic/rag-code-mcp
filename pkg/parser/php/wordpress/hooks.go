@@ -169,6 +169,11 @@ func (a *HookAnalyzer) extractHooksFromCalls(calls []php.MethodCall, filePath st
 		if len(call.Args) > 0 {
 			hook.Name = call.Args[0]
 		}
+		if hook.Name == "" {
+			continue
+		}
+		hook.StartLine = startLine
+		hook.EndLine = startLine
 
 		// For add_action/add_filter: second arg is callback
 		if hookType == HookAction || hookType == HookFilter ||
@@ -251,6 +256,9 @@ func (h *ASTHelper) ExtractHookFromFunctionCall(call *ast.ExprFunctionCall, file
 	if len(args) > 0 {
 		hook.Name = args[0]
 	}
+	if hook.Name == "" {
+		return nil
+	}
 
 	// For add/remove hooks: callback, priority, accepted_args
 	if hookType == HookAction || hookType == HookFilter ||
@@ -328,6 +336,25 @@ func (h *ASTHelper) extractExprValue(expr ast.Vertex) string {
 			val = val[1 : len(val)-1] // Remove quotes
 		}
 		return val
+	case *ast.ScalarEncapsed:
+		var sb strings.Builder
+		for _, part := range n.Parts {
+			switch p := part.(type) {
+			case *ast.ScalarEncapsedStringPart:
+				sb.WriteString(string(p.Value))
+			case *ast.ScalarEncapsedStringBrackets:
+				sb.WriteString("{" + h.extractExprValue(p.Var) + "}")
+			case *ast.ScalarEncapsedStringVar:
+				sb.WriteString("${" + h.extractExprValue(p.Name) + "}")
+			default:
+				sb.WriteString(h.extractExprValue(part))
+			}
+		}
+		return sb.String()
+	case *ast.ExprBinaryConcat:
+		return h.extractExprValue(n.Left) + h.extractExprValue(n.Right)
+	case *ast.ScalarMagicConstant:
+		return string(n.Value)
 	case *ast.ScalarLnumber:
 		return string(n.Value)
 	case *ast.ScalarDnumber:
@@ -356,6 +383,8 @@ func (h *ASTHelper) extractExprValue(expr ast.Vertex) string {
 			}
 			return "$" + name
 		}
+	case *ast.ExprPropertyFetch:
+		return h.extractExprValue(n.Var) + "->" + h.extractExprValue(n.Prop)
 	case *ast.ExprArray:
 		// For array callbacks like [$this, 'method']
 		if len(n.Items) == 2 {

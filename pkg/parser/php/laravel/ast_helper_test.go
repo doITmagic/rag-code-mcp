@@ -2,6 +2,7 @@ package laravel
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/doITmagic/rag-code-mcp/pkg/parser/php"
@@ -18,10 +19,9 @@ class Test {
 }
 `
 
-	tmpFile := "/tmp/test_ast_extract.php"
+	tmpFile := filepath.Join(t.TempDir(), "test_ast_extract.php")
 	err := os.WriteFile(tmpFile, []byte(phpCode), 0644)
 	assert.NoError(t, err)
-	defer os.Remove(tmpFile)
 
 	// Analyze PHP file
 	analyzer := php.NewCodeAnalyzer()
@@ -62,10 +62,9 @@ class Test {
 }
 `
 
-	tmpFile := "/tmp/test_ast_map.php"
+	tmpFile := filepath.Join(t.TempDir(), "test_ast_map.php")
 	err := os.WriteFile(tmpFile, []byte(phpCode), 0644)
 	assert.NoError(t, err)
-	defer os.Remove(tmpFile)
 
 	analyzer := php.NewCodeAnalyzer()
 	_, err = analyzer.AnalyzeFile(tmpFile)
@@ -93,10 +92,9 @@ class Test {
 }
 `
 
-	tmpFile := "/tmp/test_ast_string.php"
+	tmpFile := filepath.Join(t.TempDir(), "test_ast_string.php")
 	err := os.WriteFile(tmpFile, []byte(phpCode), 0644)
 	assert.NoError(t, err)
-	defer os.Remove(tmpFile)
 
 	analyzer := php.NewCodeAnalyzer()
 	_, err = analyzer.AnalyzeFile(tmpFile)

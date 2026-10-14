@@ -177,6 +177,9 @@ func (ca *CodeAnalyzer) analyzeFiles(dir string, files []string) (*PackageInfo, 
 
 		// Process methods for this type
 		for _, method := range typ.Methods {
+			if method.Level > 0 {
+				continue
+			}
 			methodInfo := ca.analyzeFunctionDecl(fset, method, astFuncMap, typ.Name) // pass receiver name
 			methodInfo.IsMethod = true
 			methodInfo.Receiver = typ.Name
@@ -195,6 +198,16 @@ func (ca *CodeAnalyzer) analyzeFiles(dir string, files []string) (*PackageInfo, 
 			fnInfo := ca.analyzeFunctionDecl(fset, fn, astFuncMap)
 			info.Functions = append(info.Functions, fnInfo)
 		}
+
+		// Process typed constants and variables associated with this type (e.g., iota enums).
+		for _, c := range typ.Consts {
+			constInfo := ca.analyzeConstantDecl(fset, c)
+			info.Constants = append(info.Constants, constInfo...)
+		}
+		for _, v := range typ.Vars {
+			varInfo := ca.analyzeVariableDecl(fset, v)
+			info.Variables = append(info.Variables, varInfo...)
+		}
 	} // Consts and vars
 	for _, c := range docPkg.Consts {
 		constInfo := ca.analyzeConstantDecl(fset, c)
@@ -208,33 +221,16 @@ func (ca *CodeAnalyzer) analyzeFiles(dir string, files []string) (*PackageInfo, 
 	return info, nil
 }
 
-// buildFunctionASTMap creates a map from function/method name to AST FuncDecl (with Body intact)
-func (ca *CodeAnalyzer) buildFunctionASTMap(files []*ast.File) map[string]*ast.BlockStmt {
-	funcMap := make(map[string]*ast.BlockStmt)
+// buildFunctionASTMap creates a map from function/method token.Pos to AST FuncDecl Body (with Body intact)
+func (ca *CodeAnalyzer) buildFunctionASTMap(files []*ast.File) map[token.Pos]*ast.BlockStmt {
+	funcMap := make(map[token.Pos]*ast.BlockStmt)
 
 	for _, file := range files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			if fn, ok := n.(*ast.FuncDecl); ok {
-				// Map by function name (for functions) or receiver.method (for methods)
-				key := fn.Name.Name
-				if fn.Recv != nil && len(fn.Recv.List) > 0 {
-					// Extract receiver type name
-					recvType := ""
-					switch t := fn.Recv.List[0].Type.(type) {
-					case *ast.StarExpr:
-						if ident, ok := t.X.(*ast.Ident); ok {
-							recvType = ident.Name
-						}
-					case *ast.Ident:
-						recvType = t.Name
-					}
-					if recvType != "" {
-						key = recvType + "." + fn.Name.Name
-					}
-				}
-				// Store ONLY the Body pointer (doc.New won't touch this)
+				// Store ONLY the Body pointer keyed by declaration Pos (doc.New won't touch this)
 				if fn.Body != nil {
-					funcMap[key] = fn.Body
+					funcMap[fn.Pos()] = fn.Body
 				}
 			}
 			return true
@@ -244,7 +240,7 @@ func (ca *CodeAnalyzer) buildFunctionASTMap(files []*ast.File) map[string]*ast.B
 	return funcMap
 }
 
-func (ca *CodeAnalyzer) analyzeFunctionDecl(fset *token.FileSet, fn *doc.Func, astBodyMap map[string]*ast.BlockStmt, receiverName ...string) FunctionInfo {
+func (ca *CodeAnalyzer) analyzeFunctionDecl(fset *token.FileSet, fn *doc.Func, astBodyMap map[token.Pos]*ast.BlockStmt, receiverName ...string) FunctionInfo {
 	info := FunctionInfo{
 		Name:        fn.Name,
 		Description: cleanDoc(fn.Doc),
@@ -252,12 +248,11 @@ func (ca *CodeAnalyzer) analyzeFunctionDecl(fset *token.FileSet, fn *doc.Func, a
 		Examples:    ca.extractExamples(fn.Doc),
 	}
 
-	// Try to find the AST Body
-	key := fn.Name
-	if len(receiverName) > 0 && receiverName[0] != "" {
-		key = receiverName[0] + "." + fn.Name
+	// Try to find the AST Body by declaration token.Pos
+	var astBody *ast.BlockStmt
+	if fn.Decl != nil {
+		astBody = astBodyMap[fn.Decl.Pos()]
 	}
-	astBody := astBodyMap[key]
 
 	if fn.Decl != nil && astBody != nil {
 		// Use doc.Func for position (Pos()) and astBody for end position
@@ -311,7 +306,7 @@ func (ca *CodeAnalyzer) analyzeFunctionDecl(fset *token.FileSet, fn *doc.Func, a
 	return info
 }
 
-func (ca *CodeAnalyzer) analyzeTypeDecl(fset *token.FileSet, typ *doc.Type, astBodyMap map[string]*ast.BlockStmt) TypeInfo {
+func (ca *CodeAnalyzer) analyzeTypeDecl(fset *token.FileSet, typ *doc.Type, astBodyMap map[token.Pos]*ast.BlockStmt) TypeInfo {
 	info := TypeInfo{
 		Name:        typ.Name,
 		Description: cleanDoc(typ.Doc),
@@ -456,28 +451,26 @@ func (ca *CodeAnalyzer) formatInterfaceMethodSignature(name string, funcType *as
 
 func (ca *CodeAnalyzer) analyzeConstantDecl(fset *token.FileSet, c *doc.Value) []ConstantInfo {
 	var constants []ConstantInfo
-
-	// Extract position information from declaration
-	var filePath string
-	var startLine, endLine int
-	if c.Decl != nil {
-		pos := fset.Position(c.Decl.Pos())
-		end := fset.Position(c.Decl.End())
-		filePath = pos.Filename
-		startLine = pos.Line
-		endLine = end.Line
+	if c.Decl == nil {
+		return constants
 	}
 
 	for _, spec := range c.Decl.Specs {
 		if vs, ok := spec.(*ast.ValueSpec); ok {
+			pos := fset.Position(vs.Pos())
+			end := fset.Position(vs.End())
+			desc := cleanDoc(c.Doc)
+			if vs.Doc != nil && vs.Doc.Text() != "" {
+				desc = strings.TrimSpace(vs.Doc.Text())
+			}
 			for i, name := range vs.Names {
 				constInfo := ConstantInfo{
 					Name:        name.Name,
-					Description: cleanDoc(c.Doc),
+					Description: desc,
 					IsExported:  ast.IsExported(name.Name),
-					FilePath:    filePath,
-					StartLine:   startLine,
-					EndLine:     endLine,
+					FilePath:    pos.Filename,
+					StartLine:   pos.Line,
+					EndLine:     end.Line,
 				}
 				if vs.Type != nil {
 					constInfo.Type = ca.typeToString(vs.Type)
@@ -494,28 +487,26 @@ func (ca *CodeAnalyzer) analyzeConstantDecl(fset *token.FileSet, c *doc.Value) [
 
 func (ca *CodeAnalyzer) analyzeVariableDecl(fset *token.FileSet, v *doc.Value) []VariableInfo {
 	var variables []VariableInfo
-
-	// Extract position information from declaration
-	var filePath string
-	var startLine, endLine int
-	if v.Decl != nil {
-		pos := fset.Position(v.Decl.Pos())
-		end := fset.Position(v.Decl.End())
-		filePath = pos.Filename
-		startLine = pos.Line
-		endLine = end.Line
+	if v.Decl == nil {
+		return variables
 	}
 
 	for _, spec := range v.Decl.Specs {
 		if vs, ok := spec.(*ast.ValueSpec); ok {
+			pos := fset.Position(vs.Pos())
+			end := fset.Position(vs.End())
+			desc := cleanDoc(v.Doc)
+			if vs.Doc != nil && vs.Doc.Text() != "" {
+				desc = strings.TrimSpace(vs.Doc.Text())
+			}
 			for _, name := range vs.Names {
 				varInfo := VariableInfo{
 					Name:        name.Name,
-					Description: cleanDoc(v.Doc),
+					Description: desc,
 					IsExported:  ast.IsExported(name.Name),
-					FilePath:    filePath,
-					StartLine:   startLine,
-					EndLine:     endLine,
+					FilePath:    pos.Filename,
+					StartLine:   pos.Line,
+					EndLine:     end.Line,
 				}
 				if vs.Type != nil {
 					varInfo.Type = ca.typeToString(vs.Type)
@@ -637,22 +628,10 @@ func (ca *CodeAnalyzer) fieldListToString(fields *ast.FieldList) string {
 }
 
 func (ca *CodeAnalyzer) typeToString(expr ast.Expr) string {
-	switch t := expr.(type) {
-	case *ast.Ident:
-		return t.Name
-	case *ast.StarExpr:
-		return "*" + ca.typeToString(t.X)
-	case *ast.ArrayType:
-		return "[]" + ca.typeToString(t.Elt)
-	case *ast.MapType:
-		return fmt.Sprintf("map[%s]%s", ca.typeToString(t.Key), ca.typeToString(t.Value))
-	case *ast.SelectorExpr:
-		return fmt.Sprintf("%s.%s", ca.typeToString(t.X), t.Sel.Name)
-	case *ast.InterfaceType:
-		return "interface{}"
-	default:
-		return "unknown"
+	if expr == nil {
+		return ""
 	}
+	return types.ExprString(expr)
 }
 
 func (ca *CodeAnalyzer) exprToString(expr ast.Expr) string {

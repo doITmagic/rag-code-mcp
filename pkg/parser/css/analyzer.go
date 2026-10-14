@@ -46,10 +46,14 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*parser.Result, er
 
 	var selectorBuilder strings.Builder
 	var contentBuilder strings.Builder
+	var globalDecls []string
+	globalStartLine := 0
 	braceDepth := 0
-	startLine := 1
+	startLine := 0
 	currentLine := 1
 	inComment := false
+	inLineComment := false
+	var inQuote byte
 
 	baseName := filepath.Base(path)
 
@@ -58,34 +62,94 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*parser.Result, er
 
 		if c == '\n' {
 			currentLine++
+			if inLineComment {
+				inLineComment = false
+				continue
+			}
 		}
 
-		// Skip over slash-star comments
-		if !inComment && c == '/' && i+1 < len(text) && text[i+1] == '*' {
-			inComment = true
-			i++ // skip '*'
+		if inLineComment {
 			continue
 		}
-		if inComment && c == '*' && i+1 < len(text) && text[i+1] == '/' {
-			inComment = false
-			i++ // skip '/'
-			continue
+
+		// Handle block comments when not inside a string literal
+		if inQuote == 0 {
+			if !inComment && c == '/' && i+1 < len(text) && text[i+1] == '*' {
+				inComment = true
+				i++ // skip '*'
+				continue
+			}
+			if inComment && c == '*' && i+1 < len(text) && text[i+1] == '/' {
+				inComment = false
+				i++ // skip '/'
+				continue
+			}
 		}
 		if inComment {
 			continue
 		}
 
-		if c == '{' {
+		// Handle SCSS/LESS // line comments when not inside a string or url(http://...)
+		if inQuote == 0 && c == '/' && i+1 < len(text) && text[i+1] == '/' {
+			if i == 0 || text[i-1] != ':' {
+				inLineComment = true
+				i++ // skip second '/'
+				continue
+			}
+		}
+
+		// Track string literals so braces/semicolons/comments inside quotes are not misinterpreted
+		if inQuote != 0 {
+			if c == '\\' && i+1 < len(text) {
+				if braceDepth == 0 {
+					selectorBuilder.WriteByte(c)
+					selectorBuilder.WriteByte(text[i+1])
+				} else {
+					contentBuilder.WriteByte(c)
+					contentBuilder.WriteByte(text[i+1])
+				}
+				if text[i+1] == '\n' {
+					currentLine++
+				}
+				i++
+				continue
+			}
+			if c == inQuote {
+				inQuote = 0
+			}
 			if braceDepth == 0 {
-				contentBuilder.WriteByte(c)
+				selectorBuilder.WriteByte(c)
 			} else {
 				contentBuilder.WriteByte(c)
 			}
+			continue
+		} else if c == '"' || c == '\'' {
+			inQuote = c
+			if braceDepth == 0 {
+				if selectorBuilder.Len() == 0 {
+					startLine = currentLine
+				}
+				selectorBuilder.WriteByte(c)
+			} else {
+				contentBuilder.WriteByte(c)
+			}
+			continue
+		}
+
+		if c == '{' {
+			contentBuilder.WriteByte(c)
 			braceDepth++
 			continue
 		}
 
 		if c == '}' {
+			if braceDepth <= 0 {
+				braceDepth = 0
+				selectorBuilder.Reset()
+				contentBuilder.Reset()
+				startLine = 0
+				continue
+			}
 			braceDepth--
 			contentBuilder.WriteByte(c)
 
@@ -101,6 +165,9 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*parser.Result, er
 				}
 
 				if selector != "" {
+					if startLine == 0 {
+						startLine = currentLine
+					}
 					symbols = append(symbols, parser.Symbol{
 						Name:      baseName,
 						Type:      "style_rule",
@@ -119,12 +186,34 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*parser.Result, er
 
 				selectorBuilder.Reset()
 				contentBuilder.Reset()
-				startLine = currentLine
+				startLine = 0
 			}
 			continue
 		}
 
 		if braceDepth == 0 {
+			if c == ';' {
+				decl := strings.TrimSpace(selectorBuilder.String())
+				if decl != "" {
+					if globalStartLine == 0 {
+						if startLine > 0 {
+							globalStartLine = startLine
+						} else {
+							globalStartLine = currentLine
+						}
+					}
+					globalDecls = append(globalDecls, decl+";")
+				}
+				selectorBuilder.Reset()
+				startLine = 0
+				continue
+			}
+			if selectorBuilder.Len() == 0 {
+				if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+					continue
+				}
+				startLine = currentLine
+			}
 			selectorBuilder.WriteByte(c)
 		} else {
 			contentBuilder.WriteByte(c)
@@ -133,21 +222,38 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*parser.Result, er
 
 	// Any leftover content (like variables at the root without braces)
 	leftover := strings.TrimSpace(selectorBuilder.String())
-	if leftover != "" && len(symbols) == 0 {
-		if len(leftover) > 8192 {
-			leftover = leftover[:8192] + "\n...[TRUNCATED]"
+	if len(symbols) == 0 {
+		var parts []string
+		if len(globalDecls) > 0 {
+			parts = append(parts, strings.Join(globalDecls, "\n"))
 		}
-		symbols = append(symbols, parser.Symbol{
-			Name:      baseName,
-			Type:      "style_rule",
-			FilePath:  path,
-			Language:  "css",
-			Content:   leftover,
-			Signature: "global",
-			StartLine: startLine,
-			EndLine:   currentLine,
-			IsPublic:  true,
-		})
+		if leftover != "" {
+			parts = append(parts, leftover)
+		}
+		combined := strings.TrimSpace(strings.Join(parts, "\n"))
+		if combined != "" {
+			if len(combined) > 8192 {
+				combined = combined[:8192] + "\n...[TRUNCATED]"
+			}
+			firstLine := startLine
+			if globalStartLine > 0 {
+				firstLine = globalStartLine
+			}
+			if firstLine == 0 {
+				firstLine = 1
+			}
+			symbols = append(symbols, parser.Symbol{
+				Name:      baseName,
+				Type:      "style_rule",
+				FilePath:  path,
+				Language:  "css",
+				Content:   combined,
+				Signature: "global",
+				StartLine: firstLine,
+				EndLine:   currentLine,
+				IsPublic:  true,
+			})
+		}
 	}
 
 	return &parser.Result{

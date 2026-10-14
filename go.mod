@@ -9,7 +9,7 @@ require (
 	github.com/codeclysm/extract/v3 v3.1.1
 	github.com/fsnotify/fsnotify v1.7.0
 	github.com/modelcontextprotocol/go-sdk v1.4.0
-	github.com/odvcencio/gotreesitter v0.6.0
+	github.com/odvcencio/gotreesitter v0.56.0
 	github.com/ollama/ollama v0.13.5
 	github.com/onsi/ginkgo/v2 v2.23.4
 	github.com/onsi/gomega v1.38.0

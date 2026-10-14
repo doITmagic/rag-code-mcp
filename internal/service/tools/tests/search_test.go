@@ -56,9 +56,9 @@ var _ = Describe("SmartSearchTool (rag_search)", func() {
 			var tmpFile *os.File
 
 			BeforeEach(func() {
-				// Create a real temp file so stale detection doesn't filter it out
+				// Create a real temp file in a dedicated temp subdir so it does not resolve to os.TempDir() itself
 				var err error
-				tmpFile, err = os.CreateTemp("", "ragcode_test_search_*.go")
+				tmpFile, err = os.CreateTemp(GinkgoT().TempDir(), "ragcode_test_search_*.go")
 				Expect(err).NotTo(HaveOccurred())
 				_, _ = tmpFile.WriteString("package main\nfunc MyFunc() {}\n")
 				tmpFile.Close()

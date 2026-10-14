@@ -1036,7 +1036,7 @@ func finalizeIndexStatus(root string, indexErr error) {
 
 // IndexFiles indexes specific files in a workspace.
 func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) error {
-	wctx, err := e.DetectContext(ctx, root)
+	wctx, err := e.DetectContextAsRoot(ctx, root, false)
 	if err != nil {
 		return err
 	}
@@ -1117,10 +1117,17 @@ func (e *Engine) refreshIndexCounts(root string) {
 }
 
 // IndexWorkspace indexes all files in a workspace.
+//
+// path is an already-confirmed root: it is resolved as-is, never re-detected
+// by markers, which could land on a parent (a monorepo root, or home) and
+// register and index that instead.
 func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool) error {
-	wctx, err := e.DetectContext(ctx, path)
+	wctx, err := e.DetectContextAsRoot(ctx, path, false)
 	if err != nil {
 		return err
+	}
+	if watch.IsInvalidRoot(wctx.Root) {
+		return fmt.Errorf("refusing to index invalid root %s", wctx.Root)
 	}
 
 	// Persist workspace in registry so it's available for future fallback

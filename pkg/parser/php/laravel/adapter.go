@@ -122,23 +122,24 @@ func (a *Adapter) findRouteFiles(paths []string) []string {
 	targets := []string{"web.php", "api.php", "console.php", "channels.php"}
 
 	for _, root := range paths {
-		// Check if root itself is a route file
-		base := filepath.Base(root)
-		for _, target := range targets {
-			if base == target {
-				routeFiles = append(routeFiles, root)
-				break
-			}
+		info, err := os.Stat(root)
+		if err != nil {
+			continue
 		}
 
-		// If directory, look for routes folder
-		// This is a heuristic. A better way would be to walk the directory structure
-		// specifically looking for the 'routes' directory.
-		// Check if routes dir exists
-		// But 'root' might be deep inside.
-		// Actually, AnalyzePaths usually receives the workspace root.
+		// Single file check: do not also walk it with filepath.WalkDir
+		if !info.IsDir() {
+			base := filepath.Base(root)
+			for _, target := range targets {
+				if base == target {
+					routeFiles = append(routeFiles, root)
+					break
+				}
+			}
+			continue
+		}
 
-		// Let's walk the paths to find 'routes/*.php'
+		// Let's walk the directory to find 'routes/*.php'
 		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return nil

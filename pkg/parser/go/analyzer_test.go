@@ -363,3 +363,186 @@ type Data struct {
 		assert.NotEmpty(t, res.Symbols)
 	})
 }
+
+func TestCodeAnalyzer_BugFixes(t *testing.T) {
+	ca := NewCodeAnalyzer()
+
+	t.Run("Typed consts and vars (iota enums) and per-ValueSpec spans", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		code := `package enumtest
+
+type Role int
+
+const (
+	// RoleGuest is a guest role.
+	RoleGuest Role = iota
+	// RoleAdmin is an admin role.
+	RoleAdmin
+)
+
+var (
+	// DefaultRole is the default role.
+	DefaultRole Role = RoleGuest
+	// FallbackRole is the fallback role.
+	FallbackRole Role = RoleAdmin
+)
+`
+		require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "enum.go"), []byte(code), 0644))
+		res, err := ca.Analyze(context.Background(), tmpDir)
+		require.NoError(t, err)
+
+		byName := make(map[string]pkgParser.Symbol)
+		for _, s := range res.Symbols {
+			byName[s.Name] = s
+		}
+
+		require.Contains(t, byName, "RoleGuest", "typed iota const RoleGuest must be extracted from typ.Consts")
+		require.Contains(t, byName, "RoleAdmin", "typed iota const RoleAdmin must be extracted from typ.Consts")
+		require.Contains(t, byName, "DefaultRole", "typed var DefaultRole must be extracted from typ.Vars")
+		require.Contains(t, byName, "FallbackRole", "typed var FallbackRole must be extracted from typ.Vars")
+
+		guest := byName["RoleGuest"]
+		admin := byName["RoleAdmin"]
+		assert.Equal(t, 7, guest.StartLine)
+		assert.Equal(t, 7, guest.EndLine)
+		assert.Equal(t, "RoleGuest is a guest role.", guest.Docstring)
+		assert.Equal(t, 9, admin.StartLine)
+		assert.Equal(t, 9, admin.EndLine)
+		assert.Equal(t, "RoleAdmin is an admin role.", admin.Docstring)
+
+		defRole := byName["DefaultRole"]
+		fbRole := byName["FallbackRole"]
+		assert.Equal(t, 14, defRole.StartLine)
+		assert.Equal(t, 14, defRole.EndLine)
+		assert.Equal(t, "DefaultRole is the default role.", defRole.Docstring)
+		assert.Equal(t, 16, fbRole.StartLine)
+		assert.Equal(t, 16, fbRole.EndLine)
+		assert.Equal(t, "FallbackRole is the fallback role.", fbRole.Docstring)
+	})
+
+	t.Run("Generic receiver AST body lookup and complex type expressions", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		code := `package genpkg
+
+type Stack[T any] struct {
+	items []T
+}
+
+type Pair[K comparable, V any] struct {
+	key K
+	val V
+}
+
+func Helper() {}
+
+func (s *Stack[T]) Push(v T) {
+	Helper()
+	s.items = append(s.items, v)
+}
+
+func Process(ch <-chan int, fn func(int) error, pair Pair[string, int], tags ...string) chan<- bool {
+	return nil
+}
+`
+		require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "generic.go"), []byte(code), 0644))
+		pkgInfo, err := ca.AnalyzePackage(tmpDir)
+		require.NoError(t, err)
+
+		var pushFn, processFn *FunctionInfo
+		for i := range pkgInfo.Functions {
+			switch pkgInfo.Functions[i].Name {
+			case "Push":
+				pushFn = &pkgInfo.Functions[i]
+			case "Process":
+				processFn = &pkgInfo.Functions[i]
+			}
+		}
+
+		require.NotNil(t, pushFn, "generic method Push must be found")
+		assert.Contains(t, pushFn.Code, "s.items = append(s.items, v)", "generic method body must be extracted")
+		assert.Contains(t, pushFn.Calls, "Helper", "generic method calls must be extracted from AST body")
+		assert.Equal(t, "func (s *Stack[T]) Push(v T)", pushFn.Signature)
+
+		require.NotNil(t, processFn, "Process function must be found")
+		assert.NotContains(t, processFn.Signature, "unknown", "typeToString must not produce 'unknown'")
+		assert.Equal(t, "func Process(ch <-chan int, fn func(int) error, pair Pair[string, int], tags ...string) chan<- bool", processFn.Signature)
+	})
+
+	t.Run("Duplicate function names across files do not collide in AST body map", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		fileA := `package duppkg
+
+func Open() string {
+	firstCall()
+	return "first"
+}
+`
+		fileB := `package duppkg
+
+func Open() string {
+	secondCall()
+	return "second"
+}
+`
+		require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "open_a.go"), []byte(fileA), 0644))
+		require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "open_b.go"), []byte(fileB), 0644))
+
+		fset := ca.buildFunctionASTMap(nil)
+		assert.Empty(t, fset)
+
+		pkgInfo, err := ca.AnalyzePackage(tmpDir)
+		require.NoError(t, err)
+		require.NotEmpty(t, pkgInfo.Functions)
+		for _, fn := range pkgInfo.Functions {
+			if fn.Name == "Open" {
+				if strings.HasSuffix(fn.FilePath, "open_a.go") {
+					assert.Contains(t, fn.Calls, "firstCall")
+					assert.NotContains(t, fn.Calls, "secondCall")
+				} else if strings.HasSuffix(fn.FilePath, "open_b.go") {
+					assert.Contains(t, fn.Calls, "secondCall")
+					assert.NotContains(t, fn.Calls, "firstCall")
+				}
+			}
+		}
+	})
+
+	t.Run("Promoted methods from embedded structs are not duplicated", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		code := `package embedpkg
+
+type Base struct{}
+
+func (b *Base) BaseMethod() string {
+	return "base"
+}
+
+type Derived struct {
+	Base
+}
+
+func (d *Derived) DerivedMethod() string {
+	return "derived"
+}
+`
+		require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "embed.go"), []byte(code), 0644))
+		pkgInfo, err := ca.AnalyzePackage(tmpDir)
+		require.NoError(t, err)
+
+		baseMethodCount := 0
+		for _, fn := range pkgInfo.Functions {
+			if fn.Name == "BaseMethod" {
+				baseMethodCount++
+				assert.Equal(t, "Base", fn.Receiver)
+			}
+		}
+		assert.Equal(t, 1, baseMethodCount, "promoted method BaseMethod must not be duplicated on Derived")
+
+		for _, tp := range pkgInfo.Types {
+			if tp.Name == "Derived" {
+				require.Len(t, tp.Methods, 1)
+				assert.Equal(t, "DerivedMethod", tp.Methods[0].Name)
+			}
+		}
+	})
+}
+

@@ -89,20 +89,36 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 		if err != nil {
 			return nil
 		}
+		relPath, _ := filepath.Rel(root, path)
+		relSlash := filepath.ToSlash(relPath)
 		if d.IsDir() {
+			if path == root {
+				return nil
+			}
 			name := d.Name()
 			// Basic exclusion
 			if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" || name == "tmp" {
 				return filepath.SkipDir
 			}
 			// User exclusion
-			for _, p := range opts.ExcludePatterns {
-				if name == p {
-					return filepath.SkipDir
-				}
+			if matchesExcludePatterns(relSlash, name, opts.ExcludePatterns) {
+				return filepath.SkipDir
 			}
 			return nil
 		}
+		if matchesExcludePatterns(relSlash, d.Name(), opts.ExcludePatterns) {
+			excludedFiles = append(excludedFiles, path)
+			return nil
+		}
+
+		a := parser.GetByFile(path)
+		if a == nil {
+			return nil // Unrecognized file type — skip before reading file content
+		}
+		if opts.Language != "" && a.Name() != opts.Language {
+			return nil // Does not match requested language layer
+		}
+
 		if shouldSkipFile(path) {
 			excludedFiles = append(excludedFiles, path)
 			return nil
@@ -135,20 +151,6 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 			staleCleaned = true
 		}
 	}
-
-	// 3. Filter files by language and supported parser
-	var filteredFiles []string
-	for _, p := range changedFiles {
-		a := parser.GetByFile(p)
-		if a == nil {
-			continue // Unrecognized file type
-		}
-		if opts.Language != "" && a.Name() != opts.Language {
-			continue // Does not match requested language layer
-		}
-		filteredFiles = append(filteredFiles, p)
-	}
-	changedFiles = filteredFiles
 
 	if len(changedFiles) == 0 {
 		if staleCleaned {
@@ -310,9 +312,21 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 }
 
 // attemptOllamaRestart tries to restart Ollama when it becomes unresponsive.
-// Attempts: 1) systemctl restart ollama, 2) fallback to `ollama serve` in background.
-// After restart, waits up to 15s for Ollama to become responsive again.
+// Process-killing recovery is only executed when RAGCODE_ALLOW_OLLAMA_RESTART=1 is set;
+// otherwise it only polls for Ollama HTTP heartbeat recovery without killing user processes.
 func attemptOllamaRestart() {
+	if os.Getenv("RAGCODE_ALLOW_OLLAMA_RESTART") != "1" {
+		logger.Instance.Warn("⏳ Ollama unresponsive; waiting up to 15s for HTTP heartbeat recovery (set RAGCODE_ALLOW_OLLAMA_RESTART=1 to allow forced service restart)...")
+		for i := 0; i < 5; i++ {
+			time.Sleep(3 * time.Second)
+			if err := healthcheck.PingOllama(""); err == nil {
+				logger.Instance.Info("🎉 Ollama HTTP API is online again. Resuming indexing.")
+				return
+			}
+		}
+		return
+	}
+
 	logger.Instance.Info("⚙️ Executing forced Ollama auto-recovery sequence...")
 
 	// Strategy 1: systemctl (works if Ollama is managed as a systemd service)
@@ -587,10 +601,18 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 
 				embedTexts := make([]string, len(batch))
 				for i, sym := range batch {
-					embedTexts[i] = fmt.Sprintf("%s\n%s\n%s\n%s", sym.Package, sym.Name, sym.Signature, sym.Content)
+					text := fmt.Sprintf("%s\n%s\n%s\n%s", sym.Package, sym.Name, sym.Signature, sym.Content)
 					if sym.Docstring != "" {
-						embedTexts[i] = sym.Docstring + "\n" + embedTexts[i]
+						text = sym.Docstring + "\n" + text
 					}
+					const maxEmbedRunes = 30000
+					if len(text) > maxEmbedRunes {
+						if runes := []rune(text); len(runes) > maxEmbedRunes {
+							logger.Instance.Warn("Truncating oversized symbol %s (%d runes -> %d runes) for embedding", sym.Name, len(runes), maxEmbedRunes)
+							text = string(runes[:maxEmbedRunes])
+						}
+					}
+					embedTexts[i] = text
 				}
 
 				embedCtx, embedCancel := context.WithTimeout(ctx, 30*time.Second)
@@ -645,11 +667,19 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 	close(results)
 
 	var allPoints []storage.Point
+	var firstErr error
 	for res := range results {
 		if res.err != nil {
-			return res.err
+			if firstErr == nil {
+				firstErr = res.err
+			}
+			continue
 		}
 		allPoints = append(allPoints, res.point)
+	}
+
+	if len(allPoints) == 0 && firstErr != nil {
+		return firstErr
 	}
 
 	upsertBatchSize := 50
@@ -666,6 +696,10 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 		if err != nil {
 			return fmt.Errorf("upsert failed: %w", err)
 		}
+	}
+
+	if firstErr != nil {
+		return firstErr
 	}
 
 	logger.Instance.Debug("Indexed %d symbols into %s", len(allPoints), collection)
@@ -756,6 +790,29 @@ type FileCountResult struct {
 	Breakdowns map[string]map[string]int // langName → (extension → count)
 }
 
+// matchesExcludePatterns checks if a relative path (slash-normalized) or base name
+// matches any user exclude pattern (supports directory names, trailing slashes, and globs).
+func matchesExcludePatterns(relSlash, baseName string, patterns []string) bool {
+	for _, raw := range patterns {
+		p := strings.TrimSpace(filepath.ToSlash(raw))
+		p = strings.TrimPrefix(p, "./")
+		p = strings.TrimSuffix(p, "/")
+		if p == "" {
+			continue
+		}
+		if baseName == p || relSlash == p || strings.HasPrefix(relSlash, p+"/") {
+			return true
+		}
+		if matched, _ := filepath.Match(p, baseName); matched {
+			return true
+		}
+		if matched, _ := filepath.Match(p, relSlash); matched {
+			return true
+		}
+	}
+	return false
+}
+
 // CountAllFiles counts files per language in root using a single WalkDir pass,
 // applying the same directory exclusion rules as IndexWorkspace.
 // It returns a FileCountResult with per-language totals and per-extension
@@ -769,23 +826,29 @@ func (s *Service) CountAllFiles(root string, excludePatterns []string) FileCount
 		if err != nil {
 			return nil
 		}
+		relPath, _ := filepath.Rel(root, path)
+		relSlash := filepath.ToSlash(relPath)
 		if d.IsDir() {
+			if path == root {
+				return nil
+			}
 			name := d.Name()
 			if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" || name == "tmp" {
 				return filepath.SkipDir
 			}
-			for _, p := range excludePatterns {
-				if name == p {
-					return filepath.SkipDir
-				}
+			if matchesExcludePatterns(relSlash, name, excludePatterns) {
+				return filepath.SkipDir
 			}
 			return nil
 		}
-		if shouldSkipFile(path) {
+		if matchesExcludePatterns(relSlash, d.Name(), excludePatterns) {
 			return nil
 		}
 		a := parser.GetByFile(path)
 		if a == nil {
+			return nil
+		}
+		if shouldSkipFile(path) {
 			return nil
 		}
 		lang := a.Name()

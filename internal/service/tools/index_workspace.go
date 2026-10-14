@@ -210,7 +210,8 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 	}
 
 	// Validation step must not start background indexing as a side effect.
-	wctx, err := t.engine.DetectContextAsRoot(ctx, workspaceRoot, confirm)
+	// Indexing starts only below, after the confirmation token is verified.
+	wctx, err := t.engine.DetectContextAsRoot(ctx, workspaceRoot, false)
 	if err != nil {
 		candidates := t.engine.FindAlternativeCandidates(workspaceRoot)
 		msg := err.Error()

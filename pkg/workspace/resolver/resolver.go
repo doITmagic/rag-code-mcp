@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/doITmagic/rag-code-mcp/pkg/workspace/contract"
+	"github.com/doITmagic/rag-code-mcp/pkg/workspace/watch"
 )
 
 // Detector resolves a workspace root from a given file path.
@@ -380,6 +381,13 @@ func (r *Resolver) finalize(ctx context.Context, candidate *contract.WorkspaceCa
 		return nil, &contract.ResolveWorkspaceError{
 			Code:    contract.ErrorInvalidPath,
 			Message: "resolved workspace root is empty",
+			Reason:  contract.ReasonInvalidPath,
+		}
+	}
+	if watch.IsInvalidRoot(candidate.Root) {
+		return nil, &contract.ResolveWorkspaceError{
+			Code:    contract.ErrorInvalidPath,
+			Message: fmt.Sprintf("refusing invalid workspace root %s (home, temp, or volume root)", candidate.Root),
 			Reason:  contract.ReasonInvalidPath,
 		}
 	}

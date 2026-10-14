@@ -83,6 +83,14 @@ const autoScoreThresholdRatio = 0.40
 // provide an explicit threshold.
 const defaultSemanticMinScore = 0.72
 
+// softSemanticMinScore is the fallback floor used when defaultSemanticMinScore
+// filters out all vector search candidates and there are no exact matches.
+const softSemanticMinScore = 0.55
+
+// softSemanticMaxResult caps the number of exploratory results retained by the
+// soft semantic fallback.
+const softSemanticMaxResult = 3
+
 func (t *SmartSearchTool) Register(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        t.Name(),
@@ -115,6 +123,7 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 	}
 
 	exactSymbol := isSymbolQuery(query)
+	strictIdentifier := isStrictIdentifierQuery(query)
 	if input.ExactSymbol != nil {
 		exactSymbol = *input.ExactSymbol
 	}
@@ -151,23 +160,46 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 			merged[i].source = "exact"
 		}
 	}
-	if !exactSymbol || len(merged) == 0 && input.ExactSymbol == nil {
+	hasExactMatches := len(merged) > 0
+	if !exactSymbol || (!strictIdentifier || len(merged) == 0) && input.ExactSymbol == nil {
+		exactMatches := merged
+		exactMeta := sr.meta
 		exactSymbol = false
 		sr = t.runParallelSearch(ctx, input.FilePath, query, limit, input.IncludeDocs)
 		if sr.semantic == nil && sr.hybrid == nil {
-			if sr.err == nil {
-				recordSearchMetric(sr.meta, query, nil, false, nil, t0)
+			if len(exactMatches) > 0 {
+				sr.meta = exactMeta
+				merged = exactMatches
+			} else {
+				if sr.err == nil {
+					recordSearchMetric(sr.meta, query, nil, false, nil, t0)
+				}
+				return t.handleSearchError(sr.err, sr.meta.workspaceRoot, sr.meta.workspaceID)
 			}
-			return t.handleSearchError(sr.err, sr.meta.workspaceRoot, sr.meta.workspaceID)
+		} else {
+			semMerged := t.mergeResults(sr.semantic, sr.hybrid, limit)
+			merged = blendExactAndSemantic(exactMatches, semMerged, limit)
 		}
-		merged = t.mergeResults(sr.semantic, sr.hybrid, limit)
 	}
+	preFilter := append([]mergedResult(nil), merged...)
+	defaultFloor := !exactSymbol && sr.meta.collection != "fallback"
 	merged = t.applyFilters(merged, filterConfig{
 		Mode:         input.Mode,
 		MinScore:     input.MinScore,
 		FilePath:     input.FilePath,
-		DefaultFloor: !exactSymbol && sr.meta.collection != "fallback",
+		DefaultFloor: defaultFloor,
 	})
+	if len(merged) == 0 && len(preFilter) > 0 && !hasExactMatches && defaultFloor && input.MinScore <= 0 && !strictIdentifier {
+		merged = t.applyFilters(preFilter, filterConfig{
+			Mode:         input.Mode,
+			MinScore:     softSemanticMinScore,
+			FilePath:     input.FilePath,
+			DefaultFloor: false,
+		})
+		if len(merged) > softSemanticMaxResult {
+			merged = merged[:softSemanticMaxResult]
+		}
+	}
 
 	if len(merged) == 0 {
 		recordSearchMetric(sr.meta, query, nil, sr.meta.collection == "fallback", nil, t0)
@@ -218,6 +250,58 @@ func isSymbolQuery(query string) bool {
 		}
 	}
 	return query != ""
+}
+
+// isStrictIdentifierQuery distinguishes code identifier tokens (PascalCase,
+// camelCase, snake_case, qualified names, or tokens with digits/symbols) from
+// plain lowercase natural-language words (e.g. "authentication", "caching",
+// "router", "config") that should still run semantic search in discovery mode.
+func isStrictIdentifierQuery(query string) bool {
+	if !isSymbolQuery(query) {
+		return false
+	}
+	for _, r := range query {
+		if !unicode.IsLower(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// blendExactAndSemantic merges exact symbol matches with semantic/hybrid
+// results, deduplicating by point ID and preserving descending score order.
+func blendExactAndSemantic(exact, semantic []mergedResult, limit int) []mergedResult {
+	if len(exact) == 0 {
+		return semantic
+	}
+	if len(semantic) == 0 {
+		return exact
+	}
+	seen := make(map[string]int, len(exact)+len(semantic))
+	combined := make([]mergedResult, 0, len(exact)+len(semantic))
+	for _, r := range exact {
+		seen[r.id] = len(combined)
+		combined = append(combined, r)
+	}
+	for _, r := range semantic {
+		if idx, ok := seen[r.id]; ok {
+			combined[idx].source = "both"
+			if r.score > combined[idx].score {
+				combined[idx].score = r.score
+				combined[idx].rawScore = r.rawScore
+			}
+			continue
+		}
+		seen[r.id] = len(combined)
+		combined = append(combined, r)
+	}
+	sort.Slice(combined, func(i, j int) bool {
+		return combined[i].score > combined[j].score
+	})
+	if limit > 0 && len(combined) > limit {
+		combined = combined[:limit]
+	}
+	return combined
 }
 
 // mergedResult holds a deduplicated result with metadata extracted from payload.

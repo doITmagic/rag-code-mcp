@@ -51,16 +51,18 @@ type Options struct {
 
 // FileWatcher handles file system notifications for a workspace.
 type FileWatcher struct {
-	watcher      *fsnotify.Watcher
-	root         string
-	stopChan     chan struct{}
-	stopOnce     sync.Once
-	mu           sync.Mutex
-	timer        *time.Timer
-	debounce     time.Duration
-	onChange     func(context.Context, string, []string) error
-	exclude      map[string]struct{}
-	changedFiles map[string]struct{}
+	watcher         *fsnotify.Watcher
+	root            string
+	stopChan        chan struct{}
+	stopOnce        sync.Once
+	lifecycleCtx    context.Context
+	lifecycleCancel context.CancelFunc
+	mu              sync.Mutex
+	timer           *time.Timer
+	debounce        time.Duration
+	onChange        func(context.Context, string, []string) error
+	exclude         map[string]struct{}
+	changedFiles    map[string]struct{}
 }
 
 // NewFileWatcher creates a new file watcher for the given root directory.
@@ -75,14 +77,18 @@ func NewFileWatcher(root string, opts Options, onChange func(context.Context, st
 		debounce = defaultDebounce
 	}
 
+	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
+
 	return &FileWatcher{
-		watcher:      w,
-		root:         root,
-		stopChan:     make(chan struct{}),
-		debounce:     debounce,
-		onChange:     onChange,
-		exclude:      normalizeExclude(opts.ExcludePatterns),
-		changedFiles: make(map[string]struct{}),
+		watcher:         w,
+		root:            root,
+		stopChan:        make(chan struct{}),
+		lifecycleCtx:    lifecycleCtx,
+		lifecycleCancel: lifecycleCancel,
+		debounce:        debounce,
+		onChange:        onChange,
+		exclude:         normalizeExclude(opts.ExcludePatterns),
+		changedFiles:    make(map[string]struct{}),
 	}, nil
 }
 
@@ -192,7 +198,10 @@ func (fw *FileWatcher) triggerDebouncedIndex() {
 			return
 		}
 
-		ctx := context.Background()
+		ctx := fw.lifecycleCtx
+		if ctx == nil {
+			ctx = context.Background()
+		}
 		if err := fw.onChange(ctx, fw.root, files); err != nil {
 			logger.Instance.Error("Auto-reindexing failed: %v", err)
 		} else {
@@ -204,6 +213,14 @@ func (fw *FileWatcher) triggerDebouncedIndex() {
 // Stop terminates the watcher.
 func (fw *FileWatcher) Stop() {
 	fw.stopOnce.Do(func() {
+		if fw.lifecycleCancel != nil {
+			fw.lifecycleCancel()
+		}
+		fw.mu.Lock()
+		if fw.timer != nil {
+			fw.timer.Stop()
+		}
+		fw.mu.Unlock()
 		close(fw.stopChan)
 	})
 }

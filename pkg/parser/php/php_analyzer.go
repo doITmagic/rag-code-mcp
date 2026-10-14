@@ -92,6 +92,16 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 		logger.Instance.Debug("[PHP] Route fallback: +%d chunks", len(routeChunks))
 	}
 
+	// If no blade_template symbol was produced and the file is a .blade.php template
+	// (e.g. standalone .blade.php when the laravel enricher is not imported),
+	// extract a fallback blade_template chunk.
+	if !hasBladeChunk(chunks) && isBladeFile(path) {
+		logger.Instance.Debug("[PHP] Blade fallback for %s", filepath.Base(path))
+		bladeChunks := a.codeAnalyzer.ExtractBladeChunks(path)
+		chunks = append(chunks, bladeChunks...)
+		logger.Instance.Debug("[PHP] Blade fallback: +%d chunks", len(bladeChunks))
+	}
+
 	symbols := make([]pkgParser.Symbol, len(chunks))
 	for i, chunk := range chunks {
 		// PHP: methods can be private/protected — read visibility from metadata if available,
@@ -132,6 +142,65 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 func isRouteFile(path string) bool {
 	dir := filepath.Dir(path)
 	return filepath.Base(dir) == "routes"
+}
+
+// isBladeFile checks if a file has the .blade.php double extension.
+func isBladeFile(path string) bool {
+	return strings.HasSuffix(strings.ToLower(path), ".blade.php")
+}
+
+// hasBladeChunk checks whether chunks already contain a blade_template chunk.
+func hasBladeChunk(chunks []CodeChunk) bool {
+	for _, ch := range chunks {
+		if ch.Type == "blade_template" {
+			return true
+		}
+	}
+	return false
+}
+
+// ExtractBladeChunks creates a fallback blade_template CodeChunk for a standalone .blade.php file.
+func (ca *CodeAnalyzer) ExtractBladeChunks(filePath string) []CodeChunk {
+	content, err := readFileContent(filePath)
+	if err != nil {
+		return nil
+	}
+	lines := strings.Split(string(content), "\n")
+	endLine := len(lines)
+	if endLine < 1 {
+		endLine = 1
+	}
+
+	fp := filepath.ToSlash(filePath)
+	lowerFp := strings.ToLower(fp)
+	name := filepath.Base(filePath)
+	if len(name) > len(".blade.php") && strings.HasSuffix(strings.ToLower(name), ".blade.php") {
+		name = name[:len(name)-len(".blade.php")]
+	}
+	const marker = "resources/views/"
+	if idx := strings.LastIndex(lowerFp, marker); idx >= 0 {
+		rel := fp[idx+len(marker):]
+		if len(rel) > len(".blade.php") && strings.HasSuffix(strings.ToLower(rel), ".blade.php") {
+			rel = rel[:len(rel)-len(".blade.php")]
+		}
+		name = strings.ReplaceAll(rel, "/", ".")
+	}
+
+	return []CodeChunk{
+		{
+			Name:      name,
+			Type:      "blade_template",
+			Language:  "php",
+			FilePath:  filePath,
+			StartLine: 1,
+			EndLine:   endLine,
+			Signature: name,
+			Metadata: map[string]any{
+				"framework": "laravel",
+				"blade":     true,
+			},
+		},
+	}
 }
 
 // RouteInfo holds extracted route data (kept in php package to avoid import cycles).

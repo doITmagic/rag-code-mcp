@@ -309,7 +309,7 @@ func (v *routeCollector) applyGroupArrayArgs(ctx *GroupContext, args []ast.Verte
 							} else {
 								ctx.Namespace = val
 							}
-						} else if key == "middleware" {
+						case "middleware":
 							if str := v.extractString(arrayItem.Val); str != "" {
 								ctx.Middleware = append(ctx.Middleware, str)
 							} else if arr := v.extractStringArray(arrayItem.Val); arr != nil {

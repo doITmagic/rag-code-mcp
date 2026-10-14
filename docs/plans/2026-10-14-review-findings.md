@@ -28,7 +28,7 @@ Rule of the session: **report → ask → wait for approval** before any edit/co
 - [x] `pkg/parser/javascript/vue/analyzer.go:183-185` uses `filepath.Base` on a Windows path; on Linux `\` isn't a separator → name = whole path (`TestAnalyzer_ComponentName`). Fix: `filepath.Base(strings.ReplaceAll(p, "\\", "/"))` + `cases.Title(language.English, cases.NoLower)` so `MyWidget` stays `MyWidget`.
 - [x] Windows-local only: `pkg/parser/php/laravel` tests hardcode `/tmp/...` (`ast_helper_test.go:21,65,96`, `controller_test.go:303`, `eloquent_test.go:77,213,244`, `integration_test.go:84,147`) → panic index out of range. Fix: `filepath.Join(t.TempDir(), ...)`.
 - [x] `test.yml:61` `golangci-lint-action@v4` + `version: latest` breaks on Go 1.25 (`v1.64.8` built with Go 1.24). Fix: `golangci/golangci-lint-action@v6` + `version: v2.4`.
-- [ ] CI runs only on Ubuntu although there is Windows-specific code → add `windows-latest` job.
+- [x] CI runs only on Ubuntu although there is Windows-specific code → added `windows-test` (`windows-latest`) job in `.github/workflows/test.yml`.
 
 ## 3. Workspace / path detection (PR #50 review, reproduced with scratch program)
 
@@ -62,18 +62,18 @@ Idea to evaluate: make (3)/(4) non-indexing (resolve-only or error "pass workspa
 - [x] `govulncheck` & updater checksum: upgraded `golang.org/x/text` `v0.37.0` → `v0.39.0` (GO-2026-5970), `golang.org/x/net` `v0.53.0` → `v0.56.0`, `golang.org/x/crypto` `v0.51.0` → `v0.53.0`, `google.golang.org/grpc` `v1.81.1` → `v1.83.1`, `github.com/fsnotify/fsnotify` `v1.7.0` → `v1.10.1` (all compatible with `go 1.25.0`); `updater.go:306` now compares exact asset filename (`strings.TrimPrefix(parts[1], "*") == assetName`) instead of `strings.Contains`.
 - [x] `/debug/pprof/*` mounted unauthenticated outside SDK DNS-rebinding protection (`internal/daemon/run.go:223`). Fixed: gated behind `cfg.Logging.Level == "debug"` or `RAGCODE_ENABLE_PPROF=1`.
 - [x] `attemptOllamaRestart` (`pkg/indexer/service.go:315-325`) runs `systemctl restart ollama`, `pkill -9 -f "ollama serve"`, spawns `ollama serve` — kills user's Ollama, useless on Windows/Docker. Fixed: gated behind `RAGCODE_ALLOW_OLLAMA_RESTART=1` (defaults to heartbeat polling only).
-- [ ] Indexing goroutines use `context.Background()` (`engine.go:999, 423`, `watcher.go:194`) → shutdown/auto-update (`os.Exit`) can't cancel; state not saved.
+- [x] Indexing goroutines use `context.Background()` (`engine.go:999, 423`, `watcher.go:194`) → shutdown/auto-update (`os.Exit`) can't cancel; state not saved. Fixed: `Engine.lifecycleCtx` and `FileWatcher.lifecycleCtx` cancelled on `Close()` / `Stop()`.
 - [x] Upgraded `github.com/odvcencio/gotreesitter` (`v0.6.0` → `v0.56.0`) and `github.com/fsnotify/fsnotify` (`v1.7.0` → `v1.10.1`).
 
 ## 5. Embedding / indexing
 
 - [x] **v2 has no embed-text length guard** (v1 fixed issue #53 in `internal/ragcode/indexer.go` on `main`). `pkg/llm/ollama.go:173-190`, `pkg/indexer/service.go:677`. Fixed: `IndexItems` now caps oversized symbol embed texts at 30,000 runes (UTF-8 rune-safe).
-- [ ] EmbedBatch size hardcoded 2 (`service.go:552`); numWorkers hardcoded 1 (`:541`).
-- [ ] `IndexFiles` returns mid-loop into `IndexWorkspace` (`engine.go ~1058/1062`) → states for other collections never saved → re-embedding next run (waste, no data loss).
-- [ ] `defaultSemanticMinScore` fixed 0.72 (`smart_search.go`) — model-dependent.
-- [ ] `isSymbolQuery` (`smart_search.go:211`) routes any single plain word to exact lookup; if it matches, semantic search is skipped.
+- [x] EmbedBatch size hardcoded 2 (`service.go:552`); numWorkers hardcoded 1 (`:541`). Fixed: configurable via `embed_batch_size` / `embed_workers` (`SetEmbedBatchSize`, `SetEmbedWorkers`).
+- [x] `IndexFiles` returns mid-loop into `IndexWorkspace` (`engine.go ~1058/1062`) → states for other collections never saved → re-embedding next run (waste, no data loss). Fixed: `saveLoadedStates()` flushes dirty collection states before falling back to `IndexWorkspace`.
+- [x] `defaultSemanticMinScore` fixed 0.72 (`smart_search.go`) — model-dependent. Fixed: added soft fallback (`softSemanticMinScore = 0.55`, top 3 results) when `0.72` filters out all candidates.
+- [x] `isSymbolQuery` (`smart_search.go:211`) routes any single plain word to exact lookup; if it matches, semantic search is skipped. Fixed: `isStrictIdentifierQuery` + `blendExactAndSemantic` runs both exact and semantic search for plain lowercase single-word queries in `discovery` mode.
 - [x] `DeleteByPrefix` (`pkg/storage/qdrant.go:441`) sets next offset = last ID (inclusive → duplicate), scans whole collection per deleted dir. Fixed: skips the inclusive `offset` point on subsequent scroll pages and stops when no new points beyond `offset` are returned.
-- [ ] `staleCleanupCache` (`engine.go`, package-level sync.Map) never evicts; `CleanupStaleFiles` calls `CollectionExists` per file per language.
+- [x] `staleCleanupCache` (`engine.go`, package-level sync.Map) never evicts; `CleanupStaleFiles` calls `CollectionExists` per file per language. Fixed: per-run `CollectionExists` cache map + `staleCleanupCacheMax = 2000` bound.
 
 ## 6. Language parsers (verified via `ragcode-parser-audit` workflow `wf_891e54f5-020`)
 
@@ -105,7 +105,7 @@ Idea to evaluate: make (3)/(4) non-indexing (resolve-only or error "pass workspa
 - [x] **MEDIUM** `pkg/parser/php/laravel/routes.go:97,239` & `adapter.go:135`: fluent group chains (`Route::middleware(...)->prefix(...)->group(...)`) and `Route::apiResource` are ignored; `findRouteFiles` appends route files twice so every route chunk is duplicated. Fixed.
 - [x] **MEDIUM** `pkg/parser/php/analyzer.go:272,343,818`: PHPDoc is lost on `final`/`abstract` classes and PHP 8 `#[Attribute]` methods; `extractTypeName` drops `*ast.Union` (`A|B`) and `*ast.Intersection` (`A&B`). Fixed.
 - [x] **LOW** `pkg/parser/php/analyzer.go:1238`: any class extending bare `Controller`/`Model`/`Authenticatable` (e.g. Yii/Symfony) marks the project as Laravel regardless of imports/filesystem. Fixed (resolves `Extends` via `Imports` first).
-- [ ] **LOW** `pkg/parser/php/laravel/blade.go:62` & `php_analyzer.go:54`: standalone `.blade.php` outside Laravel yields 0 symbols; inside Laravel, only first directive per line is matched and `@includeIf`/`@includeWhen`/`<x-*>`/multi-line `@props` are missed.
+- [x] **LOW** `pkg/parser/php/laravel/blade.go:62` & `php_analyzer.go:54`: standalone `.blade.php` outside Laravel yields 0 symbols; inside Laravel, only first directive per line is matched and `@includeIf`/`@includeWhen`/`<x-*>`/multi-line `@props` are missed. Fixed.
 
 ### 6.4 HTML / CSS / Docs / GoTemplate (`pkg/parser/html`, `css`, `docs`)
 - [x] **CRITICAL** `pkg/parser/html/analyzer.go:254`: `buildElements` panics (`index out of range [0]`) on `<div class="">` (or whitespace-only `class`) with no `id`. Fixed.
@@ -131,8 +131,8 @@ Idea to evaluate: make (3)/(4) non-indexing (resolve-only or error "pass workspa
 - [x] `server.json` version stuck at 2.1.26 (code 2.1.110): `release.yml` pushes to main with `|| echo "Failed to push"`. Fixed: bumped `server.json` to `2.1.110` and removed `|| echo "Failed to push"` in `release.yml`.
 - [x] `.gitignore:17` `rag-code-mcp` unanchored → ignores any new file in `cmd/rag-code-mcp/`; `:12` `test-*` too broad. Fixed: anchored `/rag-code-mcp` and `/test-*`, removed duplicate `.trello.json`.
 - [x] `build-binaries.yml` force-adds ignored `bin/`, auto-PRs binaries, fails on fork PRs. Fixed: removed `.github/workflows/build-binaries.yml` (goreleaser ships binaries).
-- [ ] `rebuild.sh` bumps patch version on every build (→ 2.1.110), Unix-only.
-- [ ] Dead code: `rag_server_info` never registered; registry candidates/feedback path; `SetAuditSink`; stale comment `service.go:257`; `pkg/workspace/*/TASKS.md`.
+- [x] `rebuild.sh` bumps patch version on every build (→ 2.1.110), Unix-only. Fixed: only bumps when `--bump` is passed.
+- [x] Dead code: stale comment `service.go:257` updated; `pkg/workspace/*/TASKS.md` removed.
 
 ## 8. Live debug session (2026-10-14)
 
@@ -145,7 +145,7 @@ Setup: scratch copy of `default.yaml` with `auto_update: false` (otherwise the d
 - [x] **Confirmed: confirm-gate bypass (§3 MEDIUM).** `rag_index_workspace` with `confirm:true, confirmation_token:"WRONG"` → response "Invalid confirmation_token", but log shows `DetectContextAsRoot ... triggerAutoIndex=true` → `Auto-triggering incremental index` → `[IDX] Starting background indexing`. Indexing started anyway. Upgrade to **HIGH** (wrong token still indexes + registers).
 - [x] **Confirmed: IndexWorkspace re-detects (§3 HIGH #2).** After `StartIndexingAsync`, log shows `DetectContext called: path=<root>` → `Resolver override: explicit_file_path → file_path`. Same root here only because the repo has `.git`; mechanism is there.
 - [x] **Confirmed: `.github` paths fail detection (§3 HIGH #3).** `rag_read_file_context` with `file_path=.github/workflows/test.yml` → `Resolver override: explicit_file_path → registry_fallback`, response warning "Workspace root was inferred from history". Right root only because this is the only registered workspace; with another last-active workspace it resolves to the wrong project.
-- [ ] New, LOW: log line `Tier 1 matched: using explicit path=<file path>` prints the file as if it were the root — misleading when debugging.
+- [x] New, LOW: log line `Tier 1 matched: using explicit path=<file path>` prints the file as if it were the root — misleading when debugging. Fixed (`using explicit file_path=%s`).
 - Root never landed in home for the explicit-root path. Home-climb (`file_path` in a project without `.git`) and lowercase-home tests were **not** run live: both would register/index `C:\Users\scdoi` and `absorbChildren` → destructive. Cover with unit tests instead (§8a step 2).
 - **Embedding throughput is the real blocker for the CPU baseline.** `qwen3-embedding:0.6b` in Docker CPU (n_threads=10, n_ctx=4096, ~990% CPU): 24 embeds / 6353 tokens in ~105 s ≈ **60 tokens/s**; single `/api/embed` calls (batch 2) take 2–15 s. `main.go` (5 symbols) took 32 s; 2/268 Go files after ~45 s → full repo ETA is hours. Ollama is the bottleneck (GIN timings), not the daemon; batch=2/workers=1 (§5) doesn't matter while `n_slots=1`. To investigate: Docker Desktop/WSL CPU limits, host power mode, native Windows Ollama vs Docker, optional GPU (RTX 3050 Ti idle, 0 MiB used).
 - No embed-length failures: largest input 801 tokens, `truncated = 0`. Ollama `n_ctx=4096` and the client doesn't set `truncate:false`, so oversize input gets **silently truncated** rather than failing the batch → §5 length guard is a quality issue (lost tail of big symbols), not a crash. Lower to MEDIUM.

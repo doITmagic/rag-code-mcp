@@ -59,6 +59,17 @@ type Engine struct {
 	// connectTriggered tracks whether background indexing was automatically
 	// triggered for a workspace ID upon initial daemon resolution.
 	connectTriggered sync.Map
+
+	lifecycleCtx    context.Context
+	lifecycleCancel context.CancelFunc
+	bgWg            sync.WaitGroup
+}
+
+func (e *Engine) bgContext() context.Context {
+	if e != nil && e.lifecycleCtx != nil {
+		return e.lifecycleCtx
+	}
+	return context.Background()
 }
 
 // detectionCacheEntry wraps a cached WorkspaceContext with an expiry.
@@ -114,6 +125,30 @@ func NewEngine(idx *indexer.Service, srv *search.Service, registryPath string, c
 		})
 	}
 
+	if cfg != nil && idx != nil {
+		batchSize := cfg.LLM.EmbedBatchSize
+		if cfg.Workspace.EmbedBatchSize > 0 {
+			batchSize = cfg.Workspace.EmbedBatchSize
+		} else if cfg.RagCode.EmbedBatchSize > 0 {
+			batchSize = cfg.RagCode.EmbedBatchSize
+		}
+		if batchSize > 0 {
+			idx.SetEmbedBatchSize(batchSize)
+		}
+
+		workers := cfg.LLM.EmbedWorkers
+		if cfg.Workspace.EmbedWorkers > 0 {
+			workers = cfg.Workspace.EmbedWorkers
+		} else if cfg.RagCode.EmbedWorkers > 0 {
+			workers = cfg.RagCode.EmbedWorkers
+		}
+		if workers > 0 {
+			idx.SetEmbedWorkers(workers)
+		}
+	}
+
+	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
+
 	return &Engine{
 		indexer:      idx,
 		search:       srv,
@@ -126,6 +161,9 @@ func NewEngine(idx *indexer.Service, srv *search.Service, registryPath string, c
 
 		pendingFiles:    make(map[string]map[string]struct{}),
 		pendingOverflow: make(map[string]bool),
+
+		lifecycleCtx:    lifecycleCtx,
+		lifecycleCancel: lifecycleCancel,
 	}
 }
 
@@ -278,7 +316,7 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 			return nil, fmt.Errorf("failed to resolve path: %w", err)
 		}
 		req.FilePath = abs
-		logger.Instance.Info("[WS-DETECT] ✅ Tier 1 matched: using explicit path=%s", abs)
+		logger.Instance.Info("[WS-DETECT] ✅ Tier 1 matched: using explicit file_path=%s", abs)
 	}
 
 	resp, wsErr := e.resolver.Resolve(ctx, req)
@@ -420,7 +458,7 @@ func (e *Engine) GetActiveWorkspace() (string, error) {
 // programmatic use and testing. The adapter's sticky workspace mechanism
 // relies on DetectContext + X-Resolved-Workspace header instead.
 func (e *Engine) CheckAndReindexOnConnect(hint string) string {
-	ctx := context.Background()
+	ctx := e.bgContext()
 	wctx, err := e.DetectContext(ctx, hint)
 	if err != nil {
 		logger.Instance.Warn("[STICKY] CheckAndReindexOnConnect: failed to resolve hint=%q: %v", hint, err)
@@ -948,6 +986,10 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 		return
 	}
 
+	if e.bgContext().Err() != nil {
+		return
+	}
+
 	if _, loaded := e.indexingJobs.LoadOrStore(id, time.Now()); loaded {
 		// A job is already running. If recreate=true, queue it so it fires
 		// after the current job finishes (via tryStartPendingIndex/defer).
@@ -981,11 +1023,15 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 	s.Error = ""
 	indexer.SaveIndexStatus(root, s)
 
+	e.bgWg.Add(1)
 	go func() {
+		defer e.bgWg.Done()
 		defer func() {
 			e.indexingJobs.Delete(id)
-			// If watcher changes came in while we were indexing, run a follow-up incremental job.
-			e.tryStartPendingIndex(root, id)
+			if e.bgContext().Err() == nil {
+				// If watcher changes came in while we were indexing, run a follow-up incremental job.
+				e.tryStartPendingIndex(root, id)
+			}
 		}()
 
 		if len(e.indexingSlot) > 0 {
@@ -993,10 +1039,14 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 		}
 		e.indexingSlot <- struct{}{}
 		defer func() { <-e.indexingSlot }()
+
+		ctx := e.bgContext()
+		if ctx.Err() != nil {
+			return
+		}
 		s.StartedAt = time.Now().UTC().Format(time.RFC3339)
 		indexer.SaveIndexStatus(root, s)
 
-		ctx := context.Background()
 		var err error
 
 		if len(changedFiles) > 0 {
@@ -1007,7 +1057,9 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 			err = e.IndexWorkspace(ctx, root, recreate)
 		}
 
-		finalizeIndexStatus(root, err)
+		if ctx.Err() == nil {
+			finalizeIndexStatus(root, err)
+		}
 		if err != nil {
 			logger.Instance.Error("[IDX] ws=%s Background indexing failed: %v", filepath.Base(root), err)
 		} else {
@@ -1042,6 +1094,13 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) er
 	}
 
 	states := make(map[string]*indexer.State)
+	saveLoadedStates := func() {
+		for col, st := range states {
+			if saveErr := st.Save(indexer.StatePath(wctx.Root, col)); saveErr != nil {
+				logger.Instance.Warn("[IDX] Failed to save state for %s before full workspace fallback: %v", col, saveErr)
+			}
+		}
+	}
 
 	// Resolve the collection per file: one watcher batch can mix languages,
 	// and taking the first file's language sent the rest to the wrong one.
@@ -1055,17 +1114,21 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) er
 		if state == nil {
 			exists, err := e.search.CollectionExists(ctx, collection)
 			if err != nil {
+				saveLoadedStates()
 				return err
 			}
 			if !exists {
+				saveLoadedStates()
 				return e.IndexWorkspace(ctx, root, false)
 			}
 			statePath := indexer.StatePath(wctx.Root, collection)
 			if _, err := os.Stat(statePath); os.IsNotExist(err) {
+				saveLoadedStates()
 				return e.IndexWorkspace(ctx, root, false)
 			}
 			state, err = indexer.LoadState(statePath)
 			if err != nil {
+				saveLoadedStates()
 				return err
 			}
 			states[collection] = state
@@ -1271,12 +1334,22 @@ func processedCount(diskTotal, totalFiles, doneFiles int) int {
 	return n
 }
 
-// StopWatchers stops all workspace watchers.
+// Close cancels the engine's background lifecycle context, stops all workspace watchers,
+// and waits for in-flight background indexing goroutines to exit cleanly.
+func (e *Engine) Close() {
+	e.StopWatchers()
+	e.bgWg.Wait()
+}
+
+// StopWatchers stops all workspace watchers and cancels the background lifecycle context.
 func (e *Engine) StopWatchers() {
-	if e.watchers == nil {
-		return
+	if e.lifecycleCancel != nil {
+		e.lifecycleCancel()
 	}
-	e.watchers.StopAll()
+	if e.watchers != nil {
+		e.watchers.StopAll()
+	}
+	e.bgWg.Wait()
 }
 
 func (e *Engine) handleWatchChange(ctx context.Context, root string, changedFiles []string) error {
@@ -1296,17 +1369,32 @@ func (e *Engine) handleWatchChange(ctx context.Context, root string, changedFile
 
 // staleCooldown prevents repeatedly deleting the same file from the DB
 // across consecutive search queries. Entries expire after 10 minutes.
-const staleCooldown = 10 * time.Minute
+const (
+	staleCooldown        = 10 * time.Minute
+	staleCleanupCacheMax = 2000
+)
 
 // staleCleanupCache tracks recently cleaned file paths to avoid repeated deletes.
 // Key: "wsID:filePath", Value: time.Time of last cleanup.
-var staleCleanupCache sync.Map
+var (
+	staleCleanupCache      sync.Map
+	staleCleanupCacheCount atomic.Int64
+)
 
 // CleanupStaleFiles removes vectors for deleted files from ALL language collections
 // of a workspace. It runs asynchronously and deduplicates to avoid hammering Qdrant.
 func (e *Engine) CleanupStaleFiles(wsID string, staleFiles []string) {
 	if len(staleFiles) == 0 {
 		return
+	}
+
+	// Bound staleCleanupCache size so it cannot grow without bound in a long-running daemon.
+	if staleCleanupCacheCount.Load() >= staleCleanupCacheMax {
+		staleCleanupCache.Range(func(k, _ any) bool {
+			staleCleanupCache.Delete(k)
+			return true
+		})
+		staleCleanupCacheCount.Store(0)
 	}
 
 	// Deduplicate: skip files cleaned recently
@@ -1318,6 +1406,8 @@ func (e *Engine) CleanupStaleFiles(wsID string, staleFiles []string) {
 			if now.Sub(last.(time.Time)) < staleCooldown {
 				continue
 			}
+		} else {
+			staleCleanupCacheCount.Add(1)
 		}
 		staleCleanupCache.Store(cacheKey, now)
 		toClean = append(toClean, f)
@@ -1328,26 +1418,37 @@ func (e *Engine) CleanupStaleFiles(wsID string, staleFiles []string) {
 	}
 
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(e.bgContext(), 30*time.Second)
 		defer cancel()
 
 		langs := parser.SupportedLanguages()
+		collectionExists := make(map[string]bool, len(langs))
 		var totalDeleted int
 
 		for _, filePath := range toClean {
 			for _, lang := range langs {
 				collection := CollectionNameFor(wsID, lang)
 
-				// Check collection exists before attempting delete
-				exists, err := e.search.CollectionExists(ctx, collection)
-				if err != nil || !exists {
+				// Check collection exists once per collection per CleanupStaleFiles pass
+				exists, checked := collectionExists[collection]
+				if !checked {
+					var err error
+					exists, err = e.search.CollectionExists(ctx, collection)
+					if err != nil {
+						exists = false
+					}
+					collectionExists[collection] = exists
+				}
+				if !exists {
 					continue
 				}
 
 				if err := e.search.DeleteByFilter(ctx, collection, "file_path", filePath); err != nil {
 					logger.Instance.Warn("[STALE] Failed to delete vectors for %s from %s: %v", filePath, collection, err)
 					// Remove from cache so retry is possible next query
-					staleCleanupCache.Delete(wsID + ":" + filePath)
+					if _, loaded := staleCleanupCache.LoadAndDelete(wsID + ":" + filePath); loaded {
+						staleCleanupCacheCount.Add(-1)
+					}
 				} else {
 					totalDeleted++
 				}

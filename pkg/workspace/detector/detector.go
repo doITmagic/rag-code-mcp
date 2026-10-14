@@ -353,6 +353,9 @@ func (d *Detector) ensureAllowed(path string) *contract.ResolveWorkspaceError {
 		if err != nil {
 			continue
 		}
+		if resolvedAllowed, err := filepath.EvalSymlinks(al); err == nil {
+			al = resolvedAllowed
+		}
 		cleanAllowed := filepath.Clean(al)
 		prefix := cleanAllowed + string(os.PathSeparator)
 		if runtime.GOOS == "windows" {

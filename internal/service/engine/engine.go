@@ -62,6 +62,7 @@ type Engine struct {
 
 	lifecycleCtx    context.Context
 	lifecycleCancel context.CancelFunc
+	bgWg            sync.WaitGroup
 }
 
 func (e *Engine) bgContext() context.Context {
@@ -985,6 +986,10 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 		return
 	}
 
+	if e.bgContext().Err() != nil {
+		return
+	}
+
 	if _, loaded := e.indexingJobs.LoadOrStore(id, time.Now()); loaded {
 		// A job is already running. If recreate=true, queue it so it fires
 		// after the current job finishes (via tryStartPendingIndex/defer).
@@ -1018,11 +1023,15 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 	s.Error = ""
 	indexer.SaveIndexStatus(root, s)
 
+	e.bgWg.Add(1)
 	go func() {
+		defer e.bgWg.Done()
 		defer func() {
 			e.indexingJobs.Delete(id)
-			// If watcher changes came in while we were indexing, run a follow-up incremental job.
-			e.tryStartPendingIndex(root, id)
+			if e.bgContext().Err() == nil {
+				// If watcher changes came in while we were indexing, run a follow-up incremental job.
+				e.tryStartPendingIndex(root, id)
+			}
 		}()
 
 		if len(e.indexingSlot) > 0 {
@@ -1030,10 +1039,14 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 		}
 		e.indexingSlot <- struct{}{}
 		defer func() { <-e.indexingSlot }()
+
+		ctx := e.bgContext()
+		if ctx.Err() != nil {
+			return
+		}
 		s.StartedAt = time.Now().UTC().Format(time.RFC3339)
 		indexer.SaveIndexStatus(root, s)
 
-		ctx := e.bgContext()
 		var err error
 
 		if len(changedFiles) > 0 {
@@ -1044,7 +1057,9 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 			err = e.IndexWorkspace(ctx, root, recreate)
 		}
 
-		finalizeIndexStatus(root, err)
+		if ctx.Err() == nil {
+			finalizeIndexStatus(root, err)
+		}
 		if err != nil {
 			logger.Instance.Error("[IDX] ws=%s Background indexing failed: %v", filepath.Base(root), err)
 		} else {
@@ -1319,23 +1334,22 @@ func processedCount(diskTotal, totalFiles, doneFiles int) int {
 	return n
 }
 
-// Close cancels the engine's background lifecycle context and stops all workspace watchers.
+// Close cancels the engine's background lifecycle context, stops all workspace watchers,
+// and waits for in-flight background indexing goroutines to exit cleanly.
 func (e *Engine) Close() {
-	if e.lifecycleCancel != nil {
-		e.lifecycleCancel()
-	}
 	e.StopWatchers()
+	e.bgWg.Wait()
 }
 
-// StopWatchers stops all workspace watchers.
+// StopWatchers stops all workspace watchers and cancels the background lifecycle context.
 func (e *Engine) StopWatchers() {
 	if e.lifecycleCancel != nil {
 		e.lifecycleCancel()
 	}
-	if e.watchers == nil {
-		return
+	if e.watchers != nil {
+		e.watchers.StopAll()
 	}
-	e.watchers.StopAll()
+	e.bgWg.Wait()
 }
 
 func (e *Engine) handleWatchChange(ctx context.Context, root string, changedFiles []string) error {

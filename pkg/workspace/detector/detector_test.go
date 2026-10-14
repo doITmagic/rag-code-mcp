@@ -10,8 +10,17 @@ import (
 	"github.com/doITmagic/rag-code-mcp/pkg/workspace/contract"
 )
 
-func TestDetectFromFilePathMarkers(t *testing.T) {
+func evalTempDir(t *testing.T) string {
+	t.Helper()
 	tmp := t.TempDir()
+	if resolved, err := filepath.EvalSymlinks(tmp); err == nil {
+		return resolved
+	}
+	return tmp
+}
+
+func TestDetectFromFilePathMarkers(t *testing.T) {
+	tmp := evalTempDir(t)
 	markerDir := filepath.Join(tmp, "project")
 	if err := os.Mkdir(markerDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -37,7 +46,7 @@ func TestDetectFromFilePathMarkers(t *testing.T) {
 }
 
 func TestDetectMetadataFallback(t *testing.T) {
-	tmp := t.TempDir()
+	tmp := evalTempDir(t)
 	project := filepath.Join(tmp, "proj")
 	if err := os.MkdirAll(filepath.Join(project, ".ragcode"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -225,7 +234,7 @@ func TestDetectNonExistentFileDescriptiveError(t *testing.T) {
 
 func TestDetectMonorepoGitRootPriority(t *testing.T) {
 	// Level 0 has .git (Tier 1)
-	tmp := t.TempDir()
+	tmp := evalTempDir(t)
 	if err := os.WriteFile(filepath.Join(tmp, ".git"), []byte{}, 0o644); err != nil {
 		t.Fatalf("marker: %v", err)
 	}
@@ -258,7 +267,7 @@ func TestDetectMonorepoGitRootPriority(t *testing.T) {
 }
 
 func TestDetectSameTierPrefersOutermostRoot(t *testing.T) {
-	tmp := t.TempDir()
+	tmp := evalTempDir(t)
 	// Both parent and child have Tier 3 marker (package.json), no .git
 	if err := os.WriteFile(filepath.Join(tmp, "package.json"), []byte(`{"name":"root"}`), 0o644); err != nil {
 		t.Fatal(err)
@@ -286,7 +295,7 @@ func TestDetectSameTierPrefersOutermostRoot(t *testing.T) {
 }
 
 func TestDetectAllowedRootBoundaryDoesNotAbortValidChild(t *testing.T) {
-	outer := t.TempDir()
+	outer := evalTempDir(t)
 	project := filepath.Join(outer, "project")
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)

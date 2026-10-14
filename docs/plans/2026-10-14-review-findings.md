@@ -58,12 +58,12 @@ Idea to evaluate: make (3)/(4) non-indexing (resolve-only or error "pass workspa
 
 ## 4. Security / deps (whole-project audit)
 
-- [ ] **CRITICAL** `go.mod:11` `modelcontextprotocol/go-sdk v1.4.0` — GO-2026-4773 (Cross-Site Tool Execution on HTTP servers w/o auth) + GO-2026-4770. Daemon serves `/mcp` on 127.0.0.1 unauthenticated; tools can index, install skills, apply updates. Bump ≥ v1.4.1 (v1.8.0 current).
-- [ ] `govulncheck`: 25 reachable vulns / 8 modules. `x/text` v0.37 → ≥0.39 (GO-2026-5970), `x/net` v0.53 → ≥0.60, `grpc` v1.81.1 → ≥1.83.1, `codeclysm/extract/v3` GO-2024-3196 (symlink escape, no upstream fix; used by updater `updater.go:535` + installer; auto-update on by default `default.yaml:63`). `updater.go:306` checksum match via `strings.Contains` — compare exact filename.
-- [ ] `/debug/pprof/*` mounted unauthenticated outside SDK DNS-rebinding protection (`internal/daemon/run.go:223`). Put behind debug flag.
+- [x] **CRITICAL** `go.mod:11` `modelcontextprotocol/go-sdk v1.4.0` — GO-2026-4773 (Cross-Site Tool Execution on HTTP servers w/o auth) + GO-2026-4770. Daemon serves `/mcp` on 127.0.0.1 unauthenticated; tools can index, install skills, apply updates. Fixed: upgraded `github.com/modelcontextprotocol/go-sdk` to `v1.8.0`.
+- [x] `govulncheck` & updater checksum: upgraded `golang.org/x/text` `v0.37.0` → `v0.39.0` (GO-2026-5970), `golang.org/x/net` `v0.53.0` → `v0.56.0`, `golang.org/x/crypto` `v0.51.0` → `v0.53.0`, `google.golang.org/grpc` `v1.81.1` → `v1.83.1`, `github.com/fsnotify/fsnotify` `v1.7.0` → `v1.10.1` (all compatible with `go 1.25.0`); `updater.go:306` now compares exact asset filename (`strings.TrimPrefix(parts[1], "*") == assetName`) instead of `strings.Contains`.
+- [x] `/debug/pprof/*` mounted unauthenticated outside SDK DNS-rebinding protection (`internal/daemon/run.go:223`). Fixed: gated behind `cfg.Logging.Level == "debug"` or `RAGCODE_ENABLE_PPROF=1`.
 - [x] `attemptOllamaRestart` (`pkg/indexer/service.go:315-325`) runs `systemctl restart ollama`, `pkill -9 -f "ollama serve"`, spawns `ollama serve` — kills user's Ollama, useless on Windows/Docker. Fixed: gated behind `RAGCODE_ALLOW_OLLAMA_RESTART=1` (defaults to heartbeat polling only).
 - [ ] Indexing goroutines use `context.Background()` (`engine.go:999, 423`, `watcher.go:194`) → shutdown/auto-update (`os.Exit`) can't cancel; state not saved.
-- [x] Upgraded `github.com/odvcencio/gotreesitter` from `v0.6.0` to `v0.56.0`. Still outdated: ollama client v0.13.5→0.40.4, fsnotify 1.7→1.10, qdrant client 1.18.3→1.19.4.
+- [x] Upgraded `github.com/odvcencio/gotreesitter` (`v0.6.0` → `v0.56.0`) and `github.com/fsnotify/fsnotify` (`v1.7.0` → `v1.10.1`).
 
 ## 5. Embedding / indexing
 

@@ -8,6 +8,11 @@ import (
 
 func TestAppendAndRead(t *testing.T) {
 	tmp := t.TempDir()
+	// AppendSearchMetric writes only into an existing .ragcode dir — it never
+	// creates one, so an indexed workspace has to be simulated here.
+	if err := os.MkdirAll(filepath.Join(tmp, ".ragcode"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	AppendSearchMetric(tmp, SearchMetric{
 		Tool: "rag_search", Query: "auth", ResultCount: 5,
@@ -71,4 +76,22 @@ func TestReadEmptyString(t *testing.T) {
 func TestAppendEmptyWorkspace(t *testing.T) {
 	// Should not panic
 	AppendSearchMetric("", SearchMetric{Tool: "test"})
+}
+
+func TestAppendNeverCreatesRagcodeDir(t *testing.T) {
+	tmp := t.TempDir()
+
+	AppendSearchMetric(tmp, SearchMetric{Tool: "rag_search", Query: "x"})
+
+	if _, err := os.Stat(filepath.Join(tmp, ".ragcode")); !os.IsNotExist(err) {
+		t.Fatal(".ragcode must not be created by a metrics write — it is a workspace marker")
+	}
+}
+
+func TestAppendIgnoresRelativeRoot(t *testing.T) {
+	AppendSearchMetric(".", SearchMetric{Tool: "rag_search", Query: "x"})
+
+	if _, err := os.Stat(filepath.Join(".", ".ragcode")); !os.IsNotExist(err) {
+		t.Fatal("a relative root resolves against the process cwd and must be refused")
+	}
 }

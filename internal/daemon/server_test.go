@@ -79,8 +79,10 @@ func TestListenAndServe_PortConflict(t *testing.T) {
 		Version: "test-1.0",
 		OnReady: func() {}, // Should not be called
 	})
-	
+
 	// Expect address in use error
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "address already in use")
+	// The OS wording differs (Linux "address already in use", Windows "Only one
+	// usage of each socket address"); check the daemon's own message instead.
+	assert.Contains(t, err.Error(), "failed to bind TCP port")
 }

@@ -159,4 +159,118 @@ class Complex(metaclass=MyMeta):
 		assert.Contains(t, deps, "MyMeta")
 		assert.Contains(t, deps, "User")
 	})
+
+	t.Run("CRLF files preserve decorators and strip CR from Content", func(t *testing.T) {
+		crlfCode := "class Service:\r\n    @staticmethod\r\n    def ping() -> str:\r\n        return \"pong\"\r\n"
+		path := filepath.Join(tmpDir, "crlf_service.py")
+		require.NoError(t, os.WriteFile(path, []byte(crlfCode), 0644))
+
+		res, err := analyzer.Analyze(context.Background(), path)
+		require.NoError(t, err)
+
+		var pingSym *pkgParser.Symbol
+		for i := range res.Symbols {
+			if res.Symbols[i].Name == "ping" {
+				pingSym = &res.Symbols[i]
+			}
+		}
+		require.NotNil(t, pingSym, "ping method must be extracted from CRLF file")
+		assert.Equal(t, true, pingSym.Metadata["is_static"], "decorator @staticmethod must be preserved on CRLF file")
+		assert.NotContains(t, pingSym.Content, "\r", "extracted Content must not contain carriage returns")
+	})
+
+	t.Run("Multi-line signatures, call defaults, return hints with spaces, and Unicode names", func(t *testing.T) {
+		sigCode := `from typing import Tuple, Dict, Any, Optional
+
+def multi_line_func(
+    items: list = list(),
+    config: Dict[str, Any] = dict(a=1, b=2),
+) -> Tuple[int, str]:
+    """Multi-line function docstring."""
+    return 0, "ok"
+
+async def données_utilisateur(nom: str = str()) -> Optional[Tuple[str, int]]:
+    return nom, 1
+
+class Processor:
+    def transform(
+        self,
+        payload: dict = dict(),
+    ) -> Tuple[bool, str]:
+        """Transform payload."""
+        def _inner_helper(x: int) -> int:
+            return x + 1
+        return True, str(_inner_helper(1))
+
+    class InnerClass:
+        def inner_only(self) -> None:
+            pass
+`
+		path := filepath.Join(tmpDir, "signatures.py")
+		require.NoError(t, os.WriteFile(path, []byte(sigCode), 0644))
+
+		res, err := analyzer.Analyze(context.Background(), path)
+		require.NoError(t, err)
+
+		byName := make(map[string]pkgParser.Symbol)
+		var methodNames []string
+		for _, s := range res.Symbols {
+			byName[s.Name] = s
+			if s.Type == "method" {
+				methodNames = append(methodNames, s.Name)
+			}
+		}
+
+		require.Contains(t, byName, "multi_line_func")
+		mlf := byName["multi_line_func"]
+		assert.Equal(t, "def multi_line_func(items: list, config: Dict[str, Any]) -> Tuple[int, str]", mlf.Signature)
+		assert.Equal(t, "Multi-line function docstring.", mlf.Docstring)
+		assert.Contains(t, mlf.Content, `return 0, "ok"`)
+
+		require.Contains(t, byName, "données_utilisateur")
+		uniFn := byName["données_utilisateur"]
+		assert.Equal(t, "async def données_utilisateur(nom: str) -> Optional[Tuple[str, int]]", uniFn.Signature)
+		assert.Equal(t, true, uniFn.Metadata["is_async"])
+
+		require.Contains(t, byName, "transform")
+		tr := byName["transform"]
+		assert.Equal(t, "def transform(self, payload: dict) -> Tuple[bool, str]", tr.Signature)
+		assert.Equal(t, "Transform payload.", tr.Docstring)
+
+		assert.NotContains(t, methodNames, "_inner_helper", "nested helper def inside a method must not be extracted as a class method")
+		assert.NotContains(t, methodNames, "inner_only", "inner class method must not be attributed as a direct method of outer class")
+	})
+
+	t.Run("Multiline triple-quoted strings at column 0 do not truncate blocks", func(t *testing.T) {
+		sqlCode := `class Repository:
+    def fetch_users(self) -> list:
+        query = """
+SELECT id, name
+FROM users
+WHERE active = 1
+"""
+        return self.execute(query)
+
+    def execute(self, q: str) -> list:
+        return []
+`
+		path := filepath.Join(tmpDir, "repo.py")
+		require.NoError(t, os.WriteFile(path, []byte(sqlCode), 0644))
+
+		res, err := analyzer.Analyze(context.Background(), path)
+		require.NoError(t, err)
+
+		byName := make(map[string]pkgParser.Symbol)
+		for _, s := range res.Symbols {
+			byName[s.Name] = s
+		}
+
+		require.Contains(t, byName, "Repository")
+		require.Contains(t, byName, "fetch_users")
+		require.Contains(t, byName, "execute", "method after multiline SQL string must still be extracted inside Repository")
+
+		fetchSym := byName["fetch_users"]
+		assert.Contains(t, fetchSym.Content, "return self.execute(query)", "fetch_users block must include lines after column-0 multiline string")
+	})
 }
+

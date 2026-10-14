@@ -1,6 +1,8 @@
 package javascript
 
 import (
+	"bytes"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -71,7 +73,7 @@ func (p *TreeSitterParser) ParseFile(source []byte, filePath string) (*fileAnaly
 		nodeType := child.Type(langObj)
 
 		switch nodeType {
-		case "function_declaration":
+		case "function_declaration", "generator_function_declaration":
 			fn := p.extractFunction(child, source, langObj, filePath)
 			if fn != nil {
 				fa.Functions = append(fa.Functions, *fn)
@@ -80,7 +82,7 @@ func (p *TreeSitterParser) ParseFile(source []byte, filePath string) (*fileAnaly
 		case "export_statement":
 			p.processExportStatement(child, source, langObj, filePath, fa)
 
-		case "class_declaration":
+		case "class_declaration", "abstract_class_declaration":
 			cls := p.extractClass(child, source, langObj, filePath)
 			if cls != nil {
 				fa.Classes = append(fa.Classes, *cls)
@@ -121,18 +123,33 @@ func (p *TreeSitterParser) ParseFile(source []byte, filePath string) (*fileAnaly
 
 // --- Extraction helpers ---
 
+func fileStem(filePath string) string {
+	return strings.TrimSuffix(filepath.Base(strings.ReplaceAll(filePath, "\\", "/")), filepath.Ext(filePath))
+}
+
 func (p *TreeSitterParser) extractFunction(node *gotreesitter.Node, source []byte, lang *gotreesitter.Language, filePath string) *JSFunction {
+	isArrow := node.Type(lang) == "arrow_function"
 	fn := &JSFunction{
 		FilePath:  filePath,
+		IsArrow:   isArrow,
 		StartLine: int(node.StartPoint().Row) + 1,
 		EndLine:   int(node.EndPoint().Row) + 1,
+		Code:      node.Text(source),
+		Calls:     collectCalls(node, source, lang),
+		Docstring: jsDocBefore(source, node.StartByte()),
 	}
 
 	for i := 0; i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		switch child.Type(lang) {
 		case "identifier":
-			fn.Name = child.Text(source)
+			if isArrow {
+				if len(fn.Params) == 0 {
+					fn.Params = []string{child.Text(source)}
+				}
+			} else if fn.Name == "" {
+				fn.Name = child.Text(source)
+			}
 		case "formal_parameters":
 			fn.Params = p.extractParams(child, source, lang)
 		case "async":
@@ -147,9 +164,12 @@ func (p *TreeSitterParser) extractFunction(node *gotreesitter.Node, source []byt
 
 func (p *TreeSitterParser) extractClass(node *gotreesitter.Node, source []byte, lang *gotreesitter.Language, filePath string) *JSClass {
 	cls := &JSClass{
-		FilePath:  filePath,
-		StartLine: int(node.StartPoint().Row) + 1,
-		EndLine:   int(node.EndPoint().Row) + 1,
+		FilePath:   filePath,
+		IsAbstract: node.Type(lang) == "abstract_class_declaration",
+		StartLine:  int(node.StartPoint().Row) + 1,
+		EndLine:    int(node.EndPoint().Row) + 1,
+		Code:       node.Text(source),
+		Docstring:  jsDocBefore(source, node.StartByte()),
 	}
 
 	for i := 0; i < node.ChildCount(); i++ {
@@ -219,7 +239,7 @@ func (p *TreeSitterParser) extractClassMethods(bodyNode *gotreesitter.Node, sour
 		child := bodyNode.Child(i)
 		childType := child.Type(lang)
 
-		if childType != "method_definition" {
+		if childType != "method_definition" && childType != "abstract_method_signature" {
 			continue
 		}
 
@@ -227,6 +247,9 @@ func (p *TreeSitterParser) extractClassMethods(bodyNode *gotreesitter.Node, sour
 			StartLine:  int(child.StartPoint().Row) + 1,
 			EndLine:    int(child.EndPoint().Row) + 1,
 			Visibility: "public",
+			Code:       child.Text(source),
+			Calls:      collectCalls(child, source, lang),
+			Docstring:  jsDocBefore(source, child.StartByte()),
 		}
 
 		for j := 0; j < child.ChildCount(); j++ {
@@ -319,6 +342,7 @@ func (p *TreeSitterParser) extractParams(node *gotreesitter.Node, source []byte,
 
 func (p *TreeSitterParser) processExportStatement(node *gotreesitter.Node, source []byte, lang *gotreesitter.Language, filePath string, fa *fileAnalysis) {
 	isDefault := false
+	doc := jsDocBefore(source, node.StartByte())
 
 	for i := 0; i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -330,27 +354,42 @@ func (p *TreeSitterParser) processExportStatement(node *gotreesitter.Node, sourc
 		}
 
 		switch childType {
-		case "function_declaration":
+		case "function_declaration", "function_expression", "function", "generator_function", "generator_function_declaration", "arrow_function":
 			fn := p.extractFunction(child, source, lang, filePath)
 			if fn != nil {
+				if fn.Name == "" {
+					fn.Name = fileStem(filePath)
+				}
 				fn.IsExported = true
 				fn.IsDefault = isDefault
+				if fn.Docstring == "" {
+					fn.Docstring = doc
+				}
 				fa.Functions = append(fa.Functions, *fn)
 			}
 
-		case "class_declaration":
+		case "class_declaration", "abstract_class_declaration", "class":
 			cls := p.extractClass(child, source, lang, filePath)
 			if cls != nil {
+				if cls.Name == "" {
+					cls.Name = fileStem(filePath)
+				}
 				cls.IsExported = true
 				cls.IsDefault = isDefault
+				if cls.Docstring == "" {
+					cls.Docstring = doc
+				}
 				fa.Classes = append(fa.Classes, *cls)
 			}
 
-		case "lexical_declaration":
+		case "lexical_declaration", "variable_declaration":
 			fns := p.extractArrowFromDeclaration(child, source, lang, filePath)
 			for j := range fns {
 				fns[j].IsExported = true
 				fns[j].IsDefault = isDefault
+				if fns[j].Docstring == "" {
+					fns[j].Docstring = doc
+				}
 			}
 			fa.Functions = append(fa.Functions, fns...)
 
@@ -358,6 +397,9 @@ func (p *TreeSitterParser) processExportStatement(node *gotreesitter.Node, sourc
 			iface := p.extractInterface(child, source, lang, filePath)
 			if iface != nil {
 				iface.IsExported = true
+				if iface.Docstring == "" {
+					iface.Docstring = doc
+				}
 				fa.Interfaces = append(fa.Interfaces, *iface)
 			}
 
@@ -410,66 +452,94 @@ func (p *TreeSitterParser) extractArrowFromDeclaration(node *gotreesitter.Node, 
 		}
 
 		var name string
-		var isArrow, isAsync bool
-		var params []string
+		var fnNode *gotreesitter.Node
+		sawEq := false
 
 		for j := 0; j < child.ChildCount(); j++ {
 			gc := child.Child(j)
 			gcType := gc.Type(lang)
 
+			if gcType == "=" {
+				sawEq = true
+				continue
+			}
+			if !sawEq {
+				if gcType == "identifier" && name == "" {
+					name = gc.Text(source)
+				}
+				continue
+			}
+
 			switch gcType {
-			case "identifier":
-				name = gc.Text(source)
-			case "arrow_function":
-				isArrow = true
-				for k := 0; k < gc.ChildCount(); k++ {
-					gk := gc.Child(k)
-					gkType := gk.Type(lang)
-					switch gkType {
-					case "formal_parameters":
-						params = p.extractParams(gk, source, lang)
-					case "async":
-						isAsync = true
-					case "identifier":
-						// Single param arrow: x => ...
-						if len(params) == 0 {
-							params = []string{gk.Text(source)}
-						}
-					}
-				}
-			case "function_expression", "function":
-				// const fn = function() {}
-				for k := 0; k < gc.ChildCount(); k++ {
-					gk := gc.Child(k)
-					gkType := gk.Type(lang)
-					switch gkType {
-					case "formal_parameters":
-						params = p.extractParams(gk, source, lang)
-					case "async":
-						isAsync = true
-					}
-				}
+			case "arrow_function", "function_expression", "function", "generator_function":
+				fnNode = gc
+			case "call_expression":
+				fnNode = unwrapFunctionCall(gc, source, lang)
 			}
 		}
 
-		if name != "" && (isArrow || child.ChildCount() > 1) {
-			// Only add if it looks like a function assignment
-			text := child.Text(source)
-			if strings.Contains(text, "=>") || strings.Contains(text, "function") {
-				fns = append(fns, JSFunction{
-					Name:      name,
-					IsArrow:   isArrow,
-					IsAsync:   isAsync,
-					Params:    params,
-					FilePath:  filePath,
-					StartLine: int(node.StartPoint().Row) + 1,
-					EndLine:   int(node.EndPoint().Row) + 1,
-				})
+		if name != "" && fnNode != nil {
+			fn := p.extractFunction(fnNode, source, lang, filePath)
+			if fn != nil {
+				fn.Name = name
+				fn.StartLine = int(node.StartPoint().Row) + 1
+				fn.EndLine = int(node.EndPoint().Row) + 1
+				fn.Code = child.Text(source)
+				fn.Calls = collectCalls(child, source, lang)
+				fn.Docstring = jsDocBefore(source, node.StartByte())
+				fns = append(fns, *fn)
 			}
 		}
 	}
 
 	return fns
+}
+
+func unwrapFunctionCall(callNode *gotreesitter.Node, source []byte, lang *gotreesitter.Language) *gotreesitter.Node {
+	callee := callNode.Child(0)
+	if callee == nil || !isFunctionWrapperCall(callee.Text(source)) {
+		return nil
+	}
+	for i := 0; i < callNode.ChildCount(); i++ {
+		argList := callNode.Child(i)
+		if argList.Type(lang) != "arguments" {
+			continue
+		}
+		for j := 0; j < argList.ChildCount(); j++ {
+			arg := argList.Child(j)
+			switch arg.Type(lang) {
+			case "arrow_function", "function_expression", "function", "generator_function":
+				return arg
+			}
+		}
+	}
+	return nil
+}
+
+func isFunctionWrapperCall(callee string) bool {
+	switch callee {
+	case "memo", "React.memo", "forwardRef", "React.forwardRef",
+		"useCallback", "React.useCallback", "observer",
+		"debounce", "throttle", "once":
+		return true
+	}
+	return false
+}
+
+func jsDocBefore(source []byte, offset uint32) string {
+	if int(offset) > len(source) {
+		return ""
+	}
+	prefix := source[:offset]
+	end := bytes.LastIndex(prefix, []byte("*/"))
+	if end < 0 || strings.TrimSpace(string(prefix[end+2:])) != "" {
+		return ""
+	}
+	start := bytes.LastIndex(prefix[:end], []byte("/**"))
+	if start < 0 || bytes.Contains(prefix[start+3:end], []byte("*/")) {
+		return ""
+	}
+	return cleanJSDoc(string(prefix[start+3 : end]))
 }
 
 func (p *TreeSitterParser) extractImport(node *gotreesitter.Node, source []byte, lang *gotreesitter.Language) *JSImport {
@@ -531,6 +601,8 @@ func (p *TreeSitterParser) extractInterface(node *gotreesitter.Node, source []by
 		FilePath:  filePath,
 		StartLine: int(node.StartPoint().Row) + 1,
 		EndLine:   int(node.EndPoint().Row) + 1,
+		Code:      node.Text(source),
+		Docstring: jsDocBefore(source, node.StartByte()),
 	}
 
 	for i := 0; i < node.ChildCount(); i++ {
@@ -539,7 +611,9 @@ func (p *TreeSitterParser) extractInterface(node *gotreesitter.Node, source []by
 
 		switch childType {
 		case "type_identifier":
-			iface.Name = child.Text(source)
+			if iface.Name == "" {
+				iface.Name = child.Text(source)
+			}
 		case "extends_type_clause":
 			for j := 0; j < child.ChildCount(); j++ {
 				gc := child.Child(j)
@@ -597,16 +671,23 @@ func (p *TreeSitterParser) extractTypeAlias(node *gotreesitter.Node, source []by
 		EndLine:   int(node.EndPoint().Row) + 1,
 	}
 
+	sawEq := false
 	for i := 0; i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		childType := child.Type(lang)
 
-		switch childType {
-		case "type_identifier":
-			ta.Name = child.Text(source)
-		case "type", "union_type", "intersection_type", "function_type",
-			"object_type", "predefined_type", "literal_type", "template_literal_type":
-			ta.Definition = child.Text(source)
+		if childType == "=" {
+			sawEq = true
+			continue
+		}
+		if !sawEq {
+			if childType == "type_identifier" && ta.Name == "" {
+				ta.Name = child.Text(source)
+			}
+			continue
+		}
+		if childType != ";" && !strings.HasPrefix(childType, "comment") && ta.Definition == "" {
+			ta.Definition = strings.TrimSpace(child.Text(source))
 		}
 	}
 
@@ -634,17 +715,22 @@ func (p *TreeSitterParser) extractEnum(node *gotreesitter.Node, source []byte, l
 		case "enum_body":
 			for j := 0; j < child.ChildCount(); j++ {
 				gc := child.Child(j)
-				if gc.Type(lang) == "enum_member" || gc.Type(lang) == "property_identifier" {
+				gcType := gc.Type(lang)
+				if gcType == "enum_member" || gcType == "enum_assignment" || gcType == "property_identifier" {
 					memberName := ""
 					for k := 0; k < gc.ChildCount(); k++ {
 						gk := gc.Child(k)
-						if gk.Type(lang) == "property_identifier" {
+						gkType := gk.Type(lang)
+						if gkType == "property_identifier" || gkType == "identifier" {
 							memberName = gk.Text(source)
 							break
 						}
 					}
 					if memberName == "" {
 						memberName = gc.Text(source)
+						if eqIdx := strings.Index(memberName, "="); eqIdx >= 0 {
+							memberName = memberName[:eqIdx]
+						}
 					}
 					// Clean up
 					memberName = strings.TrimSuffix(memberName, ",")
@@ -667,4 +753,53 @@ func detectLanguage(filePath string) string {
 		return "typescript"
 	}
 	return "javascript"
+}
+
+// collectCalls preserves receivers of calls made inside node:
+// `foo()` gives foo, `a.b.c()` gives a.b.c, `new Foo()` gives Foo. Nested
+// function bodies are included, like the Go analyzer's call extraction.
+// Duplicates are dropped; order is source order.
+func collectCalls(node *gotreesitter.Node, source []byte, lang *gotreesitter.Language) []string {
+	var calls []string
+	seen := make(map[string]bool)
+	var walk func(n *gotreesitter.Node)
+	walk = func(n *gotreesitter.Node) {
+		if n == nil {
+			return
+		}
+		switch n.Type(lang) {
+		case "call_expression", "new_expression":
+			// call: the callee is the first child; new: skip the `new` keyword.
+			callee := ""
+			for i := 0; i < n.ChildCount(); i++ {
+				if c := n.Child(i); c != nil && c.Type(lang) != "new" {
+					callee = calleeName(c, source, lang)
+					break
+				}
+			}
+			if callee != "" && !seen[callee] {
+				seen[callee] = true
+				calls = append(calls, callee)
+			}
+		}
+		for i := 0; i < n.ChildCount(); i++ {
+			walk(n.Child(i))
+		}
+	}
+	walk(node)
+	return calls
+}
+
+// calleeName preserves member receivers for later symbol resolution.
+func calleeName(n *gotreesitter.Node, source []byte, lang *gotreesitter.Language) string {
+	if n == nil {
+		return ""
+	}
+	switch n.Type(lang) {
+	case "identifier", "property_identifier":
+		return n.Text(source)
+	case "member_expression":
+		return n.Text(source)
+	}
+	return ""
 }

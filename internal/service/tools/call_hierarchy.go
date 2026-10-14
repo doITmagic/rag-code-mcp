@@ -36,12 +36,15 @@ type CallHierarchyInput struct {
 }
 
 type CallNode struct {
-	Name      string      `json:"name"`
-	Type      string      `json:"type"`
-	FilePath  string      `json:"file_path"`
-	Package   string      `json:"package"`
-	Children  []*CallNode `json:"children,omitempty"`
-	Recursive bool        `json:"recursive,omitempty"`
+	SymbolID   string `json:"symbol_id,omitempty"`
+	Resolution string `json:"resolution,omitempty"`
+	symbol     *storage.SearchResult
+	Name       string      `json:"name"`
+	Type       string      `json:"type"`
+	FilePath   string      `json:"file_path"`
+	Package    string      `json:"package"`
+	Children   []*CallNode `json:"children,omitempty"`
+	Recursive  bool        `json:"recursive,omitempty"`
 }
 
 func (t *CallHierarchyTool) Register(server *mcp.Server) {
@@ -74,6 +77,7 @@ func (t *CallHierarchyTool) Register(server *mcp.Server) {
 		}
 
 		return &mcp.CallToolResult{
+			IsError: responseIsError(result),
 			Content: []mcp.Content{&mcp.TextContent{Text: result}},
 		}, nil, nil
 	})
@@ -87,6 +91,13 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 	}
 
 	direction, _ := args["direction"].(string)
+	if direction == "" {
+		direction = "incoming"
+	}
+	if direction != "incoming" && direction != "outgoing" {
+		resp := ToolResponse{Status: "error", Error: fmt.Sprintf("direction must be 'incoming' or 'outgoing', got %q", direction)}
+		return resp.JSON()
+	}
 	depthVal := args["depth"]
 	var depth int
 	switch v := depthVal.(type) {
@@ -114,8 +125,13 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 	rootNode := &CallNode{Name: symbolName}
 
 	// Try to find root symbol info
-	rootRes := t.findSymbolInfo(ctx, wctx.ID, symbolName)
+	rootRes, resolution := resolveSymbol(ctx, t.engine, wctx.ID, symbolName, filePath)
+	rootNode.Resolution = resolution
+	if resolution == "ambiguous" {
+		return (ToolResponse{Status: "ambiguous", Message: "Multiple symbols match; provide a qualified symbol name or its file_path."}).JSON()
+	}
 	if rootRes != nil {
+		rootNode.symbol, rootNode.SymbolID = rootRes, symbolKey(*rootRes)
 		rootNode.Type, _ = rootRes.Point.Payload["type"].(string)
 		rootNode.FilePath, _ = rootRes.Point.Payload["file_path"].(string)
 		rootNode.Package, _ = rootRes.Point.Payload["package"].(string)
@@ -174,14 +190,6 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 	return resp.JSON()
 }
 
-func (t *CallHierarchyTool) findSymbolInfo(ctx context.Context, wsID, name string) *storage.SearchResult {
-	res, err := t.engine.SearchByName(ctx, wsID, name, 1)
-	if err == nil && len(res) > 0 {
-		return &res[0]
-	}
-	return nil
-}
-
 // collectFiles traverses the CallNode tree and adds unique non-empty FilePath values to seen.
 func collectFiles(node *CallNode, seen map[string]bool) {
 	if node == nil {
@@ -196,17 +204,21 @@ func collectFiles(node *CallNode, seen map[string]bool) {
 }
 
 func (t *CallHierarchyTool) resolveIncoming(ctx context.Context, wsID string, node *CallNode, depth int, visited map[string]bool) {
-	if depth <= 0 || visited[node.Name] {
-		if visited[node.Name] {
+	if depth <= 0 || visited[node.SymbolID] {
+		if visited[node.SymbolID] {
 			node.Recursive = true
 		}
 		return
 	}
-	visited[node.Name] = true
+	if node.symbol == nil {
+		return
+	}
+	visited[node.SymbolID] = true
+	defer delete(visited, node.SymbolID)
 
 	// ExactSearchPolyglot fans out to all language collections in parallel
 	res, err := t.engine.ExactSearchPolyglot(ctx, wsID, map[string]interface{}{
-		"relations[].target_name": node.Name,
+		"relations[].target_name": shortSymbolName(node.Name),
 		"relations[].type":        "calls",
 	}, 20)
 	if err != nil {
@@ -219,9 +231,12 @@ func (t *CallHierarchyTool) resolveIncoming(ctx context.Context, wsID string, no
 		if rels, ok := r.Point.Payload["relations"].([]interface{}); ok {
 			for _, relRaw := range rels {
 				if rel, ok := relRaw.(map[string]interface{}); ok {
-					if rel["target_name"] == node.Name && rel["type"] == "calls" {
-						hasCall = true
-						break
+					if rel["type"] == "calls" {
+						target, _ := resolveCall(ctx, t.engine, wsID, r, rel)
+						if target != nil && symbolKey(*target) == node.SymbolID {
+							hasCall = true
+							break
+						}
 					}
 				}
 			}
@@ -231,11 +246,12 @@ func (t *CallHierarchyTool) resolveIncoming(ctx context.Context, wsID string, no
 		}
 
 		name, _ := r.Point.Payload["name"].(string)
-		if name == "" || name == node.Name {
+		if name == "" {
 			continue
 		}
 
 		child := &CallNode{
+			SymbolID: symbolKey(r), symbol: &r, Resolution: "resolved",
 			Name:     name,
 			Type:     fmt.Sprintf("%v", r.Point.Payload["type"]),
 			FilePath: fmt.Sprintf("%v", r.Point.Payload["file_path"]),
@@ -247,15 +263,16 @@ func (t *CallHierarchyTool) resolveIncoming(ctx context.Context, wsID string, no
 }
 
 func (t *CallHierarchyTool) resolveOutgoing(ctx context.Context, wsID string, node *CallNode, depth int, visited map[string]bool) {
-	if depth <= 0 || visited[node.Name] {
-		if visited[node.Name] {
+	if depth <= 0 || visited[node.SymbolID] {
+		if visited[node.SymbolID] {
 			node.Recursive = true
 		}
 		return
 	}
-	visited[node.Name] = true
+	visited[node.SymbolID] = true
+	defer delete(visited, node.SymbolID)
 
-	res := t.findSymbolInfo(ctx, wsID, node.Name)
+	res := node.symbol
 	if res == nil {
 		return
 	}
@@ -269,25 +286,22 @@ func (t *CallHierarchyTool) resolveOutgoing(ctx context.Context, wsID string, no
 
 			target, _ := relMap["target_name"].(string)
 			relType, _ := relMap["type"].(string)
-			if target == "" || target == node.Name || relType != "calls" {
-				continue
-			}
-
-			// Skip qualified names — parser emits both qualified and short form
-			if strings.Contains(target, ".") {
+			if target == "" || relType != "calls" {
 				continue
 			}
 
 			child := &CallNode{Name: target}
-			childInfo := t.findSymbolInfo(ctx, wsID, target)
+			childInfo, status := resolveCall(ctx, t.engine, wsID, *res, relMap)
+			child.Resolution = status
 			if childInfo != nil {
+				child.symbol, child.SymbolID = childInfo, symbolKey(*childInfo)
 				child.Type, _ = childInfo.Point.Payload["type"].(string)
 				child.FilePath, _ = childInfo.Point.Payload["file_path"].(string)
 				child.Package, _ = childInfo.Point.Payload["package"].(string)
 				node.Children = append(node.Children, child)
 				t.resolveOutgoing(ctx, wsID, child, depth-1, visited)
 			} else {
-				child.Type = "external"
+				child.Type = status
 				node.Children = append(node.Children, child)
 			}
 		}

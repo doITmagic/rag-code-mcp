@@ -190,7 +190,7 @@ var _ = Describe("Functional MCP Tools Integration", Ordered, func() {
 	BeforeAll(func() {
 		root = workspaceRoot()
 
-		// Probe /mcp cu tools/list pentru a verifica că serverul rulează
+		// Probe /mcp with tools/list to verify the server is up
 		probeBody := []byte(`{"jsonrpc":"2.0","id":"probe","method":"tools/list","params":{}}`)
 		req, _ := http.NewRequest(http.MethodPost, baseURL+"/mcp", bytes.NewReader(probeBody))
 		req.Header.Set("Content-Type", "application/json")
@@ -204,7 +204,7 @@ var _ = Describe("Functional MCP Tools Integration", Ordered, func() {
 	})
 
 	AfterAll(func() {
-		// Nimic de curățat — transport stateless, fără conexiuni persistente.
+		// Nothing to clean up — stateless transport, no persistent connections.
 	})
 
 	// ── rag_search_code ────────────────────────────────────────────────────────

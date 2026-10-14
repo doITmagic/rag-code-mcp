@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -53,10 +55,17 @@ func TestHTMLAnalyzer_Comprehensive(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "html", res.Language)
 
-		require.Len(t, res.Symbols, 4) // H1, H2, H3, H2
+		// Section symbols only; id/class elements are covered in elements_test.go.
+		var sections []pkgParser.Symbol
+		for _, s := range res.Symbols {
+			if s.Type != "element" {
+				sections = append(sections, s)
+			}
+		}
+		require.Len(t, sections, 4) // H1, H2, H3, H2
 
 		symbols := make(map[string]int)
-		for _, s := range res.Symbols {
+		for _, s := range sections {
 			symbols[s.Name]++
 		}
 
@@ -197,5 +206,39 @@ func TestHTMLAnalyzer_Comprehensive(t *testing.T) {
 			}
 		}
 		assert.True(t, foundDefine, "expected define 'sidebar' symbol")
+	})
+
+	t.Run("EmptyClassAndScriptStyleStripping", func(t *testing.T) {
+		rawHTML := `<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Page</title>
+    <style>body { color: red; }</style>
+</head>
+<body>
+    <div class="">Empty class div</div>
+    <div class="   ">Whitespace class div</div>
+    <script>console.log("secret_js_token");</script>
+    <noscript>noscript_fallback_token</noscript>
+    <h1>Visible Heading</h1>
+    <p>Visible paragraph prose.</p>
+    <script>const inlineSectionScript = 123;</script>
+    <style>.inline-style { display: none; }</style>
+</body>
+</html>`
+		rawPath := filepath.Join(tmpDir, "empty_class_and_scripts.html")
+		require.NoError(t, os.WriteFile(rawPath, []byte(rawHTML), 0644))
+
+		res, err := analyzer.Analyze(context.Background(), rawPath)
+		require.NoError(t, err)
+		require.NotEmpty(t, res.Symbols)
+
+		for _, s := range res.Symbols {
+			assert.NotContains(t, s.Content, "secret_js_token")
+			assert.NotContains(t, s.Content, "inlineSectionScript")
+			assert.NotContains(t, s.Content, "noscript_fallback_token")
+			assert.NotContains(t, s.Content, "display: none")
+			assert.NotEqual(t, "div.", s.Name)
+		}
 	})
 }

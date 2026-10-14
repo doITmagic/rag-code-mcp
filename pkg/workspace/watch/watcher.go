@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -126,6 +127,13 @@ func (fw *FileWatcher) watchLoop() {
 			if event.Op&fsnotify.Chmod == fsnotify.Chmod {
 				continue
 			}
+			// Events for excluded paths still arrive from watched parents: on
+			// Windows, a write inside .ragcode reports ".ragcode" itself on the
+			// root watch. Indexing writes there, so without this every index
+			// run triggered the next one.
+			if fw.isExcludedPath(event.Name) {
+				continue
+			}
 			if event.Op&fsnotify.Create == fsnotify.Create {
 				info, err := os.Stat(event.Name)
 				if err == nil && info.IsDir() {
@@ -188,7 +196,7 @@ func (fw *FileWatcher) triggerDebouncedIndex() {
 		if err := fw.onChange(ctx, fw.root, files); err != nil {
 			logger.Instance.Error("Auto-reindexing failed: %v", err)
 		} else {
-			logger.Instance.Info("✅ Auto-reindexing complete for %s", fw.root)
+			logger.Instance.Info("Reindex request accepted for %s", fw.root)
 		}
 	})
 }
@@ -198,6 +206,26 @@ func (fw *FileWatcher) Stop() {
 	fw.stopOnce.Do(func() {
 		close(fw.stopChan)
 	})
+}
+
+// isExcludedPath reports whether path, relative to the root, lies under a
+// directory the watcher skips, or names an excluded directory itself. The
+// hidden-name rule applies to directory components only: the indexer skips
+// hidden directories but does index hidden files (.goreleaser.yaml), so an
+// edit to one must still trigger a reindex.
+func (fw *FileWatcher) isExcludedPath(path string) bool {
+	rel, err := filepath.Rel(fw.root, path)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return false
+	}
+	parts := strings.Split(rel, string(filepath.Separator))
+	for _, part := range parts[:len(parts)-1] {
+		if part != "." && fw.shouldSkipDir(path, part, false) {
+			return true
+		}
+	}
+	_, excluded := fw.exclude[strings.ToLower(parts[len(parts)-1])]
+	return excluded
 }
 
 func (fw *FileWatcher) shouldSkipDir(path, base string, isRoot bool) bool {
@@ -241,18 +269,22 @@ func IsInvalidRoot(root string) bool {
 	if clean == "" || clean == "." {
 		return true
 	}
-	if clean == string(os.PathSeparator) {
+	// A volume root is its own parent: "/" on Unix, "C:\" on Windows.
+	if clean == string(os.PathSeparator) || filepath.Dir(clean) == clean {
 		return true
 	}
-	home, err := os.UserHomeDir()
-	if err == nil {
-		homeClean := filepath.Clean(home)
-		if clean == homeClean {
-			return true
-		}
-	}
-	if clean == os.TempDir() {
+	if home, err := os.UserHomeDir(); err == nil && samePath(clean, home) {
 		return true
 	}
-	return false
+	return samePath(clean, os.TempDir())
+}
+
+// samePath compares two paths, case-insensitively on Windows where
+// "c:\users\x" and "C:\Users\x" name the same directory.
+func samePath(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }

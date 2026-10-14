@@ -36,7 +36,9 @@ func (ca *CodeAnalyzer) Name() string {
 
 // CanHandle returns true if the analyzer supports the given file extension.
 func (ca *CodeAnalyzer) CanHandle(filePath string) bool {
-	return strings.HasSuffix(filePath, ".go") && !strings.HasSuffix(filePath, "_test.go")
+	// _test.go files are included: test code calls the API, so usages and
+	// call hierarchies were blind to it.
+	return strings.HasSuffix(strings.ToLower(filePath), ".go")
 }
 
 // Analyze extracts symbols from a file or directory.
@@ -72,28 +74,60 @@ func (ca *CodeAnalyzer) Analyze(ctx context.Context, path string) (*pkgParser.Re
 }
 
 func (ca *CodeAnalyzer) AnalyzePackage(dir string) (*PackageInfo, error) {
-	// Create a new FileSet for each directory
-	fset := token.NewFileSet()
-
-	// Parse files individually to retain AST bodies
 	files, err := filepath.Glob(filepath.Join(dir, "*.go"))
 	if err != nil {
 		return nil, fmt.Errorf("globbing directory: %w", err)
 	}
+	var src []string
+	for _, f := range files {
+		if !strings.HasSuffix(f, "_test.go") {
+			src = append(src, f)
+		}
+	}
+	return ca.analyzeFiles(dir, src)
+}
 
-	var astFiles []*ast.File
-	fileMap := make(map[string]*ast.File)
-
-	for _, file := range files {
-		if strings.HasSuffix(file, "_test.go") {
+// AnalyzeTestPackages analyzes the _test.go files of dir. They are kept apart
+// from the package proper because external tests (package foo_test) are a
+// different package to go/doc, and grouped by package name for that reason.
+// A directory without tests yields nil.
+func (ca *CodeAnalyzer) AnalyzeTestPackages(dir string) []*PackageInfo {
+	files, _ := filepath.Glob(filepath.Join(dir, "*_test.go"))
+	byPkg := make(map[string][]string)
+	var order []string
+	for _, f := range files {
+		parsed, err := parser.ParseFile(token.NewFileSet(), f, nil, parser.PackageClauseOnly)
+		if err != nil {
 			continue
 		}
+		name := parsed.Name.Name
+		if _, ok := byPkg[name]; !ok {
+			order = append(order, name)
+		}
+		byPkg[name] = append(byPkg[name], f)
+	}
+	var out []*PackageInfo
+	for _, name := range order {
+		if info, err := ca.analyzeFiles(dir, byPkg[name]); err == nil {
+			out = append(out, info)
+		}
+	}
+	return out
+}
+
+// analyzeFiles parses the given files of one package and extracts its API.
+func (ca *CodeAnalyzer) analyzeFiles(dir string, files []string) (*PackageInfo, error) {
+	// Create a new FileSet for each directory
+	fset := token.NewFileSet()
+
+	// Parse files individually to retain AST bodies
+	var astFiles []*ast.File
+	for _, file := range files {
 		f, err := parser.ParseFile(fset, file, nil, parser.ParseComments)
 		if err != nil {
 			continue // Skip files with parse errors
 		}
 		astFiles = append(astFiles, f)
-		fileMap[file] = f
 	}
 
 	if len(astFiles) == 0 {
@@ -103,10 +137,23 @@ func (ca *CodeAnalyzer) AnalyzePackage(dir string) (*PackageInfo, error) {
 	// Build a map from function name -> AST FuncDecl (with Body) BEFORE doc.New()
 	astFuncMap := ca.buildFunctionASTMap(astFiles)
 
-	// Build documentation view (this may modify AST nodes)
-	docPkg, err := doc.NewFromFiles(fset, astFiles, "./", doc.AllDecls|doc.AllMethods)
-	if err != nil {
-		return nil, fmt.Errorf("doc.NewFromFiles: %w", err)
+	// Build documentation view (this may modify AST nodes).
+	// doc.NewFromFiles drops every _test.go file from the package view (it
+	// only mines them for examples), so test groups go through doc.New,
+	// which takes the files as given.
+	var docPkg *doc.Package
+	if len(files) > 0 && strings.HasSuffix(files[0], "_test.go") {
+		astPkg := &ast.Package{Name: astFiles[0].Name.Name, Files: make(map[string]*ast.File, len(astFiles))}
+		for _, f := range astFiles {
+			astPkg.Files[fset.File(f.Pos()).Name()] = f
+		}
+		docPkg = doc.New(astPkg, "./", doc.AllDecls|doc.AllMethods)
+	} else {
+		var err error
+		docPkg, err = doc.NewFromFiles(fset, astFiles, "./", doc.AllDecls|doc.AllMethods)
+		if err != nil {
+			return nil, fmt.Errorf("doc.NewFromFiles: %w", err)
+		}
 	}
 
 	info := &PackageInfo{
@@ -130,6 +177,9 @@ func (ca *CodeAnalyzer) AnalyzePackage(dir string) (*PackageInfo, error) {
 
 		// Process methods for this type
 		for _, method := range typ.Methods {
+			if method.Level > 0 {
+				continue
+			}
 			methodInfo := ca.analyzeFunctionDecl(fset, method, astFuncMap, typ.Name) // pass receiver name
 			methodInfo.IsMethod = true
 			methodInfo.Receiver = typ.Name
@@ -148,6 +198,16 @@ func (ca *CodeAnalyzer) AnalyzePackage(dir string) (*PackageInfo, error) {
 			fnInfo := ca.analyzeFunctionDecl(fset, fn, astFuncMap)
 			info.Functions = append(info.Functions, fnInfo)
 		}
+
+		// Process typed constants and variables associated with this type (e.g., iota enums).
+		for _, c := range typ.Consts {
+			constInfo := ca.analyzeConstantDecl(fset, c)
+			info.Constants = append(info.Constants, constInfo...)
+		}
+		for _, v := range typ.Vars {
+			varInfo := ca.analyzeVariableDecl(fset, v)
+			info.Variables = append(info.Variables, varInfo...)
+		}
 	} // Consts and vars
 	for _, c := range docPkg.Consts {
 		constInfo := ca.analyzeConstantDecl(fset, c)
@@ -161,33 +221,16 @@ func (ca *CodeAnalyzer) AnalyzePackage(dir string) (*PackageInfo, error) {
 	return info, nil
 }
 
-// buildFunctionASTMap creates a map from function/method name to AST FuncDecl (with Body intact)
-func (ca *CodeAnalyzer) buildFunctionASTMap(files []*ast.File) map[string]*ast.BlockStmt {
-	funcMap := make(map[string]*ast.BlockStmt)
+// buildFunctionASTMap creates a map from function/method token.Pos to AST FuncDecl Body (with Body intact)
+func (ca *CodeAnalyzer) buildFunctionASTMap(files []*ast.File) map[token.Pos]*ast.BlockStmt {
+	funcMap := make(map[token.Pos]*ast.BlockStmt)
 
 	for _, file := range files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			if fn, ok := n.(*ast.FuncDecl); ok {
-				// Map by function name (for functions) or receiver.method (for methods)
-				key := fn.Name.Name
-				if fn.Recv != nil && len(fn.Recv.List) > 0 {
-					// Extract receiver type name
-					recvType := ""
-					switch t := fn.Recv.List[0].Type.(type) {
-					case *ast.StarExpr:
-						if ident, ok := t.X.(*ast.Ident); ok {
-							recvType = ident.Name
-						}
-					case *ast.Ident:
-						recvType = t.Name
-					}
-					if recvType != "" {
-						key = recvType + "." + fn.Name.Name
-					}
-				}
-				// Store ONLY the Body pointer (doc.New won't touch this)
+				// Store ONLY the Body pointer keyed by declaration Pos (doc.New won't touch this)
 				if fn.Body != nil {
-					funcMap[key] = fn.Body
+					funcMap[fn.Pos()] = fn.Body
 				}
 			}
 			return true
@@ -197,7 +240,7 @@ func (ca *CodeAnalyzer) buildFunctionASTMap(files []*ast.File) map[string]*ast.B
 	return funcMap
 }
 
-func (ca *CodeAnalyzer) analyzeFunctionDecl(fset *token.FileSet, fn *doc.Func, astBodyMap map[string]*ast.BlockStmt, receiverName ...string) FunctionInfo {
+func (ca *CodeAnalyzer) analyzeFunctionDecl(fset *token.FileSet, fn *doc.Func, astBodyMap map[token.Pos]*ast.BlockStmt, receiverName ...string) FunctionInfo {
 	info := FunctionInfo{
 		Name:        fn.Name,
 		Description: cleanDoc(fn.Doc),
@@ -205,12 +248,11 @@ func (ca *CodeAnalyzer) analyzeFunctionDecl(fset *token.FileSet, fn *doc.Func, a
 		Examples:    ca.extractExamples(fn.Doc),
 	}
 
-	// Try to find the AST Body
-	key := fn.Name
-	if len(receiverName) > 0 && receiverName[0] != "" {
-		key = receiverName[0] + "." + fn.Name
+	// Try to find the AST Body by declaration token.Pos
+	var astBody *ast.BlockStmt
+	if fn.Decl != nil {
+		astBody = astBodyMap[fn.Decl.Pos()]
 	}
-	astBody := astBodyMap[key]
 
 	if fn.Decl != nil && astBody != nil {
 		// Use doc.Func for position (Pos()) and astBody for end position
@@ -264,7 +306,7 @@ func (ca *CodeAnalyzer) analyzeFunctionDecl(fset *token.FileSet, fn *doc.Func, a
 	return info
 }
 
-func (ca *CodeAnalyzer) analyzeTypeDecl(fset *token.FileSet, typ *doc.Type, astBodyMap map[string]*ast.BlockStmt) TypeInfo {
+func (ca *CodeAnalyzer) analyzeTypeDecl(fset *token.FileSet, typ *doc.Type, astBodyMap map[token.Pos]*ast.BlockStmt) TypeInfo {
 	info := TypeInfo{
 		Name:        typ.Name,
 		Description: cleanDoc(typ.Doc),
@@ -409,28 +451,26 @@ func (ca *CodeAnalyzer) formatInterfaceMethodSignature(name string, funcType *as
 
 func (ca *CodeAnalyzer) analyzeConstantDecl(fset *token.FileSet, c *doc.Value) []ConstantInfo {
 	var constants []ConstantInfo
-
-	// Extract position information from declaration
-	var filePath string
-	var startLine, endLine int
-	if c.Decl != nil {
-		pos := fset.Position(c.Decl.Pos())
-		end := fset.Position(c.Decl.End())
-		filePath = pos.Filename
-		startLine = pos.Line
-		endLine = end.Line
+	if c.Decl == nil {
+		return constants
 	}
 
 	for _, spec := range c.Decl.Specs {
 		if vs, ok := spec.(*ast.ValueSpec); ok {
+			pos := fset.Position(vs.Pos())
+			end := fset.Position(vs.End())
+			desc := cleanDoc(c.Doc)
+			if vs.Doc != nil && vs.Doc.Text() != "" {
+				desc = strings.TrimSpace(vs.Doc.Text())
+			}
 			for i, name := range vs.Names {
 				constInfo := ConstantInfo{
 					Name:        name.Name,
-					Description: cleanDoc(c.Doc),
+					Description: desc,
 					IsExported:  ast.IsExported(name.Name),
-					FilePath:    filePath,
-					StartLine:   startLine,
-					EndLine:     endLine,
+					FilePath:    pos.Filename,
+					StartLine:   pos.Line,
+					EndLine:     end.Line,
 				}
 				if vs.Type != nil {
 					constInfo.Type = ca.typeToString(vs.Type)
@@ -447,28 +487,26 @@ func (ca *CodeAnalyzer) analyzeConstantDecl(fset *token.FileSet, c *doc.Value) [
 
 func (ca *CodeAnalyzer) analyzeVariableDecl(fset *token.FileSet, v *doc.Value) []VariableInfo {
 	var variables []VariableInfo
-
-	// Extract position information from declaration
-	var filePath string
-	var startLine, endLine int
-	if v.Decl != nil {
-		pos := fset.Position(v.Decl.Pos())
-		end := fset.Position(v.Decl.End())
-		filePath = pos.Filename
-		startLine = pos.Line
-		endLine = end.Line
+	if v.Decl == nil {
+		return variables
 	}
 
 	for _, spec := range v.Decl.Specs {
 		if vs, ok := spec.(*ast.ValueSpec); ok {
+			pos := fset.Position(vs.Pos())
+			end := fset.Position(vs.End())
+			desc := cleanDoc(v.Doc)
+			if vs.Doc != nil && vs.Doc.Text() != "" {
+				desc = strings.TrimSpace(vs.Doc.Text())
+			}
 			for _, name := range vs.Names {
 				varInfo := VariableInfo{
 					Name:        name.Name,
-					Description: cleanDoc(v.Doc),
+					Description: desc,
 					IsExported:  ast.IsExported(name.Name),
-					FilePath:    filePath,
-					StartLine:   startLine,
-					EndLine:     endLine,
+					FilePath:    pos.Filename,
+					StartLine:   pos.Line,
+					EndLine:     end.Line,
 				}
 				if vs.Type != nil {
 					varInfo.Type = ca.typeToString(vs.Type)
@@ -590,22 +628,10 @@ func (ca *CodeAnalyzer) fieldListToString(fields *ast.FieldList) string {
 }
 
 func (ca *CodeAnalyzer) typeToString(expr ast.Expr) string {
-	switch t := expr.(type) {
-	case *ast.Ident:
-		return t.Name
-	case *ast.StarExpr:
-		return "*" + ca.typeToString(t.X)
-	case *ast.ArrayType:
-		return "[]" + ca.typeToString(t.Elt)
-	case *ast.MapType:
-		return fmt.Sprintf("map[%s]%s", ca.typeToString(t.Key), ca.typeToString(t.Value))
-	case *ast.SelectorExpr:
-		return fmt.Sprintf("%s.%s", ca.typeToString(t.X), t.Sel.Name)
-	case *ast.InterfaceType:
-		return "interface{}"
-	default:
-		return "unknown"
+	if expr == nil {
+		return ""
 	}
+	return types.ExprString(expr)
 }
 
 func (ca *CodeAnalyzer) exprToString(expr ast.Expr) string {
@@ -703,21 +729,21 @@ func (ca *CodeAnalyzer) AnalyzePaths(paths []string) ([]CodeChunk, error) {
 				}
 				return nil
 			}
-			if !strings.HasSuffix(d.Name(), ".go") || strings.HasSuffix(d.Name(), "_test.go") {
+			if !strings.HasSuffix(d.Name(), ".go") {
 				return nil
 			}
 			dir := filepath.Dir(path)
 			if visited[dir] {
 				return nil
 			}
-			// mark and analyze the whole package directory
+			// mark and analyze the whole package directory, tests included
 			visited[dir] = true
-			pkgInfo, perr := ca.AnalyzePackage(dir)
-			if perr != nil {
-				// Non-fatal: skip directories without proper Go package
-				return nil
+			if pkgInfo, perr := ca.AnalyzePackage(dir); perr == nil {
+				chunks = append(chunks, convertPackageInfoToChunks(pkgInfo)...)
 			}
-			chunks = append(chunks, convertPackageInfoToChunks(pkgInfo)...)
+			for _, ti := range ca.AnalyzeTestPackages(dir) {
+				chunks = append(chunks, convertPackageInfoToChunks(ti)...)
+			}
 			return nil
 		})
 		if err != nil {

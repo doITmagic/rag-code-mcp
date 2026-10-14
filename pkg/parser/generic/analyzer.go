@@ -41,6 +41,10 @@ func (a *Analyzer) Name() string {
 
 // CanHandle returns true if the extension matches.
 func (a *Analyzer) CanHandle(filePath string) bool {
+	base := strings.ToLower(filepath.Base(filePath))
+	if base == ".env" || strings.HasPrefix(base, ".env.") {
+		return true
+	}
 	ext := strings.ToLower(filepath.Ext(filePath))
 	for _, e := range a.extensions {
 		if e == ext {

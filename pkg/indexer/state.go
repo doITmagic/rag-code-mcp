@@ -1,12 +1,21 @@
 package indexer
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
+
+// StatePath binds snapshots to a collection, including its branch and language.
+func StatePath(root, collection string) string {
+	return filepath.Join(root, ".ragcode", fmt.Sprintf("state-%x.json", sha256.Sum256([]byte(collection))))
+}
 
 // FileState represents the state of a single file in the index.
 type FileState struct {
@@ -53,8 +62,18 @@ func (s *State) Save(path string) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	dir := filepath.Dir(path)
+	if filepath.Base(dir) == ".ragcode" {
+		if _, statErr := os.Stat(dir); os.IsNotExist(statErr) {
+			workspaceRoot := filepath.Dir(dir)
+			if cachedHasParentRagcode(workspaceRoot) {
+				return nil
+			}
+		}
+	}
+
 	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 
@@ -84,6 +103,22 @@ func (s *State) RemoveFile(path string) {
 	defer s.mu.Unlock()
 
 	delete(s.Files, path)
+}
+
+// RemovePrefix removes all files matching the given path prefix from the state.
+func (s *State) RemovePrefix(prefix string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for path := range s.Files {
+		match := strings.HasPrefix(path, prefix)
+		if !match && runtime.GOOS == "windows" {
+			match = strings.HasPrefix(strings.ToLower(path), strings.ToLower(prefix))
+		}
+		if match {
+			delete(s.Files, path)
+		}
+	}
 }
 
 // GetFileState retrieves the state for a single file.

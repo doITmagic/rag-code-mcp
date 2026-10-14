@@ -6,14 +6,20 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/doITmagic/rag-code-mcp/pkg/workspace/contract"
+	"github.com/doITmagic/rag-code-mcp/pkg/workspace/watch"
 )
 
 // Options configures the detector behavior.
 type Options struct {
-	Markers          []string
+	Tier1Markers []string
+	Tier2Markers []string
+	Tier3Markers []string
+	Markers      []string // Consolidated array used internally
+
 	AllowedRoots     []string
 	ExcludePatterns  []string
 	MaxDepth         int
@@ -21,42 +27,22 @@ type Options struct {
 	MetadataFileName string
 }
 
-// DefaultOptions provides sane defaults aligned with TASKS.md requirements.
+// DefaultOptions provides sane defaults for root detection.
 func DefaultOptions() Options {
 	return Options{
-		Markers: []string{
-			".git",
-			"go.mod",
-			"package.json",
-			"Cargo.toml",
-			"pyproject.toml",
-			"setup.py",
-			"requirements.txt",
-			"composer.json",
-			"pom.xml",
-			"build.gradle",
-			"Gemfile",
-			"Package.swift",
-			"tsconfig.json",
-			"tailwind.config.js",
-			"tailwind.config.ts",
-			"vite.config.js",
-			"vite.config.ts",
-			"next.config.js",
-			"deno.json",
-			"Dockerfile",
-			"docker-compose.yml",
-			"mix.exs",
-			"artisan",
-			".agent",
-			".idea",
-			".vscode",
-			".vs",
-			".cursor",
-			".windsurf",
-			".claude",
-			"AGENTS.md",
-			"CLAUDE.md",
+		Tier1Markers: []string{".git", ".svn", ".hg"},
+		Tier2Markers: []string{
+			"AGENTS.md", "CLAUDE.md",
+			".agent", ".cursor", ".windsurf", ".claude",
+			".idea", ".vscode", ".vs",
+		},
+		Tier3Markers: []string{
+			"go.mod", "package.json", "Cargo.toml", "pyproject.toml",
+			"setup.py", "requirements.txt", "composer.json", "pom.xml",
+			"build.gradle", "Gemfile", "Package.swift", "tsconfig.json",
+			"tailwind.config.js", "tailwind.config.ts", "vite.config.js",
+			"vite.config.ts", "next.config.js", "deno.json", "Dockerfile",
+			"docker-compose.yml", "mix.exs", "artisan",
 		},
 		MaxDepth:         10,
 		MetadataFileName: filepath.Join(".ragcode", "root"),
@@ -65,22 +51,48 @@ func DefaultOptions() Options {
 
 // Detector performs marker-based root detection with security validation.
 type Detector struct {
-	opts Options
+	opts    Options
+	tierMap map[string]int
 }
 
 // New creates a new detector with the supplied options.
 func New(opts Options) *Detector {
 	defaults := DefaultOptions()
-	if len(opts.Markers) == 0 {
-		opts.Markers = defaults.Markers
+
+	if len(opts.Tier1Markers) == 0 && len(opts.Tier2Markers) == 0 && len(opts.Tier3Markers) == 0 {
+		opts.Tier1Markers = defaults.Tier1Markers
+		opts.Tier2Markers = defaults.Tier2Markers
+		opts.Tier3Markers = defaults.Tier3Markers
 	}
+
+	if len(opts.Markers) == 0 {
+		opts.Markers = append(opts.Markers, opts.Tier1Markers...)
+		opts.Markers = append(opts.Markers, opts.Tier2Markers...)
+		opts.Markers = append(opts.Markers, opts.Tier3Markers...)
+	}
+
 	if opts.MaxDepth == 0 {
 		opts.MaxDepth = defaults.MaxDepth
 	}
 	if opts.MetadataFileName == "" {
 		opts.MetadataFileName = defaults.MetadataFileName
 	}
-	return &Detector{opts: opts}
+
+	tierMap := make(map[string]int, len(opts.Tier1Markers)+len(opts.Tier2Markers)+len(opts.Tier3Markers))
+	for _, m := range opts.Tier1Markers {
+		tierMap[m] = 1
+	}
+	for _, m := range opts.Tier2Markers {
+		tierMap[m] = 2
+	}
+	for _, m := range opts.Tier3Markers {
+		tierMap[m] = 3
+	}
+
+	return &Detector{
+		opts:    opts,
+		tierMap: tierMap,
+	}
 }
 
 // DetectFromFilePath implements resolver.Detector.
@@ -145,22 +157,62 @@ func (d *Detector) DetectFromFilePath(ctx context.Context, filePath string) (*co
 	return d.walkUp(startDir)
 }
 
+func (d *Detector) getTier(marker string) int {
+	base := filepath.Base(marker)
+	if tier, ok := d.tierMap[base]; ok {
+		return tier
+	}
+	return 3 // Implicit fallback
+}
+
+func (d *Detector) getCandidateTier(candidate *contract.WorkspaceCandidate) int {
+	best := 99
+	for _, m := range candidate.Markers {
+		if m == d.opts.MetadataFileName {
+			if 2 < best {
+				best = 2
+			}
+			continue
+		}
+		t := d.getTier(m)
+		if t < best {
+			best = t
+		}
+	}
+	return best
+}
+
 func (d *Detector) walkUp(start string) (*contract.WorkspaceCandidate, *contract.ResolveWorkspaceError) {
 	dir := start
 	depth := 0
-	for {
-		if d.opts.MaxDepth > 0 && depth >= d.opts.MaxDepth {
+
+	var bestCandidate *contract.WorkspaceCandidate
+	var bestTier = 99
+	var firstErr *contract.ResolveWorkspaceError
+
+	for d.opts.MaxDepth <= 0 || depth < d.opts.MaxDepth {
+		depth++
+
+		// Never climb into or past home, temp or a volume root: IDE dirs such
+		// as ~/.claude or ~/.vscode would otherwise make home the workspace.
+		if watch.IsInvalidRoot(dir) {
 			break
 		}
-		depth++
 
 		if !d.shouldExclude(dir) {
 			candidate, err := d.inspectDir(dir)
 			if err != nil {
-				return nil, err
-			}
-			if candidate != nil {
-				return candidate, nil
+				if firstErr == nil {
+					firstErr = err
+				}
+			} else if candidate != nil {
+				tier := d.getCandidateTier(candidate)
+				// Prefer the highest (outermost) valid root within the best tier
+				// so nested submodules or sub-packages don't shadow the repo root.
+				if tier <= bestTier {
+					bestTier = tier
+					bestCandidate = candidate
+				}
 			}
 		}
 
@@ -171,11 +223,30 @@ func (d *Detector) walkUp(start string) (*contract.WorkspaceCandidate, *contract
 		dir = parent
 	}
 
+	if bestCandidate != nil {
+		return bestCandidate, nil
+	}
+	if firstErr != nil {
+		return nil, firstErr
+	}
+
 	return nil, &contract.ResolveWorkspaceError{
 		Code:    contract.ErrorInvalidPath,
 		Message: fmt.Sprintf("no workspace markers found starting from %s", start),
 		Reason:  contract.ReasonInvalidPath,
 	}
+}
+
+// FindAlternativeCandidates searches for potential workspace roots around the given path using defined options.
+func (d *Detector) FindAlternativeCandidates(start string) []string {
+	var results []string
+	candidate, _ := d.walkUp(start)
+	if candidate != nil {
+		results = append(results, candidate.Root)
+	}
+	// As a fallback safety for subdirectories without stopping,
+	// one could inspect subdirectories here up to depth 1, but up-walk is generally accurate.
+	return results
 }
 
 func (d *Detector) inspectDir(dir string) (*contract.WorkspaceCandidate, *contract.ResolveWorkspaceError) {
@@ -234,6 +305,13 @@ func (d *Detector) detectFromMetadata(start string) (*contract.WorkspaceCandidat
 	if resolved, err := filepath.EvalSymlinks(root); err == nil {
 		root = resolved
 	}
+	if watch.IsInvalidRoot(root) {
+		return nil, &contract.ResolveWorkspaceError{
+			Code:    contract.ErrorInvalidPath,
+			Message: fmt.Sprintf("metadata referenced root %s, which is a home, temp or volume root", root),
+			Reason:  contract.ReasonInvalidPath,
+		}
+	}
 	if err := d.ensureAllowed(root); err != nil {
 		return nil, err
 	}
@@ -269,12 +347,19 @@ func (d *Detector) ensureAllowed(path string) *contract.ResolveWorkspaceError {
 	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
 		abs = resolved
 	}
+	cleanAbs := filepath.Clean(abs)
 	for _, allowed := range d.opts.AllowedRoots {
 		al, err := filepath.Abs(allowed)
 		if err != nil {
 			continue
 		}
-		if strings.HasPrefix(abs, filepath.Clean(al)+string(os.PathSeparator)) || abs == filepath.Clean(al) {
+		cleanAllowed := filepath.Clean(al)
+		prefix := cleanAllowed + string(os.PathSeparator)
+		if runtime.GOOS == "windows" {
+			if strings.EqualFold(cleanAbs, cleanAllowed) || (len(cleanAbs) >= len(prefix) && strings.EqualFold(cleanAbs[:len(prefix)], prefix)) {
+				return nil
+			}
+		} else if cleanAbs == cleanAllowed || strings.HasPrefix(cleanAbs, prefix) {
 			return nil
 		}
 	}
@@ -285,13 +370,19 @@ func (d *Detector) ensureAllowed(path string) *contract.ResolveWorkspaceError {
 	}
 }
 
+// shouldExclude reports whether any path component equals an exclude pattern.
+// Matching whole components keeps ".git" from excluding ".github" or "build"
+// from excluding "buildkite", and matches how the indexer skips directories.
 func (d *Detector) shouldExclude(path string) bool {
+	parts := strings.FieldsFunc(filepath.ToSlash(path), func(r rune) bool { return r == '/' })
 	for _, pattern := range d.opts.ExcludePatterns {
 		if pattern == "" {
 			continue
 		}
-		if strings.Contains(path, pattern) {
-			return true
+		for _, part := range parts {
+			if part == pattern || (runtime.GOOS == "windows" && strings.EqualFold(part, pattern)) {
+				return true
+			}
 		}
 	}
 	return false

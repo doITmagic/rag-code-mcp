@@ -297,3 +297,40 @@ func TestIsVueProject(t *testing.T) {
 		}
 	}
 }
+
+// The component name comes from `name:` even on one line, and the filename
+// fallback must use the base name on Windows paths too.
+func TestAnalyzer_ComponentName(t *testing.T) {
+	a := NewAnalyzer()
+	info := a.Analyze("<script>\nexport default {\n  name: 'MikeWidget',\n  computed: {\n    total() { return 1 }\n  },\n  methods: {\n    mikeMethod() {},\n    async save() {}\n  }\n}\n</script>\n", `C:\proj\src\M.vue`)
+	if len(info.Components) != 1 || info.Components[0].Name != "MikeWidget" {
+		t.Fatalf("inline name: got %+v", info.Components)
+	}
+	if got := info.Components[0].Methods; len(got) != 2 || got[0] != "mikeMethod" || got[1] != "save" {
+		t.Fatalf("methods: got %v", got)
+	}
+	if got := info.Components[0].Computed; len(got) != 1 || got[0] != "total" {
+		t.Fatalf("computed: got %v", got)
+	}
+	info = a.Analyze("<script>\nexport default { data() { return {} } }\n</script>\n", `C:\proj\src\MyWidget.vue`)
+	if len(info.Components) != 1 || info.Components[0].Name != "MyWidget" {
+		t.Fatalf("filename fallback: got %+v", info.Components)
+	}
+}
+
+func TestAnalyzer_ComponentNameIgnoresNestedDataNameAndSetsEndLine(t *testing.T) {
+	a := NewAnalyzer()
+	src := "<template>\n  <div>{{ name }}</div>\n</template>\n<script>\nexport default {\n  data() {\n    return {\n      name: 'John'\n    }\n  }\n}\n</script>"
+	info := a.Analyze(src, "UserProfile.vue")
+	if len(info.Components) != 1 {
+		t.Fatalf("expected 1 component, got %d", len(info.Components))
+	}
+	comp := info.Components[0]
+	if comp.Name != "UserProfile" {
+		t.Errorf("expected component name 'UserProfile' (from filename), got %q", comp.Name)
+	}
+	if comp.StartLine != 1 || comp.EndLine != 12 {
+		t.Errorf("expected lines 1..12, got %d..%d", comp.StartLine, comp.EndLine)
+	}
+}
+

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/doITmagic/rag-code-mcp/pkg/llm"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/css"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/docs"
+	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/generic"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/go"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/html"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/javascript"
@@ -124,9 +126,6 @@ func Run(rcfg RunConfig) error {
 	}
 	provider := llm.NewRetryableProvider(ollamaProvider, 3, 30*time.Second)
 
-	if err := ollamaProvider.Warmup(context.Background()); err != nil {
-		logger.Instance.Warn("Ollama warmup failed (model may cold-start on first embed): %v", err)
-	}
 	logger.Instance.Info("LLM provider ready: embed=%s (retries=3, timeout=30s, keep_alive=30m)", cfg.LLM.OllamaEmbed)
 
 	// ── Vector Store ──
@@ -221,12 +220,14 @@ func Run(rcfg RunConfig) error {
 	mcpMux := http.NewServeMux()
 	mcpMux.Handle("/mcp", streamableHandler)
 
-	// Profiling endpoints
-	mcpMux.HandleFunc("/debug/pprof/", pprof.Index)
-	mcpMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	mcpMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	mcpMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	mcpMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	// Profiling endpoints (only mounted in debug mode or when explicitly enabled)
+	if strings.EqualFold(cfg.Logging.Level, "debug") || os.Getenv("RAGCODE_ENABLE_PPROF") == "1" {
+		mcpMux.HandleFunc("/debug/pprof/", pprof.Index)
+		mcpMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		mcpMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		mcpMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		mcpMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	}
 
 	// Middleware: sticky workspace + response writer injection.
 	//
@@ -254,13 +255,9 @@ func Run(rcfg RunConfig) error {
 	})
 
 	// ── Paths ──
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("cannot determine home directory: %w", err)
-	}
-	ragcodeDir := filepath.Join(homeDir, ".ragcode")
+	ragcodeDir := utils.RagCodeHome()
 	if err := os.MkdirAll(ragcodeDir, 0o700); err != nil {
-		return fmt.Errorf("cannot create ~/.ragcode: %w", err)
+		return fmt.Errorf("cannot create data dir %s: %w", ragcodeDir, err)
 	}
 
 	// ── Start Daemon Listeners ──
@@ -272,6 +269,11 @@ func Run(rcfg RunConfig) error {
 		Handler: mcpHandler,
 		OnReady: func() {
 			logger.Instance.Info("Daemon ready — port=%d", rcfg.HTTPPort)
+			go func() {
+				if err := ollamaProvider.Warmup(context.Background()); err != nil {
+					logger.Instance.Warn("Ollama warmup failed (model may cold-start on first embed): %v", err)
+				}
+			}()
 		},
 	})
 

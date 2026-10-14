@@ -1,17 +1,17 @@
-# PHP Parser
+# PHP Parser (`pkg/parser/php`)
 
-The `php` package implements a robust analyzer for the **PHP** language, providing extensive support for modern versions (8.0+) and native integration with the **Laravel** framework.
+The `php` package implements a full **PHP 8+** AST analyzer (powered by `VKCOM/php-parser`) with pluggable `FrameworkEnricher` modules for **Laravel** (including **Blade**) and **WordPress** (including **WooCommerce** and **Oxygen Builder**).
 
-## 🎯 Objectives
+## 🎯 Extracted Symbols
 
-The PHP analyzer extracts complex code structures, emphasizing object relationships and framework-specific metadata.
-
-### Extracted Symbols:
-1.  **Classes**: Class definitions, namespaces, inheritances, and implemented interfaces.
-2.  **Methods**: Visibility, return types, parameters, and docstrings (PHPDoc).
-3.  **Interfaces & Traits**: Full support for PHP composition structures.
-4.  **Laravel Specialization**: Automatically detects Eloquent models, relationships (`hasMany`, `belongsTo`), controllers, and routes.
-5.  **Functions & Constants**: Global or class-level symbols.
+1. **Classes (`class`, `abstract class`, `final class`)**: Namespace, inheritance (`extends`), implemented interfaces (`implements`), trait usage, properties, constants, and methods.
+2. **Interfaces (`interface`) & Traits (`trait`)**: Full method and property extraction with file paths, line spans, and PHPDoc comments.
+3. **PHP 8.1 Enums (`enum`)**: Backed and unit enums (`StmtEnum`) along with enum cases (`StmtEnumCase`).
+4. **Methods & Functions**: Visibility (`public`, `protected`, `private`), `static`/`abstract`/`final` modifiers, PHP 8 attributes (`#[...]`), union (`A|B`), intersection (`A&B`), and nullable (`?T`) types, plus PHPDoc annotations.
+5. **Imports (`use`)**: Single and group `use Prefix\{A, B as C};` statements for accurate FQN resolution across classes and framework analyzers.
+6. **Framework Enrichers**:
+   - **[Laravel (`./laravel`)](./laravel/README.md)**: Eloquent models & relationships, controllers, routes (`web.php`, `api.php`, fluent `Route::...->group()`, `Route::resource`, `Route::apiResource`), migrations, middleware, service providers, and Blade templates (`.blade.php`).
+   - **[WordPress (`./wordpress`)](./wordpress/README.md)**: Action & filter hooks (`add_action`, `add_filter`, `do_action`, `apply_filters`), Custom Post Types & taxonomies, shortcodes, Gutenberg blocks, widgets, admin pages & REST API endpoints, plugin headers, **WooCommerce** hooks/templates/API, and **Oxygen Builder** custom elements.
 
 ---
 
@@ -19,73 +19,21 @@ The PHP analyzer extracts complex code structures, emphasizing object relationsh
 
 ```mermaid
 graph TD
-    A[Source Files .php] --> B[PHP Analyzer Registry]
-    B --> C[PHP Analyzer Core]
-    C --> D[PHPDoc Parsing]
-    D --> E[Laravel Adapter]
-    E --> F[Eloquents / Routes / Controllers]
-    F --> G[pkgParser.Result]
+    A[Source Files .php / .blade.php] --> B[PHP Analyzer]
+    B --> C[Core PHP 8+ AST & PHPDoc]
+    C --> D{FrameworkEnricher Registry}
+    D -->|Laravel Detected| E[Laravel & Blade Enricher]
+    D -->|WordPress Detected| F[WordPress + WooCommerce + Oxygen Enricher]
+    E & F --> G[pkgParser.Result Symbols & Relations]
 ```
 
 ---
 
 ## 🏗️ Package Structure
 
-*   `types.go`: Local data structures (e.g., `ClassInfo`, `MethodInfo`, `ReturnInfo`).
-*   `analyzer.go`: Main conversion and scanning logic.
-*   `php_analyzer.go`: Implementation of the `parser.Analyzer` interface.
-*   `phpdoc.go`: Specialized parser for PHPDoc comments.
-*   `laravel/`: Dedicated sub-package for Laravel-specific analysis (Eloquent, Relationships, Diagrams).
-
----
-
-## 🔍 Extraction Example
-
-### PHP Source Code (Laravel Model):
-```php
-namespace App\Models;
-
-class User extends Model {
-    /** @return HasMany */
-    public function orders() {
-        return $this->hasMany(Order::class);
-    }
-}
-```
-
-### Result (Symbol Metadata):
-| Field | Value |
-|------|---------|
-| `Name` | `"User"` |
-| `Type` | `"class"` |
-| `Metadata.namespace` | `"App\Models"` |
-| `Metadata.is_eloquent` | `true` |
-| `Metadata.relations` | `[{"name": "orders", "type": "hasMany", "related": "Order"}]` |
-
----
-
-## 💻 Usage
-
-```go
-import (
-    "context"
-    "github.com/doITmagic/rag-code-mcp/pkg/parser"
-    _ "github.com/doITmagic/rag-code-mcp/pkg/parser/php"
-)
-
-func main() {
-    analyzer := parser.GetByName("php")
-    result, err := analyzer.Analyze(context.Background(), "./app")
-    // ... process result.Symbols
-}
-```
-
----
-
-## 📋 Metadata and Components
-
-| Component | Description |
-|------------|-----------|
-| **PHPDoc** | Extracts complex types from comments (e.g., `Collection<User>`). |
-| **Laravel** | Automatically identifies routes and maps them to controller methods. |
-| **Visibility** | Captures whether a method is `public`, `protected`, or `private`. |
+- `php_analyzer.go`: Implements `parser.Analyzer` and runs registered `FrameworkEnricher` plugins.
+- `analyzer.go`: Core AST visitor (`symbolCollector`) for classes, interfaces, traits, enums, functions, constants, group `use` imports, and call graph extraction.
+- `phpdoc.go`: PHPDoc parser (`@param`, `@return`, `@var`, `@property`, `@throws`).
+- `types.go`: Intermediate PHP AST representations (`PackageInfo`, `ClassInfo`, `InterfaceInfo`, `TraitInfo`, `MethodInfo`, `CodeChunk`).
+- [`laravel/`](./laravel/README.md): Laravel & Blade framework analyzer and enricher.
+- [`wordpress/`](./wordpress/README.md): WordPress, WooCommerce, and Oxygen Builder analyzer and enricher.

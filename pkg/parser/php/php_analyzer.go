@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
@@ -32,6 +33,8 @@ func init() {
 // Analyzer implements the parser.Analyzer interface for PHP.
 type Analyzer struct {
 	codeAnalyzer *CodeAnalyzer
+	// ponytail: one lock matches the shared collector; make collection local only if parallel parsing becomes useful.
+	mu sync.Mutex
 }
 
 // NewAnalyzer creates a new PHP analyzer.
@@ -48,11 +51,14 @@ func (a *Analyzer) Name() string {
 
 // CanHandle returns true for .php files.
 func (a *Analyzer) CanHandle(filePath string) bool {
-	return strings.HasSuffix(filePath, ".php")
+	return strings.HasSuffix(strings.ToLower(filePath), ".php")
 }
 
 // Analyze extracts symbols from a file or directory.
 func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
 	paths := []string{path}
 	logger.Instance.Debug("[PHP] Analyze: %s (enrichers=%d)", filepath.Base(path), len(enrichers))
 
@@ -109,6 +115,11 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 			Relations: chunk.Relations,
 			Metadata:  chunk.Metadata,
 		}
+		qualified, _ := chunk.Metadata["qualified_name"].(string)
+		if qualified == "" {
+			qualified = strings.TrimPrefix(chunk.Package+"\\"+chunk.Name, "\\")
+		}
+		symbols[i].QualifiedName = qualified
 	}
 
 	return &pkgParser.Result{

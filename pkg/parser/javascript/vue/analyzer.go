@@ -1,6 +1,7 @@
 package vue
 
 import (
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -14,11 +15,14 @@ var (
 	reScriptSetup   = regexp.MustCompile(`<script\s+[^>]*setup[^>]*>`)
 
 	// Options API
+	reDefineOptions   = regexp.MustCompile(`(?m)defineOptions\s*\(\s*\{`)
 	reDefineComponent = regexp.MustCompile(`(?m)defineComponent\s*\(\s*\{`)
-	reExportDefault   = regexp.MustCompile(`(?m)^export\s+default\s+\{`)
+	reExportDefault   = regexp.MustCompile(`(?m)export\s+default\s+\{`)
 	reOptionsProps    = regexp.MustCompile(`(?m)^\s+props\s*:\s*[\[{]`)
 	reOptionsEmits    = regexp.MustCompile(`(?m)^\s+emits\s*:\s*[\[{]`)
-	reComponentName   = regexp.MustCompile(`(?m)^\s+name\s*:\s*['"](\w+)['"]`)
+	// Not anchored to a line start: `export default { name: 'X', ... }` on
+	// one line is common and was falling through to the filename.
+	reComponentName   = regexp.MustCompile(`(?:^|[\s{,])name\s*:\s*['"](\w+)['"]`)
 
 	// Composition API
 	reRef         = regexp.MustCompile(`\bref\s*\(`)
@@ -65,7 +69,7 @@ var (
 	rePluginUse = regexp.MustCompile(`(?m)app\.use\s*\(\s*(\w+)`)
 
 	// Component methods/properties extraction
-	reMethodName = regexp.MustCompile(`(?m)^\s+(\w+)\s*\(`)
+	reMethodName = regexp.MustCompile(`(?m)^\s+(?:async\s+)?(\w+)\s*\(`) // async methods too
 )
 
 // Analyzer detects Vue.js-specific patterns
@@ -154,6 +158,51 @@ func (a *Analyzer) Analyze(source string, filePath string) *VueInfo {
 	return info
 }
 
+// extractComponentName extracts the component `name:` option only from the
+// top-level options object of defineOptions({...}), defineComponent({...}), or
+// export default {...}, ignoring nested objects like data() { return { name: ... } }.
+func extractComponentName(source string) string {
+	for _, re := range []*regexp.Regexp{reDefineOptions, reDefineComponent, reExportDefault} {
+		loc := re.FindStringIndex(source)
+		if loc == nil {
+			continue
+		}
+		topLevel := topLevelObjectText(source[loc[1]-1:])
+		if match := reComponentName.FindStringSubmatch(topLevel); len(match) > 1 {
+			return match[1]
+		}
+	}
+	return ""
+}
+
+func topLevelObjectText(s string) string {
+	var b strings.Builder
+	depth := 0
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		switch ch {
+		case '{':
+			depth++
+			if depth <= 2 {
+				b.WriteByte(ch)
+			}
+		case '}':
+			if depth <= 2 {
+				b.WriteByte(ch)
+			}
+			depth--
+			if depth == 0 {
+				return b.String()
+			}
+		default:
+			if depth == 1 {
+				b.WriteByte(ch)
+			}
+		}
+	}
+	return b.String()
+}
+
 // detectSFCComponent analyzes a Single File Component
 func (a *Analyzer) detectSFCComponent(fullSource, scriptContent, filePath string) Component {
 	comp := Component{
@@ -162,6 +211,7 @@ func (a *Analyzer) detectSFCComponent(fullSource, scriptContent, filePath string
 		IsExported:  true,
 		IsDefault:   true,
 		StartLine:   1,
+		EndLine:     strings.Count(fullSource, "\n") + 1,
 	}
 
 	// Determine component type
@@ -174,15 +224,13 @@ func (a *Analyzer) detectSFCComponent(fullSource, scriptContent, filePath string
 	}
 
 	// Extract component name
-	if match := reComponentName.FindStringSubmatch(scriptContent); len(match) > 1 {
-		comp.Name = match[1]
+	if name := extractComponentName(scriptContent); name != "" {
+		comp.Name = name
 	} else {
-		// Derive from filename
-		name := strings.TrimSuffix(filePath, ".vue")
-		if idx := strings.LastIndex(name, "/"); idx != -1 {
-			name = name[idx+1:]
-		}
-		comp.Name = cases.Title(language.English).String(name)
+		// Derive from filename. Normalize "\" to "/" first so Windows paths
+		// passed in tests on Linux also strip directory components.
+		name := strings.TrimSuffix(filepath.Base(strings.ReplaceAll(filePath, `\`, "/")), ".vue")
+		comp.Name = cases.Title(language.English, cases.NoLower).String(name)
 	}
 
 	// Extract props
@@ -193,6 +241,8 @@ func (a *Analyzer) detectSFCComponent(fullSource, scriptContent, filePath string
 
 	// Extract lifecycle hooks
 	comp.Hooks = a.extractHooks(scriptContent)
+	comp.Methods = a.extractObjectKeys(scriptContent, "methods")
+	comp.Computed = a.extractObjectKeys(scriptContent, "computed")
 
 	return comp
 }
@@ -214,13 +264,15 @@ func (a *Analyzer) detectComponents(source, filePath string) []Component {
 			comp.Type = "options"
 		}
 
-		if match := reComponentName.FindStringSubmatch(source); len(match) > 1 {
-			comp.Name = match[1]
+		if name := extractComponentName(source); name != "" {
+			comp.Name = name
 		}
 
 		comp.Props = a.extractProps(source)
 		comp.Emits = a.extractEmits(source)
 		comp.Hooks = a.extractHooks(source)
+		comp.Methods = a.extractObjectKeys(source, "methods")
+		comp.Computed = a.extractObjectKeys(source, "computed")
 
 		components = append(components, comp)
 	}

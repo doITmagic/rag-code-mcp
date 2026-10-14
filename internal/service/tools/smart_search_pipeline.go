@@ -62,6 +62,11 @@ type parallelSearchResult struct {
 // runParallelSearch executes semantic and hybrid searches concurrently,
 // collects results, and extracts workspace metadata.
 func (t *SmartSearchTool) runParallelSearch(ctx context.Context, filePath, query string, limit int, includeDocs bool) parallelSearchResult {
+	workspace, err := t.engine.DetectContext(ctx, filePath)
+	if err != nil {
+		return parallelSearchResult{err: err}
+	}
+	ctx = engine.WithResolvedWorkspace(ctx, filePath, workspace)
 	type searchResult struct {
 		label   string
 		result  *engine.SearchCodeResult
@@ -84,7 +89,7 @@ func (t *SmartSearchTool) runParallelSearch(ctx context.Context, filePath, query
 	go func() {
 		defer wg.Done()
 		t0 := time.Now()
-		res, err := t.engine.HybridSearchCode(ctx, filePath, query, limit)
+		res, err := t.engine.HybridSearchCode(ctx, filePath, query, limit, includeDocs)
 		results <- searchResult{label: "hybrid", result: res, err: err, elapsed: time.Since(t0)}
 	}()
 
@@ -133,9 +138,10 @@ func (t *SmartSearchTool) runParallelSearch(ctx context.Context, filePath, query
 
 // filterConfig holds parameters for the post-processing pipeline.
 type filterConfig struct {
-	Mode     string
-	MinScore float32
-	FilePath string
+	Mode         string
+	MinScore     float32
+	FilePath     string
+	DefaultFloor bool
 }
 
 // applyFilters runs the full post-processing pipeline on merged results:
@@ -143,7 +149,7 @@ type filterConfig struct {
 func (t *SmartSearchTool) applyFilters(merged []mergedResult, cfg filterConfig) []mergedResult {
 	merged = applyModeFilter(merged, cfg.Mode)
 	merged = applyPathScoping(merged, scoring.ScopeDir(cfg.FilePath))
-	merged = applyScoreFilter(merged, cfg.MinScore)
+	merged = applyScoreFilter(merged, cfg.MinScore, cfg.DefaultFloor)
 	merged = t.groupDocsByTree(merged)
 	return merged
 }
@@ -168,16 +174,23 @@ func applyModeFilter(merged []mergedResult, mode string) []mergedResult {
 }
 
 // applyScoreFilter removes results below the effective minimum score.
-// If minScore is specified, use it directly. Otherwise, apply auto-threshold:
-// when top score > 0.70, prune results below 40% of top score.
-func applyScoreFilter(merged []mergedResult, minScore float32) []mergedResult {
+// If minScore is specified, use it directly. Otherwise, use the default floor
+// or 40% of the top score, whichever is higher.
+func applyScoreFilter(merged []mergedResult, minScore float32, defaultFloor bool) []mergedResult {
 	if len(merged) == 0 {
 		return merged
 	}
 
 	effective := minScore
-	if effective <= 0 && merged[0].score > autoScoreThresholdTrigger {
-		effective = merged[0].score * autoScoreThresholdRatio
+	if effective <= 0 && defaultFloor {
+		effective = defaultSemanticMinScore
+		topScore := float32(0)
+		for _, m := range merged {
+			topScore = max(topScore, m.score, m.rawScore)
+		}
+		if relative := topScore * autoScoreThresholdRatio; topScore > autoScoreThresholdTrigger && relative > effective {
+			effective = relative
+		}
 	}
 	if effective <= 0 {
 		return merged
@@ -185,7 +198,7 @@ func applyScoreFilter(merged []mergedResult, minScore float32) []mergedResult {
 
 	var filtered []mergedResult
 	for _, m := range merged {
-		if m.score >= effective {
+		if max(m.score, m.rawScore) >= effective {
 			filtered = append(filtered, m)
 		}
 	}
@@ -291,7 +304,7 @@ func buildResultsMessage(count int, useCompact, isFallback bool) string {
 	if isFallback {
 		return fmt.Sprintf("⚡ Found %d results via AST fallback with full source code. Indexing in progress — results will improve.", count)
 	}
-	return fmt.Sprintf("🎯 Found %d high-confidence results with full source code.", count)
+	return fmt.Sprintf("Found %d results with full source code.", count)
 }
 
 // serializeResults populates the ToolResponse with either compact or full result data,
@@ -330,9 +343,6 @@ func serializeResults(response *ToolResponse, merged []mergedResult, useCompact,
 
 		validResults = append(validResults, resultToMap(m, !useCompact, query, includeReasons))
 
-		if !useCompact {
-			actualBytes += int64(len(m.content))
-		}
 	}
 
 	// Telemetry: baseline = sum of unique file sizes (deduplicated)
@@ -342,6 +352,10 @@ func serializeResults(response *ToolResponse, merged []mergedResult, useCompact,
 
 	response.Message = buildResultsMessage(len(validResults), useCompact, isFallback)
 	response.Data = validResults
+	if len(validResults) == 0 {
+		response.Status = "no_results"
+		response.Message = "No results remain after filtering missing files."
+	}
 
 	// Proactive stale index warning (now with auto-cleanup note)
 	if len(staleFiles) > 0 {
@@ -356,20 +370,32 @@ func serializeResults(response *ToolResponse, merged []mergedResult, useCompact,
 		}
 	}
 
+	// Count the envelope and metadata as well as source snippets.
+	encoded, _ := response.JSON()
+	actualBytes = int64(len(encoded))
 	response.Context.Telemetry = telemetry.CalculateSavings(baselineBytes, actualBytes)
 	return staleFiles
 }
 
 // noResultsResponse returns a "no results" JSON response.
 func noResultsResponse(query string, meta searchMetadata) (string, error) {
+	idxStatus := indexer.LoadIndexStatus(meta.workspaceRoot)
+	status := "no_results"
+	message := fmt.Sprintf("🔍 No code results found for query: '%s'", query)
+	if idxStatus != nil && idxStatus.EndedAt == "" {
+		status = "indexing_in_progress"
+		message = fmt.Sprintf("Indexing is still in progress. No match for '%s' was found in the partial index; retry after indexing completes.", query)
+	}
 	response := ToolResponse{
-		Status:  "no_results",
-		Message: fmt.Sprintf("🔍 No code results found for query: '%s'", query),
+		Status:  status,
+		Message: message,
 		Context: ContextMetadata{
 			WorkspaceRoot:   meta.workspaceRoot,
 			DetectionSource: meta.detectionSource,
 			Language:        meta.language,
 			Collection:      meta.collection,
+			IndexingStatus:  idxStatus,
+			SessionMetrics:  telemetry.ReadAggregatedMetrics(meta.workspaceRoot),
 		},
 	}
 	return response.JSON()
@@ -377,7 +403,10 @@ func noResultsResponse(query string, meta searchMetadata) (string, error) {
 
 // recordSearchMetric maps pipeline data to a telemetry.SearchMetric and appends to JSONL.
 func recordSearchMetric(meta searchMetadata, query string, merged []mergedResult, isFallback bool, savings *telemetry.Savings, start time.Time) {
-	source := "vector"
+	source := "hybrid"
+	if meta.collection == "exact" {
+		source = "exact"
+	}
 	if isFallback {
 		source = "fallback"
 	}

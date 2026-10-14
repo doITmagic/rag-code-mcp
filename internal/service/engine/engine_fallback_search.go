@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
+	"github.com/doITmagic/rag-code-mcp/internal/service/iderules"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
 	"github.com/doITmagic/rag-code-mcp/pkg/scoring"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
@@ -100,6 +101,10 @@ func (e *Engine) FallbackDirectSearch(ctx context.Context, workspaceRoot, query 
 					return filepath.SkipDir
 				}
 			}
+			return nil
+		}
+
+		if iderules.IsGenerated(path) {
 			return nil
 		}
 
@@ -232,6 +237,9 @@ func fallbackScoreSymbol(sym parser.Symbol, lowerQuery string, tokens []string) 
 // Tagged with _source: "fallback" so callers can identify non-vector results.
 func symbolToSearchResult(sym parser.Symbol, score float32) storage.SearchResult {
 	idKey := fmt.Sprintf("%s:%s:%d:%d", sym.FilePath, sym.Name, sym.StartLine, sym.EndLine)
+	if sym.QualifiedName != "" {
+		idKey += ":" + sym.QualifiedName
+	}
 	id := fmt.Sprintf("%x", sha256.Sum256([]byte(idKey)))[:32]
 
 	payload := map[string]interface{}{

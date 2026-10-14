@@ -67,6 +67,7 @@ func (t *ReadFileContextTool) Register(server *mcp.Server) {
 		logger.Instance.Info("rag_read_file_context completed in %v", time.Since(start))
 		logger.Instance.Debug("rag_read_file_context result size (bytes): %d", len(result))
 		return &mcp.CallToolResult{
+			IsError: responseIsError(result),
 			Content: []mcp.Content{&mcp.TextContent{Text: result}},
 		}, nil, nil
 	})
@@ -85,10 +86,19 @@ func (t *ReadFileContextTool) Execute(ctx context.Context, args map[string]inter
 		return resp.JSON()
 	}
 
-	absPath, err := filepath.Abs(filePath)
-	if err != nil {
-		resp := ToolResponse{Status: "error", Error: fmt.Sprintf("invalid file path: %v", err)}
-		return resp.JSON()
+	var absPath string
+	if !filepath.IsAbs(filePath) && wctx != nil && wctx.Root != "" {
+		candidate := filepath.Join(wctx.Root, filePath)
+		if _, statErr := os.Stat(candidate); statErr == nil {
+			absPath = candidate
+		}
+	}
+	if absPath == "" {
+		absPath, err = filepath.Abs(filePath)
+		if err != nil {
+			resp := ToolResponse{Status: "error", Error: fmt.Sprintf("invalid file path: %v", err)}
+			return resp.JSON()
+		}
 	}
 
 	// Make sure the file actually exists

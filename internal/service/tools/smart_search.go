@@ -10,15 +10,17 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
+	"github.com/doITmagic/rag-code-mcp/pkg/telemetry"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // SmartSearchTool implements the rag_search MCP tool.
-// It runs both semantic (discovery) and hybrid (exact) searches in parallel,
+// It runs both semantic and hybrid (reranked) searches in parallel,
 // merges results by score, and returns adaptive output (compact vs full)
 // based on result confidence — no manual mode selection needed.
 type SmartSearchTool struct {
@@ -37,18 +39,18 @@ func NewSmartSearchTool(eng *engine.Engine) *SmartSearchTool {
 func (t *SmartSearchTool) Name() string { return "rag_search" }
 func (t *SmartSearchTool) Description() string {
 	return "Intelligent code search that automatically determines the best search strategy. " +
-		"Simply provide your query — the tool runs both semantic and exact searches in parallel, " +
+		"Simply provide your query — the tool combines semantic and hybrid search, " +
 		"merges results by relevance score, and adapts the response format automatically: " +
-		"high-confidence matches return full source code, exploratory results return compact summaries. " +
+		"results return full source code or compact summaries; scores are ranking signals, not confidence probabilities. " +
 		"No need to choose a search mode. Provide 'file_path' for faster workspace detection, or omit it for Auto-Discovery. " +
+		"CamelCase, snake_case and qualified identifiers use exact symbol lookup. Set 'exact_symbol' to override this detection. " +
 		"Set 'include_full_content' to true to force full source code in all results, overriding compact mode. " +
 		"Set 'include_docs' to true to also search project documentation (README, guides, Markdown files) alongside code. " +
 		"Use 'mode'=\"strict_code\" when you ONLY want to see implementation logic exactly (Go, Python, etc) and strictly ignore documentation. " +
 		"Use 'mode'=\"strict_docs\" when searching for architectural plans or summaries. " +
 		"Use 'mode'=\"all\" or omit for broad scans. " +
 		"Set 'min_score' (0.0-1.0) to filter out low-relevance results. Note: final scores may slightly exceed 1.0 after path-proximity boosting. " +
-		"When omitted, an automatic threshold is applied: " +
-		"if the top result scores above 0.70, results below 40% of the top score are automatically pruned. " +
+		"When omitted, results below 0.72 or 40% of the top score (whichever is higher) are automatically pruned. " +
 		"Set 'include_reasons' to true to include a 'match_reasons' field in each result, explaining which fields " +
 		"(symbol_name, signature, content, docstring) contributed to the match — useful for understanding result relevance."
 }
@@ -62,6 +64,7 @@ type SmartSearchInput struct {
 	IncludeDocs        bool    `json:"include_docs,omitempty"`
 	IncludeReasons     bool    `json:"include_reasons,omitempty"`
 	Mode               string  `json:"mode,omitempty"`
+	ExactSymbol        *bool   `json:"exact_symbol,omitempty"`
 }
 
 // highConfidenceThreshold: if top result score exceeds this, return full content.
@@ -75,6 +78,10 @@ const autoScoreThresholdTrigger = 0.70
 
 // autoScoreThresholdRatio: results below topScore * ratio are pruned.
 const autoScoreThresholdRatio = 0.40
+
+// defaultSemanticMinScore rejects weak vector neighbours when callers do not
+// provide an explicit threshold.
+const defaultSemanticMinScore = 0.72
 
 func (t *SmartSearchTool) Register(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
@@ -94,6 +101,7 @@ func (t *SmartSearchTool) Register(server *mcp.Server) {
 
 		logger.Instance.Info("rag_search completed in %v", time.Since(start))
 		return &mcp.CallToolResult{
+			IsError: responseIsError(result),
 			Content: []mcp.Content{&mcp.TextContent{Text: result}},
 		}, nil, nil
 	})
@@ -106,19 +114,63 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 		return "", err
 	}
 
-	sr := t.runParallelSearch(ctx, input.FilePath, query, limit, input.IncludeDocs)
-	if sr.semantic == nil && sr.hybrid == nil {
-		return t.handleSearchError(sr.err, sr.meta.workspaceRoot, sr.meta.workspaceID)
+	exactSymbol := isSymbolQuery(query)
+	if input.ExactSymbol != nil {
+		exactSymbol = *input.ExactSymbol
 	}
-
-	merged := t.mergeResults(sr.semantic, sr.hybrid, limit)
+	var sr parallelSearchResult
+	var merged []mergedResult
+	if exactSymbol {
+		wctx, err := t.engine.DetectContext(ctx, input.FilePath)
+		if err != nil {
+			return "", err
+		}
+		sr.meta = searchMetadata{workspaceRoot: wctx.Root, workspaceID: wctx.ID, collection: "exact", detectionSource: wctx.DetectionSource}
+		ctx = engine.WithResolvedWorkspace(ctx, input.FilePath, wctx)
+		exact, err := t.engine.SearchByName(ctx, sr.meta.workspaceID, query, limit)
+		if err != nil {
+			var missing *engine.ErrNoCollectionsFound
+			if errors.As(err, &missing) && input.ExactSymbol != nil && *input.ExactSymbol {
+				return (ToolResponse{Status: "indexing_required", Message: "Index this workspace before exact symbol lookup.", Context: ContextFromWorkspaceWithStatus(wctx, t.engine)}).JSON()
+			}
+			if !errors.As(err, &missing) {
+				return "", err
+			}
+		}
+		if len(exact) == 0 && err == nil {
+			exact, err = t.engine.ExactSearchPolyglot(ctx, sr.meta.workspaceID, map[string]interface{}{"qualified_name": query}, limit)
+			if err != nil {
+				return "", err
+			}
+		}
+		for i := range exact {
+			exact[i].Score = 1
+		}
+		merged = t.mergeResults(&engine.SearchCodeResult{Results: exact}, nil, limit)
+		for i := range merged {
+			merged[i].source = "exact"
+		}
+	}
+	if !exactSymbol || len(merged) == 0 && input.ExactSymbol == nil {
+		exactSymbol = false
+		sr = t.runParallelSearch(ctx, input.FilePath, query, limit, input.IncludeDocs)
+		if sr.semantic == nil && sr.hybrid == nil {
+			if sr.err == nil {
+				recordSearchMetric(sr.meta, query, nil, false, nil, t0)
+			}
+			return t.handleSearchError(sr.err, sr.meta.workspaceRoot, sr.meta.workspaceID)
+		}
+		merged = t.mergeResults(sr.semantic, sr.hybrid, limit)
+	}
 	merged = t.applyFilters(merged, filterConfig{
-		Mode:     input.Mode,
-		MinScore: input.MinScore,
-		FilePath: input.FilePath,
+		Mode:         input.Mode,
+		MinScore:     input.MinScore,
+		FilePath:     input.FilePath,
+		DefaultFloor: !exactSymbol && sr.meta.collection != "fallback",
 	})
 
 	if len(merged) == 0 {
+		recordSearchMetric(sr.meta, query, nil, sr.meta.collection == "fallback", nil, t0)
 		return noResultsResponse(query, sr.meta)
 	}
 
@@ -137,16 +189,42 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 		t.engine.CleanupStaleFiles(sr.meta.workspaceID, staleFiles)
 	}
 
-	// Record metric asynchronously to avoid blocking response
-	go recordSearchMetric(sr.meta, query, merged, isFallback, response.Context.Telemetry, t0)
+	// Count only results actually returned after stale-file filtering.
+	valid := merged[:0]
+	for _, m := range merged {
+		stale := false
+		for _, path := range staleFiles {
+			stale = stale || m.filePath == path
+		}
+		if !stale {
+			valid = append(valid, m)
+		}
+	}
+	recordSearchMetric(sr.meta, query, valid, isFallback, response.Context.Telemetry, t0)
+	response.Context.SessionMetrics = telemetry.ReadAggregatedMetrics(sr.meta.workspaceRoot)
 
 	return response.JSON()
+}
+
+// Single identifiers use exact lookup first, then semantic fallback. Callers
+// can override this heuristic with exact_symbol.
+func isSymbolQuery(query string) bool {
+	for i, r := range query {
+		if !(unicode.IsLetter(r) || unicode.IsDigit(r) || strings.ContainsRune("_.$\\:", r)) {
+			return false
+		}
+		if i == 0 && unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return query != ""
 }
 
 // mergedResult holds a deduplicated result with metadata extracted from payload.
 type mergedResult struct {
 	id         string
 	score      float32
+	rawScore   float32
 	filePath   string
 	name       string
 	symbolType string
@@ -173,14 +251,16 @@ func (t *SmartSearchTool) mergeResults(semantic, hybrid *engine.SearchCodeResult
 				existing.source = "both"
 				if r.Score > existing.score {
 					existing.score = r.Score
+					existing.rawScore = r.Score
 				}
 				continue
 			}
 
 			m := &mergedResult{
-				id:     id,
-				score:  r.Score,
-				source: source,
+				id:       id,
+				score:    r.Score,
+				rawScore: r.Score,
+				source:   source,
 			}
 
 			// Extract payload fields
@@ -205,11 +285,11 @@ func (t *SmartSearchTool) mergeResults(semantic, hybrid *engine.SearchCodeResult
 			if v, ok := r.Point.Payload["content"].(string); ok {
 				m.content = v
 			}
-			if v, ok := r.Point.Payload["start_line"].(float64); ok {
-				m.startLine = int(v)
+			if v, ok := parseLineArg(r.Point.Payload["start_line"]); ok {
+				m.startLine = v
 			}
-			if v, ok := r.Point.Payload["end_line"].(float64); ok {
-				m.endLine = int(v)
+			if v, ok := parseLineArg(r.Point.Payload["end_line"]); ok {
+				m.endLine = v
 			}
 
 			seen[id] = m
@@ -243,7 +323,7 @@ func (t *SmartSearchTool) mergeResults(semantic, hybrid *engine.SearchCodeResult
 }
 
 // handleSearchError handles indexing/workspace errors consistently.
-func (t *SmartSearchTool) handleSearchError(err error, workspaceRoot, workspaceID string) (string, error) {
+func (t *SmartSearchTool) handleSearchError(err error, _, _ string) (string, error) {
 	if err == nil {
 		response := ToolResponse{
 			Status:  "no_results",

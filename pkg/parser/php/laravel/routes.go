@@ -11,7 +11,6 @@ import (
 	"github.com/VKCOM/php-parser/pkg/parser"
 	"github.com/VKCOM/php-parser/pkg/version"
 	"github.com/VKCOM/php-parser/pkg/visitor"
-	"github.com/VKCOM/php-parser/pkg/visitor/traverser"
 
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
 )
@@ -70,7 +69,7 @@ func (ra *RouteAnalyzer) analyzeFile(filePath string) ([]Route, error) {
 		astHelper: ra.astHelper,
 	}
 
-	traverser.NewTraverser(collector).Traverse(rootNode)
+	collector.walk(rootNode)
 
 	return collector.routes, nil
 }
@@ -93,6 +92,58 @@ type routeCollector struct {
 	groupStack []GroupContext
 }
 
+func (v *routeCollector) walk(node ast.Vertex) {
+	if node == nil {
+		return
+	}
+	v.EnterNode(node)
+	defer v.LeaveNode(node)
+
+	switch n := node.(type) {
+	case *ast.Root:
+		for _, stmt := range n.Stmts {
+			v.walk(stmt)
+		}
+	case *ast.StmtStmtList:
+		for _, stmt := range n.Stmts {
+			v.walk(stmt)
+		}
+	case *ast.StmtNamespace:
+		for _, stmt := range n.Stmts {
+			v.walk(stmt)
+		}
+	case *ast.StmtExpression:
+		v.walk(n.Expr)
+	case *ast.StmtIf:
+		v.walk(n.Stmt)
+		for _, elseIf := range n.ElseIf {
+			v.walk(elseIf)
+		}
+		v.walk(n.Else)
+	case *ast.StmtElseIf:
+		v.walk(n.Stmt)
+	case *ast.StmtElse:
+		v.walk(n.Stmt)
+	case *ast.ExprStaticCall:
+		v.ExprStaticCall(n)
+		for _, arg := range n.Args {
+			v.walk(arg)
+		}
+	case *ast.ExprMethodCall:
+		v.ExprMethodCall(n)
+		v.walk(n.Var)
+		for _, arg := range n.Args {
+			v.walk(arg)
+		}
+	case *ast.Argument:
+		v.walk(n.Expr)
+	case *ast.ExprClosure:
+		for _, stmt := range n.Stmts {
+			v.walk(stmt)
+		}
+	}
+}
+
 func (v *routeCollector) EnterNode(n ast.Vertex) bool {
 	if call, ok := n.(*ast.ExprStaticCall); ok {
 		className := v.extractName(call.Class)
@@ -102,6 +153,12 @@ func (v *routeCollector) EnterNode(n ast.Vertex) bool {
 				v.pushGroupContext(call.Args)
 				return true
 			}
+		}
+	}
+	if methodCall, ok := n.(*ast.ExprMethodCall); ok {
+		if v.extractIdentifier(methodCall.Method) == "group" && v.isRouteFluentChain(methodCall) {
+			v.pushFluentGroupContext(methodCall)
+			return true
 		}
 	}
 	return true
@@ -117,9 +174,105 @@ func (v *routeCollector) LeaveNode(n ast.Vertex) {
 			}
 		}
 	}
+	if methodCall, ok := n.(*ast.ExprMethodCall); ok {
+		if v.extractIdentifier(methodCall.Method) == "group" && v.isRouteFluentChain(methodCall) {
+			v.popGroupContext()
+		}
+	}
 }
 
-func (v *routeCollector) pushGroupContext(args []ast.Vertex) {
+func (v *routeCollector) isRouteFluentChain(n ast.Vertex) bool {
+	curr := n
+	for curr != nil {
+		switch c := curr.(type) {
+		case *ast.ExprMethodCall:
+			curr = c.Var
+		case *ast.ExprStaticCall:
+			className := v.extractName(c.Class)
+			return className == "Route" || strings.HasSuffix(className, "\\Route")
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+type fluentStep struct {
+	method string
+	args   []ast.Vertex
+}
+
+func (v *routeCollector) pushFluentGroupContext(groupCall *ast.ExprMethodCall) {
+	ctx := v.inheritGroupContext()
+
+	var steps []fluentStep
+	curr := groupCall.Var
+	for curr != nil {
+		switch c := curr.(type) {
+		case *ast.ExprMethodCall:
+			steps = append(steps, fluentStep{
+				method: v.extractIdentifier(c.Method),
+				args:   c.Args,
+			})
+			curr = c.Var
+		case *ast.ExprStaticCall:
+			steps = append(steps, fluentStep{
+				method: v.extractIdentifier(c.Call),
+				args:   c.Args,
+			})
+			curr = nil
+		default:
+			curr = nil
+		}
+	}
+
+	// Apply steps from innermost (Route::...) to outermost before ->group(...)
+	for i := len(steps) - 1; i >= 0; i-- {
+		v.applyFluentStep(&ctx, steps[i].method, steps[i].args)
+	}
+
+	// Also check if ->group(...) itself received an attributes array as first argument
+	v.applyGroupArrayArgs(&ctx, groupCall.Args)
+
+	v.groupStack = append(v.groupStack, ctx)
+}
+
+func (v *routeCollector) applyFluentStep(ctx *GroupContext, method string, args []ast.Vertex) {
+	if len(args) == 0 {
+		return
+	}
+	switch method {
+	case "prefix":
+		val := v.extractString(args[0])
+		if val != "" {
+			if ctx.Prefix != "" {
+				ctx.Prefix = strings.TrimRight(ctx.Prefix, "/") + "/" + strings.TrimLeft(val, "/")
+			} else {
+				ctx.Prefix = val
+			}
+		}
+	case "name", "as":
+		val := v.extractString(args[0])
+		ctx.NamePrefix += val
+	case "namespace":
+		val := v.extractString(args[0])
+		if val != "" {
+			if ctx.Namespace != "" {
+				ctx.Namespace += "\\" + val
+			} else {
+				ctx.Namespace = val
+			}
+		}
+	case "middleware":
+		if str := v.extractString(args[0]); str != "" {
+			ctx.Middleware = append(ctx.Middleware, str)
+		} else if arr := v.extractStringArray(args[0]); arr != nil {
+			ctx.Middleware = append(ctx.Middleware, arr...)
+		}
+	}
+}
+
+func (v *routeCollector) inheritGroupContext() GroupContext {
 	ctx := GroupContext{}
 	if len(v.groupStack) > 0 {
 		prev := v.groupStack[len(v.groupStack)-1]
@@ -128,31 +281,35 @@ func (v *routeCollector) pushGroupContext(args []ast.Vertex) {
 		ctx.NamePrefix = prev.NamePrefix
 		ctx.Middleware = append([]string(nil), prev.Middleware...)
 	}
+	return ctx
+}
 
+func (v *routeCollector) applyGroupArrayArgs(ctx *GroupContext, args []ast.Vertex) {
 	if len(args) > 0 {
 		if arg, ok := args[0].(*ast.Argument); ok {
 			if exprArray, ok := arg.Expr.(*ast.ExprArray); ok {
 				for _, item := range exprArray.Items {
 					if arrayItem, ok := item.(*ast.ExprArrayItem); ok {
 						key := v.extractString(arrayItem.Key)
-						if key == "prefix" {
+						switch key {
+						case "prefix":
 							val := v.extractString(arrayItem.Val)
 							if ctx.Prefix != "" {
 								ctx.Prefix = strings.TrimRight(ctx.Prefix, "/") + "/" + strings.TrimLeft(val, "/")
 							} else {
 								ctx.Prefix = val
 							}
-						} else if key == "as" {
+						case "as":
 							val := v.extractString(arrayItem.Val)
 							ctx.NamePrefix += val
-						} else if key == "namespace" {
+						case "namespace":
 							val := v.extractString(arrayItem.Val)
 							if ctx.Namespace != "" {
 								ctx.Namespace += "\\" + val
 							} else {
 								ctx.Namespace = val
 							}
-						} else if key == "middleware" {
+						case "middleware":
 							if str := v.extractString(arrayItem.Val); str != "" {
 								ctx.Middleware = append(ctx.Middleware, str)
 							} else if arr := v.extractStringArray(arrayItem.Val); arr != nil {
@@ -164,6 +321,11 @@ func (v *routeCollector) pushGroupContext(args []ast.Vertex) {
 			}
 		}
 	}
+}
+
+func (v *routeCollector) pushGroupContext(args []ast.Vertex) {
+	ctx := v.inheritGroupContext()
+	v.applyGroupArrayArgs(&ctx, args)
 	v.groupStack = append(v.groupStack, ctx)
 }
 
@@ -206,14 +368,33 @@ func (v *routeCollector) ExprStaticCall(n *ast.ExprStaticCall) {
 	}
 
 	methodName := v.extractIdentifier(n.Call)
+	v.dispatchRouteMethod(methodName, n.Args, n.Position.StartLine)
+}
 
+// ExprMethodCall handles fluent route definitions like Route::middleware('auth')->get(...)
+func (v *routeCollector) ExprMethodCall(n *ast.ExprMethodCall) {
+	if !v.isRouteFluentChain(n) {
+		return
+	}
+	methodName := v.extractIdentifier(n.Method)
+	switch methodName {
+	case "get", "post", "put", "patch", "delete", "options", "any", "match", "resource", "apiResource":
+		v.pushFluentGroupContext(n)
+		v.dispatchRouteMethod(methodName, n.Args, n.Position.StartLine)
+		v.popGroupContext()
+	}
+}
+
+func (v *routeCollector) dispatchRouteMethod(methodName string, args []ast.Vertex, line int) {
 	switch methodName {
 	case "get", "post", "put", "patch", "delete", "options", "any":
-		v.extractRoute(methodName, n.Args, n.Position.StartLine)
+		v.extractRoute(methodName, args, line)
 	case "match":
-		v.extractMatchRoute(n.Args, n.Position.StartLine)
+		v.extractMatchRoute(args, line)
 	case "resource":
-		v.extractResourceRoute(n.Args, n.Position.StartLine)
+		v.extractResourceRoute(args, line)
+	case "apiResource":
+		v.extractApiResourceRoute(args, line)
 	}
 }
 
@@ -263,6 +444,39 @@ func (v *routeCollector) extractMatchRoute(args []ast.Vertex, line int) {
 }
 
 func (v *routeCollector) extractResourceRoute(args []ast.Vertex, line int) {
+	actions := []struct {
+		action string
+		method string
+	}{
+		{"index", "GET"},
+		{"create", "GET"},
+		{"store", "POST"},
+		{"show", "GET"},
+		{"edit", "GET"},
+		{"update", "PUT/PATCH"},
+		{"destroy", "DELETE"},
+	}
+	v.extractResourceActions(args, line, actions, "Resource")
+}
+
+func (v *routeCollector) extractApiResourceRoute(args []ast.Vertex, line int) {
+	actions := []struct {
+		action string
+		method string
+	}{
+		{"index", "GET"},
+		{"store", "POST"},
+		{"show", "GET"},
+		{"update", "PUT/PATCH"},
+		{"destroy", "DELETE"},
+	}
+	v.extractResourceActions(args, line, actions, "API resource")
+}
+
+func (v *routeCollector) extractResourceActions(args []ast.Vertex, line int, actions []struct {
+	action string
+	method string
+}, label string) {
 	if len(args) < 2 {
 		return
 	}
@@ -278,17 +492,9 @@ func (v *routeCollector) extractResourceRoute(args []ast.Vertex, line int) {
 		return
 	}
 
-	actions := map[string]string{
-		"index":   "GET",
-		"create":  "GET",
-		"store":   "POST",
-		"show":    "GET",
-		"edit":    "GET",
-		"update":  "PUT/PATCH",
-		"destroy": "DELETE",
-	}
-
-	for action, method := range actions {
+	for _, item := range actions {
+		action := item.action
+		method := item.method
 		uri := name
 		if action == "show" || action == "edit" || action == "update" || action == "destroy" {
 			uri += "/{id}"
@@ -307,7 +513,7 @@ func (v *routeCollector) extractResourceRoute(args []ast.Vertex, line int) {
 			Action:      action,
 			FilePath:    v.filePath,
 			Line:        line,
-			Description: fmt.Sprintf("Resource route for %s.%s", name, action),
+			Description: fmt.Sprintf("%s route for %s.%s", label, name, action),
 		}
 		v.applyGroupContext(&route)
 		v.routes = append(v.routes, route)

@@ -58,6 +58,7 @@ func (t *ListPackageExportsTool) Register(server *mcp.Server) {
 		}
 
 		return &mcp.CallToolResult{
+			IsError: responseIsError(result),
 			Content: []mcp.Content{&mcp.TextContent{Text: result}},
 		}, nil, nil
 	})
@@ -65,14 +66,14 @@ func (t *ListPackageExportsTool) Register(server *mcp.Server) {
 
 // ExportedSymbol represents a symbol exported directly from DB payload
 type ExportedSymbol struct {
-	Name           string
-	Type           string
-	Signature      string
-	Description    string
-	FilePath       string
-	StartLine      int
-	Package        string
-	RelationsCount int // number of AST relations — indicates usage complexity/popularity
+	Name           string `json:"name"`
+	Type           string `json:"type"`
+	Signature      string `json:"signature"`
+	Description    string `json:"description"`
+	FilePath       string `json:"file_path"`
+	StartLine      int    `json:"start_line"`
+	Package        string `json:"package"`
+	RelationsCount int    `json:"relations_count"` // number of AST relations
 }
 
 func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {

@@ -71,7 +71,7 @@ var _ = Describe("Health Metrics & Index Status", func() {
 
 			var resp tools.ToolResponse
 			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
-			Expect(resp.Status).To(Equal("success"))
+			Expect(resp.Status).To(Equal("no_results"))
 			Expect(resp.Warning).To(ContainSubstring("stale file(s) detected"))
 			Expect(resp.Warning).To(ContainSubstring(missingPath))
 			Expect(resp.Warning).To(ContainSubstring("Auto-cleanup triggered"))
@@ -138,6 +138,7 @@ var _ = Describe("Health Metrics & Index Status", func() {
 			resJSON, err := tool.Execute(ctx, tools.SmartSearchInput{
 				Query:    "func",
 				FilePath: "main.go",
+				MinScore: 0.1, // Exercise stale filtering independently of the relevance floor.
 			})
 			Expect(err).NotTo(HaveOccurred())
 

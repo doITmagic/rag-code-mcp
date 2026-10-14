@@ -1,6 +1,7 @@
 package laravel
 
 import (
+	"path/filepath"
 	"strings"
 
 	"github.com/VKCOM/php-parser/pkg/ast"
@@ -77,11 +78,12 @@ func (a *ControllerAnalyzer) extractController(class php.ClassInfo) Controller {
 
 // isApiController checks if controller is API-specific
 func (a *ControllerAnalyzer) isApiController(class php.ClassInfo) bool {
+	slashPath := strings.ReplaceAll(filepath.ToSlash(class.FilePath), "\\", "/")
 	return strings.Contains(class.Namespace, "\\Api") ||
 		strings.Contains(class.Namespace, "\\API") ||
 		strings.HasSuffix(class.Name, "ApiController") ||
-		strings.Contains(class.FilePath, "/Api/") ||
-		strings.Contains(class.FilePath, "/API/")
+		strings.Contains(slashPath, "/Api/") ||
+		strings.Contains(slashPath, "/API/")
 }
 
 // isResourceController checks for standard resource methods

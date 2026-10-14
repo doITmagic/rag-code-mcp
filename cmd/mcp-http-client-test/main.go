@@ -126,7 +126,7 @@ func main() {
 	serverURL := flag.String("url", "http://localhost:3000", "Base URL of the MCP server")
 	workspacePath := flag.String("path", "", "Absolute path to a file in the workspace to index and search")
 	query := flag.String("query", "IndexWorkspace implementation", "Search query to run")
-	mode := flag.String("mode", "discovery", "rag_search_code mode: discovery or exact")
+	mode := flag.String("mode", "discovery", "rag_search mode: discovery or exact")
 	limit := flag.Int("limit", 3, "Number of results to return")
 	outPath := flag.String("out", "", "If set, write the final tool JSON response to this file")
 	indexTimeout := flag.Duration("index-timeout", 2*time.Minute, "Timeout for index request")
@@ -144,25 +144,61 @@ func main() {
 
 	// Step 1: Index workspace (optional)
 	if !*skipIndex {
-		fmt.Println("\n📦 Triggering workspace indexing...")
-		resp, err := callMCP(*serverURL, "index-1", "tools/call", map[string]any{
+		cwd, _ := os.Getwd()
+		fmt.Println("\n📦 Resolving workspace for indexing...")
+		resp, err := callMCP(*serverURL, "index-resolve", "tools/call", map[string]any{
 			"name": "rag_index_workspace",
 			"arguments": map[string]any{
-				"file_path": *workspacePath,
-				"recreate":  false,
+				"file_path":      *workspacePath,
+				"workspace_root": cwd,
+				"confirm":        false,
+				"recreate":       false,
 			},
 		}, *indexTimeout)
 		if err != nil {
-			fmt.Printf("❌ Indexing failed: %v\n", err)
+			fmt.Printf("❌ Index resolution failed: %v\n", err)
 			os.Exit(1)
 		}
-		printResult("Index", resp)
+		printResult("Index (resolve)", resp)
+
+		var token string
+		var resolvedRoot string
+		if text := extractToolText(resp); text != "" {
+			var parsed map[string]any
+			if json.Unmarshal([]byte(text), &parsed) == nil {
+				if data, ok := parsed["data"].(map[string]any); ok {
+					token, _ = data["confirmation_token"].(string)
+					resolvedRoot, _ = data["resolved_root"].(string)
+				}
+			}
+		}
+		if resolvedRoot == "" {
+			resolvedRoot = cwd
+		}
+		if token != "" {
+			fmt.Println("📦 Confirming workspace indexing...")
+			resp, err = callMCP(*serverURL, "index-confirm", "tools/call", map[string]any{
+				"name": "rag_index_workspace",
+				"arguments": map[string]any{
+					"file_path":          *workspacePath,
+					"workspace_root":     resolvedRoot,
+					"confirm":            true,
+					"confirmation_token": token,
+					"recreate":           false,
+				},
+			}, *indexTimeout)
+			if err != nil {
+				fmt.Printf("❌ Indexing failed: %v\n", err)
+				os.Exit(1)
+			}
+			printResult("Index (confirm)", resp)
+		}
 	}
 
 	// Step 2: Search
 	fmt.Printf("\n🔍 Searching: %q (mode=%s, limit=%d)...\n", *query, *mode, *limit)
 	resp, err := callMCP(*serverURL, "search-1", "tools/call", map[string]any{
-		"name": "rag_search_code",
+		"name": "rag_search",
 		"arguments": map[string]any{
 			"query":     *query,
 			"file_path": *workspacePath,

@@ -480,3 +480,266 @@ func TestCodeAnalyzer_BarouUserClass(t *testing.T) {
 		}
 	}
 }
+
+func TestCodeAnalyzer_InterfaceAndTraitFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	phpFile := filepath.Join(tmpDir, "contracts.php")
+
+	phpCode := `<?php
+namespace App\Contracts;
+
+/**
+ * Payment gateway contract
+ */
+interface PaymentGateway {
+    /**
+     * Charge an amount
+     */
+    public function charge(int $cents): bool;
+}
+
+/**
+ * Auditable trait
+ */
+trait Auditable {
+    /**
+     * @var string Last actor
+     */
+    protected string $auditedBy;
+
+    /**
+     * Record audit log
+     */
+    public function recordAudit(string $event): void {
+        $this->auditedBy = $event;
+    }
+}
+`
+	require.NoError(t, os.WriteFile(phpFile, []byte(phpCode), 0644))
+
+	analyzer := NewCodeAnalyzer()
+	chunks, err := analyzer.AnalyzeFile(phpFile)
+	require.NoError(t, err)
+
+	byTypeAndName := make(map[string]CodeChunk)
+	for _, ch := range chunks {
+		byTypeAndName[ch.Type+":"+ch.Name] = ch
+	}
+
+	iface, ok := byTypeAndName["interface:PaymentGateway"]
+	require.True(t, ok, "expected interface chunk")
+	require.Equal(t, phpFile, iface.FilePath)
+	require.Greater(t, iface.StartLine, 0)
+	require.GreaterOrEqual(t, iface.EndLine, iface.StartLine)
+	require.NotEmpty(t, iface.Code)
+	require.Equal(t, "Payment gateway contract", iface.Docstring)
+
+	ifaceMethod, ok := byTypeAndName["method:charge"]
+	require.True(t, ok, "expected interface method chunk")
+	require.Equal(t, phpFile, ifaceMethod.FilePath)
+	require.Greater(t, ifaceMethod.StartLine, 0)
+	require.NotEmpty(t, ifaceMethod.Code)
+	require.Equal(t, "Charge an amount", ifaceMethod.Docstring)
+
+	tr, ok := byTypeAndName["trait:Auditable"]
+	require.True(t, ok, "expected trait chunk")
+	require.Equal(t, phpFile, tr.FilePath)
+	require.Greater(t, tr.StartLine, 0)
+	require.GreaterOrEqual(t, tr.EndLine, tr.StartLine)
+	require.NotEmpty(t, tr.Code)
+	require.Equal(t, "Auditable trait", tr.Docstring)
+
+	trMethod, ok := byTypeAndName["method:recordAudit"]
+	require.True(t, ok, "expected trait method chunk")
+	require.Equal(t, phpFile, trMethod.FilePath)
+	require.Greater(t, trMethod.StartLine, 0)
+	require.NotEmpty(t, trMethod.Code)
+	require.Equal(t, "Record audit log", trMethod.Docstring)
+
+	trProp, ok := byTypeAndName["property:$auditedBy"]
+	require.True(t, ok, "expected trait property chunk")
+	require.Equal(t, phpFile, trProp.FilePath)
+	require.Greater(t, trProp.StartLine, 0)
+	require.Equal(t, "protected string $auditedBy", trProp.Signature, "trait property signature must not have double $$")
+}
+
+func TestCodeAnalyzer_Enum(t *testing.T) {
+	tmpDir := t.TempDir()
+	phpFile := filepath.Join(tmpDir, "OrderStatus.php")
+
+	phpCode := `<?php
+namespace App\Enums;
+
+interface HasLabel {
+    public function label(): string;
+}
+
+/**
+ * Order lifecycle status
+ */
+enum OrderStatus: string implements HasLabel {
+    case Pending = 'pending';
+    case Paid = 'paid';
+    case Cancelled = 'cancelled';
+
+    public function label(): string {
+        return $this->value;
+    }
+}
+`
+	require.NoError(t, os.WriteFile(phpFile, []byte(phpCode), 0644))
+
+	analyzer := NewCodeAnalyzer()
+	chunks, err := analyzer.AnalyzeFile(phpFile)
+	require.NoError(t, err)
+
+	var enumChunk *CodeChunk
+	consts := make(map[string]CodeChunk)
+	var labelMethod *CodeChunk
+	for i := range chunks {
+		ch := &chunks[i]
+		if ch.Type == "class" && ch.Name == "OrderStatus" {
+			enumChunk = ch
+		}
+		if ch.Type == "constant" {
+			consts[ch.Name] = *ch
+		}
+		if ch.Type == "method" && ch.Name == "label" && ch.StartLine > 10 {
+			labelMethod = ch
+		}
+	}
+
+	require.NotNil(t, enumChunk, "expected OrderStatus enum chunk")
+	require.Equal(t, "App\\Enums", enumChunk.Package)
+	require.Equal(t, phpFile, enumChunk.FilePath)
+	require.Greater(t, enumChunk.StartLine, 0)
+	require.Equal(t, "Order lifecycle status", enumChunk.Docstring)
+	require.Contains(t, enumChunk.Metadata["implements"], "HasLabel")
+
+	require.Contains(t, consts, "Pending")
+	require.Contains(t, consts, "Paid")
+	require.Contains(t, consts, "Cancelled")
+	require.Greater(t, consts["Pending"].StartLine, 0)
+	require.NotNil(t, labelMethod, "expected enum method label()")
+}
+
+func TestCodeAnalyzer_GroupUse(t *testing.T) {
+	tmpDir := t.TempDir()
+	phpFile := filepath.Join(tmpDir, "Service.php")
+
+	phpCode := `<?php
+namespace App\Services;
+
+use App\Models\{User, Post as BlogPost};
+
+class ContentService {}
+`
+	require.NoError(t, os.WriteFile(phpFile, []byte(phpCode), 0644))
+
+	analyzer := NewCodeAnalyzer()
+	_, err := analyzer.AnalyzeFile(phpFile)
+	require.NoError(t, err)
+
+	pkgs := analyzer.GetPackages()
+	require.Len(t, pkgs, 1)
+	require.Len(t, pkgs[0].Classes, 1)
+	imports := pkgs[0].Classes[0].Imports
+	require.Equal(t, "App\\Models\\User", imports["User"])
+	require.Equal(t, "App\\Models\\Post", imports["BlogPost"])
+}
+
+func TestCodeAnalyzer_PHPDocAndUnionIntersectionTypes(t *testing.T) {
+	tmpDir := t.TempDir()
+	phpFile := filepath.Join(tmpDir, "modern.php")
+
+	phpCode := `<?php
+namespace App\Services;
+
+/**
+ * Final service docstring
+ */
+final class FinalService {
+    /**
+     * Attributed property docstring
+     * @var string|int
+     */
+    #[Inject]
+    public string|int $id;
+
+    /**
+     * Attributed method docstring
+     */
+    #[Route('/test')]
+    public function handle(Countable&Iterator $items, int|string $key): int|false {
+        return false;
+    }
+}
+
+/**
+ * Abstract base docstring
+ */
+abstract class AbstractBase {}
+`
+	require.NoError(t, os.WriteFile(phpFile, []byte(phpCode), 0644))
+
+	analyzer := NewCodeAnalyzer()
+	chunks, err := analyzer.AnalyzeFile(phpFile)
+	require.NoError(t, err)
+
+	pkgs := analyzer.GetPackages()
+	require.Len(t, pkgs, 1)
+	classMap := make(map[string]ClassInfo)
+	for _, c := range pkgs[0].Classes {
+		classMap[c.Name] = c
+	}
+
+	require.True(t, classMap["FinalService"].IsFinal)
+	require.False(t, classMap["FinalService"].IsAbstract)
+	require.Equal(t, "Final service docstring", classMap["FinalService"].Description)
+
+	require.True(t, classMap["AbstractBase"].IsAbstract)
+	require.False(t, classMap["AbstractBase"].IsFinal)
+	require.Equal(t, "Abstract base docstring", classMap["AbstractBase"].Description)
+
+	var handleChunk, propChunk *CodeChunk
+	for i := range chunks {
+		if chunks[i].Type == "method" && chunks[i].Name == "handle" {
+			handleChunk = &chunks[i]
+		}
+		if chunks[i].Type == "property" && chunks[i].Name == "$id" {
+			propChunk = &chunks[i]
+		}
+	}
+	require.NotNil(t, handleChunk)
+	require.Equal(t, "Attributed method docstring", handleChunk.Docstring)
+	require.Equal(t, "public function handle(Countable&Iterator $items, int|string $key): int|false", handleChunk.Signature)
+
+	require.NotNil(t, propChunk)
+	require.Equal(t, "Attributed property docstring", propChunk.Docstring)
+	require.Equal(t, "public string|int $id", propChunk.Signature)
+}
+
+func TestCodeAnalyzer_LaravelFalsePositiveOnBareControllerOrModel(t *testing.T) {
+	tmpDir := t.TempDir()
+	phpFile := filepath.Join(tmpDir, "CustomController.php")
+
+	// Non-Laravel project with bare extends Controller / Model
+	phpCode := `<?php
+namespace MyCustomApp\Web;
+
+use Symfony\Bundle\FrameworkBundle\Controller\AbstractController as Controller;
+
+class HomeController extends Controller {}
+class Item extends Model {}
+`
+	require.NoError(t, os.WriteFile(phpFile, []byte(phpCode), 0644))
+
+	analyzer := NewCodeAnalyzer()
+	chunks, err := analyzer.AnalyzeFile(phpFile)
+	require.NoError(t, err)
+	require.False(t, analyzer.IsLaravelProject(), "bare Controller/Model without Illuminate or artisan must not trigger Laravel detection")
+	for _, ch := range chunks {
+		require.Nil(t, ch.Metadata["framework"])
+	}
+}
+

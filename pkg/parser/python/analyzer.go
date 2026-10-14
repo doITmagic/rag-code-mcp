@@ -3,6 +3,7 @@ package python
 import (
 	"context"
 	"strings"
+	"sync"
 
 	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
 )
@@ -14,6 +15,8 @@ func init() {
 // Analyzer implements the parser.Analyzer interface for Python.
 type Analyzer struct {
 	ca *CodeAnalyzer
+	// ponytail: one lock matches the shared collector; make collection local only if parallel parsing becomes useful.
+	mu sync.Mutex
 }
 
 // NewAnalyzer creates a new Python analyzer.
@@ -30,11 +33,20 @@ func (a *Analyzer) Name() string {
 
 // CanHandle returns true for .py files.
 func (a *Analyzer) CanHandle(filePath string) bool {
-	return strings.HasSuffix(filePath, ".py")
+	return strings.HasSuffix(strings.ToLower(filePath), ".py")
+}
+
+func (a *Analyzer) ReleaseResources() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.ca.ReleaseResources()
 }
 
 // Analyze extracts symbols from a file or directory.
 func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
 	chunks, err := a.ca.AnalyzePaths([]string{path})
 	if err != nil {
 		return nil, err

@@ -182,8 +182,8 @@ func (t *TreeSitterAnalyzer) detectComponent(root *gotreesitter.Node, source []b
 			}
 
 			// Extract component name from options
-			if match := reComponentName.FindStringSubmatch(text); len(match) > 1 {
-				comp.Name = match[1]
+			if name := extractComponentName(text); name != "" {
+				comp.Name = name
 			}
 
 			// Extract props from AST

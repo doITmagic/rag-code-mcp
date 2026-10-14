@@ -109,6 +109,66 @@ func TestDetectExclusion(t *testing.T) {
 	}
 }
 
+// IDE dirs such as ~/.claude are Tier-2 markers; a project with only a Tier-3
+// marker (package.json) used to resolve to home because the walk kept climbing.
+func TestDetectStopsBelowHome(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	project := filepath.Join(home, "proj")
+	mustMkdir(t, filepath.Join(home, ".claude"))
+	mustMkdir(t, filepath.Join(project, "src"))
+	mustWrite(t, filepath.Join(project, "package.json"))
+
+	resp, err := New(DefaultOptions()).DetectFromFilePath(context.Background(), filepath.Join(project, "src", "a.js"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Root != project {
+		t.Fatalf("expected root %s, got %s", project, resp.Root)
+	}
+
+	// A file directly in home has no project: refuse rather than pick home.
+	if resp, err := New(DefaultOptions()).DetectFromFilePath(context.Background(), filepath.Join(home, "notes.txt")); err == nil {
+		t.Fatalf("expected error for a file in home, got root %s", resp.Root)
+	}
+}
+
+// Exclude patterns match whole path components: ".git" must not exclude
+// ".github", nor "build" exclude "buildkite".
+func TestDetectExcludeMatchesComponents(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "buildkite")
+	mustMkdir(t, filepath.Join(project, ".github", "workflows"))
+	mustMkdir(t, filepath.Join(project, "node_modules", "x"))
+	mustWrite(t, filepath.Join(project, "go.mod"))
+
+	det := New(Options{ExcludePatterns: []string{".git", "build", "node_modules"}})
+	resp, err := det.DetectFromFilePath(context.Background(), filepath.Join(project, ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Root != project {
+		t.Fatalf("expected root %s, got %s", project, resp.Root)
+	}
+	if _, err := det.DetectFromFilePath(context.Background(), filepath.Join(project, "node_modules", "x", "a.js")); err == nil {
+		t.Fatalf("expected node_modules path to be excluded")
+	}
+}
+
+func mustMkdir(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+}
+
+func mustWrite(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+}
+
 func TestDetectNoMarkers(t *testing.T) {
 	tmp := t.TempDir()
 	// Use a nested subdirectory to avoid picking up .ragcode markers
@@ -162,3 +222,93 @@ func TestDetectNonExistentFileDescriptiveError(t *testing.T) {
 		t.Fatalf("expected descriptive error with workspace detection hint, got: %s", err.Message)
 	}
 }
+
+func TestDetectMonorepoGitRootPriority(t *testing.T) {
+	// Level 0 has .git (Tier 1)
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, ".git"), []byte{}, 0o644); err != nil {
+		t.Fatalf("marker: %v", err)
+	}
+
+	// Level 1 has go.mod (Tier 3)
+	subDir1 := filepath.Join(tmp, "project_alpha")
+	if err := os.MkdirAll(subDir1, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(subDir1, "go.mod"), []byte("module project_alpha"), 0o644); err != nil {
+		t.Fatalf("marker: %v", err)
+	}
+
+	// File inside Level 1
+	targetFile := filepath.Join(subDir1, "main.go")
+	if err := os.WriteFile(targetFile, []byte("package main"), 0o644); err != nil {
+		t.Fatalf("file: %v", err)
+	}
+
+	det := New(DefaultOptions())
+	resp, err := det.DetectFromFilePath(context.Background(), targetFile)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Validates the detector skips the Tier 3 directory and climbs to the Tier 1 VCS root.
+	if resp.Root != tmp {
+		t.Fatalf("expected tier 1 root %s, got tier 3 %s", tmp, resp.Root)
+	}
+}
+
+func TestDetectSameTierPrefersOutermostRoot(t *testing.T) {
+	tmp := t.TempDir()
+	// Both parent and child have Tier 3 marker (package.json), no .git
+	if err := os.WriteFile(filepath.Join(tmp, "package.json"), []byte(`{"name":"root"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(tmp, "packages", "web")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "package.json"), []byte(`{"name":"web"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	targetFile := filepath.Join(sub, "index.js")
+	if err := os.WriteFile(targetFile, []byte("export default 1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	det := New(DefaultOptions())
+	resp, err := det.DetectFromFilePath(context.Background(), targetFile)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Root != tmp {
+		t.Fatalf("expected outermost tier-3 root %s, got %s", tmp, resp.Root)
+	}
+}
+
+func TestDetectAllowedRootBoundaryDoesNotAbortValidChild(t *testing.T) {
+	outer := t.TempDir()
+	project := filepath.Join(outer, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Project only has Tier 3 marker (go.mod), so walkUp continues past `project` into `outer`
+	if err := os.WriteFile(filepath.Join(project, "go.mod"), []byte("module example.com/p"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	targetFile := filepath.Join(project, "main.go")
+	if err := os.WriteFile(targetFile, []byte("package main"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := DefaultOptions()
+	opts.AllowedRoots = []string{project}
+	det := New(opts)
+	resp, err := det.DetectFromFilePath(context.Background(), targetFile)
+	if err != nil {
+		t.Fatalf("expected valid child candidate inside AllowedRoots to succeed, got error: %v", err)
+	}
+	if resp.Root != project {
+		t.Fatalf("expected root %s, got %s", project, resp.Root)
+	}
+}
+

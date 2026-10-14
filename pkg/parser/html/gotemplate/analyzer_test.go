@@ -1,6 +1,7 @@
 package gotemplate
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -252,5 +253,58 @@ func TestAnalyze_BlockRelations(t *testing.T) {
 	}
 	if !hasInheritance {
 		t.Error("expected RelInheritance for block 'content' in symbols")
+	}
+}
+
+func TestAnalyze_ComplexPipelinesAndInlineEnds(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "inline.tmpl")
+	content := `{{ define "card" }}
+<div class="{{ if .Active }}active{{ else }}inactive{{ end }}">
+    {{ range $i, $item := .Items }}
+        {{ with $u := $item.User }}<span>{{ $u.Name }}</span>{{ end }}
+    {{ end }}
+    {{ template "sub" (dict "Title" .Title) }}
+    {{ block "extra" $ }}{{ if .ShowExtra }}<span>Extra</span>{{ end }}{{ end }}
+</div>
+{{ end }}`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ba := &GoTemplateAnalyzer{}
+	templates := ba.Analyze([]string{path})
+	if len(templates) != 1 {
+		t.Fatalf("expected 1 template, got %d", len(templates))
+	}
+	tpl := templates[0]
+
+	if len(tpl.Defines) != 1 {
+		t.Fatalf("expected 1 define, got %d", len(tpl.Defines))
+	}
+	if tpl.Defines[0].Line != 1 || tpl.Defines[0].EndLine != 9 {
+		t.Errorf("expected define Line=1 EndLine=9, got Line=%d EndLine=%d", tpl.Defines[0].Line, tpl.Defines[0].EndLine)
+	}
+
+	if len(tpl.Ranges) != 1 || tpl.Ranges[0].Variable != "$i, $item := .Items" {
+		t.Errorf("expected range '$i, $item := .Items', got %+v", tpl.Ranges)
+	}
+	if tpl.Ranges[0].Line != 3 || tpl.Ranges[0].EndLine != 5 {
+		t.Errorf("expected range Line=3 EndLine=5, got Line=%d EndLine=%d", tpl.Ranges[0].Line, tpl.Ranges[0].EndLine)
+	}
+
+	if len(tpl.WithBlocks) != 1 || tpl.WithBlocks[0].Pipeline != "$u := $item.User" {
+		t.Errorf("expected with '$u := $item.User', got %+v", tpl.WithBlocks)
+	}
+	if tpl.WithBlocks[0].Line != 4 || tpl.WithBlocks[0].EndLine != 4 {
+		t.Errorf("expected with Line=4 EndLine=4, got Line=%d EndLine=%d", tpl.WithBlocks[0].Line, tpl.WithBlocks[0].EndLine)
+	}
+
+	if len(tpl.TemplateIncludes) != 1 || tpl.TemplateIncludes[0].Name != "sub" || tpl.TemplateIncludes[0].Pipeline != `(dict "Title" .Title)` {
+		t.Errorf("unexpected TemplateIncludes: %+v", tpl.TemplateIncludes)
+	}
+
+	if len(tpl.Blocks) != 1 || tpl.Blocks[0].Name != "extra" || tpl.Blocks[0].Pipeline != "$" || tpl.Blocks[0].EndLine != 7 {
+		t.Errorf("unexpected Blocks: %+v", tpl.Blocks)
 	}
 }

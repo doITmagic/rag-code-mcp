@@ -50,6 +50,7 @@ func (t *EvaluateRagCodeTool) Register(server *mcp.Server) {
 		}
 		logger.Instance.Info("rag_evaluate completed in %v", time.Since(start))
 		return &mcp.CallToolResult{
+			IsError: responseIsError(result),
 			Content: []mcp.Content{&mcp.TextContent{Text: result}},
 		}, nil, nil
 	})
@@ -111,7 +112,10 @@ func (t *EvaluateRagCodeTool) Execute(ctx context.Context, args map[string]inter
 		b.WriteString(fmt.Sprintf("- **System Status**:\n%s\n", strings.Join(healthStatus, "\n")))
 	}
 	if t.cfg != nil {
-		b.WriteString(fmt.Sprintf("- **Models**: Chat=%s, Embed=%s\n", t.cfg.LLM.OllamaModel, t.cfg.LLM.OllamaEmbed))
+		b.WriteString(fmt.Sprintf("- **Embedding model**: %s\n", t.cfg.LLM.OllamaEmbed))
+		if t.cfg.LLM.OllamaModel != "" {
+			b.WriteString(fmt.Sprintf("- **Chat model**: %s\n", t.cfg.LLM.OllamaModel))
+		}
 	}
 
 	data := map[string]interface{}{

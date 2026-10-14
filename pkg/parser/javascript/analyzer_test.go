@@ -67,9 +67,13 @@ func TestCodeAnalyzer_Analyze_Vue(t *testing.T) {
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
+import { useAuth } from './auth';
 
 const label = ref('Click me');
+const upper = computed(() => label.value.toUpperCase());
+const auth1 = useAuth();
+const auth2 = useAuth();
 
 function handleClick() {
   console.log('clicked');
@@ -88,10 +92,34 @@ button { padding: 8px; }
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Result may be empty for this Vue file since it uses script setup
-	// but the key thing is no error and CanHandle returns true
 	if result == nil {
-		t.Error("expected non-nil result for .vue file")
+		t.Fatal("expected non-nil result for .vue file")
+	}
+
+	var foundButton bool
+	var useAuthCount int
+	for _, sym := range result.Symbols {
+		if sym.Name == "ref" || sym.Name == "computed" {
+			t.Errorf("built-in Vue composable %q should not be emitted as a function symbol", sym.Name)
+		}
+		if sym.Name == "Button" {
+			foundButton = true
+			if sym.StartLine != 1 || sym.EndLine <= 1 {
+				t.Errorf("Button component symbol lines = %d..%d, want 1..>1", sym.StartLine, sym.EndLine)
+			}
+		}
+		if sym.Name == "useAuth" {
+			useAuthCount++
+			if sym.StartLine <= 0 || sym.EndLine <= 0 {
+				t.Errorf("useAuth symbol lines = %d..%d, want >0", sym.StartLine, sym.EndLine)
+			}
+		}
+	}
+	if !foundButton {
+		t.Error("expected Button component symbol")
+	}
+	if useAuthCount != 1 {
+		t.Errorf("expected useAuth custom composable once (deduplicated), got %d", useAuthCount)
 	}
 }
 

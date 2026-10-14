@@ -1,6 +1,6 @@
 # RagCode Parser System (V2)
 
-The `parser` package is the core engine of RagCode's code analysis capabilities. it provides a unified interface and a registry-based system to extract structured information (symbols, documentation, relationships) from various programming and markup languages.
+The `parser` package is the core engine of RagCode's code analysis capabilities. It provides a unified interface and a registry-based system to extract structured information (symbols, documentation, relationships) from programming, template, stylesheet, and documentation languages.
 
 ## 🏗️ Architecture Overview
 
@@ -10,46 +10,51 @@ The system is built on a modular, plug-and-play architecture where each language
 graph TD
     A[Source Path] --> B[Registry]
     B --> C{Detect Language}
-    C -->|Go| D[Go Analyzer]
-    C -->|Python| E[Python Analyzer]
-    C -->|PHP| F[PHP Analyzer]
-    C -->|HTML| G[HTML Analyzer]
-    C -->|Other| H[Generic Fallback]
-    
-    D & E & F & G & H --> I[Consolidated Result]
-    I --> J[Symbol Metadata & CodeChunks]
+    C -->|Go / GoTemplate| D[Go & GoTemplate Analyzers]
+    C -->|PHP| E[PHP + Laravel + WordPress / WooCommerce / Oxygen]
+    C -->|JS / TS / JSX / TSX / Vue| F[JS/TS Tree-sitter + Vue SFC Analyzer]
+    C -->|Python| G[Python Analyzer]
+    C -->|HTML / CSS / SCSS| H[HTML & CSS Analyzers]
+    C -->|MD / JSON / YAML / TOML| I[Docs Analyzer]
+    C -->|Other / .env*| J[Generic Fallback]
+
+    D & E & F & G & H & I & J --> K[Consolidated Result]
+    K --> L[Symbol Metadata & CodeChunks]
 ```
 
 ## 🛠️ Main Interface: `Analyzer`
 
-All language parsers must implement the following interface defined in `parser.go`:
+All language parsers implement the interface defined in `parser.go`:
 
 ```go
 type Analyzer interface {
-	// Name returns the analyzer name (e.g., "golang", "python").
+	// Name returns the analyzer name (e.g., "go", "php", "javascript", "python").
 	Name() string
-	
-	// CanHandle returns true if the analyzer supports the given file extension.
+
+	// CanHandle returns true if the analyzer supports the given file path/extension.
 	CanHandle(filePath string) bool
-	
-	// Analyze extracts symbols from a file or directory.
+
+	// Analyze extracts symbols and relations from a file or directory.
 	Analyze(ctx context.Context, path string) (*Result, error)
 }
 ```
 
-## 📂 Supported Languages
+## 📂 Supported Languages & Frameworks
 
-Click on each language to see the detailed technical documentation for its specific analyzer:
+Click on each language/framework to see the technical documentation for its analyzer:
 
-| Language | Directory | Description | Status |
-|----------|-----------|-------------|--------|
-| **Go** | [`/go`](./go/README.md) | Native AST parsing with full documentation support. | ✅ Production |
-| **Python** | [`/python`](./python/README.md) | Robust regex & indentation analysis. | ✅ Production |
-| **PHP** | [`/php`](./php/README.md) | Deep Laravel integration (Eloquent, Routes, Controllers) & WordPress. | ✅ Production |
-| **HTML & CSS** | [`/html`](./html/README.md) | HTML semantic sectioning + CSS/SCSS/SASS/LESS via tree-sitter. | ✅ Production |
-| **JavaScript** | [`/javascript`](./javascript/README.md) | React, Vue, & TypeScript support. | ✅ Production |
-| **Docs** | [`/docs`](./docs/README.md) | Markdown, JSON, YAML, XML, TOML, reStructuredText. | ✅ Production |
-| **Generic** | [`/generic`](./generic/README.md) | Universal regex-based fallback for other languages. | ✅ Production |
+| Language / Framework | Directory | Description | Status |
+|----------------------|-----------|-------------|--------|
+| **Go** | [`/go`](./go/README.md) | Native `go/ast` & `go/doc` parsing (functions, methods, structs, interfaces, generics, typed `iota` enums). | ✅ Production |
+| **PHP** | [`/php`](./php/README.md) | Full PHP 8+ AST (`classes`, `interfaces`, `traits`, `enums`, attributes, union/intersection types, group `use`). | ✅ Production |
+| **Laravel & Blade** | [`/php/laravel`](./php/laravel/README.md) | Eloquent models & relations, controllers, routes (`web`/`api`/fluent groups/`apiResource`), migrations, middleware, service providers, Blade templates. | ✅ Production |
+| **WordPress, WooCommerce & Oxygen** | [`/php/wordpress`](./php/wordpress/README.md) | Hooks (`add_action`/`add_filter`/`do_action`/`apply_filters`), CPTs, taxonomies, shortcodes, Gutenberg blocks, widgets, admin/REST, **WooCommerce**, **Oxygen Builder**. | ✅ Production |
+| **JavaScript / TypeScript / React / Vue** | [`/javascript`](./javascript/README.md) | Tree-sitter AST for `.js`/`.ts`/`.jsx`/`.tsx` (React components, classes, abstract classes, interfaces, type aliases, enums) + Vue `.vue` SFCs (Options & `<script setup>` Composition API, composables). | ✅ Production |
+| **Python** | [`/python`](./python/README.md) | Classes, methods, async functions, multi-line signatures, decorators, type hints, mixins, metaclasses. | ✅ Production |
+| **HTML & Go Templates** | [`/html`](./html/README.md) | Semantic HTML section/element extraction + Go `html/template` & `text/template` blocks (`define`, `block`, `template`, `range`, `with`). | ✅ Production |
+| **CSS / SCSS / LESS** | [`/css`](./css/README.md) | Rulesets, selectors, `@media`, `@keyframes`, CSS custom properties (`--var`), SCSS/LESS variables and `@mixin`. | ✅ Production |
+| **Docs (MD / JSON / YAML / TOML)** | [`/docs`](./docs/README.md) | Markdown heading hierarchy (with code blocks & tables) + structured JSON/YAML/TOML/XML chunking. | ✅ Production |
+| **Generic & Config** | [`/generic`](./generic/README.md) | Universal fallback for Shell, SQL, Dockerfile, Makefile, `.env*` (`.env`, `.env.local`, `.env.example`, etc.), Ruby, Rust, Java, C/C++. | ✅ Production |
 
 ## 🚀 Unified Symbol Model
 
@@ -57,32 +62,9 @@ Every analyzer returns a `Symbol` structure, ensuring that the embedding and ind
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `Name` | `string` | The identifier name (e.g., function name, class name). |
-| `Type` | `SymbolType` | Kind of symbol (`function`, `method`, `class`, `struct`, etc.). |
-| `Signature`| `string` | Complete source line definition. |
-| `Docstring`| `string` | Extracted comments or documentation. |
-| `Metadata` | `map[string]any`| Language-specific attributes (e.g., `is_async`, `is_exported`). |
-
-## 💻 Global Usage Example
-
-```go
-import (
-    "context"
-    "github.com/doITmagic/rag-code-mcp/pkg/parser"
-    _ "github.com/doITmagic/rag-code-mcp/pkg/parser/go"
-    _ "github.com/doITmagic/rag-code-mcp/pkg/parser/python"
-)
-
-func main() {
-    // 1. Get appropriate analyzer by file extension
-    analyzer := parser.GetByFile("main.py")
-    
-    // 2. Perform deep analysis
-    result, err := analyzer.Analyze(context.Background(), "path/to/code")
-    
-    // 3. Use unified results
-    for _, sym := range result.Symbols {
-        fmt.Printf("[%s] Found %s: %s\n", sym.Language, sym.Type, sym.Name)
-    }
-}
-```
+| `Name` | `string` | Identifier name (e.g., function name, class name, hook name, route URI). |
+| `QualifiedName` | `string` | Package/namespace/class-qualified symbol name. |
+| `Type` | `SymbolType` | Kind of symbol (`function`, `method`, `class`, `struct`, `interface`, `trait`, `enum`, `constant`, `section`, etc.). |
+| `Signature` | `string` | Complete symbol signature or header definition. |
+| `Docstring` | `string` | Extracted doc comments (GoDoc, PHPDoc, JSDoc, Python docstrings). |
+| `Metadata` | `map[string]any` | Language/framework-specific attributes (`relations`, `hook_type`, `http_method`, `props`, etc.). |

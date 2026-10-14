@@ -55,6 +55,7 @@ func (t *FindUsagesTool) Register(server *mcp.Server) {
 		}
 
 		return &mcp.CallToolResult{
+			IsError: responseIsError(result),
 			Content: []mcp.Content{&mcp.TextContent{Text: result}},
 		}, nil, nil
 	})
@@ -86,8 +87,12 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 	}
 
 	// Fan-out to all language collections in parallel — zero embedding
+	targetSymbol, resolution := resolveSymbol(ctx, t.engine, wctx.ID, symbolName, filePath)
+	if resolution == "ambiguous" {
+		return (ToolResponse{Status: "ambiguous", Message: "Multiple symbols match; provide a qualified symbol name or its file_path."}).JSON()
+	}
 	filter := map[string]interface{}{
-		"relations[].target_name": symbolName,
+		"relations[].target_name": shortSymbolName(symbolName),
 	}
 
 	idx := t.engine.GetIndexStatus(wctx.Root)
@@ -154,8 +159,14 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 			if relList, ok := relationsRaw.([]interface{}); ok {
 				for _, relItem := range relList {
 					if rMap, ok := relItem.(map[string]interface{}); ok {
-						if target, _ := rMap["target_name"].(string); target == symbolName {
+						if target, _ := rMap["target_name"].(string); target == shortSymbolName(symbolName) {
 							relType, _ := rMap["type"].(string)
+							if relType == "calls" && targetSymbol != nil {
+								resolved, _ := resolveCall(ctx, t.engine, wctx.ID, result, rMap)
+								if resolved == nil || symbolKey(*resolved) != symbolKey(*targetSymbol) {
+									continue
+								}
+							}
 							if relType == "" {
 								continue
 							}
@@ -169,12 +180,15 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 			}
 		}
 
+		if targetSymbol != nil && len(matchedRelations) == 0 {
+			continue
+		}
 		actualBytes += int64(len(code))
 		// Validate file path is within workspace root before stat
 		if resultFilePath != "" && !seenFiles[resultFilePath] {
 			seenFiles[resultFilePath] = true
 			clean := filepath.Clean(resultFilePath)
-			if wctx.Root != "" && strings.HasPrefix(clean, filepath.Clean(wctx.Root)+string(filepath.Separator)) {
+			if wctx.Root != "" && isWithinRoot(wctx.Root, clean) {
 				if info, statErr := os.Stat(clean); statErr == nil {
 					baselineBytes += info.Size()
 				}
@@ -260,4 +274,15 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 		},
 	}
 	return resp.JSON()
+}
+
+// isWithinRoot reports whether path lies inside root. filepath.Rel is used
+// instead of a string prefix check because Windows paths are case-insensitive:
+// a root of "c:\proj" and a result path of "C:\proj\a.go" must still match.
+func isWithinRoot(root, path string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), path)
+	if err != nil || filepath.IsAbs(rel) {
+		return false
+	}
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

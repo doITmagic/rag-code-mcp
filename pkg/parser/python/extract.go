@@ -1,6 +1,7 @@
 package python
 
 import (
+	"bytes"
 	"fmt"
 	"io/fs"
 	"log"
@@ -16,8 +17,10 @@ import (
 
 // Pre-compiled regex patterns for better performance
 var (
-	importRe     = regexp.MustCompile(`^import\s+(.+)$`)
-	fromImportRe = regexp.MustCompile(`^from\s+(\S+)\s+import\s+(.+)$`)
+	importRe         = regexp.MustCompile(`^import\s+(.+)$`)
+	fromImportRe     = regexp.MustCompile(`^from\s+(\S+)\s+import\s+(.+)$`)
+	defStartRe       = regexp.MustCompile(`^(async\s+)?def\s+([\p{L}_][\p{L}\p{N}_]*)\s*\(`)
+	decoratorStartRe = regexp.MustCompile(`^@([\p{L}_][\p{L}\p{N}_]*(?:\.[\p{L}_][\p{L}\p{N}_]*)*)`)
 )
 
 // CodeAnalyzer implements rich Python analysis
@@ -120,6 +123,7 @@ func (ca *CodeAnalyzer) AnalyzePaths(paths []string) ([]CodeChunk, error) {
 // parseAndCollect parses Python source and collects symbols
 // Uses tree-sitter for accurate AST parsing, with regex as fallback/supplement
 func (ca *CodeAnalyzer) parseAndCollect(filePath string, content []byte) error {
+	content = bytes.ReplaceAll(content, []byte("\r\n"), []byte("\n"))
 	moduleName := ca.extractModuleName(filePath)
 
 	module := &ModuleInfo{
@@ -450,35 +454,57 @@ func (ca *CodeAnalyzer) extractClasses(lines []string, filePath string, content 
 func (ca *CodeAnalyzer) extractMethods(lines []string, classStartIdx, classEndIdx int, className, filePath string, content []byte) []MethodInfo {
 	var methods []MethodInfo
 
-	funcRe := regexp.MustCompile(`^\s+(?:async\s+)?def\s+(\w+)\s*\(([^)]*)\)(?:\s*->\s*(\S+))?\s*:`)
-	decoratorRe := regexp.MustCompile(`^\s+@(\w+(?:\.\w+)*)(?:\(.*\))?$`)
+	classIndent := getIndentation(lines[classStartIdx])
+	classHeaderEnd := advancePastParensAndTripleQuotes(lines, classStartIdx)
+
+	bodyIndent := -1
+	for k := classHeaderEnd + 1; k <= classEndIdx && k < len(lines); k++ {
+		trimmed := strings.TrimSpace(lines[k])
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		ind := getIndentation(lines[k])
+		if ind > classIndent {
+			bodyIndent = ind
+		}
+		break
+	}
+	if bodyIndent == -1 {
+		return methods
+	}
 
 	var currentDecorators []string
 
-	for i := classStartIdx + 1; i <= classEndIdx && i < len(lines); i++ {
+	for i := classHeaderEnd + 1; i <= classEndIdx && i < len(lines); i++ {
 		line := lines[i]
 		trimmed := strings.TrimSpace(line)
-
-		if matches := decoratorRe.FindStringSubmatch(line); matches != nil {
-			currentDecorators = append(currentDecorators, matches[1])
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
 
-		if matches := funcRe.FindStringSubmatch(line); matches != nil {
-			methodName := matches[1]
-			paramsStr := matches[2]
-			returnType := ""
-			if len(matches) > 3 {
-				returnType = matches[3]
-			}
+		indent := getIndentation(line)
+		if indent != bodyIndent {
+			continue
+		}
 
+		if strings.HasPrefix(trimmed, `"""`) || strings.HasPrefix(trimmed, `'''`) {
+			i = advancePastParensAndTripleQuotes(lines, i)
+			continue
+		}
+
+		if matches := decoratorStartRe.FindStringSubmatch(trimmed); matches != nil {
+			currentDecorators = append(currentDecorators, matches[1])
+			i = advancePastParensAndTripleQuotes(lines, i)
+			continue
+		}
+
+		if methodName, paramsStr, returnType, isAsync, headerEndIdx, ok := parseDefHeader(lines, i); ok {
 			params := ca.parseParameters(paramsStr)
 
 			isStatic := false
 			isClassMethod := false
 			isProperty := false
 			isAbstract := false
-			isAsync := strings.Contains(line, "async def")
 
 			for _, dec := range currentDecorators {
 				switch dec {
@@ -501,12 +527,12 @@ func (ca *CodeAnalyzer) extractMethods(lines []string, classStartIdx, classEndId
 			endLine := ca.findMethodEnd(lines, i)
 
 			docstring := ""
-			if i+1 < len(lines) {
-				docstring = ca.extractDocstring(lines, i+1)
+			if headerEndIdx+1 < len(lines) && headerEndIdx+1 < endLine {
+				docstring = ca.extractDocstring(lines, headerEndIdx+1)
 			}
 
 			signature := ca.buildMethodSignature(methodName, params, returnType, isAsync)
-			calls := ca.extractMethodCalls(lines, i+1, endLine-1)
+			calls := ca.extractMethodCalls(lines, headerEndIdx+1, endLine-1)
 			typeDeps := ca.extractTypeDependencies(params, returnType)
 
 			methods = append(methods, MethodInfo{
@@ -530,8 +556,14 @@ func (ca *CodeAnalyzer) extractMethods(lines []string, classStartIdx, classEndId
 				Code:          extractCodeFromContent(content, startLine, endLine),
 			})
 			currentDecorators = nil
-		} else if trimmed != "" && !strings.HasPrefix(trimmed, "#") && !strings.HasPrefix(trimmed, "@") {
+			if endLine-1 > i {
+				i = endLine - 1
+			} else {
+				i = headerEndIdx
+			}
+		} else {
 			currentDecorators = nil
+			i = advancePastParensAndTripleQuotes(lines, i)
 		}
 	}
 	return methods
@@ -617,41 +649,33 @@ func (ca *CodeAnalyzer) extractClassVariables(lines []string, classStartIdx, cla
 
 func (ca *CodeAnalyzer) extractFunctions(lines []string, filePath string, content []byte) []FunctionInfo {
 	var functions []FunctionInfo
-	funcRe := regexp.MustCompile(`^(?:async\s+)?def\s+(\w+)\s*\(([^)]*)\)(?:\s*->\s*(\S+))?\s*:`)
-	decoratorRe := regexp.MustCompile(`^@(\w+(?:\.\w+)*)(?:\(.*\))?$`)
 	var currentDecorators []string
 	for i := 0; i < len(lines); i++ {
 		line := lines[i]
 		trimmed := strings.TrimSpace(line)
 		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
-			if matches := decoratorRe.FindStringSubmatch(trimmed); matches != nil {
+			if matches := decoratorStartRe.FindStringSubmatch(trimmed); matches != nil {
 				currentDecorators = append(currentDecorators, matches[1])
+				i = advancePastParensAndTripleQuotes(lines, i)
 				continue
 			}
-			if matches := funcRe.FindStringSubmatch(trimmed); matches != nil {
-				funcName := matches[1]
-				paramsStr := matches[2]
-				returnType := ""
-				if len(matches) > 3 {
-					returnType = matches[3]
-				}
+			if funcName, paramsStr, returnType, isAsync, headerEndIdx, ok := parseDefHeader(lines, i); ok {
 				params := ca.parseParameters(paramsStr)
-				isAsync := strings.HasPrefix(trimmed, "async ")
 				startLine := i + 1
 				endLine := ca.findBlockEnd(lines, i)
 				docstring := ""
-				if i+1 < len(lines) {
-					docstring = ca.extractDocstring(lines, i+1)
+				if headerEndIdx+1 < len(lines) && headerEndIdx+1 < endLine {
+					docstring = ca.extractDocstring(lines, headerEndIdx+1)
 				}
 				isGenerator := false
-				for j := i + 1; j < endLine && j < len(lines); j++ {
+				for j := headerEndIdx + 1; j < endLine && j < len(lines); j++ {
 					if strings.Contains(lines[j], "yield") {
 						isGenerator = true
 						break
 					}
 				}
 				signature := ca.buildFunctionSignature(funcName, params, returnType, isAsync)
-				calls := ca.extractMethodCalls(lines, i+1, endLine-1)
+				calls := ca.extractMethodCalls(lines, headerEndIdx+1, endLine-1)
 				functions = append(functions, FunctionInfo{
 					Name:        funcName,
 					Signature:   signature,
@@ -668,12 +692,251 @@ func (ca *CodeAnalyzer) extractFunctions(lines []string, filePath string, conten
 					Code:        extractCodeFromContent(content, startLine, endLine),
 				})
 				currentDecorators = nil
+				if endLine-1 > i {
+					i = endLine - 1
+				} else {
+					i = headerEndIdx
+				}
 			} else if trimmed != "" && !strings.HasPrefix(trimmed, "#") && !strings.HasPrefix(trimmed, "@") {
 				currentDecorators = nil
+				i = advancePastParensAndTripleQuotes(lines, i)
 			}
 		}
 	}
 	return functions
+}
+
+// parseDefHeader parses a single-line or multi-line Python `def` / `async def` header
+// starting at lines[startIdx]. It supports nested parentheses in default values,
+// spaces in return type annotations, and Unicode function/method names.
+func parseDefHeader(lines []string, startIdx int) (name, paramsStr, returnType string, isAsync bool, headerEndIdx int, ok bool) {
+	if startIdx >= len(lines) {
+		return "", "", "", false, startIdx, false
+	}
+	trimmed := strings.TrimSpace(lines[startIdx])
+	matches := defStartRe.FindStringSubmatch(trimmed)
+	if matches == nil {
+		return "", "", "", false, startIdx, false
+	}
+	isAsync = matches[1] != ""
+	name = matches[2]
+
+	openParenIdx := strings.IndexByte(lines[startIdx], '(')
+	if openParenIdx == -1 {
+		return "", "", "", false, startIdx, false
+	}
+
+	parenDepth := 1
+	inTriple := ""
+	var paramsBuf strings.Builder
+	lineIdx := startIdx
+	col := openParenIdx + 1
+
+	for lineIdx < len(lines) {
+		line := lines[lineIdx]
+		if lineIdx > startIdx {
+			col = 0
+			if paramsBuf.Len() > 0 {
+				paramsBuf.WriteByte(' ')
+			}
+		}
+		for col < len(line) {
+			if inTriple != "" {
+				if line[col] == '\\' && col+1 < len(line) {
+					paramsBuf.WriteString(line[col : col+2])
+					col += 2
+					continue
+				}
+				if strings.HasPrefix(line[col:], inTriple) {
+					paramsBuf.WriteString(inTriple)
+					inTriple = ""
+					col += 3
+					continue
+				}
+				paramsBuf.WriteByte(line[col])
+				col++
+				continue
+			}
+
+			if line[col] == '#' {
+				break
+			}
+			if strings.HasPrefix(line[col:], `"""`) || strings.HasPrefix(line[col:], `'''`) {
+				inTriple = line[col : col+3]
+				paramsBuf.WriteString(inTriple)
+				col += 3
+				continue
+			}
+			if line[col] == '"' || line[col] == '\'' {
+				q := line[col]
+				paramsBuf.WriteByte(q)
+				col++
+				for col < len(line) {
+					if line[col] == '\\' && col+1 < len(line) {
+						paramsBuf.WriteString(line[col : col+2])
+						col += 2
+						continue
+					}
+					paramsBuf.WriteByte(line[col])
+					if line[col] == q {
+						col++
+						break
+					}
+					col++
+				}
+				continue
+			}
+			switch line[col] {
+			case '(':
+				parenDepth++
+				paramsBuf.WriteByte('(')
+				col++
+			case ')':
+				parenDepth--
+				if parenDepth == 0 {
+					col++
+					goto foundCloseParen
+				}
+				paramsBuf.WriteByte(')')
+				col++
+			default:
+				paramsBuf.WriteByte(line[col])
+				col++
+			}
+		}
+		lineIdx++
+	}
+	return "", "", "", false, startIdx, false
+
+foundCloseParen:
+	bracketDepth := 0
+	var retBuf strings.Builder
+	for lineIdx < len(lines) {
+		line := lines[lineIdx]
+		for col < len(line) {
+			if line[col] == '#' {
+				break
+			}
+			if line[col] == '"' || line[col] == '\'' {
+				q := line[col]
+				retBuf.WriteByte(q)
+				col++
+				for col < len(line) {
+					if line[col] == '\\' && col+1 < len(line) {
+						retBuf.WriteString(line[col : col+2])
+						col += 2
+						continue
+					}
+					retBuf.WriteByte(line[col])
+					if line[col] == q {
+						col++
+						break
+					}
+					col++
+				}
+				continue
+			}
+			switch line[col] {
+			case '(', '[', '{':
+				bracketDepth++
+				retBuf.WriteByte(line[col])
+			case ')', ']', '}':
+				if bracketDepth > 0 {
+					bracketDepth--
+				}
+				retBuf.WriteByte(line[col])
+			case '\\':
+				// Line continuation backslash outside string
+			case ':':
+				if bracketDepth == 0 {
+					afterParens := strings.TrimSpace(retBuf.String())
+					retType := ""
+					if strings.HasPrefix(afterParens, "->") {
+						retType = strings.TrimSpace(strings.TrimPrefix(afterParens, "->"))
+						retType = strings.Join(strings.Fields(retType), " ")
+					}
+					return name, strings.TrimSpace(paramsBuf.String()), retType, isAsync, lineIdx, true
+				}
+				retBuf.WriteByte(':')
+			default:
+				retBuf.WriteByte(line[col])
+			}
+			col++
+		}
+		lineIdx++
+		col = 0
+		retBuf.WriteByte(' ')
+	}
+	return "", "", "", false, startIdx, false
+}
+
+// advancePastParensAndTripleQuotes scans from startIdx until any open parentheses/brackets
+// or triple-quoted strings opened on or after startIdx are closed, returning the last line index.
+func advancePastParensAndTripleQuotes(lines []string, startIdx int) int {
+	inTriple := ""
+	parenDepth := 0
+	for i := startIdx; i < len(lines); i++ {
+		inTriple, parenDepth = scanLineState(lines[i], inTriple, parenDepth)
+		if inTriple == "" && parenDepth == 0 {
+			return i
+		}
+	}
+	return len(lines) - 1
+}
+
+// scanLineState updates triple-quote and bracket/paren depth state across a single line.
+func scanLineState(line string, inTriple string, parenDepth int) (string, int) {
+	j := 0
+	for j < len(line) {
+		if inTriple != "" {
+			if line[j] == '\\' && j+1 < len(line) {
+				j += 2
+				continue
+			}
+			if strings.HasPrefix(line[j:], inTriple) {
+				inTriple = ""
+				j += 3
+				continue
+			}
+			j++
+			continue
+		}
+
+		if line[j] == '#' {
+			break
+		}
+		if strings.HasPrefix(line[j:], `"""`) || strings.HasPrefix(line[j:], `'''`) {
+			inTriple = line[j : j+3]
+			j += 3
+			continue
+		}
+		if line[j] == '"' || line[j] == '\'' {
+			q := line[j]
+			j++
+			for j < len(line) {
+				if line[j] == '\\' && j+1 < len(line) {
+					j += 2
+					continue
+				}
+				if line[j] == q {
+					j++
+					break
+				}
+				j++
+			}
+			continue
+		}
+		switch line[j] {
+		case '(', '[', '{':
+			parenDepth++
+		case ')', ']', '}':
+			if parenDepth > 0 {
+				parenDepth--
+			}
+		}
+		j++
+	}
+	return inTriple, parenDepth
 }
 
 func (ca *CodeAnalyzer) extractVariablesAndConstants(lines []string, filePath string) ([]VariableInfo, []ConstantInfo) {
@@ -749,10 +1012,10 @@ func (ca *CodeAnalyzer) parseParameters(paramsStr string) []ParamInfo {
 	current := ""
 	for _, ch := range paramsStr {
 		switch ch {
-		case '[', '(':
+		case '[', '(', '{':
 			depth++
 			current += string(ch)
-		case ']', ')':
+		case ']', ')', '}':
 			depth--
 			current += string(ch)
 		case ',':
@@ -809,16 +1072,24 @@ func (ca *CodeAnalyzer) findBlockEnd(lines []string, startIdx int) int {
 	}
 	baseIndent := getIndentation(lines[startIdx])
 	endLine := startIdx + 1
+	inTriple, parenDepth := scanLineState(lines[startIdx], "", 0)
+
 	for i := startIdx + 1; i < len(lines); i++ {
 		line := lines[i]
-		if strings.TrimSpace(line) == "" {
+		wasInTriple := inTriple != ""
+		wasInParens := parenDepth > 0
+
+		if !wasInTriple && strings.TrimSpace(line) == "" {
 			endLine = i + 1
 			continue
 		}
-		currentIndent := getIndentation(line)
-		if currentIndent <= baseIndent && strings.TrimSpace(line) != "" {
-			break
+		if !wasInTriple && !wasInParens {
+			currentIndent := getIndentation(line)
+			if currentIndent <= baseIndent && strings.TrimSpace(line) != "" {
+				break
+			}
 		}
+		inTriple, parenDepth = scanLineState(line, inTriple, parenDepth)
 		endLine = i + 1
 	}
 	return endLine

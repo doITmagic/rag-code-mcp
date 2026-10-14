@@ -2,6 +2,7 @@ package resolver
 
 import (
 	context "context"
+	"os"
 	"strings"
 	testing "testing"
 
@@ -427,3 +428,19 @@ func TestResolveFilePathNonInvalidPathErrorPassthrough(t *testing.T) {
 		t.Fatalf("non-invalid-path errors should not get hint appended, got: %s", err.Message)
 	}
 }
+
+func TestResolveWorkspaceRootRefusesInvalidRoot(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip(err)
+	}
+	r := New(Dependencies{})
+	resp, wsErr := r.Resolve(context.Background(), contract.ResolveWorkspaceRequest{WorkspaceRoot: home})
+	if wsErr == nil {
+		t.Fatalf("expected error for home workspace_root, got resp=%+v", resp)
+	}
+	if wsErr.Code != contract.ErrorInvalidPath {
+		t.Fatalf("expected ErrorInvalidPath, got %s", wsErr.Code)
+	}
+}
+

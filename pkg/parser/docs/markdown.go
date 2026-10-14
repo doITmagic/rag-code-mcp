@@ -51,12 +51,117 @@ func (p *MarkdownParser) Parse(source []byte, filePath string) ([]parser.Symbol,
 
 			if paraText != "" {
 				startLine, endLine := p.getLines(t.Map)
+				sig := currentHeading
+				if sig == "" {
+					sig = "Document"
+				}
 				symbols = append(symbols, parser.Symbol{
 					Name:      filepath.Base(filePath),
 					Type:      "documentation",
 					Package:   "",
 					Content:   paraText,
-					Signature: currentHeading,
+					Signature: sig,
+					Docstring: "",
+					StartLine: startLine,
+					EndLine:   endLine,
+					FilePath:  filePath,
+					Language:  "markdown",
+					IsPublic:  true,
+					Metadata: map[string]interface{}{
+						"chunk_type":      "markdown",
+						"section_heading": currentHeading,
+					},
+				})
+			}
+
+		case *markdown.TableOpen:
+			startLine, endLine := p.getLines(t.Map)
+			var rows []string
+			var currentRow []string
+			for i+1 < len(tokens) {
+				i++
+				if _, ok := tokens[i].(*markdown.TableClose); ok {
+					break
+				}
+				switch cellTok := tokens[i].(type) {
+				case *markdown.TrOpen:
+					currentRow = nil
+				case *markdown.TrClose:
+					if len(currentRow) > 0 {
+						rows = append(rows, strings.Join(currentRow, " | "))
+					}
+				case *markdown.Inline:
+					currentRow = append(currentRow, strings.TrimSpace(cellTok.Content))
+				}
+			}
+			tableText := strings.TrimSpace(strings.Join(rows, "\n"))
+			if tableText != "" {
+				sig := currentHeading
+				if sig == "" {
+					sig = "Table"
+				}
+				symbols = append(symbols, parser.Symbol{
+					Name:      filepath.Base(filePath),
+					Type:      "documentation",
+					Package:   "",
+					Content:   tableText,
+					Signature: sig,
+					Docstring: "",
+					StartLine: startLine,
+					EndLine:   endLine,
+					FilePath:  filePath,
+					Language:  "markdown",
+					IsPublic:  true,
+					Metadata: map[string]interface{}{
+						"chunk_type":      "markdown",
+						"section_heading": currentHeading,
+					},
+				})
+			}
+
+		case *markdown.CodeBlock:
+			content := strings.TrimRight(t.Content, "\n")
+			if strings.TrimSpace(content) != "" {
+				startLine, endLine := p.getLines(t.Map)
+				sig := currentHeading
+				if sig == "" {
+					sig = "Code Block"
+				}
+				fullContent := fmt.Sprintf("```\n%s\n```", content)
+				symbols = append(symbols, parser.Symbol{
+					Name:      filepath.Base(filePath),
+					Type:      "code_block",
+					Package:   "",
+					Content:   fullContent,
+					Signature: sig,
+					Docstring: "",
+					StartLine: startLine,
+					EndLine:   endLine,
+					FilePath:  filePath,
+					Language:  "markdown",
+					IsPublic:  true,
+					Metadata: map[string]interface{}{
+						"chunk_type":      "markdown",
+						"code_language":   "",
+						"section_heading": currentHeading,
+					},
+				})
+			}
+
+		case *markdown.HTMLBlock:
+			content := strings.TrimSpace(t.Content)
+			if content != "" {
+				startLine, endLine := p.getLines(t.Map)
+				sig := currentHeading
+				if sig == "" {
+					sig = "HTML Block"
+				}
+				symbols = append(symbols, parser.Symbol{
+					Name:      filepath.Base(filePath),
+					Type:      "documentation",
+					Package:   "",
+					Content:   content,
+					Signature: sig,
 					Docstring: "",
 					StartLine: startLine,
 					EndLine:   endLine,

@@ -9,12 +9,11 @@ relations/
 # Binaries
 /cmd/agent-runner/agent-runner
 /rag-code-mcp
-test-*
+/test-*
 bin/
 tests/e2e/bin/
 /rag-code-install
 index-all
-rag-code-mcp
 
 # Test programs
 cmd/test-*/
@@ -60,13 +59,11 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
-docs/plans/*.md
 
 # Scripts
 scripts/
 .ragcode/
 .agent/
-.trello.json
 build-binaries.sh
 
 # Debug logs
@@ -76,3 +73,17 @@ windsurf_debug_log.txt
 # Worktrees
 .worktrees/
 worktrees/
+
+# Auto-generated IDE rule files (auto_create_ide_rules)
+.cursor/rules/ragcode.mdc
+.windsurf/rules/ragcode.md
+.clinerules/ragcode.md
+.roo/rules/ragcode.md
+CLAUDE.md
+
+# Legacy flat rule files written by older versions
+.clauderules
+.clinerules
+.cursorrules
+.roomodes
+.windsurfrules

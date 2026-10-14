@@ -19,16 +19,20 @@ Unlike generic RAG that splits code into arbitrary text chunks, RagCode:
 - **Semantic chunking** - extracts complete functions, classes, methods (not random 512-token splits)
 - **Rich metadata** - name, type, parameters, return type, dependencies, line numbers
 - **Relationships** - knows class inheritance, method calls, imports
-- **AST parsing** - understands Go, PHP, Python syntax (not regex/heuristics)
+- **AST parsing** - understands Go, PHP (Laravel, WordPress, WooCommerce, Oxygen Builder), Python, JavaScript/TypeScript (React, Vue), HTML/CSS/SCSS syntax
 - **Exact + semantic search** - find "UserController" exactly, not just similar text
 - **Complete code units** - AI sees runnable code, not fragments
 - **Evaluation** - Request AI self-evaluation on performance and quality. **Use to share feedback.**
 
 ## Compatibility
 
-- **IDEs:** Windsurf, Cursor, VS Code + GitHub Copilot, Claude Desktop, Antigravity
-- **Languages:** Go, PHP (Laravel), Python (full support with classes, decorators, type hints)
-- **Planned:** JavaScript/TypeScript (tree-sitter based)
+- **IDEs:** Windsurf, Cursor, VS Code + GitHub Copilot, Claude Desktop, Antigravity, Gemini CLI, Zed
+- **Languages & Frameworks:**
+  - **Go** (plus Go Templates `.tmpl`/`.gotmpl`/`.gohtml`)
+  - **PHP** — full PHP 8+ AST + **Laravel** (Eloquent models, routes, controllers, middleware, migrations, service providers, Blade) + **WordPress** (hooks/actions/filters, CPTs, taxonomies, shortcodes, Gutenberg blocks, widgets, REST/admin, **WooCommerce**, **Oxygen Builder**)
+  - **JavaScript / TypeScript** — tree-sitter AST + **React** (JSX/TSX) + **Vue** Single-File Components (`.vue` Options API & `<script setup>` Composition API, composables)
+  - **Python** (classes, async functions, decorators, type hints, mixins, metaclasses)
+  - **Web & Docs** — HTML, CSS/SCSS/LESS, Markdown, JSON, YAML, TOML, `.env*`, Dockerfile, Makefile, SQL, Shell
 - **OS:** Linux, macOS, Windows (all require Docker)
 
 ## Quick Install
@@ -60,11 +64,11 @@ Key flags: `-ollama` (docker/local), `-qdrant` (docker/remote), `-gpu`, `-models
 ## Example Usage
 
 User: "Find authentication middleware in this codebase"
-→ RagCode uses `rag_search_code` tool
+→ RagCode uses `rag_search` tool
 ## 9 Powerful MCP Tools
 
 ### Search & Exploration
-1. `rag_search` - **USE FIRST** - Unified search by MEANING or EXACT matches. Auto-adapts response format. Supports **Go, PHP, Python, HTML** and Markdown docs `include_docs: true`.
+1. `rag_search` - **USE FIRST** - Unified search by MEANING or EXACT matches. Auto-adapts response format. Supports **Go, PHP (Laravel, WordPress, WooCommerce, Oxygen), JS/TS (React, Vue), Python, HTML/CSS** and Markdown/JSON/YAML docs (`include_docs: true`).
 2. `rag_find_usages` - Find all callers/usages across codebase with snippets + file:line (AST-based).
 3. `rag_call_hierarchy` - Explore caller/callee relationships for a symbol (incoming/outgoing).
 4. `rag_list_package_exports` - List all public functions, classes, and types in a package/module.

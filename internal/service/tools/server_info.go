@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	// Preluăm valorile injectate la build, dar le facem globale pentru tool
+	// Pick up the build-injected values, exposed globally for the tool
 	serverVersion string
 	serverCommit  string
 	serverDate    string
@@ -22,7 +22,7 @@ func init() {
 	serverStart = time.Now()
 }
 
-// SetServerBuildInfo permite main.go să injecteze datele de build în tool
+// SetServerBuildInfo lets main.go inject the build data into the tool
 func SetServerBuildInfo(version, commit, date string) {
 	serverVersion = version
 	serverCommit = commit
@@ -58,6 +58,7 @@ func (t *ServerInfoTool) Register(server *mcp.Server) {
 		}
 
 		return &mcp.CallToolResult{
+			IsError: responseIsError(result),
 			Content: []mcp.Content{&mcp.TextContent{Text: result}},
 		}, nil, nil
 	})

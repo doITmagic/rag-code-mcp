@@ -76,3 +76,57 @@ Route::resource('photos', PhotoController::class);
 	}
 	assert.Equal(t, 7, resourceFound)
 }
+
+func TestRouteAnalyzer_ApiResourceAndFluentGroups(t *testing.T) {
+	code := `<?php
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\CommentController;
+use App\Http\Controllers\Admin\DashboardController;
+
+Route::apiResource('comments', CommentController::class);
+
+Route::prefix('admin')->middleware(['auth', 'admin'])->name('admin.')->group(function () {
+    Route::get('/dashboard', [DashboardController::class, 'index']);
+});
+`
+	tmpDir := t.TempDir()
+	routesDir := filepath.Join(tmpDir, "routes")
+	assert.NoError(t, os.MkdirAll(routesDir, 0755))
+	routeFile := filepath.Join(routesDir, "api.php")
+	assert.NoError(t, os.WriteFile(routeFile, []byte(code), 0644))
+
+	analyzer := NewRouteAnalyzer()
+	routes, err := analyzer.Analyze([]string{routeFile})
+	assert.NoError(t, err)
+
+	// apiResource should generate 5 routes (index, store, show, update, destroy)
+	apiResActions := make(map[string]string)
+	var dashboardRoute *Route
+	for i := range routes {
+		r := &routes[i]
+		if r.Controller == "CommentController" {
+			apiResActions[r.Action] = r.Method
+		}
+		if r.Controller == "DashboardController" {
+			dashboardRoute = r
+		}
+	}
+	assert.Len(t, apiResActions, 5)
+	assert.Equal(t, "GET", apiResActions["index"])
+	assert.Equal(t, "POST", apiResActions["store"])
+	assert.Equal(t, "GET", apiResActions["show"])
+	assert.Equal(t, "PUT/PATCH", apiResActions["update"])
+	assert.Equal(t, "DELETE", apiResActions["destroy"])
+
+	if assert.NotNil(t, dashboardRoute, "expected fluent group route") {
+		assert.Equal(t, "admin/dashboard", dashboardRoute.URI)
+		assert.Equal(t, []string{"auth", "admin"}, dashboardRoute.Middleware)
+		assert.Equal(t, "admin.", dashboardRoute.Name)
+	}
+
+	// Single file passed to findRouteFiles must not be returned twice
+	adapter := NewAdapter()
+	foundFiles := adapter.findRouteFiles([]string{routeFile})
+	assert.Equal(t, []string{routeFile}, foundFiles)
+}
+

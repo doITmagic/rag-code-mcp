@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
 	"github.com/doITmagic/rag-code-mcp/internal/service/search"
@@ -255,6 +256,16 @@ func TestFallbackDirectSearchPayloadStructure(t *testing.T) {
 // uses the fallback when no Qdrant collections exist.
 func TestFallbackSearchIntegrationWithSearchCode(t *testing.T) {
 	root, eng := setupFallbackWorkspace(t)
+	t.Cleanup(func() {
+		for i := 0; i < 200; i++ {
+			if len(eng.ActiveIndexingJobs()) == 0 {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		eng.StopWatchers()
+		os.RemoveAll(filepath.Join(root, ".ragcode"))
+	})
 
 	// Detect workspace context first
 	wctx, err := eng.DetectContext(context.Background(), filepath.Join(root, "pkg", "calculator.go"))

@@ -4,8 +4,6 @@ import (
 	"time"
 )
 
-// DefaultWorkspaceDetectionMarkers defines default files/directories used to
-// detect workspace roots across config generation and runtime detection.
 const (
 	DefaultOllamaBaseURL = "http://localhost:11434"
 	DefaultQdrantURL     = "http://localhost:6333"
@@ -14,30 +12,6 @@ const (
 	// Changing this impacts the installer and may require re-indexing.
 	StableEmbeddingModel = "qwen3-embedding:0.6b"
 )
-
-var DefaultWorkspaceDetectionMarkers = []string{
-	".git",
-	"go.mod",
-	"package.json",
-	"Cargo.toml",
-	"pyproject.toml",
-	"setup.py",
-	"requirements.txt",
-	"composer.json",
-	"pom.xml",
-	"build.gradle",
-	"Gemfile",
-	"Package.swift",
-	".ragcode",
-	".agent",
-	".idea",
-	".vscode",
-	".vs",
-	".cursor",
-	".windsurf",
-	"AGENTS.md",
-	"CLAUDE.md",
-}
 
 // Config represents the global application configuration
 type Config struct {
@@ -214,11 +188,6 @@ type WorkspaceConfig struct {
 	// MaxWorkspaces limits the number of workspaces that can be indexed
 	// Set to 0 for unlimited (default: 10)
 	MaxWorkspaces int `yaml:"max_workspaces"`
-
-	// DetectionMarkers are files/directories used to identify workspace roots
-	// Default includes language markers plus workspace metadata/IDE markers
-	// (e.g. .ragcode, .agent, .idea, .cursor, AGENTS.md, CLAUDE.md)
-	DetectionMarkers []string `yaml:"detection_markers"`
 
 	// ExcludePatterns are glob patterns for paths to exclude from workspace detection
 	// Default: ["node_modules", ".git", "vendor", "target"]

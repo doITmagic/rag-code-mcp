@@ -40,19 +40,37 @@ type Options struct {
 
 // Service is the main indexing engine that handles file walking, change detection, and vector storage.
 type Service struct {
-	embedder     llm.Provider
-	store        storage.VectorStore
-	lastActivity atomic.Int64 // Tracks Unix elapsed time of the last successful chunk embedding
+	embedder       llm.Provider
+	store          storage.VectorStore
+	embedBatchSize int
+	embedWorkers   int
+	lastActivity   atomic.Int64 // Tracks Unix elapsed time of the last successful chunk embedding
 }
 
 // NewService creates a new indexer service.
 func NewService(embedder llm.Provider, store storage.VectorStore) *Service {
 	s := &Service{
-		embedder: embedder,
-		store:    store,
+		embedder:       embedder,
+		store:          store,
+		embedBatchSize: 2,
+		embedWorkers:   1,
 	}
 	s.lastActivity.Store(time.Now().Unix())
 	return s
+}
+
+// SetEmbedBatchSize configures the number of symbols embedded per batch request.
+func (s *Service) SetEmbedBatchSize(n int) {
+	if n > 0 {
+		s.embedBatchSize = n
+	}
+}
+
+// SetEmbedWorkers configures the number of concurrent embedding workers in IndexItems.
+func (s *Service) SetEmbedWorkers(n int) {
+	if n > 0 {
+		s.embedWorkers = n
+	}
 }
 
 // IndexWorkspace performs a full or incremental index of a workspace.
@@ -255,9 +273,9 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 		}
 	}()
 
-	// 5. Sequential file processing — no worker pool, no semaphore.
-	// Embed is serial in Ollama anyway (numWorkers=1 in IndexItems), so parallelism
-	// here only added complexity without meaningful throughput gain.
+	// 5. Sequential file processing — no file-level worker pool or semaphore.
+	// Concurrency and batching are handled at the symbol level in IndexItems
+	// (via configurable embedWorkers and embedBatchSize).
 	var fileErrs []string
 	for _, path := range changedFiles {
 		fileNum := int(doneFiles.Load()) + 1
@@ -550,9 +568,10 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 		return nil
 	}
 
-	// Ollama processes embeds serially — multiple workers only queue up requests
-	// and increase latency for concurrent search queries. Keep 1 worker.
-	numWorkers := 1
+	numWorkers := s.embedWorkers
+	if numWorkers <= 0 {
+		numWorkers = 1
+	}
 
 	type result struct {
 		point storage.Point
@@ -561,7 +580,10 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 
 	embedBatchSize := 1
 	if _, ok := s.embedder.(llm.BatchEmbedder); ok {
-		embedBatchSize = 2
+		embedBatchSize = s.embedBatchSize
+		if embedBatchSize <= 0 {
+			embedBatchSize = 2
+		}
 	}
 	jobs := make(chan []parser.Symbol, (len(symbols)+embedBatchSize-1)/embedBatchSize)
 	results := make(chan result, len(symbols))

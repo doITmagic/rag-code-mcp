@@ -607,3 +607,55 @@ func TestRemoveFile(t *testing.T) {
 		t.Fatal("state still tracks the removed file")
 	}
 }
+
+type concurrentMockEmbedder struct {
+	mockEmbedder
+	active atomic.Int32
+	max    atomic.Int32
+}
+
+func (m *concurrentMockEmbedder) Embed(_ context.Context, _ string) ([]float64, error) {
+	cur := m.active.Add(1)
+	for {
+		prev := m.max.Load()
+		if cur <= prev || m.max.CompareAndSwap(prev, cur) {
+			break
+		}
+	}
+	time.Sleep(25 * time.Millisecond)
+	m.active.Add(-1)
+	return make([]float64, 1024), nil
+}
+
+func TestSetEmbedBatchSizeAndWorkers(t *testing.T) {
+	embedder := &mockBatchEmbedder{}
+	store := &mockStore{}
+	service := NewService(embedder, store)
+	service.SetEmbedBatchSize(4)
+	service.SetEmbedBatchSize(0) // ignored
+
+	symbols := make([]parser.Symbol, 8)
+	for i := range symbols {
+		symbols[i] = parser.Symbol{ID: fmt.Sprintf("id-%d", i), Name: fmt.Sprintf("Symbol%d", i)}
+	}
+
+	if err := service.IndexItems(context.Background(), "batch-size-4", symbols); err != nil {
+		t.Fatal(err)
+	}
+	if got := atomic.LoadInt32(&embedder.batchCount); got != 2 {
+		t.Fatalf("batch calls = %d, want 2 (8 symbols with batch size 4)", got)
+	}
+
+	concEmbedder := &concurrentMockEmbedder{}
+	concService := NewService(concEmbedder, &mockStore{})
+	concService.SetEmbedWorkers(3)
+	concService.SetEmbedWorkers(-1) // ignored
+
+	if err := concService.IndexItems(context.Background(), "workers-3", symbols); err != nil {
+		t.Fatal(err)
+	}
+	if got := concEmbedder.max.Load(); got < 2 {
+		t.Fatalf("max concurrent workers = %d, want >= 2 with SetEmbedWorkers(3)", got)
+	}
+}
+

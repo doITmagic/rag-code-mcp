@@ -12,14 +12,20 @@ import (
 
 // Compiled regex patterns for Blade directives
 var (
-	reExtends   = regexp.MustCompile(`@extends\(\s*['"]([^'"]+)['"]`)
-	reSection   = regexp.MustCompile(`@section\(\s*['"]([^'"]+)['"]`)
-	reYield     = regexp.MustCompile(`@yield\(\s*['"]([^'"]+)['"]`)
-	reInclude   = regexp.MustCompile(`@include\(\s*['"]([^'"]+)['"]`)
-	reComponent = regexp.MustCompile(`@component\(\s*['"]([^'"]+)['"]`)
-	reEach      = regexp.MustCompile(`@each\(\s*['"]([^'"]+)['"]`)
-	rePushStack = regexp.MustCompile(`@(?:push|stack)\(\s*['"]([^'"]+)['"]`)
-	reProps     = regexp.MustCompile(`@props\(\s*\[(.*?)\]\s*\)`)
+	reExtends          = regexp.MustCompile(`@extends\(\s*['"]([^'"]+)['"]`)
+	reSection          = regexp.MustCompile(`@section\(\s*['"]([^'"]+)['"]`)
+	reYield            = regexp.MustCompile(`@yield\(\s*['"]([^'"]+)['"]`)
+	reInclude          = regexp.MustCompile(`@include(?:If)?\(\s*['"]([^'"]+)['"]`)
+	reIncludeCond      = regexp.MustCompile(`@include(?:When|Unless)\(\s*(?:[^,'"]+,\s*)?['"]([^'"]+)['"]`)
+	reIncludeFirstArr  = regexp.MustCompile(`@includeFirst\(\s*\[([^\]]+)\]`)
+	reIncludeFirstStr  = regexp.MustCompile(`@includeFirst\(\s*['"]([^'"]+)['"]`)
+	reComponent        = regexp.MustCompile(`@component\(\s*['"]([^'"]+)['"]`)
+	reXComponent       = regexp.MustCompile(`<x-([a-zA-Z0-9_.-]+)`)
+	reLivewire         = regexp.MustCompile(`@livewire\(\s*['"]([^'"]+)['"]`)
+	reLivewireTag      = regexp.MustCompile(`<livewire:([a-zA-Z0-9_.-]+)`)
+	reEach             = regexp.MustCompile(`@each\(\s*['"]([^'"]+)['"]`)
+	rePushStack        = regexp.MustCompile(`@(?:push|stack)\(\s*['"]([^'"]+)['"]`)
+	reProps            = regexp.MustCompile(`(?s)@props\(\s*\[(.*?)\]\s*\)`)
 )
 
 // BladeAnalyzer parses Blade template files and extracts directives.
@@ -63,69 +69,168 @@ func (ba *BladeAnalyzer) analyzeFile(filePath string) (BladeTemplate, error) {
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024) // Allow lines up to 1MB
 	lineNum := 0
+	var propsBuf strings.Builder
+	inMultilineProps := false
+
 	for scanner.Scan() {
 		lineNum++
 		line := scanner.Text()
 
+		// Handle multi-line @props([...]) accumulation
+		if inMultilineProps {
+			propsBuf.WriteString("\n")
+			propsBuf.WriteString(line)
+			combined := propsBuf.String()
+			if matches := reProps.FindAllStringSubmatch(combined, -1); len(matches) > 0 {
+				for _, m := range matches {
+					props := parsePropsArray(m[1])
+					tpl.Props = append(tpl.Props, props...)
+				}
+				propsBuf.Reset()
+				inMultilineProps = false
+			}
+		} else if matches := reProps.FindAllStringSubmatch(line, -1); len(matches) > 0 {
+			for _, m := range matches {
+				props := parsePropsArray(m[1])
+				tpl.Props = append(tpl.Props, props...)
+			}
+		} else if strings.Contains(line, "@props(") {
+			propsBuf.Reset()
+			propsBuf.WriteString(line)
+			inMultilineProps = true
+		}
+
 		// @extends
-		if m := reExtends.FindStringSubmatch(line); len(m) > 1 {
-			tpl.Extends = m[1]
+		for _, m := range reExtends.FindAllStringSubmatch(line, -1) {
+			if len(m) > 1 {
+				tpl.Extends = m[1]
+			}
 		}
 
 		// @section
-		if m := reSection.FindStringSubmatch(line); len(m) > 1 {
-			tpl.Sections = append(tpl.Sections, BladeSection{
-				Name:      m[1],
-				Type:      "section",
-				StartLine: lineNum,
-			})
+		for _, m := range reSection.FindAllStringSubmatch(line, -1) {
+			if len(m) > 1 {
+				tpl.Sections = append(tpl.Sections, BladeSection{
+					Name:      m[1],
+					Type:      "section",
+					StartLine: lineNum,
+				})
+			}
 		}
 
 		// @yield
-		if m := reYield.FindStringSubmatch(line); len(m) > 1 {
-			tpl.Sections = append(tpl.Sections, BladeSection{
-				Name:      m[1],
-				Type:      "yield",
-				StartLine: lineNum,
-			})
+		for _, m := range reYield.FindAllStringSubmatch(line, -1) {
+			if len(m) > 1 {
+				tpl.Sections = append(tpl.Sections, BladeSection{
+					Name:      m[1],
+					Type:      "yield",
+					StartLine: lineNum,
+				})
+			}
 		}
 
-		// @include
-		if m := reInclude.FindStringSubmatch(line); len(m) > 1 {
-			tpl.Includes = append(tpl.Includes, BladeInclude{
-				ViewName: m[1],
-				Type:     "include",
-				Line:     lineNum,
-			})
+		// @include / @includeIf
+		for _, m := range reInclude.FindAllStringSubmatch(line, -1) {
+			if len(m) > 1 {
+				tpl.Includes = append(tpl.Includes, BladeInclude{
+					ViewName: m[1],
+					Type:     "include",
+					Line:     lineNum,
+				})
+			}
+		}
+
+		// @includeWhen / @includeUnless
+		for _, m := range reIncludeCond.FindAllStringSubmatch(line, -1) {
+			if len(m) > 1 {
+				tpl.Includes = append(tpl.Includes, BladeInclude{
+					ViewName: m[1],
+					Type:     "include",
+					Line:     lineNum,
+				})
+			}
+		}
+
+		// @includeFirst(['a', 'b']) or @includeFirst('a')
+		for _, m := range reIncludeFirstArr.FindAllStringSubmatch(line, -1) {
+			if len(m) > 1 {
+				for _, view := range parsePropsArray(m[1]) {
+					tpl.Includes = append(tpl.Includes, BladeInclude{
+						ViewName: view,
+						Type:     "include",
+						Line:     lineNum,
+					})
+				}
+			}
+		}
+		for _, m := range reIncludeFirstStr.FindAllStringSubmatch(line, -1) {
+			if len(m) > 1 {
+				tpl.Includes = append(tpl.Includes, BladeInclude{
+					ViewName: m[1],
+					Type:     "include",
+					Line:     lineNum,
+				})
+			}
 		}
 
 		// @component
-		if m := reComponent.FindStringSubmatch(line); len(m) > 1 {
-			tpl.Includes = append(tpl.Includes, BladeInclude{
-				ViewName: m[1],
-				Type:     "component",
-				Line:     lineNum,
-			})
+		for _, m := range reComponent.FindAllStringSubmatch(line, -1) {
+			if len(m) > 1 {
+				tpl.Includes = append(tpl.Includes, BladeInclude{
+					ViewName: m[1],
+					Type:     "component",
+					Line:     lineNum,
+				})
+			}
+		}
+
+		// <x-...> Blade component tags
+		for _, m := range reXComponent.FindAllStringSubmatch(line, -1) {
+			if len(m) > 1 && m[1] != "slot" && !strings.HasPrefix(m[1], "slot:") {
+				tpl.Includes = append(tpl.Includes, BladeInclude{
+					ViewName: m[1],
+					Type:     "component",
+					Line:     lineNum,
+				})
+			}
+		}
+
+		// @livewire / <livewire:...>
+		for _, m := range reLivewire.FindAllStringSubmatch(line, -1) {
+			if len(m) > 1 {
+				tpl.Includes = append(tpl.Includes, BladeInclude{
+					ViewName: m[1],
+					Type:     "livewire",
+					Line:     lineNum,
+				})
+			}
+		}
+		for _, m := range reLivewireTag.FindAllStringSubmatch(line, -1) {
+			if len(m) > 1 {
+				tpl.Includes = append(tpl.Includes, BladeInclude{
+					ViewName: m[1],
+					Type:     "livewire",
+					Line:     lineNum,
+				})
+			}
 		}
 
 		// @each
-		if m := reEach.FindStringSubmatch(line); len(m) > 1 {
-			tpl.Includes = append(tpl.Includes, BladeInclude{
-				ViewName: m[1],
-				Type:     "each",
-				Line:     lineNum,
-			})
+		for _, m := range reEach.FindAllStringSubmatch(line, -1) {
+			if len(m) > 1 {
+				tpl.Includes = append(tpl.Includes, BladeInclude{
+					ViewName: m[1],
+					Type:     "each",
+					Line:     lineNum,
+				})
+			}
 		}
 
 		// @push / @stack
-		if m := rePushStack.FindStringSubmatch(line); len(m) > 1 {
-			tpl.Stacks = appendUnique(tpl.Stacks, m[1])
-		}
-
-		// @props
-		if m := reProps.FindStringSubmatch(line); len(m) > 1 {
-			props := parsePropsArray(m[1])
-			tpl.Props = append(tpl.Props, props...)
+		for _, m := range rePushStack.FindAllStringSubmatch(line, -1) {
+			if len(m) > 1 {
+				tpl.Stacks = appendUnique(tpl.Stacks, m[1])
+			}
 		}
 	}
 
@@ -156,11 +261,14 @@ func bladeViewName(filePath string) string {
 }
 
 // parsePropsArray extracts prop names from a @props([...]) content string.
-// Input: "'title', 'color'" → Output: ["title", "color"]
+// Supports both simple values ("'title', 'color'") and key-value defaults ("'color' => 'blue'").
 func parsePropsArray(raw string) []string {
 	var props []string
 	parts := strings.Split(raw, ",")
 	for _, p := range parts {
+		if idx := strings.Index(p, "=>"); idx >= 0 {
+			p = p[:idx]
+		}
 		p = strings.TrimSpace(p)
 		p = strings.Trim(p, "'\"")
 		if p != "" {

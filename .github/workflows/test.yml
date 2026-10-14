@@ -62,3 +62,20 @@
           with:
             version: v2.4
             args: --timeout=5m
+
+    windows-test:
+      name: Test (Windows)
+      runs-on: windows-latest
+
+      steps:
+        - name: Checkout code
+          uses: actions/checkout@v4
+
+        - name: Set up Go
+          uses: actions/setup-go@v5
+          with:
+            go-version: '1.25'
+            cache: true
+
+        - name: Run Windows-critical tests
+          run: go test ./pkg/workspace/... ./pkg/parser/... ./cmd/rag-code-install/...

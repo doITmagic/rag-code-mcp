@@ -5,9 +5,12 @@ MAIN_GO="$ROOT_DIR/cmd/rag-code-mcp/main.go"
 BIN_DIR="$ROOT_DIR/bin"
 cv="$(grep -E '^\s*Version\s*=\s*"' "$MAIN_GO" | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')"
 [[ "$cv" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || { echo "bad Version: $cv" >&2; exit 1; }
-maj="${BASH_REMATCH[1]}"; min="${BASH_REMATCH[2]}"; pat=$((BASH_REMATCH[3]+1))
-nv="$maj.$min.$pat"
-perl -0777 -i -pe 's/(\bVersion\s*=\s*")([^"]+)(")/${1}'"$nv"'${3}/' "$MAIN_GO"
+nv="$cv"
+if [[ "${1:-}" == "--bump" ]]; then
+  maj="${BASH_REMATCH[1]}"; min="${BASH_REMATCH[2]}"; pat=$((BASH_REMATCH[3]+1))
+  nv="$maj.$min.$pat"
+  perl -0777 -i -pe 's/(\bVersion\s*=\s*")([^"]+)(")/${1}'"$nv"'${3}/' "$MAIN_GO"
+fi
 mkdir -p "$BIN_DIR"
 # Kill running instances before overwriting binaries (dev convenience).
 # Uses exact name match (-x) to avoid killing unrelated processes that happen
@@ -20,5 +23,9 @@ fi
 go build -o "$BIN_DIR/rag-code-mcp" "$ROOT_DIR/cmd/rag-code-mcp"
 go build -o "$BIN_DIR/rag-code-install" "$ROOT_DIR/cmd/rag-code-install"
 cp "$ROOT_DIR/internal/config/default.yaml" "$BIN_DIR/config.yaml"
-echo "$cv -> $nv"
+if [[ "$nv" != "$cv" ]]; then
+  echo "$cv -> $nv"
+else
+  echo "built $cv (pass --bump to increment patch version)"
+fi
 

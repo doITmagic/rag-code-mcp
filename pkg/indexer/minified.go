@@ -93,7 +93,13 @@ func matchesMinifiedName(path string) bool {
 
 // exceedsLineDensity reads the first sampleBytes of path and returns
 // true when the average line length exceeds maxAvgLineLen.
+// Structured data files (.json, .yaml, .yml) are only considered minified when
+// a single line exceeds 4 KiB, so small compact JSON configs (e.g. 600B on one line)
+// are not skipped.
 func exceedsLineDensity(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	isDataFile := ext == ".json" || ext == ".yaml" || ext == ".yml"
+
 	f, err := os.Open(path)
 	if err != nil {
 		return false
@@ -103,6 +109,10 @@ func exceedsLineDensity(path string) bool {
 	buf := make([]byte, sampleBytes)
 	n, err := io.ReadFull(f, buf)
 	if n == 0 && err != nil {
+		return false
+	}
+
+	if isDataFile && n < 4096 {
 		return false
 	}
 

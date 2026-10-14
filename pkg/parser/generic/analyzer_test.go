@@ -34,6 +34,10 @@ func TestGenericAnalyzer(t *testing.T) {
 	t.Run("CanHandle", func(t *testing.T) {
 		assert.True(t, analyzer.CanHandle("script.sh"))
 		assert.False(t, analyzer.CanHandle("script.py"))
+		assert.True(t, analyzer.CanHandle(".env"))
+		assert.True(t, analyzer.CanHandle("/path/to/.env.local"))
+		assert.True(t, analyzer.CanHandle("/path/to/.env.example"))
+		assert.True(t, analyzer.CanHandle("/path/to/.env.production"))
 	})
 
 	t.Run("Analyze File", func(t *testing.T) {

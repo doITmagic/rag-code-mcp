@@ -2,6 +2,7 @@ package laravel
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/doITmagic/rag-code-mcp/pkg/parser/php"
@@ -300,10 +301,9 @@ class UserService
 // Helper function to parse PHP code into PackageInfo
 func parsePhpCode(t *testing.T, phpCode string, filename string) *php.PackageInfo {
 	// Create temporary file for AnalyzeFile to work
-	tmpFile := "/tmp/" + filename
+	tmpFile := filepath.Join(t.TempDir(), filename)
 	err := os.WriteFile(tmpFile, []byte(phpCode), 0644)
 	assert.NoError(t, err)
-	defer os.Remove(tmpFile)
 
 	// Use PHP analyzer to extract package info
 	analyzer := php.NewCodeAnalyzer()
@@ -315,3 +315,24 @@ func parsePhpCode(t *testing.T, phpCode string, filename string) *php.PackageInf
 
 	return packages[0]
 }
+
+func TestControllerAnalyzer_ApiControllerByWindowsFilePath(t *testing.T) {
+	pkg := &php.PackageInfo{
+		Namespace: "App\\Http\\Controllers",
+		Classes: []php.ClassInfo{
+			{
+				Name:      "OrderController",
+				Namespace: "App\\Http\\Controllers",
+				FullName:  "App\\Http\\Controllers\\OrderController",
+				Extends:   "Controller",
+				FilePath:  `C:\project\app\Http\Controllers\Api\OrderController.php`,
+			},
+		},
+	}
+
+	analyzer := NewControllerAnalyzer(pkg)
+	controllers := analyzer.AnalyzeControllers()
+	assert.Len(t, controllers, 1)
+	assert.True(t, controllers[0].IsApi, "Expected IsApi=true when FilePath uses Windows backslashes with \\Api\\")
+}
+

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -272,15 +273,18 @@ func IsInvalidRoot(root string) bool {
 	if clean == string(os.PathSeparator) || filepath.Dir(clean) == clean {
 		return true
 	}
-	home, err := os.UserHomeDir()
-	if err == nil {
-		homeClean := filepath.Clean(home)
-		if clean == homeClean {
-			return true
-		}
-	}
-	if clean == os.TempDir() {
+	if home, err := os.UserHomeDir(); err == nil && samePath(clean, home) {
 		return true
 	}
-	return false
+	return samePath(clean, os.TempDir())
+}
+
+// samePath compares two paths, case-insensitively on Windows where
+// "c:\users\x" and "C:\Users\x" name the same directory.
+func samePath(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }

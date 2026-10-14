@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -61,8 +62,18 @@ func (s *State) Save(path string) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	dir := filepath.Dir(path)
+	if filepath.Base(dir) == ".ragcode" {
+		if _, statErr := os.Stat(dir); os.IsNotExist(statErr) {
+			workspaceRoot := filepath.Dir(dir)
+			if cachedHasParentRagcode(workspaceRoot) {
+				return nil
+			}
+		}
+	}
+
 	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 
@@ -100,7 +111,11 @@ func (s *State) RemovePrefix(prefix string) {
 	defer s.mu.Unlock()
 
 	for path := range s.Files {
-		if strings.HasPrefix(path, prefix) {
+		match := strings.HasPrefix(path, prefix)
+		if !match && runtime.GOOS == "windows" {
+			match = strings.HasPrefix(strings.ToLower(path), strings.ToLower(prefix))
+		}
+		if match {
 			delete(s.Files, path)
 		}
 	}

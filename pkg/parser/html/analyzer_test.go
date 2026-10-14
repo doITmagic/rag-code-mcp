@@ -207,4 +207,38 @@ func TestHTMLAnalyzer_Comprehensive(t *testing.T) {
 		}
 		assert.True(t, foundDefine, "expected define 'sidebar' symbol")
 	})
+
+	t.Run("EmptyClassAndScriptStyleStripping", func(t *testing.T) {
+		rawHTML := `<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Page</title>
+    <style>body { color: red; }</style>
+</head>
+<body>
+    <div class="">Empty class div</div>
+    <div class="   ">Whitespace class div</div>
+    <script>console.log("secret_js_token");</script>
+    <noscript>noscript_fallback_token</noscript>
+    <h1>Visible Heading</h1>
+    <p>Visible paragraph prose.</p>
+    <script>const inlineSectionScript = 123;</script>
+    <style>.inline-style { display: none; }</style>
+</body>
+</html>`
+		rawPath := filepath.Join(tmpDir, "empty_class_and_scripts.html")
+		require.NoError(t, os.WriteFile(rawPath, []byte(rawHTML), 0644))
+
+		res, err := analyzer.Analyze(context.Background(), rawPath)
+		require.NoError(t, err)
+		require.NotEmpty(t, res.Symbols)
+
+		for _, s := range res.Symbols {
+			assert.NotContains(t, s.Content, "secret_js_token")
+			assert.NotContains(t, s.Content, "inlineSectionScript")
+			assert.NotContains(t, s.Content, "noscript_fallback_token")
+			assert.NotContains(t, s.Content, "display: none")
+			assert.NotEqual(t, "div.", s.Name)
+		}
+	})
 }

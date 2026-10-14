@@ -197,6 +197,7 @@ func (ca *CodeAnalyzer) analyzeFile(path string) ([]CodeChunk, error) {
 	}
 
 	title := strings.TrimSpace(doc.Find("title").First().Text())
+	doc.Find("script, style, noscript").Remove()
 	elements := ca.buildElements(doc, path)
 	sections := ca.buildSections(doc, path, title)
 	if len(sections) > 0 {
@@ -251,7 +252,11 @@ func (ca *CodeAnalyzer) buildElements(doc *goquery.Document, path string) []Code
 		class := strings.TrimSpace(sel.AttrOr("class", ""))
 		name := id
 		if name == "" {
-			name = tag + "." + strings.Fields(class)[0]
+			fields := strings.Fields(class)
+			if len(fields) == 0 {
+				return true
+			}
+			name = tag + "." + fields[0]
 		}
 		if seen[name] {
 			return true

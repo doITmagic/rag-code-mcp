@@ -113,13 +113,13 @@ func TestAutoConfigurationUsesDetectedClientDirectories(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("APPDATA", filepath.Join(home, "AppData"))
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-	for _, dir := range []string{filepath.Join(home, ".gemini", "config"), filepath.Join(home, "AppData", "Claude"), filepath.Join(home, ".codex")} {
-		if err := os.MkdirAll(dir, 0700); err != nil {
+	paths := resolveIDEPaths(home)
+	for _, key := range []string{"antigravity", "claude", "codex"} {
+		if err := os.MkdirAll(filepath.Dir(paths[key].path), 0700); err != nil {
 			t.Fatal(err)
 		}
 	}
 	configureIDEs([]string{"auto"}, filepath.Join(home, ".ragcode", "bin"), "stdio", 39000)
-	paths := resolveIDEPaths(home)
 	for _, key := range []string{"antigravity", "claude-cli", "claude"} {
 		if _, err := os.Stat(paths[key].path); err != nil {
 			t.Fatalf("%s not auto-configured: %v", key, err)

@@ -312,8 +312,25 @@ func TestAnalyzer_ComponentName(t *testing.T) {
 	if got := info.Components[0].Computed; len(got) != 1 || got[0] != "total" {
 		t.Fatalf("computed: got %v", got)
 	}
-	info = a.Analyze("<script>\nexport default { data() { return {} } }\n</script>\n", `C:\proj\src\Widget.vue`)
-	if len(info.Components) != 1 || info.Components[0].Name != "Widget" {
+	info = a.Analyze("<script>\nexport default { data() { return {} } }\n</script>\n", `C:\proj\src\MyWidget.vue`)
+	if len(info.Components) != 1 || info.Components[0].Name != "MyWidget" {
 		t.Fatalf("filename fallback: got %+v", info.Components)
 	}
 }
+
+func TestAnalyzer_ComponentNameIgnoresNestedDataNameAndSetsEndLine(t *testing.T) {
+	a := NewAnalyzer()
+	src := "<template>\n  <div>{{ name }}</div>\n</template>\n<script>\nexport default {\n  data() {\n    return {\n      name: 'John'\n    }\n  }\n}\n</script>"
+	info := a.Analyze(src, "UserProfile.vue")
+	if len(info.Components) != 1 {
+		t.Fatalf("expected 1 component, got %d", len(info.Components))
+	}
+	comp := info.Components[0]
+	if comp.Name != "UserProfile" {
+		t.Errorf("expected component name 'UserProfile' (from filename), got %q", comp.Name)
+	}
+	if comp.StartLine != 1 || comp.EndLine != 12 {
+		t.Errorf("expected lines 1..12, got %d..%d", comp.StartLine, comp.EndLine)
+	}
+}
+

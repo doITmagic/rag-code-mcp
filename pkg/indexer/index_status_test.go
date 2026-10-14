@@ -197,3 +197,23 @@ func TestSaveIndexStatusBlockedUnderParentWorkspace(t *testing.T) {
 		t.Fatal("nested .ragcode was created under a parent workspace")
 	}
 }
+
+// ~/.ragcode is the global data dir (logs, registry), not a parent workspace:
+// it must not block index_status for every project under home.
+func TestSaveIndexStatusIgnoresHomeRagcode(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	project := filepath.Join(home, "src", "proj")
+	for _, dir := range []string{filepath.Join(home, ".ragcode", "logs"), project} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ClearParentRagcodeCache()
+
+	SaveIndexStatus(project, &IndexStatus{StartedAt: "2025-01-01T00:00:00Z"})
+	if LoadIndexStatus(project) == nil {
+		t.Fatal("index_status.json was not written for a project under home")
+	}
+}

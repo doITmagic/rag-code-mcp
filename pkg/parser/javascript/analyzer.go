@@ -209,12 +209,19 @@ func (ca *CodeAnalyzer) analyzeVueFile(filePath string, content []byte) (*fileAn
 		Language: "vue",
 	}
 
-	// Map Vue composables to JS functions
+	// Map custom Vue composables to JS functions
+	seenComposables := make(map[string]bool)
 	for _, comp := range vueInfo.Composables {
+		if !comp.IsCustom || seenComposables[comp.Name] {
+			continue
+		}
+		seenComposables[comp.Name] = true
 		fa.Functions = append(fa.Functions, JSFunction{
 			Name:       comp.Name,
 			FilePath:   filePath,
 			IsExported: true,
+			StartLine:  comp.Line,
+			EndLine:    comp.Line,
 		})
 	}
 
@@ -225,6 +232,8 @@ func (ca *CodeAnalyzer) analyzeVueFile(filePath string, content []byte) (*fileAn
 			Name:       comp.Name,
 			FilePath:   filePath,
 			IsExported: comp.IsExported,
+			StartLine:  comp.StartLine,
+			EndLine:    comp.EndLine,
 			Docstring:  fmt.Sprintf("Vue component (%s)", comp.Type),
 		})
 		for _, m := range comp.Methods {

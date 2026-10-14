@@ -252,13 +252,9 @@ func Run(rcfg RunConfig) error {
 	})
 
 	// ── Paths ──
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("cannot determine home directory: %w", err)
-	}
-	ragcodeDir := filepath.Join(homeDir, ".ragcode")
+	ragcodeDir := utils.RagCodeHome()
 	if err := os.MkdirAll(ragcodeDir, 0o700); err != nil {
-		return fmt.Errorf("cannot create ~/.ragcode: %w", err)
+		return fmt.Errorf("cannot create data dir %s: %w", ragcodeDir, err)
 	}
 
 	// ── Start Daemon Listeners ──

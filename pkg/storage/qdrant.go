@@ -430,7 +430,13 @@ func (s *QdrantStore) DeleteByPrefix(ctx context.Context, collection string, key
 			break
 		}
 
+		var nextOffset *qdrant.PointId
+		advanced := 0
 		for _, p := range res {
+			if offset != nil && p.Id != nil && p.Id.String() == offset.String() {
+				continue
+			}
+			advanced++
 			if p.Payload != nil {
 				if val, ok := p.Payload[key]; ok && val != nil {
 					if strings.HasPrefix(val.GetStringValue(), prefix) {
@@ -438,12 +444,13 @@ func (s *QdrantStore) DeleteByPrefix(ctx context.Context, collection string, key
 					}
 				}
 			}
-			offset = p.Id
+			nextOffset = p.Id
 		}
 
-		if len(res) < 10000 {
+		if len(res) < 10000 || advanced == 0 || nextOffset == nil {
 			break
 		}
+		offset = nextOffset
 	}
 
 	if len(allMatchingIDs) == 0 {

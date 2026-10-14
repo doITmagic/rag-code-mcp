@@ -2,6 +2,7 @@ package laravel
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/doITmagic/rag-code-mcp/pkg/parser/php"
@@ -81,10 +82,9 @@ class PostController extends Controller
 
 	// Test Laravel detection on model
 	modelAnalyzer := php.NewCodeAnalyzer()
-	tmpModelFile := "/tmp/Post_integration_test.php"
+	tmpModelFile := filepath.Join(t.TempDir(), "Post_integration_test.php")
 	err := os.WriteFile(tmpModelFile, []byte(modelCode), 0644)
 	assert.NoError(t, err)
-	defer os.Remove(tmpModelFile)
 
 	_, err = modelAnalyzer.AnalyzeFile(tmpModelFile)
 	assert.NoError(t, err)
@@ -144,10 +144,9 @@ class DataProcessor
 }
 `
 
-	tmpFile := "/tmp/DataProcessor_test.php"
+	tmpFile := filepath.Join(t.TempDir(), "DataProcessor_test.php")
 	err := os.WriteFile(tmpFile, []byte(phpCode), 0644)
 	assert.NoError(t, err)
-	defer os.Remove(tmpFile)
 
 	analyzer := php.NewCodeAnalyzer()
 	_, err = analyzer.AnalyzeFile(tmpFile)

@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
+	"github.com/doITmagic/rag-code-mcp/pkg/workspace/watch"
 )
 
 const indexStatusFile = "index_status.json"
@@ -87,6 +88,11 @@ func hasParentRagcode(root string) bool {
 			break
 		}
 		dir = parent
+		// ~/.ragcode is the global data dir, not a parent workspace; nothing at
+		// or above home, temp or a volume root can be one.
+		if watch.IsInvalidRoot(dir) {
+			break
+		}
 
 		ragcodePath := filepath.Join(dir, ".ragcode")
 		if stat, err := os.Stat(ragcodePath); err == nil && stat.IsDir() {

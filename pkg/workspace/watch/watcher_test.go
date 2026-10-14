@@ -1,9 +1,37 @@
 package watch
 
 import (
+	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
+
+// On Windows "c:\users\x" is the home directory too; a case-sensitive check
+// let it through, and registering it absorbed every workspace beneath it.
+func TestIsInvalidRoot(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "Home")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	cases := map[string]bool{
+		home:                               true,
+		home + string(os.PathSeparator):    true,
+		os.TempDir():                       true,
+		filepath.Join(home, "src", "proj"): false,
+		filepath.Join(home, "proj"):        false,
+	}
+	if runtime.GOOS == "windows" {
+		cases[strings.ToLower(home)] = true
+		cases[strings.ToUpper(home)] = true
+	}
+	for path, want := range cases {
+		if got := IsInvalidRoot(path); got != want {
+			t.Errorf("IsInvalidRoot(%q) = %v, want %v", path, got, want)
+		}
+	}
+}
 
 // Events under excluded dirs must be dropped. On Windows a write inside
 // .ragcode is reported as a change to ".ragcode" on the root watch; indexing

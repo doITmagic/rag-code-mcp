@@ -151,3 +151,43 @@ func TestCollectStaleFiles(t *testing.T) {
 		t.Errorf("expected stale file %q, got %q", filepath.Join(wsRoot, "deleted.go"), stale[0])
 	}
 }
+
+func TestStateSave_BlocksCreatingChildRagcodeWhenParentHasRagcode(t *testing.T) {
+	ClearParentRagcodeCache()
+	defer ClearParentRagcodeCache()
+
+	parent := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(parent, ".ragcode"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(parent, "subpkg")
+	if err := os.MkdirAll(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	state := NewState()
+	childStatePath := StatePath(child, "col")
+	if err := state.Save(childStatePath); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(child, ".ragcode")); !os.IsNotExist(err) {
+		t.Fatalf("expected child .ragcode directory NOT to be created when parent has .ragcode")
+	}
+}
+
+func TestMinified_DoesNotSkipSmallCompactJSON(t *testing.T) {
+	dir := t.TempDir()
+	jsonPath := filepath.Join(dir, "config.json")
+	// 800-byte single-line JSON (> 500 chars on 1 line, but < 4 KiB)
+	payload := `{"openapi":"3.0.0","info":{"title":"Sample API","version":"1.0.0"},"paths":{"/users":{"get":{"summary":"List users","responses":{"200":{"description":"OK"}}}},"/items":{"get":{"summary":"List items","responses":{"200":{"description":"OK"}}}},"/health":{"get":{"summary":"Health check","responses":{"200":{"description":"Healthy"}}}},"/metrics":{"get":{"summary":"Metrics endpoint","responses":{"200":{"description":"Metrics"}}}},"/status":{"get":{"summary":"System status","responses":{"200":{"description":"Status OK"}}}},"/config":{"get":{"summary":"Config endpoint","responses":{"200":{"description":"Config OK"}}}}}}`
+	if len(payload) <= maxAvgLineLen {
+		t.Fatalf("test setup error: payload length %d must exceed %d", len(payload), maxAvgLineLen)
+	}
+	if err := os.WriteFile(jsonPath, []byte(payload), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if shouldSkipFile(jsonPath) {
+		t.Fatalf("expected compact JSON file under 4KiB (%d bytes) not to be skipped as minified", len(payload))
+	}
+}
+

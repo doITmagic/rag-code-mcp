@@ -172,4 +172,44 @@ func TestRegistryRefusesHomeRoot(t *testing.T) {
 	if _, ok := r.LookupByRoot(home); ok {
 		t.Fatal("home dir was registered")
 	}
+	if err := r.PromoteCandidate(context.Background(), home, "test", true); err == nil {
+		t.Fatal("expected PromoteCandidate to refuse home dir")
+	}
 }
+
+func TestRegistryCleanupAbsorbedPreservesUserFiles(t *testing.T) {
+	parent := t.TempDir()
+	child := filepath.Join(parent, "packages", "sub")
+	childRagcode := filepath.Join(child, ".ragcode")
+	if err := os.MkdirAll(childRagcode, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Write a RagCode-owned state file and a user-created marker file
+	stateFile := filepath.Join(childRagcode, "state-deadbeef.json")
+	userMarker := filepath.Join(childRagcode, "root")
+	if err := os.WriteFile(stateFile, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userMarker, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := New(filepath.Join(t.TempDir(), "registry.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Upsert(child, "sub", "test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Upsert(parent, "parent", "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(stateFile); !os.IsNotExist(err) {
+		t.Fatalf("expected RagCode-owned state file to be removed, stat err: %v", err)
+	}
+	if _, err := os.Stat(userMarker); err != nil {
+		t.Fatalf("expected user marker file .ragcode/root to be preserved, stat err: %v", err)
+	}
+}
+

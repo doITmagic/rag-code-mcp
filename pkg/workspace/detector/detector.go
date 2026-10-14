@@ -190,10 +190,7 @@ func (d *Detector) walkUp(start string) (*contract.WorkspaceCandidate, *contract
 	var bestTier = 99
 	var firstErr *contract.ResolveWorkspaceError
 
-	for {
-		if d.opts.MaxDepth > 0 && depth >= d.opts.MaxDepth {
-			break
-		}
+	for d.opts.MaxDepth <= 0 || depth < d.opts.MaxDepth {
 		depth++
 
 		// Never climb into or past home, temp or a volume root: IDE dirs such

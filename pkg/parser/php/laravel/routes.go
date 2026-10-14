@@ -291,17 +291,18 @@ func (v *routeCollector) applyGroupArrayArgs(ctx *GroupContext, args []ast.Verte
 				for _, item := range exprArray.Items {
 					if arrayItem, ok := item.(*ast.ExprArrayItem); ok {
 						key := v.extractString(arrayItem.Key)
-						if key == "prefix" {
+						switch key {
+						case "prefix":
 							val := v.extractString(arrayItem.Val)
 							if ctx.Prefix != "" {
 								ctx.Prefix = strings.TrimRight(ctx.Prefix, "/") + "/" + strings.TrimLeft(val, "/")
 							} else {
 								ctx.Prefix = val
 							}
-						} else if key == "as" {
+						case "as":
 							val := v.extractString(arrayItem.Val)
 							ctx.NamePrefix += val
-						} else if key == "namespace" {
+						case "namespace":
 							val := v.extractString(arrayItem.Val)
 							if ctx.Namespace != "" {
 								ctx.Namespace += "\\" + val

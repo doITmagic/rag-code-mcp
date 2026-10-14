@@ -47,7 +47,7 @@ Built with the official [Model Context Protocol Go SDK](https://github.com/model
 - 🔍 **Semantic Code Search** - Find code by meaning, not just keywords
 - 🚀 **5-10x Faster** - Instant results vs. reading entire files
 - 💰 **98% Token Savings** - Reduce AI context usage dramatically
-- 🌐 **Multi-Language** - Go, PHP (Laravel), Python with full support
+- 🌐 **Multi-Language & Framework Aware** - Go (and Go Templates), PHP (Laravel, Blade, WordPress, WooCommerce, Oxygen Builder), JavaScript/TypeScript (React/JSX/TSX, Vue SFC), Python, HTML/CSS/SCSS, Markdown/JSON/YAML
 - 🏢 **Multi-Workspace** - Handle multiple projects simultaneously
 - 🤖 **Agent-First** - Explicitly designed for autonomous agents like Antigravity, Windsurf, or custom scripts.
 - 🔌 **Protocol Independent** - MCP, SSE, or REST. The agent chooses how to communicate.
@@ -117,7 +117,7 @@ Without RagCode, AI assistants must:
 
 ### 🔧 9 Powerful MCP Tools for AI Code Assistants
 
-1. **`rag_search`** - **USE FIRST** - Unified search by MEANING or EXACT matches. Auto-adapts response format. Supports **Go, PHP, Python, HTML** and Markdown docs `include_docs: true`.
+1. **`rag_search`** - **USE FIRST** - Unified search by MEANING or EXACT matches. Auto-adapts response format. Supports **Go, PHP (Laravel, WordPress, WooCommerce, Oxygen), JS/TS (React, Vue), Python, HTML/CSS** and Markdown/JSON/YAML docs (`include_docs: true`).
 2. **`rag_find_usages`** - Find all callers/usages across codebase with snippets + file:line (AST-based).
 3. **`rag_call_hierarchy`** - Explore caller/callee relationships for a symbol (incoming/outgoing).
 4. **`rag_list_package_exports`** - List all public functions, classes, and types in a package/module.
@@ -129,15 +129,16 @@ Without RagCode, AI assistants must:
 
 ### 🌐 Multi-Language Code Intelligence
 
-- **Go** - Full AST analysis with functions, types, interfaces, methods
-- **PHP** - Full support + Laravel framework (Eloquent models, routes, controllers)
-- **Python** - Full support with classes, functions, decorators, type hints, mixins, metaclasses
-- **JavaScript/TypeScript** - Planned for future releases (tree-sitter based)
+- **Go** - Full AST analysis with functions, types, interfaces, methods, generics, iota enums, and Go Templates (`.tmpl`, `.gotmpl`, `.gohtml`)
+- **PHP** - Full PHP 8+ AST (classes, interfaces, traits, enums, attributes) + **Laravel** framework (Eloquent models, routes, controllers, middleware, migrations, service providers, Blade templates) + **WordPress** ecosystem (actions/filters hooks, Custom Post Types, taxonomies, shortcodes, Gutenberg blocks, widgets, REST/admin pages, **WooCommerce**, **Oxygen Builder** elements)
+- **JavaScript / TypeScript** - Full tree-sitter AST analysis for JS, TS, **React** (JSX/TSX), and **Vue** Single-File Components (`.vue` Options API & `<script setup>` Composition API, composables, props, emits)
+- **Python** - Full support with classes, functions, async/await, decorators, type hints, mixins, metaclasses
+- **Web, Docs & Config** - HTML, CSS/SCSS/LESS, Markdown (sections, code blocks, tables), JSON, YAML, TOML, `.env*`, Dockerfile, Makefile, SQL, Shell
 
 ### 🏗️ Advanced Architecture
 
 - **Multi-Workspace Detection** - Automatically detects project boundaries (git, go.mod, composer.json, package.json, pyproject.toml, requirements.txt)
-- **Per-Language Collections** - Separate vector databases for each language (`ragcode-{workspace}-go`, `ragcode-{workspace}-php`, `ragcode-{workspace}-python`)
+- **Per-Language Collections** - Separate vector databases for each language (`ragcode-{workspace}-go`, `ragcode-{workspace}-php`, `ragcode-{workspace}-javascript`, `ragcode-{workspace}-python`, `ragcode-{workspace}-html`, `ragcode-{workspace}-css`, `ragcode-{workspace}-docs`)
 - **Automatic Indexing** - Background indexing on first use, no manual intervention needed
 - **Vector Embeddings** - Uses Ollama's `qwen3-embedding:0.6b` for high-quality semantic embeddings
 - **Hybrid Search Engine** - Combines vector similarity with BM25 lexical matching
@@ -729,7 +730,7 @@ Find all authentication logic in this codebase.
 cd ~/projects/my-awesome-app
 
 # 2. Ask AI to index (using the prompt above)
-# AI will call: rag_index_workspace with workspace_root="/path/to/my-awesome-app" (and must submit a second confirmation call via confirm: true)
+# AI will call: rag_index_workspace with workspace_root="/path/to/my-awesome-app" (and must submit a second confirmation call via confirm: true and confirmation_token)
 
 # 3. Wait for confirmation (usually 1-5 minutes)
 # ✓ Indexing started for workspace '/path/to/my-awesome-app'
@@ -798,8 +799,7 @@ Create or edit `~/.config/Code/User/globalStorage/mcp-servers.json`:
       "args": [],
       "env": {
         "OLLAMA_BASE_URL": "http://localhost:11434",
-        "OLLAMA_MODEL": "phi3:medium",
-        "OLLAMA_EMBED": "mxbai-embed-large",
+        "OLLAMA_EMBED": "qwen3-embedding:0.6b",
         "QDRANT_URL": "http://localhost:6333"
       }
     }
@@ -834,7 +834,7 @@ Search for functions that handle database connections
 Find all API endpoints related to user management
 ```
 
-Copilot will automatically use RagCode's `rag_search_code`, `rag_get_function_details`, `rag_find_type_definition`, and other tools to answer your questions.
+Copilot will automatically use RagCode's `rag_search`, `rag_find_usages`, `rag_call_hierarchy`, `rag_read_file_context`, and other tools to answer your questions.
 
 #### Explicit Tool Usage
 
@@ -882,32 +882,15 @@ You can also explicitly reference RagCode tools using the `#` symbol:
 
 #### Available Tools:
 
-1. **`rag_search_code`** - **USE FIRST** - Comprehensive search by MEANING (`discovery` mode) or EXACT matches (`exact` mode). Returns complete source + file:line.
+1. **`rag_search`** - **USE FIRST** - Intelligent unified search by MEANING or EXACT symbol name (`exact_symbol: true`, `include_docs: true`). Returns complete source + file:line.
    ```json
    {
      "query": "authentication middleware",
-     "file_path": "/path/to/your/project/file.go",
-     "mode": "discovery"
+     "file_path": "/path/to/your/project/file.go"
    }
    ```
 
-3. **`rag_get_function_details`** - **COMPLETE** function source: signature, params, return types, body. **Go, PHP, Python.**
-   ```json
-   {
-     "function_name": "HandleLogin",
-     "file_path": "/path/to/your/project/auth.go"
-   }
-   ```
-
-4. **`rag_find_type_definition`** - Complete type source with fields, methods, inheritance. **Go, PHP, Python.**
-   ```json
-   {
-     "type_name": "User",
-     "file_path": "/path/to/your/project/models/user.php"
-   }
-   ```
-
-5. **`rag_find_implementations`** - All callers/usages with code snippets + file:line. **Use before refactoring.** **Go, PHP, Python.**
+2. **`rag_find_usages`** - All callers/usages with code snippets + file:line. **Use before refactoring.**
    ```json
    {
      "symbol_name": "ProcessPayment",
@@ -915,7 +898,16 @@ You can also explicitly reference RagCode tools using the `#` symbol:
    }
    ```
 
-6. **`rag_list_package_exports`** - Structured list: symbol names, types, signatures. **Go, PHP, Python.**
+3. **`rag_call_hierarchy`** - Explore recursive incoming/outgoing call relationships for a symbol.
+   ```json
+   {
+     "symbol_name": "HandleLogin",
+     "direction": "both",
+     "file_path": "/path/to/your/project/auth.go"
+   }
+   ```
+
+4. **`rag_list_package_exports`** - Structured list: symbol names, types, signatures.
    ```json
    {
      "package": "github.com/myapp/auth",
@@ -923,15 +915,7 @@ You can also explicitly reference RagCode tools using the `#` symbol:
    }
    ```
 
-7. **`rag_search_docs`** - Doc snippets with file paths. **Markdown only. Not for code.**
-   ```json
-   {
-     "query": "API authentication",
-     "file_path": "/path/to/your/project/README.md"
-   }
-   ```
-
-8. **`rag_get_code_context`** - Code snippet with configurable context lines. **Any text file.**
+5. **`rag_read_file_context`** - Code snippet with AST-aware context lines. **Any text file.**
    ```json
    {
      "file_path": "/path/to/your/project/auth.go",
@@ -940,14 +924,14 @@ You can also explicitly reference RagCode tools using the `#` symbol:
    }
    ```
 
-9. **`rag_index_workspace`** - Reindex codebase. **USUALLY AUTOMATIC.** Call after git pull/branch switch. **Go, PHP, Python, HTML.**
+6. **`rag_index_workspace`** - Index or reindex codebase using a two-step confirmation (`workspace_root`, then `confirm: true` + `confirmation_token`).
    ```json
    {
-     "file_path": "/path/to/your/project/main.go"
+     "workspace_root": "/path/to/your/project"
    }
    ```
 
-### 📌 **IMPORTANT:** All tools require `file_path`!
+### 📌 **IMPORTANT:** All tools require `file_path` (or `workspace_root` for `rag_index_workspace`)!
 
 RagCode automatically detects the workspace from `file_path`. Ensure you provide a valid path from your project.
 
@@ -957,7 +941,7 @@ RagCode automatically detects the workspace from `file_path`. Ensure you provide
 
 **RagCode automatically indexes the workspace on first use!**
 
-When you call a tool (e.g., `search_code`) for the first time in a workspace:
+When you call a tool (e.g., `rag_search`) for the first time in a workspace:
 1. ✅ Detects workspace from `file_path`
 2. ✅ Creates a Qdrant collection for that workspace + language
 3. ✅ Indexes code in background

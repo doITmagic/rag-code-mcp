@@ -1,0 +1,26 @@
+version: "2"
+
+linters:
+  settings:
+    errcheck:
+      exclude-functions:
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (net.Conn).Close
+        - (net.Listener).Close
+        - (*compress/gzip.Reader).Close
+        - (*github.com/fsnotify/fsnotify.Watcher).Close
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Fprint
+        - os.Remove
+        - os.RemoveAll
+        - os.Setenv
+        - os.Unsetenv
+    staticcheck:
+      checks:
+        - all
+        - -QF*
+        - -ST1005
+        - -ST1023
+        - -SA1019

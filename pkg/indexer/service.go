@@ -524,7 +524,7 @@ func (s *Service) ensureOllamaAlive(ctx context.Context) error {
 			}
 			logger.Instance.Warn("Circuit breaker: waiting for Ollama... (%d/10)", i+1)
 			if i == 9 {
-				return fmt.Errorf("Ollama did not recover after restart (waited 30s)")
+				return fmt.Errorf("ollama did not recover after restart (waited 30s)")
 			}
 		}
 	}

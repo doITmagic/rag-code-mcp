@@ -786,11 +786,12 @@ func parseDefHeader(lines []string, startIdx int) (name, paramsStr, returnType s
 				}
 				continue
 			}
-			if line[col] == '(' {
+			switch line[col] {
+			case '(':
 				parenDepth++
 				paramsBuf.WriteByte('(')
 				col++
-			} else if line[col] == ')' {
+			case ')':
 				parenDepth--
 				if parenDepth == 0 {
 					col++
@@ -798,7 +799,7 @@ func parseDefHeader(lines []string, startIdx int) (name, paramsStr, returnType s
 				}
 				paramsBuf.WriteByte(')')
 				col++
-			} else {
+			default:
 				paramsBuf.WriteByte(line[col])
 				col++
 			}

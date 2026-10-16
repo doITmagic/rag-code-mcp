@@ -67,6 +67,11 @@ func TestIsExcludedPath(t *testing.T) {
 // Renaming a watched directory inside the workspace must not leave its
 // subdirectories reporting events under the old path.
 func TestRenamedDirectoryReportsNestedEventsUnderNewPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// ReadDirectoryChangesW holds the watched directory open, so the
+		// rename itself fails; the stale-path behaviour is inotify-specific.
+		t.Skip("cannot rename a watched directory on Windows")
+	}
 	root := t.TempDir()
 	deep := filepath.Join(root, "a", "sub", "deep")
 	if err := os.MkdirAll(deep, 0o700); err != nil {

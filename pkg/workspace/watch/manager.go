@@ -83,7 +83,8 @@ func (m *Manager) Start(root string, onChange OnChangeFunc) error {
 	m.mu.Unlock()
 
 	if err := watcher.Start(); err != nil {
-		m.Stop(root)
+		// A concurrent Stop + Start may have replaced this watcher already.
+		m.stopIf(root, watcher)
 		return err
 	}
 	return nil

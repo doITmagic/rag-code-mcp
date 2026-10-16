@@ -121,18 +121,24 @@ func (fw *FileWatcher) Start() error {
 // addDirectoryTree also covers a populated subtree moved into the workspace:
 // its existing descendants will not emit separate creation events. It returns
 // the first watch that could not be installed; a directory that vanished
-// during the walk is not an error.
+// during the walk is not an error, unless it is the workspace root: without
+// its watch nothing reports the root moving, and the engine would skip its
+// rescan fallback for a root it believes is watched.
 func (fw *FileWatcher) addDirectoryTree(root string) error {
 	var firstErr error
 	walkErr := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		isRoot := path == fw.root
 		if err != nil {
+			if isRoot {
+				return err
+			}
 			return nil
 		}
 		if d.IsDir() {
-			if fw.shouldSkipDir(path, d.Name(), path == fw.root) {
+			if fw.shouldSkipDir(path, d.Name(), isRoot) {
 				return filepath.SkipDir
 			}
-			if err := fw.watcher.Add(path); err != nil && !os.IsNotExist(err) {
+			if err := fw.watcher.Add(path); err != nil && (isRoot || !os.IsNotExist(err)) {
 				logger.Instance.Warn("Unable to watch %s: %v", path, err)
 				if firstErr == nil {
 					firstErr = fmt.Errorf("watch %s: %w", path, err)

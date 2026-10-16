@@ -12,6 +12,7 @@ type fakeWatcher struct {
 	started   int
 	stopped   int
 	startChan chan struct{}
+	release   chan struct{} // when set, Start blocks until it is closed
 	startErr  error
 }
 
@@ -22,7 +23,11 @@ func (f *fakeWatcher) Start() error {
 		close(f.startChan)
 		f.startChan = nil
 	}
+	release := f.release
 	f.mu.Unlock()
+	if release != nil {
+		<-release
+	}
 	return f.startErr
 }
 
@@ -157,5 +162,42 @@ func TestManagerRootGoneIgnoresReplacedWatcher(t *testing.T) {
 	gone[1]()
 	if mgr.Watching("/tmp/project") {
 		t.Fatal("own rootGone did not remove the watcher")
+	}
+}
+
+// A Start that fails after its watcher was replaced must not remove the
+// replacement: Stop + Start may run while the old watch installation is busy.
+func TestManagerFailedStartIgnoresReplacedWatcher(t *testing.T) {
+	mgr := NewManager(Options{})
+	entered, release := make(chan struct{}), make(chan struct{})
+	old := &fakeWatcher{startChan: entered, release: release, startErr: errors.New("max_user_watches reached")}
+	repl := &fakeWatcher{}
+	next := []*fakeWatcher{old, repl}
+	mgr.SetFactory(func(root string, opts Options, onChange OnChangeFunc) (Watcher, error) {
+		w := next[0]
+		next = next[1:]
+		return w, nil
+	})
+	noop := func(context.Context, string, []string) error { return nil }
+
+	done := make(chan error)
+	go func() { done <- mgr.Start("/tmp/project", noop) }()
+	<-entered
+	mgr.Stop("/tmp/project")
+	if err := mgr.Start("/tmp/project", noop); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-done; err == nil {
+		t.Fatal("expected the old Start to fail")
+	}
+	if !mgr.Watching("/tmp/project") {
+		t.Fatal("failed old Start removed the replacement watcher")
+	}
+	repl.mu.Lock()
+	stopped := repl.stopped
+	repl.mu.Unlock()
+	if stopped != 0 {
+		t.Fatal("failed old Start stopped the replacement watcher")
 	}
 }

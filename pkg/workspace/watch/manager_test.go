@@ -2,6 +2,7 @@ package watch
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 )
@@ -11,9 +12,10 @@ type fakeWatcher struct {
 	started   int
 	stopped   int
 	startChan chan struct{}
+	startErr  error
 }
 
-func (f *fakeWatcher) Start() {
+func (f *fakeWatcher) Start() error {
 	f.mu.Lock()
 	f.started++
 	if f.startChan != nil {
@@ -21,6 +23,7 @@ func (f *fakeWatcher) Start() {
 		f.startChan = nil
 	}
 	f.mu.Unlock()
+	return f.startErr
 }
 
 func (f *fakeWatcher) Stop() {
@@ -88,5 +91,34 @@ func TestManagerStopAll(t *testing.T) {
 		if stopped != 1 {
 			t.Fatalf("watcher %d expected Stop once, got %d", i, stopped)
 		}
+	}
+}
+
+// A watcher whose Start fails must not stay registered, so a later Start can
+// retry and the engine sees the root as unwatched.
+func TestManagerForgetsWatcherWhoseStartFails(t *testing.T) {
+	mgr := NewManager(Options{})
+	var fail bool
+	mgr.SetFactory(func(root string, opts Options, onChange OnChangeFunc) (Watcher, error) {
+		if fail {
+			return &fakeWatcher{startErr: errors.New("max_user_watches reached")}, nil
+		}
+		return &fakeWatcher{}, nil
+	})
+	noop := func(context.Context, string, []string) error { return nil }
+
+	fail = true
+	if err := mgr.Start("/tmp/project", noop); err == nil {
+		t.Fatal("expected Start to report the watcher failure")
+	}
+	if mgr.Watching("/tmp/project") {
+		t.Fatal("failed watcher stayed registered")
+	}
+	fail = false
+	if err := mgr.Start("/tmp/project", noop); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if !mgr.Watching("/tmp/project") {
+		t.Fatal("retried watcher not registered")
 	}
 }

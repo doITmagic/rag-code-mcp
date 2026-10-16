@@ -2,6 +2,7 @@ package watch
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -92,25 +93,32 @@ func NewFileWatcher(root string, opts Options, onChange func(context.Context, st
 	}, nil
 }
 
-// Start begins watching the directory tree.
-func (fw *FileWatcher) Start() {
+// Start begins watching the directory tree. A partially watched tree (e.g.
+// max_user_watches exhausted mid-walk) is an error: the caller cannot tell
+// which edits it would miss, so it must not count on the watcher at all.
+func (fw *FileWatcher) Start() error {
 	if IsInvalidRoot(fw.root) {
-		logger.Instance.Error("Cannot start watcher on invalid root directory: %s", fw.root)
-		return
+		fw.watcher.Close()
+		return fmt.Errorf("invalid root directory: %s", fw.root)
 	}
 
 	if err := fw.addDirectoryTree(fw.root); err != nil {
-		logger.Instance.Warn("Error walking directory for watcher setup: %v", err)
+		fw.watcher.Close()
+		return err
 	}
 
 	logger.Instance.Info("👀 Watcher started for %s", fw.root)
 	go fw.watchLoop()
+	return nil
 }
 
 // addDirectoryTree also covers a populated subtree moved into the workspace:
-// its existing descendants will not emit separate creation events.
+// its existing descendants will not emit separate creation events. It returns
+// the first watch that could not be installed; a directory that vanished
+// during the walk is not an error.
 func (fw *FileWatcher) addDirectoryTree(root string) error {
-	return filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+	var firstErr error
+	walkErr := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -118,12 +126,19 @@ func (fw *FileWatcher) addDirectoryTree(root string) error {
 			if fw.shouldSkipDir(path, d.Name(), path == fw.root) {
 				return filepath.SkipDir
 			}
-			if err := fw.watcher.Add(path); err != nil {
+			if err := fw.watcher.Add(path); err != nil && !os.IsNotExist(err) {
 				logger.Instance.Warn("Unable to watch %s: %v", path, err)
+				if firstErr == nil {
+					firstErr = fmt.Errorf("watch %s: %w", path, err)
+				}
 			}
 		}
 		return nil
 	})
+	if walkErr != nil {
+		return walkErr
+	}
+	return firstErr
 }
 
 // dropDirectoryTree forgets watches on and below a renamed directory. inotify

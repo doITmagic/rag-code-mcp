@@ -105,3 +105,52 @@ func TestWorkspaceIndexesSourceBeforeDocsAndSharesScan(t *testing.T) {
 		t.Fatalf("incremental run indexed %v, want only %s", got, lateDoc)
 	}
 }
+
+// A directory moved into an excluded location (or out of the workspace) emits
+// only its own vanished path. Its files must still lose their index entries.
+func TestIndexFilesReconcilesDirectoryMovedIntoExcludedDir(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "a", "sub", "x.go")
+	if err := os.MkdirAll(filepath.Dir(src), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src, []byte("package sub\nfunc X() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := &indexOrderStore{testStore: testStore{existing: map[string]bool{}}}
+	provider := &mockLLM{}
+	eng := NewEngine(indexer.NewService(provider, store), search.NewService(provider, store), filepath.Join(t.TempDir(), "registry.json"), &config.Config{})
+	eng.SetResolver(resolver.New(resolver.Dependencies{Detector: &exactRootDetector{}, Registry: eng.registry}))
+	t.Cleanup(eng.Close)
+	ctx := context.Background()
+	if err := eng.IndexWorkspace(ctx, root, false); err != nil {
+		t.Fatal(err)
+	}
+	wctx, err := eng.DetectContextAsRoot(ctx, root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statePath := indexer.StatePath(root, wctx.CollectionName("go"))
+	if st, _ := indexer.LoadState(statePath); st == nil || len(st.Files) != 1 {
+		t.Fatalf("expected x.go tracked after initial index, got %+v", st)
+	}
+
+	if err := os.MkdirAll(filepath.Join(root, "tmp"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(root, "a"), filepath.Join(root, "tmp", "a")); err != nil {
+		t.Fatal(err)
+	}
+	// What the watcher delivers for this move: the vanished source and the
+	// excluded destination parent.
+	if err := eng.IndexFiles(ctx, root, []string{filepath.Join(root, "a"), filepath.Join(root, "tmp")}); err != nil {
+		t.Fatal(err)
+	}
+	st, err := indexer.LoadState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, tracked := st.Files[src]; tracked {
+		t.Fatalf("x.go still tracked after its directory moved into tmp/: %v", st.Files)
+	}
+}

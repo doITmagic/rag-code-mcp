@@ -126,13 +126,15 @@ func (fw *FileWatcher) addDirectoryTree(root string) error {
 	})
 }
 
-// dropDirectoryTree forgets watches below a renamed directory. inotify keeps
-// them keyed by the old path, so re-adding the new name would reuse the stale
-// entries and report nested edits under the old path forever.
+// dropDirectoryTree forgets watches on and below a renamed directory. inotify
+// keeps them keyed by the old path, so re-adding the new name would reuse the
+// stale entries and report nested edits under the old path forever. The
+// directory itself is included: its IN_MOVE_SELF may arrive after the Create
+// of the new name, in which case fsnotify would remove the reused watch.
 func (fw *FileWatcher) dropDirectoryTree(old string) {
 	prefix := old + string(filepath.Separator)
 	for _, p := range fw.watcher.WatchList() {
-		if strings.HasPrefix(p, prefix) {
+		if p == old || strings.HasPrefix(p, prefix) {
 			_ = fw.watcher.Remove(p)
 		}
 	}

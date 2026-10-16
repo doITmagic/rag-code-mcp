@@ -149,6 +149,8 @@ func TestExcludedPathMatchesScannerRules(t *testing.T) {
 		{"lucrari/data.json", false, true},
 		{"pkg/lib/y.go", false, false},
 		{"pkg/newdir", true, false},
+		{"..generated.gen.go", false, true}, // a leading ".." is not an escape from root
+		{"..hidden/x.go", false, true},
 	}
 	for _, c := range cases {
 		if got := ExcludedPath(root, filepath.Join(root, filepath.FromSlash(c.rel)), c.isDir, patterns); got != c.want {

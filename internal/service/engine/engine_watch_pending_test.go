@@ -152,3 +152,28 @@ func TestPendingOverflowDoesNotQueueRecreate(t *testing.T) {
 		t.Fatalf("explicit recreate must be queued as recreate: overflow=%t recreate=%t", overflow, recreate)
 	}
 }
+
+func TestPendingFullRunSurvivesJobHandoff(t *testing.T) {
+	eng := newTestEnginePending()
+	t.Cleanup(eng.Close)
+	const workspaceID = "handoff-full-run"
+	eng.pendingMu.Lock()
+	eng.pendingOverflow[workspaceID] = true
+	eng.pendingMu.Unlock()
+
+	// A newer job claimed the workspace between the old job's marker removal
+	// and the replay. The full-run request must wait for that job, not vanish.
+	eng.indexingJobs.Store(workspaceID, time.Now())
+	defer eng.indexingJobs.Delete(workspaceID)
+	eng.tryStartPendingIndex("/mock/ws", workspaceID)
+	if _, overflow, recreate := eng.popPendingIndex(workspaceID); !overflow || recreate {
+		t.Fatalf("full-run request lost during handoff: overflow=%t recreate=%t", overflow, recreate)
+	}
+
+	// A plain StartIndexingAsync(nil,false) while a job runs stays a no-op,
+	// otherwise search-triggered indexing would requeue itself forever.
+	eng.StartIndexingAsync("/mock/ws", workspaceID, nil, false)
+	if _, overflow, _ := eng.popPendingIndex(workspaceID); overflow {
+		t.Fatal("direct full-run request must not be queued behind a running job")
+	}
+}

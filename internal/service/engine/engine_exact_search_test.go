@@ -78,6 +78,9 @@ func (s *testStore) GetCollectionPointCount(_ context.Context, _ string) (uint64
 func (s *testStore) DeleteByFilter(_ context.Context, _ string, _ string, _ interface{}) error {
 	return nil
 }
+func (s *testStore) DeleteByPrefix(_ context.Context, _ string, _ string, _ string) (int, error) {
+	return 0, nil
+}
 func (s *testStore) DeleteCollection(_ context.Context, _ string) error {
 	return nil
 }

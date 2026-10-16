@@ -66,7 +66,7 @@ func TestHandleWatchChangeAccumulatesPendingWhileIndexing(t *testing.T) {
 		t.Fatalf("handleWatchChange returned error: %v", err)
 	}
 
-	pending, overflow := eng.popPendingIndex(wctx.ID)
+	pending, overflow, _ := eng.popPendingIndex(wctx.ID)
 	if overflow {
 		t.Fatalf("expected overflow=false")
 	}
@@ -93,7 +93,7 @@ func TestPendingOverflowTriggersFullScanFallback(t *testing.T) {
 	}
 
 	eng.addPendingIndexFiles(wctx.ID, many)
-	pending, overflow := eng.popPendingIndex(wctx.ID)
+	pending, overflow, _ := eng.popPendingIndex(wctx.ID)
 	if !overflow {
 		t.Fatalf("expected overflow=true")
 	}
@@ -102,11 +102,78 @@ func TestPendingOverflowTriggersFullScanFallback(t *testing.T) {
 	}
 
 	// Ensure overflow flag is cleared after pop.
-	pending2, overflow2 := eng.popPendingIndex(wctx.ID)
+	pending2, overflow2, _ := eng.popPendingIndex(wctx.ID)
 	if overflow2 {
 		t.Fatalf("expected overflow cleared after pop")
 	}
 	if len(pending2) != 0 {
 		t.Fatalf("expected no pending after second pop, got %d", len(pending2))
+	}
+}
+
+func TestPendingReplayRetainsBatchWhenAnotherJobStartsFirst(t *testing.T) {
+	eng := newTestEnginePending()
+	t.Cleanup(eng.Close)
+	const workspaceID = "handoff-workspace"
+	files := []string{"/mock/ws/a.go", "/mock/ws/b.go"}
+	eng.addPendingIndexFiles(workspaceID, files)
+
+	// A newer job can claim the workspace after the old job removes its marker
+	// but before it replays pending files. Replaying must queue the batch on the
+	// newer job, rather than discard it because that job is already running.
+	eng.indexingJobs.Store(workspaceID, time.Now())
+	defer eng.indexingJobs.Delete(workspaceID)
+	eng.tryStartPendingIndex("/mock/ws", workspaceID)
+	got, overflow, _ := eng.popPendingIndex(workspaceID)
+	if overflow || len(got) != len(files) || got[0] != files[0] || got[1] != files[1] {
+		t.Fatalf("pending batch was lost during job handoff: files=%v, overflow=%t", got, overflow)
+	}
+}
+
+func TestPendingOverflowDoesNotQueueRecreate(t *testing.T) {
+	eng := newTestEnginePending()
+	t.Cleanup(eng.Close)
+	const workspaceID = "overflow-workspace"
+	eng.indexingJobs.Store(workspaceID, time.Now())
+	defer eng.indexingJobs.Delete(workspaceID)
+
+	many := make([]string, 0, pendingIndexMaxFiles+1)
+	for i := 0; i < pendingIndexMaxFiles+1; i++ {
+		many = append(many, fmt.Sprintf("/mock/ws/%d.go", i))
+	}
+	eng.StartIndexingAsync("/mock/ws", workspaceID, many, false)
+	if _, overflow, recreate := eng.popPendingIndex(workspaceID); !overflow || recreate {
+		t.Fatalf("overflow must request a full run without recreate: overflow=%t recreate=%t", overflow, recreate)
+	}
+
+	// An explicit recreate while a job runs is the only way to queue a rebuild.
+	eng.StartIndexingAsync("/mock/ws", workspaceID, nil, true)
+	if _, overflow, recreate := eng.popPendingIndex(workspaceID); overflow || !recreate {
+		t.Fatalf("explicit recreate must be queued as recreate: overflow=%t recreate=%t", overflow, recreate)
+	}
+}
+
+func TestPendingFullRunSurvivesJobHandoff(t *testing.T) {
+	eng := newTestEnginePending()
+	t.Cleanup(eng.Close)
+	const workspaceID = "handoff-full-run"
+	eng.pendingMu.Lock()
+	eng.pendingOverflow[workspaceID] = true
+	eng.pendingMu.Unlock()
+
+	// A newer job claimed the workspace between the old job's marker removal
+	// and the replay. The full-run request must wait for that job, not vanish.
+	eng.indexingJobs.Store(workspaceID, time.Now())
+	defer eng.indexingJobs.Delete(workspaceID)
+	eng.tryStartPendingIndex("/mock/ws", workspaceID)
+	if _, overflow, recreate := eng.popPendingIndex(workspaceID); !overflow || recreate {
+		t.Fatalf("full-run request lost during handoff: overflow=%t recreate=%t", overflow, recreate)
+	}
+
+	// A plain StartIndexingAsync(nil,false) while a job runs stays a no-op,
+	// otherwise search-triggered indexing would requeue itself forever.
+	eng.StartIndexingAsync("/mock/ws", workspaceID, nil, false)
+	if _, overflow, _ := eng.popPendingIndex(workspaceID); overflow {
+		t.Fatal("direct full-run request must not be queued behind a running job")
 	}
 }

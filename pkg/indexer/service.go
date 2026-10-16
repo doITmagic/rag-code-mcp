@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -36,6 +37,7 @@ type Options struct {
 	ExcludePatterns []string
 	Recreate        bool
 	Progress        func(doneFiles, totalFiles int)
+	Scan            *WorkspaceScan // Optional shared inventory for this indexing run.
 }
 
 // Service is the main indexing engine that handles file walking, change detection, and vector storage.
@@ -75,6 +77,14 @@ func (s *Service) SetEmbedWorkers(n int) {
 
 // IndexWorkspace performs a full or incremental index of a workspace.
 func (s *Service) IndexWorkspace(ctx context.Context, root string, collection string, opts Options) error {
+	root = filepath.Clean(root)
+	scan := opts.Scan
+	if scan != nil && (scan.root != root || !slices.Equal(scan.excludePatterns, opts.ExcludePatterns)) {
+		return fmt.Errorf("workspace scan does not match root or exclusion patterns")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := os.Remove(filepath.Join(root, ".ragcode", "state.json")); err != nil && !os.IsNotExist(err) {
 		logger.Instance.Warn("Failed to remove legacy index state for %s: %v", root, err)
 	}
@@ -100,63 +110,25 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 		staleCleaned = s.cleanupStaleFiles(ctx, root, collection, state, opts.Language)
 	}
 
-	// 2. Scan for changes
+	// 2. Reuse the inventory across languages, but check metadata now so edits
+	// made while an earlier language was indexing are still picked up.
+	if scan == nil {
+		scan, err = s.ScanWorkspace(ctx, root, opts.ExcludePatterns)
+		if err != nil {
+			return err
+		}
+	}
 	var changedFiles []string
-	var excludedFiles []string
-	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil
+	for _, path := range languageFiles(scan.files, opts.Language) {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		relPath, _ := filepath.Rel(root, path)
-		relSlash := filepath.ToSlash(relPath)
-		if d.IsDir() {
-			if path == root {
-				return nil
-			}
-			name := d.Name()
-			// Basic exclusion
-			if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" || name == "tmp" {
-				return filepath.SkipDir
-			}
-			// User exclusion
-			if matchesExcludePatterns(relSlash, name, opts.ExcludePatterns) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if matchesExcludePatterns(relSlash, d.Name(), opts.ExcludePatterns) {
-			excludedFiles = append(excludedFiles, path)
-			return nil
-		}
-
-		a := parser.GetByFile(path)
-		if a == nil {
-			return nil // Unrecognized file type — skip before reading file content
-		}
-		if opts.Language != "" && a.Name() != opts.Language {
-			return nil // Does not match requested language layer
-		}
-
-		if shouldSkipFile(path) {
-			excludedFiles = append(excludedFiles, path)
-			return nil
-		}
-
-		info, err := d.Info()
-		if err != nil {
-			return nil
-		}
-
-		if state.IsChanged(path, info) {
+		info, err := os.Stat(path)
+		if err == nil && !info.IsDir() && state.IsChanged(path, info) {
 			changedFiles = append(changedFiles, path)
 		}
-		return nil
-	})
-
-	if err != nil {
-		return fmt.Errorf("failed to scan workspace: %w", err)
 	}
-	for _, path := range excludedFiles {
+	for _, path := range languageFiles(scan.excluded, opts.Language) {
 		if _, ok := state.GetFileState(path); !ok {
 			continue
 		}
@@ -835,62 +807,13 @@ func matchesExcludePatterns(relSlash, baseName string, patterns []string) bool {
 	return false
 }
 
-// CountAllFiles counts files per language in root using a single WalkDir pass,
-// applying the same directory exclusion rules as IndexWorkspace.
+// CountAllFiles counts files per language using the shared workspace scanner,
+// applying the same exclusion rules as IndexWorkspace.
 // It returns a FileCountResult with per-language totals and per-extension
 // breakdowns, used to pre-populate progress totals before indexing begins.
 func (s *Service) CountAllFiles(root string, excludePatterns []string) FileCountResult {
-	result := FileCountResult{
-		Counts:     make(map[string]int),
-		Breakdowns: make(map[string]map[string]int),
-	}
-	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		relPath, _ := filepath.Rel(root, path)
-		relSlash := filepath.ToSlash(relPath)
-		if d.IsDir() {
-			if path == root {
-				return nil
-			}
-			name := d.Name()
-			if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" || name == "tmp" {
-				return filepath.SkipDir
-			}
-			if matchesExcludePatterns(relSlash, name, excludePatterns) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if matchesExcludePatterns(relSlash, d.Name(), excludePatterns) {
-			return nil
-		}
-		a := parser.GetByFile(path)
-		if a == nil {
-			return nil
-		}
-		if shouldSkipFile(path) {
-			return nil
-		}
-		lang := a.Name()
-		result.Counts[lang]++
-
-		// Track per-extension breakdown
-		ext := strings.ToLower(filepath.Ext(path))
-		if ext == "" {
-			// Extension-less files (Dockerfile, Gemfile, Makefile) would all
-			// collapse into a single "" key; use the basename instead.
-			ext = strings.ToLower(filepath.Base(path))
-		}
-		if result.Breakdowns[lang] == nil {
-			result.Breakdowns[lang] = make(map[string]int)
-		}
-		result.Breakdowns[lang][ext]++
-
-		return nil
-	})
-	return result
+	scan, _ := s.ScanWorkspace(context.Background(), root, excludePatterns)
+	return scan.FileCountResult
 }
 
 // cleanupStaleFiles detects deleted files or directories, cleans up their vectors from Qdrant,

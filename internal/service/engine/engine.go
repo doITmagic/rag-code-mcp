@@ -1216,16 +1216,27 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 		excludePatterns = e.config.Workspace.ExcludePatterns
 	}
 
-	// Pre-count total files per language with a single WalkDir pass.
-	// This gives us the real on_disk totals for accurate progress reporting,
-	// instead of using len(changedFiles) which only reflects modified files.
-	fileCounts := e.indexer.CountAllFiles(wctx.Root, excludePatterns)
+	// Share one inventory across all language collections. Counting separately
+	// and walking again for every language multiplies I/O on data-heavy projects.
+	scan, err := e.indexer.ScanWorkspace(ctx, wctx.Root, excludePatterns)
+	if err != nil {
+		return err
+	}
+	fileCounts := scan.FileCountResult
 	logger.Instance.Info("[IDX] ws=%s file counts: %v (breakdowns: %v)", wsName, fileCounts.Counts, fileCounts.Breakdowns)
 
-	// Sort languages by file count descending so the dominant language is indexed
-	// first and AI search works immediately for the most relevant code.
+	// Index source code before docs/config and generic data, even when generated
+	// JSON or Markdown outnumbers the source. Within each tier, dominant languages
+	// go first; break ties by name for a deterministic order.
 	sort.Slice(languages, func(i, j int) bool {
-		return fileCounts.Counts[languages[i]] > fileCounts.Counts[languages[j]]
+		left, right := languages[i], languages[j]
+		if lp, rp := indexingLanguagePriority(left), indexingLanguagePriority(right); lp != rp {
+			return lp < rp
+		}
+		if fileCounts.Counts[left] != fileCounts.Counts[right] {
+			return fileCounts.Counts[left] > fileCounts.Counts[right]
+		}
+		return left < right
 	})
 	logger.Instance.Info("[IDX] ws=%s indexing order: %v", wsName, languages)
 
@@ -1254,6 +1265,9 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 
 	var indexErrors []string
 	for _, lang := range languages {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		diskTotal := fileCounts.Counts[lang]
 		collection := wctx.CollectionName(lang)
 		logger.Instance.Info("[IDX] ws=%s lang=%s ▶ starting (on_disk=%d)", wsName, lang, diskTotal)
@@ -1271,6 +1285,7 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 			WorkspaceName:   wsName,
 			ExcludePatterns: excludePatterns,
 			Recreate:        recreate,
+			Scan:            scan,
 			Progress: func(doneFiles, totalFiles int) {
 				// Throttle disk I/O: at most one write every 2s, plus the last file.
 				if doneFiles != totalFiles && time.Since(lastStatusWrite) < 2*time.Second {
@@ -1316,6 +1331,17 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 	}
 
 	return nil
+}
+
+func indexingLanguagePriority(language string) int {
+	switch language {
+	case "docs":
+		return 1
+	case "generic":
+		return 2
+	default:
+		return 0
+	}
 }
 
 // processedCount is how many of the diskTotal files are indexed partway through

@@ -61,6 +61,11 @@ type Engine struct {
 	// triggered for a workspace ID upon initial daemon resolution.
 	connectTriggered sync.Map
 
+	// unwatched holds workspace roots whose watcher failed to start. Without a
+	// watcher nothing else re-indexes, so each later DetectContext for such a
+	// root runs an incremental index, which also retries the watcher.
+	unwatched sync.Map
+
 	lifecycleCtx    context.Context
 	lifecycleCancel context.CancelFunc
 	bgWg            sync.WaitGroup
@@ -356,23 +361,7 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 	// for all subsequent requests — eliminating repeated resolver cascades.
 	transport.SetResponseHeader(ctx, "X-Resolved-Workspace", wctx.Root)
 
-	// Auto-trigger background indexing for the resolved workspace so the
-	// knowledge base is warmed up or synced with disk immediately.
-	// We use connectTriggered to ensure this only happens ONCE per WorkspaceID
-	// per daemon lifetime, preventing full index scans on every cache miss.
-	// recreate=false ensures incremental indexing — only new/changed files are processed.
-	if e.config == nil || e.config.Workspace.AutoIndex {
-		if _, triggered := e.connectTriggered.LoadOrStore(wctx.ID, true); !triggered {
-			// Do NOT check indexingJobs.Load here — that is a TOCTOU race window.
-			// StartIndexingAsync uses indexingJobs.LoadOrStore atomically and is
-			// already idempotent: if a job is running it returns immediately.
-			// Calling it directly (not via `go`) avoids the extra scheduling delay
-			// that previously widened the race window between ResumeIndexingOnConnect
-			// and DetectContext. StartIndexingAsync spawns its own goroutine internally.
-			logger.Instance.Info("[DAEMON] [WS-DETECT] Auto-triggering incremental index for workspace: %s", wctx.Root)
-			e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
-		}
-	}
+	e.autoTriggerIndex(wctx)
 
 	// Don't cache entries that require reindex or are high-risk — let next call re-evaluate
 	if !wctx.ReindexRequired && wctx.MismatchRisk != "high" {
@@ -435,15 +424,39 @@ func (e *Engine) DetectContextAsRoot(ctx context.Context, root string, triggerAu
 	transport.SetResponseHeader(ctx, "X-Resolved-Workspace", wctx.Root)
 
 	if triggerAutoIndex {
-		if e.config == nil || e.config.Workspace.AutoIndex {
-			if _, triggered := e.connectTriggered.LoadOrStore(wctx.ID, true); !triggered {
-				logger.Instance.Info("[DAEMON] [WS-DETECT] Auto-triggering incremental index for workspace: %s", wctx.Root)
-				e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
-			}
-		}
+		e.autoTriggerIndex(wctx)
 	}
 
 	return wctx, nil
+}
+
+// autoTriggerIndex starts a background incremental index for a resolved
+// workspace so the knowledge base is warmed up or synced with disk.
+// connectTriggered limits this to ONCE per WorkspaceID per daemon lifetime,
+// preventing full index scans on every cache miss. The exception is a root
+// with no watcher: nothing else would ever pick up new files, so every cache
+// miss re-runs the incremental index (and IndexWorkspace retries the watcher).
+// shortcut: bounded only by detectionCacheTTL, add a cooldown if these scans
+// show up in profiles.
+func (e *Engine) autoTriggerIndex(wctx *WorkspaceContext) {
+	if e.config != nil && !e.config.Workspace.AutoIndex {
+		return
+	}
+	// Do NOT check indexingJobs.Load here — that is a TOCTOU race window.
+	// StartIndexingAsync uses indexingJobs.LoadOrStore atomically and is
+	// already idempotent: if a job is running it returns immediately.
+	// Calling it directly (not via `go`) avoids the extra scheduling delay
+	// that previously widened the race window between ResumeIndexingOnConnect
+	// and DetectContext. StartIndexingAsync spawns its own goroutine internally.
+	if _, triggered := e.connectTriggered.LoadOrStore(wctx.ID, true); !triggered {
+		logger.Instance.Info("[DAEMON] [WS-DETECT] Auto-triggering incremental index for workspace: %s", wctx.Root)
+		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+		return
+	}
+	if _, ok := e.unwatched.Load(wctx.Root); ok {
+		logger.Instance.Info("[DAEMON] [WS-DETECT] No watcher for %s, re-running incremental index", wctx.Root)
+		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+	}
 }
 
 // GetActiveWorkspace returns the last confirmed workspace root from the resolver.
@@ -1298,6 +1311,9 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 	if e.watchers != nil {
 		if err := e.watchers.Start(wctx.Root, e.handleWatchChange); err != nil {
 			logger.Instance.Warn("[IDX] Failed to start watcher for ws=%s: %v", filepath.Base(wctx.Root), err)
+			e.unwatched.Store(wctx.Root, true)
+		} else {
+			e.unwatched.Delete(wctx.Root)
 		}
 	}
 

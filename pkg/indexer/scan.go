@@ -52,9 +52,7 @@ func (s *Service) ScanWorkspace(ctx context.Context, root string, excludePattern
 			if path == scan.root {
 				return nil
 			}
-			name := d.Name()
-			if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" || name == "tmp" ||
-				matchesExcludePatterns(relSlash, name, scan.excludePatterns) {
+			if skipDirName(d.Name()) || matchesExcludePatterns(relSlash, d.Name(), scan.excludePatterns) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -84,6 +82,28 @@ func (s *Service) ScanWorkspace(ctx context.Context, root string, excludePattern
 		return scan, fmt.Errorf("failed to scan workspace: %w", err)
 	}
 	return scan, nil
+}
+
+func skipDirName(name string) bool {
+	return strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" || name == "tmp"
+}
+
+// ExcludedPath reports whether the scanner would never reach path under root:
+// it or an ancestor is a pruned directory, or it matches an exclude pattern.
+// Watcher events for such paths can be dropped instead of triggering a run.
+func ExcludedPath(root, path string, isDir bool, excludePatterns []string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return false
+	}
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	for i, name := range parts {
+		dir := isDir || i < len(parts)-1
+		if dir && skipDirName(name) || matchesExcludePatterns(strings.Join(parts[:i+1], "/"), name, excludePatterns) {
+			return true
+		}
+	}
+	return false
 }
 
 // languageFiles also supports legacy callers that index all languages into a

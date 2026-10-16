@@ -131,3 +131,31 @@ func TestScanWorkspaceCancellationAndMissingRoot(t *testing.T) {
 		t.Fatalf("missing root scan returned %v", err)
 	}
 }
+
+func TestExcludedPathMatchesScannerRules(t *testing.T) {
+	root := filepath.Join(string(filepath.Separator), "ws")
+	patterns := []string{"*.gen.go", "lucrari"}
+	cases := []struct {
+		rel   string
+		isDir bool
+		want  bool
+	}{
+		{"tmp/cache/x", true, true},
+		{"tmp/cache/a.go", false, true},
+		{"node_modules/m/i.js", false, true},
+		{".github/ci.yml", false, true},
+		{".goreleaser.yaml", false, false}, // hidden file: indexed
+		{"x.gen.go", false, true},
+		{"lucrari/data.json", false, true},
+		{"pkg/lib/y.go", false, false},
+		{"pkg/newdir", true, false},
+	}
+	for _, c := range cases {
+		if got := ExcludedPath(root, filepath.Join(root, filepath.FromSlash(c.rel)), c.isDir, patterns); got != c.want {
+			t.Errorf("ExcludedPath(%q, isDir=%v) = %v, want %v", c.rel, c.isDir, got, c.want)
+		}
+	}
+	if ExcludedPath(root, filepath.Join(filepath.Dir(root), "outside", "tmp", "a.go"), false, patterns) {
+		t.Error("paths outside root must not be treated as excluded")
+	}
+}

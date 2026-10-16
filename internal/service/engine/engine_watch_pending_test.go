@@ -66,7 +66,7 @@ func TestHandleWatchChangeAccumulatesPendingWhileIndexing(t *testing.T) {
 		t.Fatalf("handleWatchChange returned error: %v", err)
 	}
 
-	pending, overflow := eng.popPendingIndex(wctx.ID)
+	pending, overflow, _ := eng.popPendingIndex(wctx.ID)
 	if overflow {
 		t.Fatalf("expected overflow=false")
 	}
@@ -93,7 +93,7 @@ func TestPendingOverflowTriggersFullScanFallback(t *testing.T) {
 	}
 
 	eng.addPendingIndexFiles(wctx.ID, many)
-	pending, overflow := eng.popPendingIndex(wctx.ID)
+	pending, overflow, _ := eng.popPendingIndex(wctx.ID)
 	if !overflow {
 		t.Fatalf("expected overflow=true")
 	}
@@ -102,7 +102,7 @@ func TestPendingOverflowTriggersFullScanFallback(t *testing.T) {
 	}
 
 	// Ensure overflow flag is cleared after pop.
-	pending2, overflow2 := eng.popPendingIndex(wctx.ID)
+	pending2, overflow2, _ := eng.popPendingIndex(wctx.ID)
 	if overflow2 {
 		t.Fatalf("expected overflow cleared after pop")
 	}
@@ -124,8 +124,31 @@ func TestPendingReplayRetainsBatchWhenAnotherJobStartsFirst(t *testing.T) {
 	eng.indexingJobs.Store(workspaceID, time.Now())
 	defer eng.indexingJobs.Delete(workspaceID)
 	eng.tryStartPendingIndex("/mock/ws", workspaceID)
-	got, overflow := eng.popPendingIndex(workspaceID)
+	got, overflow, _ := eng.popPendingIndex(workspaceID)
 	if overflow || len(got) != len(files) || got[0] != files[0] || got[1] != files[1] {
 		t.Fatalf("pending batch was lost during job handoff: files=%v, overflow=%t", got, overflow)
+	}
+}
+
+func TestPendingOverflowDoesNotQueueRecreate(t *testing.T) {
+	eng := newTestEnginePending()
+	t.Cleanup(eng.Close)
+	const workspaceID = "overflow-workspace"
+	eng.indexingJobs.Store(workspaceID, time.Now())
+	defer eng.indexingJobs.Delete(workspaceID)
+
+	many := make([]string, 0, pendingIndexMaxFiles+1)
+	for i := 0; i < pendingIndexMaxFiles+1; i++ {
+		many = append(many, fmt.Sprintf("/mock/ws/%d.go", i))
+	}
+	eng.StartIndexingAsync("/mock/ws", workspaceID, many, false)
+	if _, overflow, recreate := eng.popPendingIndex(workspaceID); !overflow || recreate {
+		t.Fatalf("overflow must request a full run without recreate: overflow=%t recreate=%t", overflow, recreate)
+	}
+
+	// An explicit recreate while a job runs is the only way to queue a rebuild.
+	eng.StartIndexingAsync("/mock/ws", workspaceID, nil, true)
+	if _, overflow, recreate := eng.popPendingIndex(workspaceID); overflow || !recreate {
+		t.Fatalf("explicit recreate must be queued as recreate: overflow=%t recreate=%t", overflow, recreate)
 	}
 }

@@ -63,6 +63,7 @@ func (m *Manager) Start(root string, onChange OnChangeFunc) error {
 	factory := m.factory
 	opts := m.opts
 	m.mu.Unlock()
+	opts.rootGone = func() { m.Stop(root) }
 
 	watcher, err := factory(root, opts, onChange)
 	if err != nil {

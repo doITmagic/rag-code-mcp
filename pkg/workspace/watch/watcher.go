@@ -48,6 +48,10 @@ const defaultDebounce = 1 * time.Second
 type Options struct {
 	Debounce        time.Duration
 	ExcludePatterns []string
+
+	// rootGone is called once when the root itself is moved or removed, so
+	// the Manager can forget the watcher. Set by Manager.Start.
+	rootGone func()
 }
 
 // FileWatcher handles file system notifications for a workspace.
@@ -64,6 +68,7 @@ type FileWatcher struct {
 	onChange        func(context.Context, string, []string) error
 	exclude         map[string]struct{}
 	changedFiles    map[string]struct{}
+	rootGone        func()
 }
 
 // NewFileWatcher creates a new file watcher for the given root directory.
@@ -90,6 +95,7 @@ func NewFileWatcher(root string, opts Options, onChange func(context.Context, st
 		onChange:        onChange,
 		exclude:         normalizeExclude(opts.ExcludePatterns),
 		changedFiles:    make(map[string]struct{}),
+		rootGone:        opts.rootGone,
 	}, nil
 }
 
@@ -173,6 +179,17 @@ func (fw *FileWatcher) watchLoop() {
 			// run triggered the next one.
 			if fw.isExcludedPath(event.Name) {
 				continue
+			}
+			if event.Op&(fsnotify.Rename|fsnotify.Remove) != 0 && event.Name == fw.root {
+				// The tree is now at an unknown path (or gone). A later
+				// IndexWorkspace on the new path starts a fresh watcher.
+				logger.Instance.Info("Workspace root %s moved or removed, stopping watcher", fw.root)
+				fw.dropDirectoryTree(fw.root)
+				if fw.rootGone != nil {
+					fw.rootGone()
+				}
+				fw.Stop()
+				return
 			}
 			if event.Op&fsnotify.Rename == fsnotify.Rename {
 				fw.dropDirectoryTree(event.Name)

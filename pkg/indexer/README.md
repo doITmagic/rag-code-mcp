@@ -81,8 +81,11 @@ A directory moved in from outside the workspace triggers rediscovery with the
 usual exclusions, and its subdirectories are watched so later edits are detected
 too. More than 200 queued changes trigger a full incremental run, never a
 collection rebuild; only an explicit recreate request drops collections.
-If the watcher cannot start, indexing still runs and files created after
-discovery are picked up by the next run.
+If the watcher cannot start (or only part of the tree could be watched),
+indexing still runs and the root counts as unwatched: a later workspace
+detection (a search or tool call) re-runs an incremental index, at most once
+a minute, which picks up files created after discovery and retries the
+watcher.
 The inventory is never reused between runs. Direct indexer `IndexWorkspace`
 callers can omit `Options.Scan` to scan normally.
 

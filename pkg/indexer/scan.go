@@ -93,7 +93,7 @@ func skipDirName(name string) bool {
 // Watcher events for such paths can be dropped instead of triggering a run.
 func ExcludedPath(root, path string, isDir bool, excludePatterns []string) bool {
 	rel, err := filepath.Rel(root, path)
-	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return false
 	}
 	parts := strings.Split(filepath.ToSlash(rel), "/")

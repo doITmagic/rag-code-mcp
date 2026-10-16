@@ -92,17 +92,28 @@ func TestRenamedDirectoryReportsNestedEventsUnderNewPath(t *testing.T) {
 	if err := os.Rename(filepath.Join(root, "a"), filepath.Join(root, "b")); err != nil {
 		t.Fatal(err)
 	}
-	<-got // rename batch
-	want := filepath.Join(root, "b", "sub", "deep", "x.go")
-	if err := os.WriteFile(want, []byte("package deep\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	select {
-	case files := <-got:
-		if len(files) != 1 || files[0] != want {
-			t.Fatalf("nested event reported as %v, want [%s]", files, want)
-		}
+	case <-got: // rename batch
 	case <-time.After(2 * time.Second):
-		t.Fatal("no event for file created under renamed directory")
+		t.Fatal("no event for the rename itself")
+	}
+	// Both the renamed directory itself and a nested subdirectory must report
+	// under the new path: the former can lose its watch when IN_MOVE_SELF
+	// arrives after the Create of the new name.
+	for _, want := range []string{
+		filepath.Join(root, "b", "top.go"),
+		filepath.Join(root, "b", "sub", "deep", "x.go"),
+	} {
+		if err := os.WriteFile(want, []byte("package x\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case files := <-got:
+			if len(files) != 1 || files[0] != want {
+				t.Fatalf("event reported as %v, want [%s]", files, want)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("no event for %s under renamed directory", want)
+		}
 	}
 }

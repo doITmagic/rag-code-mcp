@@ -978,7 +978,7 @@ func (e *Engine) tryStartPendingIndex(root, workspaceID string) {
 		// full incremental run picks every change up; only an explicit request
 		// may drop collections, otherwise a busy first index re-embeds everything.
 		logger.Instance.Info("[IDX] ♻️ ws=%s pending changes exceeded limit or recreate queued — full run (recreate=%v)", filepath.Base(root), recreate)
-		e.StartIndexingAsync(root, workspaceID, nil, recreate)
+		e.startIndexing(root, workspaceID, nil, recreate, true)
 		return
 	}
 	if len(files) == 0 {
@@ -1005,6 +1005,14 @@ func (e *Engine) finishIndexingJob(root, workspaceID string) {
 // If recreate=true and a job is already running, the recreate is queued and
 // will start immediately after the current job finishes.
 func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recreate bool) {
+	e.startIndexing(root, id, changedFiles, recreate, false)
+}
+
+// startIndexing is StartIndexingAsync with one extra rule for pending replay:
+// queueFullRun keeps a full-run request when a newer job already claimed the
+// workspace, instead of dropping it. Direct callers (search-triggered
+// indexing) must keep the old no-op, or a failing index would requeue forever.
+func (e *Engine) startIndexing(root, id string, changedFiles []string, recreate, queueFullRun bool) {
 	if watch.IsInvalidRoot(root) {
 		logger.Instance.Error("[IDX] ⛔ Refusing to index invalid/dangerous root: %s", root)
 		return
@@ -1024,6 +1032,9 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 			logger.Instance.Info("[IDX] ⏳ ws=%s recreate requested while indexing — queued for after current job", filepath.Base(root))
 		} else if len(changedFiles) > 0 {
 			e.addPendingIndexFilesLocked(id, changedFiles)
+		} else if queueFullRun {
+			e.pendingOverflow[id] = true
+			delete(e.pendingFiles, id)
 		}
 		e.pendingMu.Unlock()
 		return
@@ -1139,10 +1150,11 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) er
 		if indexer.ExcludedPath(wctx.Root, p, isDir, excludePatterns) {
 			continue
 		}
-		if isDir {
-			// Moving a populated directory into the workspace can emit only a
-			// directory event. Rediscover its files with the usual exclusions;
-			// no individual child events are guaranteed to arrive.
+		// Moving a populated directory into the workspace, out of it, or into
+		// an excluded directory can emit only the directory's own path; no
+		// per-file events are guaranteed. Rediscover with the usual exclusions
+		// so new files are indexed and vanished ones lose their vectors.
+		if isDir || os.IsNotExist(statErr) && e.hasIndexedDescendants(wctx, p) {
 			saveLoadedStates()
 			return e.IndexWorkspace(ctx, root, false)
 		}
@@ -1194,6 +1206,24 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) er
 	}
 	e.refreshIndexCounts(wctx.Root)
 	return nil
+}
+
+// hasIndexedDescendants reports whether any collection state still tracks a
+// file under the vanished path p, i.e. p was an indexed directory.
+func (e *Engine) hasIndexedDescendants(wctx *WorkspaceContext, p string) bool {
+	prefix := p + string(filepath.Separator)
+	for _, lang := range parser.SupportedLanguages() {
+		st, err := indexer.LoadState(indexer.StatePath(wctx.Root, wctx.CollectionName(lang)))
+		if err != nil || st == nil {
+			continue
+		}
+		for tracked := range st.Files {
+			if strings.HasPrefix(tracked, prefix) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // refreshIndexCounts recounts files on disk after an incremental run. Watcher

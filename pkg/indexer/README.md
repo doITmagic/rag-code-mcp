@@ -74,9 +74,14 @@ then `docs` (Markdown, JSON, YAML, etc.), then `generic` text/data. Within each
 group, languages with more files go first; ties are ordered by name.
 
 Each collection checks current file metadata before choosing changed files.
-Files created after the inventory was collected are picked up by the next run
-or, when enabled, the filesystem watcher. The inventory is never reused between
-runs. Direct `IndexWorkspace` callers can omit `Options.Scan` to scan normally.
+When enabled, the filesystem watcher starts before inventory collection. Events
+received during indexing are queued and replayed in a follow-up incremental job
+after collection states are saved, including for synchronous engine calls.
+An imported directory triggers rediscovery with the usual exclusions, and its
+subdirectories are watched recursively so later edits are detected too.
+Without a watcher, files created after discovery are picked up by the next run.
+The inventory is never reused between runs. Direct indexer `IndexWorkspace`
+callers can omit `Options.Scan` to scan normally.
 
 Directory exclusions prune traversal before entering a subtree. To skip a data
 directory such as `lucrari/`, add its name to the existing

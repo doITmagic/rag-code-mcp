@@ -918,7 +918,11 @@ const pendingIndexMaxFiles = 200
 func (e *Engine) addPendingIndexFiles(workspaceID string, files []string) {
 	e.pendingMu.Lock()
 	defer e.pendingMu.Unlock()
+	e.addPendingIndexFilesLocked(workspaceID, files)
+}
 
+// addPendingIndexFilesLocked requires pendingMu, which also guards job handoff.
+func (e *Engine) addPendingIndexFilesLocked(workspaceID string, files []string) {
 	if e.pendingOverflow[workspaceID] {
 		return
 	}
@@ -976,8 +980,21 @@ func (e *Engine) tryStartPendingIndex(root, workspaceID string) {
 	e.StartIndexingAsync(root, workspaceID, files, false)
 }
 
+func (e *Engine) finishIndexingJob(root, workspaceID string) {
+	// Coordinate job removal with queuing in StartIndexingAsync. An event must
+	// either join the current job's pending set or start a new job, never land
+	// in the old pending set after it has already been drained.
+	e.pendingMu.Lock()
+	e.indexingJobs.Delete(workspaceID)
+	e.pendingMu.Unlock()
+	if e.bgContext().Err() == nil {
+		e.tryStartPendingIndex(root, workspaceID)
+	}
+}
+
 // StartIndexingAsync starts the indexing process in a background goroutine.
 // If changedFiles is nil or empty, a full re-index is performed.
+// If a job is already running, changedFiles are queued for a follow-up job.
 // If recreate=true and a job is already running, the recreate is queued and
 // will start immediately after the current job finishes.
 func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recreate bool) {
@@ -990,18 +1007,21 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 		return
 	}
 
+	e.pendingMu.Lock()
 	if _, loaded := e.indexingJobs.LoadOrStore(id, time.Now()); loaded {
 		// A job is already running. If recreate=true, queue it so it fires
 		// after the current job finishes (via tryStartPendingIndex/defer).
 		if recreate {
-			e.pendingMu.Lock()
 			e.pendingOverflow[id] = true // overflow = full re-index
 			delete(e.pendingFiles, id)
-			e.pendingMu.Unlock()
 			logger.Instance.Info("[IDX] ⏳ ws=%s recreate requested while indexing — queued for after current job", filepath.Base(root))
+		} else if len(changedFiles) > 0 {
+			e.addPendingIndexFilesLocked(id, changedFiles)
 		}
+		e.pendingMu.Unlock()
 		return
 	}
+	e.pendingMu.Unlock()
 
 	// Rule files are refreshed here rather than on every resolve: this is the
 	// point where the workspace is known to be a real, confirmed root.
@@ -1026,13 +1046,7 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 	e.bgWg.Add(1)
 	go func() {
 		defer e.bgWg.Done()
-		defer func() {
-			e.indexingJobs.Delete(id)
-			if e.bgContext().Err() == nil {
-				// If watcher changes came in while we were indexing, run a follow-up incremental job.
-				e.tryStartPendingIndex(root, id)
-			}
-		}()
+		defer e.finishIndexingJob(root, id)
 
 		if len(e.indexingSlot) > 0 {
 			logger.Instance.Info("[IDX] ⏳ ws=%s queued behind another workspace", filepath.Base(root))
@@ -1105,6 +1119,14 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) er
 	// Resolve the collection per file: one watcher batch can mix languages,
 	// and taking the first file's language sent the rest to the wrong one.
 	for _, p := range files {
+		info, statErr := os.Stat(p)
+		if statErr == nil && info.IsDir() {
+			// Moving a populated directory into the workspace can emit only a
+			// directory event. Rediscover its files with the usual exclusions;
+			// no individual child events are guaranteed to arrive.
+			saveLoadedStates()
+			return e.IndexWorkspace(ctx, root, false)
+		}
 		a := parser.GetByFile(p)
 		if a == nil {
 			continue
@@ -1135,7 +1157,7 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) er
 		}
 		// A deleted file cannot be analysed; drop its vectors instead of
 		// leaving them until the next full run or a search that notices them.
-		if _, statErr := os.Stat(p); os.IsNotExist(statErr) {
+		if os.IsNotExist(statErr) {
 			if err := e.indexer.RemoveFile(ctx, collection, p, state); err != nil {
 				logger.Instance.Warn("[IDX] Failed to remove deleted %s: %v", filepath.Base(p), err)
 			}
@@ -1191,6 +1213,27 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 	}
 	if watch.IsInvalidRoot(wctx.Root) {
 		return fmt.Errorf("refusing to index invalid root %s", wctx.Root)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	// Background jobs already hold this marker. Direct synchronous callers need
+	// one too, so early watcher events queue instead of indexing concurrently.
+	e.pendingMu.Lock()
+	_, alreadyRunning := e.indexingJobs.LoadOrStore(wctx.ID, time.Now())
+	e.pendingMu.Unlock()
+	if !alreadyRunning {
+		defer e.finishIndexingJob(wctx.Root, wctx.ID)
+	}
+
+	// Subscribe before discovery: a new file may appear after the inventory is
+	// collected, while another language spends minutes generating embeddings.
+	// Queued events are replayed once this run has saved its collection states.
+	if e.watchers != nil {
+		if err := e.watchers.Start(wctx.Root, e.handleWatchChange); err != nil {
+			return fmt.Errorf("start workspace watcher: %w", err)
+		}
 	}
 
 	// Persist workspace in registry so it's available for future fallback
@@ -1319,12 +1362,6 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 		}
 	}
 
-	if e.watchers != nil {
-		if err := e.watchers.Start(wctx.Root, e.handleWatchChange); err != nil {
-			logger.Instance.Warn("[IDX] Failed to start watcher for ws=%s: %v", filepath.Base(wctx.Root), err)
-		}
-	}
-
 	if len(indexErrors) > 0 {
 		return fmt.Errorf("indexing failed for %d language(s): %s. Check if Ollama is running and the embedding model is available",
 			len(indexErrors), strings.Join(indexErrors, "; "))
@@ -1383,10 +1420,7 @@ func (e *Engine) handleWatchChange(ctx context.Context, root string, changedFile
 	if err != nil {
 		return err
 	}
-	if _, ok := e.indexingJobs.Load(wctx.ID); ok {
-		e.addPendingIndexFiles(wctx.ID, changedFiles)
-		return nil
-	}
+	// StartIndexingAsync atomically queues the batch if a job is already active.
 	e.StartIndexingAsync(wctx.Root, wctx.ID, changedFiles, false)
 	return nil
 }

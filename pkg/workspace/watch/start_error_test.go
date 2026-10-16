@@ -2,6 +2,7 @@ package watch
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -32,5 +33,32 @@ func TestFileWatcherStartFailsWhenRootIsMissing(t *testing.T) {
 	if err := fw.Start(); err == nil {
 		fw.Stop()
 		t.Fatal("expected Start to fail for a missing root")
+	}
+}
+
+// WalkDir does not follow a symlinked root, so nothing would be watched;
+// Start must fail instead of reporting the root as watched.
+func TestFileWatcherStartFailsWhenRootIsSymlink(t *testing.T) {
+	for name, mkTarget := range map[string]bool{"existing-target": true, "broken": false} {
+		t.Run(name, func(t *testing.T) {
+			base := t.TempDir()
+			target, root := filepath.Join(base, "target"), filepath.Join(base, "link")
+			if mkTarget {
+				if err := os.Mkdir(target, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.Symlink(target, root); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+			fw, err := NewFileWatcher(root, Options{}, func(context.Context, string, []string) error { return nil })
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := fw.Start(); err == nil {
+				fw.Stop()
+				t.Fatal("expected Start to fail for a symlinked root")
+			}
+		})
 	}
 }

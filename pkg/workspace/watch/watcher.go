@@ -134,6 +134,11 @@ func (fw *FileWatcher) addDirectoryTree(root string) error {
 			}
 			return nil
 		}
+		// WalkDir does not follow a symlinked root (or descend a file), so
+		// it would succeed with no watch installed.
+		if isRoot && !d.IsDir() {
+			return fmt.Errorf("workspace root %s is not a directory", path)
+		}
 		if d.IsDir() {
 			if fw.shouldSkipDir(path, d.Name(), isRoot) {
 				return filepath.SkipDir

@@ -337,17 +337,17 @@ func TestStartIndexingAsyncRecreateQueuesWhenJobRunning(t *testing.T) {
 		t.Fatal("Expected job to still be running (we stored it manually)")
 	}
 
-	// The recreate MUST be queued as overflow — not silently dropped.
+	// The recreate MUST be queued — not silently dropped.
 	eng.pendingMu.Lock()
-	overflow := eng.pendingOverflow[wsID]
+	recreate := eng.pendingRecreate[wsID]
 	_, hasPendingFiles := eng.pendingFiles[wsID]
 	eng.pendingMu.Unlock()
 
-	if !overflow {
-		t.Error("Expected pendingOverflow[wsID]=true when recreate=true is requested while job runs")
+	if !recreate {
+		t.Error("Expected pendingRecreate[wsID]=true when recreate=true is requested while job runs")
 	}
 	if hasPendingFiles {
-		t.Error("Expected pendingFiles[wsID] to be cleared when overflow is set")
+		t.Error("Expected pendingFiles[wsID] to be cleared when recreate is queued")
 	}
 
 	// Cleanup: remove the fake job

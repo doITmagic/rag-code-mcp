@@ -49,6 +49,7 @@ type Engine struct {
 	pendingMu       sync.Mutex
 	pendingFiles    map[string]map[string]struct{} // workspaceID -> set(filePath)
 	pendingOverflow map[string]bool                // workspaceID -> too many pending changes, fallback to full scan
+	pendingRecreate map[string]bool                // workspaceID -> explicit recreate requested while a job was running
 
 	registry *registry.Registry
 
@@ -161,6 +162,7 @@ func NewEngine(idx *indexer.Service, srv *search.Service, registryPath string, c
 
 		pendingFiles:    make(map[string]map[string]struct{}),
 		pendingOverflow: make(map[string]bool),
+		pendingRecreate: make(map[string]bool),
 
 		lifecycleCtx:    lifecycleCtx,
 		lifecycleCancel: lifecycleCancel,
@@ -918,7 +920,11 @@ const pendingIndexMaxFiles = 200
 func (e *Engine) addPendingIndexFiles(workspaceID string, files []string) {
 	e.pendingMu.Lock()
 	defer e.pendingMu.Unlock()
+	e.addPendingIndexFilesLocked(workspaceID, files)
+}
 
+// addPendingIndexFilesLocked requires pendingMu, which also guards job handoff.
+func (e *Engine) addPendingIndexFilesLocked(workspaceID string, files []string) {
 	if e.pendingOverflow[workspaceID] {
 		return
 	}
@@ -942,16 +948,18 @@ func (e *Engine) addPendingIndexFiles(workspaceID string, files []string) {
 	}
 }
 
-func (e *Engine) popPendingIndex(workspaceID string) (files []string, overflow bool) {
+func (e *Engine) popPendingIndex(workspaceID string) (files []string, overflow, recreate bool) {
 	e.pendingMu.Lock()
 	defer e.pendingMu.Unlock()
 
 	overflow = e.pendingOverflow[workspaceID]
 	delete(e.pendingOverflow, workspaceID)
+	recreate = e.pendingRecreate[workspaceID]
+	delete(e.pendingRecreate, workspaceID)
 
 	set, ok := e.pendingFiles[workspaceID]
 	if !ok {
-		return nil, overflow
+		return nil, overflow, recreate
 	}
 	delete(e.pendingFiles, workspaceID)
 
@@ -960,14 +968,17 @@ func (e *Engine) popPendingIndex(workspaceID string) (files []string, overflow b
 		files = append(files, f)
 	}
 	sort.Strings(files)
-	return files, overflow
+	return files, overflow, recreate
 }
 
 func (e *Engine) tryStartPendingIndex(root, workspaceID string) {
-	files, overflow := e.popPendingIndex(workspaceID)
-	if overflow {
-		logger.Instance.Info("[IDX] ♻️ Pending changes exceeded limit for ws=%s — triggering full re-index", filepath.Base(root))
-		e.StartIndexingAsync(root, workspaceID, nil, true)
+	files, overflow, recreate := e.popPendingIndex(workspaceID)
+	if recreate || overflow {
+		// Overflow only means the batch is too large to replay file by file. A
+		// full incremental run picks every change up; only an explicit request
+		// may drop collections, otherwise a busy first index re-embeds everything.
+		logger.Instance.Info("[IDX] ♻️ ws=%s pending changes exceeded limit or recreate queued — full run (recreate=%v)", filepath.Base(root), recreate)
+		e.startIndexing(root, workspaceID, nil, recreate, true)
 		return
 	}
 	if len(files) == 0 {
@@ -976,11 +987,32 @@ func (e *Engine) tryStartPendingIndex(root, workspaceID string) {
 	e.StartIndexingAsync(root, workspaceID, files, false)
 }
 
+func (e *Engine) finishIndexingJob(root, workspaceID string) {
+	// Coordinate job removal with queuing in StartIndexingAsync. An event must
+	// either join the current job's pending set or start a new job, never land
+	// in the old pending set after it has already been drained.
+	e.pendingMu.Lock()
+	e.indexingJobs.Delete(workspaceID)
+	e.pendingMu.Unlock()
+	if e.bgContext().Err() == nil {
+		e.tryStartPendingIndex(root, workspaceID)
+	}
+}
+
 // StartIndexingAsync starts the indexing process in a background goroutine.
 // If changedFiles is nil or empty, a full re-index is performed.
+// If a job is already running, changedFiles are queued for a follow-up job.
 // If recreate=true and a job is already running, the recreate is queued and
 // will start immediately after the current job finishes.
 func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recreate bool) {
+	e.startIndexing(root, id, changedFiles, recreate, false)
+}
+
+// startIndexing is StartIndexingAsync with one extra rule for pending replay:
+// queueFullRun keeps a full-run request when a newer job already claimed the
+// workspace, instead of dropping it. Direct callers (search-triggered
+// indexing) must keep the old no-op, or a failing index would requeue forever.
+func (e *Engine) startIndexing(root, id string, changedFiles []string, recreate, queueFullRun bool) {
 	if watch.IsInvalidRoot(root) {
 		logger.Instance.Error("[IDX] ⛔ Refusing to index invalid/dangerous root: %s", root)
 		return
@@ -990,18 +1022,24 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 		return
 	}
 
+	e.pendingMu.Lock()
 	if _, loaded := e.indexingJobs.LoadOrStore(id, time.Now()); loaded {
 		// A job is already running. If recreate=true, queue it so it fires
 		// after the current job finishes (via tryStartPendingIndex/defer).
 		if recreate {
-			e.pendingMu.Lock()
-			e.pendingOverflow[id] = true // overflow = full re-index
+			e.pendingRecreate[id] = true
 			delete(e.pendingFiles, id)
-			e.pendingMu.Unlock()
 			logger.Instance.Info("[IDX] ⏳ ws=%s recreate requested while indexing — queued for after current job", filepath.Base(root))
+		} else if len(changedFiles) > 0 {
+			e.addPendingIndexFilesLocked(id, changedFiles)
+		} else if queueFullRun {
+			e.pendingOverflow[id] = true
+			delete(e.pendingFiles, id)
 		}
+		e.pendingMu.Unlock()
 		return
 	}
+	e.pendingMu.Unlock()
 
 	// Rule files are refreshed here rather than on every resolve: this is the
 	// point where the workspace is known to be a real, confirmed root.
@@ -1026,13 +1064,7 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 	e.bgWg.Add(1)
 	go func() {
 		defer e.bgWg.Done()
-		defer func() {
-			e.indexingJobs.Delete(id)
-			if e.bgContext().Err() == nil {
-				// If watcher changes came in while we were indexing, run a follow-up incremental job.
-				e.tryStartPendingIndex(root, id)
-			}
-		}()
+		defer e.finishIndexingJob(root, id)
 
 		if len(e.indexingSlot) > 0 {
 			logger.Instance.Info("[IDX] ⏳ ws=%s queued behind another workspace", filepath.Base(root))
@@ -1102,9 +1134,40 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) er
 		}
 	}
 
+	var excludePatterns []string
+	if e.config != nil {
+		excludePatterns = e.config.Workspace.ExcludePatterns
+	}
+
+	// Loaded at most once per batch: a build clean deletes thousands of files.
+	var trackedDirs map[string]struct{}
+	wasIndexedDir := func(p string) bool {
+		if trackedDirs == nil {
+			trackedDirs = e.trackedDirectories(wctx)
+		}
+		_, ok := trackedDirs[p]
+		return ok
+	}
+
 	// Resolve the collection per file: one watcher batch can mix languages,
 	// and taking the first file's language sent the rest to the wrong one.
 	for _, p := range files {
+		info, statErr := os.Stat(p)
+		isDir := statErr == nil && info.IsDir()
+		// The watcher's exclusions are looser than the scanner's (tmp/, globs):
+		// skip what a full run would never index instead of indexing it now
+		// and dropping it on the next run, or rescanning for a mkdir in tmp/.
+		if indexer.ExcludedPath(wctx.Root, p, isDir, excludePatterns) {
+			continue
+		}
+		// Moving a populated directory into the workspace, out of it, or into
+		// an excluded directory can emit only the directory's own path; no
+		// per-file events are guaranteed. Rediscover with the usual exclusions
+		// so new files are indexed and vanished ones lose their vectors.
+		if isDir || os.IsNotExist(statErr) && wasIndexedDir(p) {
+			saveLoadedStates()
+			return e.IndexWorkspace(ctx, root, false)
+		}
 		a := parser.GetByFile(p)
 		if a == nil {
 			continue
@@ -1135,7 +1198,7 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) er
 		}
 		// A deleted file cannot be analysed; drop its vectors instead of
 		// leaving them until the next full run or a search that notices them.
-		if _, statErr := os.Stat(p); os.IsNotExist(statErr) {
+		if os.IsNotExist(statErr) {
 			if err := e.indexer.RemoveFile(ctx, collection, p, state); err != nil {
 				logger.Instance.Warn("[IDX] Failed to remove deleted %s: %v", filepath.Base(p), err)
 			}
@@ -1153,6 +1216,29 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) er
 	}
 	e.refreshIndexCounts(wctx.Root)
 	return nil
+}
+
+// trackedDirectories returns every directory below root that holds a file
+// tracked by any collection state, so a vanished path can be recognised as a
+// formerly indexed directory with one map lookup. It reads each state once;
+// callers hold the result for a whole batch, which may be thousands of paths.
+func (e *Engine) trackedDirectories(wctx *WorkspaceContext) map[string]struct{} {
+	dirs := make(map[string]struct{})
+	for _, lang := range parser.SupportedLanguages() {
+		st, err := indexer.LoadState(indexer.StatePath(wctx.Root, wctx.CollectionName(lang)))
+		if err != nil || st == nil {
+			continue
+		}
+		for tracked := range st.Files {
+			for dir := filepath.Dir(tracked); len(dir) > len(wctx.Root); dir = filepath.Dir(dir) {
+				if _, seen := dirs[dir]; seen {
+					break
+				}
+				dirs[dir] = struct{}{}
+			}
+		}
+	}
+	return dirs
 }
 
 // refreshIndexCounts recounts files on disk after an incremental run. Watcher
@@ -1192,6 +1278,28 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 	if watch.IsInvalidRoot(wctx.Root) {
 		return fmt.Errorf("refusing to index invalid root %s", wctx.Root)
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	// Background jobs already hold this marker. Direct synchronous callers need
+	// one too, so early watcher events queue instead of indexing concurrently.
+	e.pendingMu.Lock()
+	_, alreadyRunning := e.indexingJobs.LoadOrStore(wctx.ID, time.Now())
+	e.pendingMu.Unlock()
+	if !alreadyRunning {
+		defer e.finishIndexingJob(wctx.Root, wctx.ID)
+	}
+
+	// Subscribe before discovery: a new file may appear after the inventory is
+	// collected, while another language spends minutes generating embeddings.
+	// Queued events are replayed once this run has saved its collection states.
+	// A watcher failure (e.g. inotify limits) must not block indexing itself.
+	if e.watchers != nil {
+		if err := e.watchers.Start(wctx.Root, e.handleWatchChange); err != nil {
+			logger.Instance.Warn("[IDX] Failed to start watcher for ws=%s: %v", filepath.Base(wctx.Root), err)
+		}
+	}
 
 	// Persist workspace in registry so it's available for future fallback
 	// detection (e.g. when file_path is missing). This is idempotent —
@@ -1216,16 +1324,27 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 		excludePatterns = e.config.Workspace.ExcludePatterns
 	}
 
-	// Pre-count total files per language with a single WalkDir pass.
-	// This gives us the real on_disk totals for accurate progress reporting,
-	// instead of using len(changedFiles) which only reflects modified files.
-	fileCounts := e.indexer.CountAllFiles(wctx.Root, excludePatterns)
+	// Share one inventory across all language collections. Counting separately
+	// and walking again for every language multiplies I/O on data-heavy projects.
+	scan, err := e.indexer.ScanWorkspace(ctx, wctx.Root, excludePatterns)
+	if err != nil {
+		return err
+	}
+	fileCounts := scan.FileCountResult
 	logger.Instance.Info("[IDX] ws=%s file counts: %v (breakdowns: %v)", wsName, fileCounts.Counts, fileCounts.Breakdowns)
 
-	// Sort languages by file count descending so the dominant language is indexed
-	// first and AI search works immediately for the most relevant code.
+	// Index source code before docs/config and generic data, even when generated
+	// JSON or Markdown outnumbers the source. Within each tier, dominant languages
+	// go first; break ties by name for a deterministic order.
 	sort.Slice(languages, func(i, j int) bool {
-		return fileCounts.Counts[languages[i]] > fileCounts.Counts[languages[j]]
+		left, right := languages[i], languages[j]
+		if lp, rp := indexingLanguagePriority(left), indexingLanguagePriority(right); lp != rp {
+			return lp < rp
+		}
+		if fileCounts.Counts[left] != fileCounts.Counts[right] {
+			return fileCounts.Counts[left] > fileCounts.Counts[right]
+		}
+		return left < right
 	})
 	logger.Instance.Info("[IDX] ws=%s indexing order: %v", wsName, languages)
 
@@ -1254,6 +1373,9 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 
 	var indexErrors []string
 	for _, lang := range languages {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		diskTotal := fileCounts.Counts[lang]
 		collection := wctx.CollectionName(lang)
 		logger.Instance.Info("[IDX] ws=%s lang=%s ▶ starting (on_disk=%d)", wsName, lang, diskTotal)
@@ -1271,6 +1393,7 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 			WorkspaceName:   wsName,
 			ExcludePatterns: excludePatterns,
 			Recreate:        recreate,
+			Scan:            scan,
 			Progress: func(doneFiles, totalFiles int) {
 				// Throttle disk I/O: at most one write every 2s, plus the last file.
 				if doneFiles != totalFiles && time.Since(lastStatusWrite) < 2*time.Second {
@@ -1304,18 +1427,23 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 		}
 	}
 
-	if e.watchers != nil {
-		if err := e.watchers.Start(wctx.Root, e.handleWatchChange); err != nil {
-			logger.Instance.Warn("[IDX] Failed to start watcher for ws=%s: %v", filepath.Base(wctx.Root), err)
-		}
-	}
-
 	if len(indexErrors) > 0 {
 		return fmt.Errorf("indexing failed for %d language(s): %s. Check if Ollama is running and the embedding model is available",
 			len(indexErrors), strings.Join(indexErrors, "; "))
 	}
 
 	return nil
+}
+
+func indexingLanguagePriority(language string) int {
+	switch language {
+	case "docs":
+		return 1
+	case "generic":
+		return 2
+	default:
+		return 0
+	}
 }
 
 // processedCount is how many of the diskTotal files are indexed partway through
@@ -1357,10 +1485,7 @@ func (e *Engine) handleWatchChange(ctx context.Context, root string, changedFile
 	if err != nil {
 		return err
 	}
-	if _, ok := e.indexingJobs.Load(wctx.ID); ok {
-		e.addPendingIndexFiles(wctx.ID, changedFiles)
-		return nil
-	}
+	// StartIndexingAsync atomically queues the batch if a job is already active.
 	e.StartIndexingAsync(wctx.Root, wctx.ID, changedFiles, false)
 	return nil
 }

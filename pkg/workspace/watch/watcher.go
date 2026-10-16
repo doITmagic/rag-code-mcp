@@ -99,7 +99,18 @@ func (fw *FileWatcher) Start() {
 		return
 	}
 
-	err := filepath.WalkDir(fw.root, func(path string, d os.DirEntry, err error) error {
+	if err := fw.addDirectoryTree(fw.root); err != nil {
+		logger.Instance.Warn("Error walking directory for watcher setup: %v", err)
+	}
+
+	logger.Instance.Info("👀 Watcher started for %s", fw.root)
+	go fw.watchLoop()
+}
+
+// addDirectoryTree also covers a populated subtree moved into the workspace:
+// its existing descendants will not emit separate creation events.
+func (fw *FileWatcher) addDirectoryTree(root string) error {
+	return filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -113,12 +124,6 @@ func (fw *FileWatcher) Start() {
 		}
 		return nil
 	})
-	if err != nil {
-		logger.Instance.Warn("Error walking directory for watcher setup: %v", err)
-	}
-
-	logger.Instance.Info("👀 Watcher started for %s", fw.root)
-	go fw.watchLoop()
 }
 
 func (fw *FileWatcher) watchLoop() {
@@ -144,10 +149,11 @@ func (fw *FileWatcher) watchLoop() {
 				info, err := os.Stat(event.Name)
 				if err == nil && info.IsDir() {
 					base := filepath.Base(event.Name)
-					if !fw.shouldSkipDir(event.Name, base, false) {
-						if err := fw.watcher.Add(event.Name); err != nil {
-							logger.Instance.Warn("Unable to watch new dir %s: %v", event.Name, err)
-						}
+					if fw.shouldSkipDir(event.Name, base, false) {
+						continue
+					}
+					if err := fw.addDirectoryTree(event.Name); err != nil {
+						logger.Instance.Warn("Unable to watch new directory tree %s: %v", event.Name, err)
 					}
 				}
 			}

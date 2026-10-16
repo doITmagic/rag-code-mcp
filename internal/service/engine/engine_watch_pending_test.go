@@ -110,3 +110,22 @@ func TestPendingOverflowTriggersFullScanFallback(t *testing.T) {
 		t.Fatalf("expected no pending after second pop, got %d", len(pending2))
 	}
 }
+
+func TestPendingReplayRetainsBatchWhenAnotherJobStartsFirst(t *testing.T) {
+	eng := newTestEnginePending()
+	t.Cleanup(eng.Close)
+	const workspaceID = "handoff-workspace"
+	files := []string{"/mock/ws/a.go", "/mock/ws/b.go"}
+	eng.addPendingIndexFiles(workspaceID, files)
+
+	// A newer job can claim the workspace after the old job removes its marker
+	// but before it replays pending files. Replaying must queue the batch on the
+	// newer job, rather than discard it because that job is already running.
+	eng.indexingJobs.Store(workspaceID, time.Now())
+	defer eng.indexingJobs.Delete(workspaceID)
+	eng.tryStartPendingIndex("/mock/ws", workspaceID)
+	got, overflow := eng.popPendingIndex(workspaceID)
+	if overflow || len(got) != len(files) || got[0] != files[0] || got[1] != files[1] {
+		t.Fatalf("pending batch was lost during job handoff: files=%v, overflow=%t", got, overflow)
+	}
+}

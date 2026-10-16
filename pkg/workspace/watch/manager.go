@@ -79,7 +79,8 @@ func (m *Manager) Start(root string, onChange OnChangeFunc) error {
 	m.mu.Unlock()
 
 	if err := watcher.Start(); err != nil {
-		m.Stop(root)
+		// A concurrent Stop + Start may have replaced this watcher already.
+		m.stopIf(root, watcher)
 		return err
 	}
 	return nil
@@ -103,6 +104,19 @@ func (m *Manager) Stop(root string) {
 	m.mu.Unlock()
 	if ok {
 		watcher.Stop()
+	}
+}
+
+// stopIf stops the watcher for root only if it is still the given one.
+func (m *Manager) stopIf(root string, w Watcher) {
+	m.mu.Lock()
+	ok := m.watchers[root] == w
+	if ok {
+		delete(m.watchers, root)
+	}
+	m.mu.Unlock()
+	if ok {
+		w.Stop()
 	}
 }
 

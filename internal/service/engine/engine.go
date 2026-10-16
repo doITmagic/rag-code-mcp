@@ -61,10 +61,9 @@ type Engine struct {
 	// triggered for a workspace ID upon initial daemon resolution.
 	connectTriggered sync.Map
 
-	// unwatched holds workspace roots whose watcher failed to start. Without a
-	// watcher nothing else re-indexes, so each later DetectContext for such a
-	// root runs an incremental index, which also retries the watcher.
-	unwatched sync.Map
+	// lastIndexed records, per workspace ID, when an indexing job last ran or
+	// finished. Paces the rescans of a workspace that has no watcher.
+	lastIndexed sync.Map
 
 	lifecycleCtx    context.Context
 	lifecycleCancel context.CancelFunc
@@ -85,6 +84,10 @@ type detectionCacheEntry struct {
 }
 
 const detectionCacheTTL = 5 * time.Second
+
+// unwatchedRescanInterval paces incremental rescans of a workspace with no
+// watcher. A var so tests can shorten it.
+var unwatchedRescanInterval = time.Minute
 
 func (e *Engine) GetSearchService() *search.Service {
 	return e.search
@@ -434,10 +437,9 @@ func (e *Engine) DetectContextAsRoot(ctx context.Context, root string, triggerAu
 // workspace so the knowledge base is warmed up or synced with disk.
 // connectTriggered limits this to ONCE per WorkspaceID per daemon lifetime,
 // preventing full index scans on every cache miss. The exception is a root
-// with no watcher: nothing else would ever pick up new files, so every cache
-// miss re-runs the incremental index (and IndexWorkspace retries the watcher).
-// shortcut: bounded only by detectionCacheTTL, add a cooldown if these scans
-// show up in profiles.
+// with no watcher (start failed, or the root was moved): nothing else would
+// ever pick up new files, so the incremental index re-runs at most once per
+// unwatchedRescanInterval, and IndexWorkspace retries the watcher.
 func (e *Engine) autoTriggerIndex(wctx *WorkspaceContext) {
 	if e.config != nil && !e.config.Workspace.AutoIndex {
 		return
@@ -453,10 +455,23 @@ func (e *Engine) autoTriggerIndex(wctx *WorkspaceContext) {
 		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 		return
 	}
-	if _, ok := e.unwatched.Load(wctx.Root); ok {
-		logger.Instance.Info("[DAEMON] [WS-DETECT] No watcher for %s, re-running incremental index", wctx.Root)
-		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+	if e.watchers == nil || e.watchers.Watching(wctx.Root) {
+		return
 	}
+	// Reserve the slot atomically so concurrent detections do not all pass
+	// the age check; the stamp is refreshed when the job finishes.
+	now := time.Now()
+	last, loaded := e.lastIndexed.LoadOrStore(wctx.ID, now)
+	if loaded {
+		if now.Sub(last.(time.Time)) < unwatchedRescanInterval {
+			return
+		}
+		if !e.lastIndexed.CompareAndSwap(wctx.ID, last, now) {
+			return
+		}
+	}
+	logger.Instance.Info("[DAEMON] [WS-DETECT] No watcher for %s, re-running incremental index", wctx.Root)
+	e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 }
 
 // GetActiveWorkspace returns the last confirmed workspace root from the resolver.
@@ -1007,6 +1022,7 @@ func (e *Engine) finishIndexingJob(root, workspaceID string) {
 	e.pendingMu.Lock()
 	e.indexingJobs.Delete(workspaceID)
 	e.pendingMu.Unlock()
+	e.lastIndexed.Store(workspaceID, time.Now())
 	if e.bgContext().Err() == nil {
 		e.tryStartPendingIndex(root, workspaceID)
 	}
@@ -1311,9 +1327,6 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 	if e.watchers != nil {
 		if err := e.watchers.Start(wctx.Root, e.handleWatchChange); err != nil {
 			logger.Instance.Warn("[IDX] Failed to start watcher for ws=%s: %v", filepath.Base(wctx.Root), err)
-			e.unwatched.Store(wctx.Root, true)
-		} else {
-			e.unwatched.Delete(wctx.Root)
 		}
 	}
 

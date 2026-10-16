@@ -11,7 +11,9 @@ type OnChangeFunc func(ctx context.Context, root string, changedFiles []string) 
 
 // Watcher abstracts a filesystem watcher implementation.
 type Watcher interface {
-	Start()
+	// Start returns an error when the tree could not be watched; the Manager
+	// then forgets the watcher so the engine can fall back to rescans.
+	Start() error
 	Stop()
 }
 
@@ -76,8 +78,19 @@ func (m *Manager) Start(root string, onChange OnChangeFunc) error {
 	m.watchers[root] = watcher
 	m.mu.Unlock()
 
-	watcher.Start()
+	if err := watcher.Start(); err != nil {
+		m.Stop(root)
+		return err
+	}
 	return nil
+}
+
+// Watching reports whether a watcher is registered for root.
+func (m *Manager) Watching(root string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.watchers[root]
+	return ok
 }
 
 // Stop halts the watcher for a workspace root.

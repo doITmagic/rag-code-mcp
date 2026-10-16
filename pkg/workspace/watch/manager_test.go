@@ -128,6 +128,43 @@ func TestManagerForgetsWatcherWhoseStartFails(t *testing.T) {
 	}
 }
 
+// A root-gone callback from an old watcher must not stop a replacement
+// watcher that was started at the same root after the old one was removed.
+func TestManagerRootGoneIgnoresReplacedWatcher(t *testing.T) {
+	mgr := NewManager(Options{})
+	var gone []func()
+	var created []*fakeWatcher
+	mgr.SetFactory(func(root string, opts Options, onChange OnChangeFunc) (Watcher, error) {
+		w := &fakeWatcher{}
+		created = append(created, w)
+		gone = append(gone, opts.rootGone)
+		return w, nil
+	})
+	noop := func(context.Context, string, []string) error { return nil }
+
+	if err := mgr.Start("/tmp/project", noop); err != nil {
+		t.Fatal(err)
+	}
+	mgr.Stop("/tmp/project")
+	if err := mgr.Start("/tmp/project", noop); err != nil {
+		t.Fatal(err)
+	}
+	gone[0]() // delayed callback from the first watcher
+	if !mgr.Watching("/tmp/project") {
+		t.Fatal("stale rootGone removed the replacement watcher")
+	}
+	created[1].mu.Lock()
+	stopped := created[1].stopped
+	created[1].mu.Unlock()
+	if stopped != 0 {
+		t.Fatal("stale rootGone stopped the replacement watcher")
+	}
+	gone[1]()
+	if mgr.Watching("/tmp/project") {
+		t.Fatal("own rootGone did not remove the watcher")
+	}
+}
+
 // A Start that fails after its watcher was replaced must not remove the
 // replacement: Stop + Start may run while the old watch installation is busy.
 func TestManagerFailedStartIgnoresReplacedWatcher(t *testing.T) {

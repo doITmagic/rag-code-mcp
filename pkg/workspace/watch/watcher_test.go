@@ -85,7 +85,9 @@ func TestRenamedDirectoryReportsNestedEventsUnderNewPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fw.Start()
+	if err := fw.Start(); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(fw.Stop)
 	time.Sleep(50 * time.Millisecond)
 

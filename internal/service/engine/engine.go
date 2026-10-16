@@ -49,6 +49,7 @@ type Engine struct {
 	pendingMu       sync.Mutex
 	pendingFiles    map[string]map[string]struct{} // workspaceID -> set(filePath)
 	pendingOverflow map[string]bool                // workspaceID -> too many pending changes, fallback to full scan
+	pendingRecreate map[string]bool                // workspaceID -> explicit recreate requested while a job was running
 
 	registry *registry.Registry
 
@@ -161,6 +162,7 @@ func NewEngine(idx *indexer.Service, srv *search.Service, registryPath string, c
 
 		pendingFiles:    make(map[string]map[string]struct{}),
 		pendingOverflow: make(map[string]bool),
+		pendingRecreate: make(map[string]bool),
 
 		lifecycleCtx:    lifecycleCtx,
 		lifecycleCancel: lifecycleCancel,
@@ -946,16 +948,18 @@ func (e *Engine) addPendingIndexFilesLocked(workspaceID string, files []string) 
 	}
 }
 
-func (e *Engine) popPendingIndex(workspaceID string) (files []string, overflow bool) {
+func (e *Engine) popPendingIndex(workspaceID string) (files []string, overflow, recreate bool) {
 	e.pendingMu.Lock()
 	defer e.pendingMu.Unlock()
 
 	overflow = e.pendingOverflow[workspaceID]
 	delete(e.pendingOverflow, workspaceID)
+	recreate = e.pendingRecreate[workspaceID]
+	delete(e.pendingRecreate, workspaceID)
 
 	set, ok := e.pendingFiles[workspaceID]
 	if !ok {
-		return nil, overflow
+		return nil, overflow, recreate
 	}
 	delete(e.pendingFiles, workspaceID)
 
@@ -964,14 +968,17 @@ func (e *Engine) popPendingIndex(workspaceID string) (files []string, overflow b
 		files = append(files, f)
 	}
 	sort.Strings(files)
-	return files, overflow
+	return files, overflow, recreate
 }
 
 func (e *Engine) tryStartPendingIndex(root, workspaceID string) {
-	files, overflow := e.popPendingIndex(workspaceID)
-	if overflow {
-		logger.Instance.Info("[IDX] ♻️ Pending changes exceeded limit for ws=%s — triggering full re-index", filepath.Base(root))
-		e.StartIndexingAsync(root, workspaceID, nil, true)
+	files, overflow, recreate := e.popPendingIndex(workspaceID)
+	if recreate || overflow {
+		// Overflow only means the batch is too large to replay file by file. A
+		// full incremental run picks every change up; only an explicit request
+		// may drop collections, otherwise a busy first index re-embeds everything.
+		logger.Instance.Info("[IDX] ♻️ ws=%s pending changes exceeded limit or recreate queued — full run (recreate=%v)", filepath.Base(root), recreate)
+		e.StartIndexingAsync(root, workspaceID, nil, recreate)
 		return
 	}
 	if len(files) == 0 {
@@ -1012,7 +1019,7 @@ func (e *Engine) StartIndexingAsync(root, id string, changedFiles []string, recr
 		// A job is already running. If recreate=true, queue it so it fires
 		// after the current job finishes (via tryStartPendingIndex/defer).
 		if recreate {
-			e.pendingOverflow[id] = true // overflow = full re-index
+			e.pendingRecreate[id] = true
 			delete(e.pendingFiles, id)
 			logger.Instance.Info("[IDX] ⏳ ws=%s recreate requested while indexing — queued for after current job", filepath.Base(root))
 		} else if len(changedFiles) > 0 {
@@ -1116,11 +1123,23 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) er
 		}
 	}
 
+	var excludePatterns []string
+	if e.config != nil {
+		excludePatterns = e.config.Workspace.ExcludePatterns
+	}
+
 	// Resolve the collection per file: one watcher batch can mix languages,
 	// and taking the first file's language sent the rest to the wrong one.
 	for _, p := range files {
 		info, statErr := os.Stat(p)
-		if statErr == nil && info.IsDir() {
+		isDir := statErr == nil && info.IsDir()
+		// The watcher's exclusions are looser than the scanner's (tmp/, globs):
+		// skip what a full run would never index instead of indexing it now
+		// and dropping it on the next run, or rescanning for a mkdir in tmp/.
+		if indexer.ExcludedPath(wctx.Root, p, isDir, excludePatterns) {
+			continue
+		}
+		if isDir {
 			// Moving a populated directory into the workspace can emit only a
 			// directory event. Rediscover its files with the usual exclusions;
 			// no individual child events are guaranteed to arrive.
@@ -1230,9 +1249,10 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 	// Subscribe before discovery: a new file may appear after the inventory is
 	// collected, while another language spends minutes generating embeddings.
 	// Queued events are replayed once this run has saved its collection states.
+	// A watcher failure (e.g. inotify limits) must not block indexing itself.
 	if e.watchers != nil {
 		if err := e.watchers.Start(wctx.Root, e.handleWatchChange); err != nil {
-			return fmt.Errorf("start workspace watcher: %w", err)
+			logger.Instance.Warn("[IDX] Failed to start watcher for ws=%s: %v", filepath.Base(wctx.Root), err)
 		}
 	}
 

@@ -77,9 +77,12 @@ Each collection checks current file metadata before choosing changed files.
 When enabled, the filesystem watcher starts before inventory collection. Events
 received during indexing are queued and replayed in a follow-up incremental job
 after collection states are saved, including for synchronous engine calls.
-An imported directory triggers rediscovery with the usual exclusions, and its
-subdirectories are watched recursively so later edits are detected too.
-Without a watcher, files created after discovery are picked up by the next run.
+A directory moved in from outside the workspace triggers rediscovery with the
+usual exclusions, and its subdirectories are watched so later edits are detected
+too. More than 200 queued changes trigger a full incremental run, never a
+collection rebuild; only an explicit recreate request drops collections.
+If the watcher cannot start, indexing still runs and files created after
+discovery are picked up by the next run.
 The inventory is never reused between runs. Direct indexer `IndexWorkspace`
 callers can omit `Options.Scan` to scan normally.
 

@@ -126,6 +126,18 @@ func (fw *FileWatcher) addDirectoryTree(root string) error {
 	})
 }
 
+// dropDirectoryTree forgets watches below a renamed directory. inotify keeps
+// them keyed by the old path, so re-adding the new name would reuse the stale
+// entries and report nested edits under the old path forever.
+func (fw *FileWatcher) dropDirectoryTree(old string) {
+	prefix := old + string(filepath.Separator)
+	for _, p := range fw.watcher.WatchList() {
+		if strings.HasPrefix(p, prefix) {
+			_ = fw.watcher.Remove(p)
+		}
+	}
+}
+
 func (fw *FileWatcher) watchLoop() {
 	defer fw.watcher.Close()
 
@@ -144,6 +156,9 @@ func (fw *FileWatcher) watchLoop() {
 			// run triggered the next one.
 			if fw.isExcludedPath(event.Name) {
 				continue
+			}
+			if event.Op&fsnotify.Rename == fsnotify.Rename {
+				fw.dropDirectoryTree(event.Name)
 			}
 			if event.Op&fsnotify.Create == fsnotify.Create {
 				info, err := os.Stat(event.Name)

@@ -63,7 +63,10 @@ func (m *Manager) Start(root string, onChange OnChangeFunc) error {
 	factory := m.factory
 	opts := m.opts
 	m.mu.Unlock()
-	opts.rootGone = func() { m.Stop(root) }
+	// Forget only this registration: a delayed callback must not stop a
+	// replacement watcher started at the same root in the meantime.
+	var watcher Watcher
+	opts.rootGone = func() { m.stopIf(root, watcher) }
 
 	watcher, err := factory(root, opts, onChange)
 	if err != nil {
@@ -104,6 +107,19 @@ func (m *Manager) Stop(root string) {
 	m.mu.Unlock()
 	if ok {
 		watcher.Stop()
+	}
+}
+
+// stopIf stops the watcher for root only if it is still the given one.
+func (m *Manager) stopIf(root string, w Watcher) {
+	m.mu.Lock()
+	ok := m.watchers[root] == w
+	if ok {
+		delete(m.watchers, root)
+	}
+	m.mu.Unlock()
+	if ok {
+		w.Stop()
 	}
 }
 

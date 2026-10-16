@@ -1139,6 +1139,16 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) er
 		excludePatterns = e.config.Workspace.ExcludePatterns
 	}
 
+	// Loaded at most once per batch: a build clean deletes thousands of files.
+	var trackedDirs map[string]struct{}
+	wasIndexedDir := func(p string) bool {
+		if trackedDirs == nil {
+			trackedDirs = e.trackedDirectories(wctx)
+		}
+		_, ok := trackedDirs[p]
+		return ok
+	}
+
 	// Resolve the collection per file: one watcher batch can mix languages,
 	// and taking the first file's language sent the rest to the wrong one.
 	for _, p := range files {
@@ -1154,7 +1164,7 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) er
 		// an excluded directory can emit only the directory's own path; no
 		// per-file events are guaranteed. Rediscover with the usual exclusions
 		// so new files are indexed and vanished ones lose their vectors.
-		if isDir || os.IsNotExist(statErr) && e.hasIndexedDescendants(wctx, p) {
+		if isDir || os.IsNotExist(statErr) && wasIndexedDir(p) {
 			saveLoadedStates()
 			return e.IndexWorkspace(ctx, root, false)
 		}
@@ -1208,22 +1218,27 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) er
 	return nil
 }
 
-// hasIndexedDescendants reports whether any collection state still tracks a
-// file under the vanished path p, i.e. p was an indexed directory.
-func (e *Engine) hasIndexedDescendants(wctx *WorkspaceContext, p string) bool {
-	prefix := p + string(filepath.Separator)
+// trackedDirectories returns every directory below root that holds a file
+// tracked by any collection state, so a vanished path can be recognised as a
+// formerly indexed directory with one map lookup. It reads each state once;
+// callers hold the result for a whole batch, which may be thousands of paths.
+func (e *Engine) trackedDirectories(wctx *WorkspaceContext) map[string]struct{} {
+	dirs := make(map[string]struct{})
 	for _, lang := range parser.SupportedLanguages() {
 		st, err := indexer.LoadState(indexer.StatePath(wctx.Root, wctx.CollectionName(lang)))
 		if err != nil || st == nil {
 			continue
 		}
 		for tracked := range st.Files {
-			if strings.HasPrefix(tracked, prefix) {
-				return true
+			for dir := filepath.Dir(tracked); len(dir) > len(wctx.Root); dir = filepath.Dir(dir) {
+				if _, seen := dirs[dir]; seen {
+					break
+				}
+				dirs[dir] = struct{}{}
 			}
 		}
 	}
-	return false
+	return dirs
 }
 
 // refreshIndexCounts recounts files on disk after an incremental run. Watcher

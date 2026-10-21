@@ -6,6 +6,7 @@ import (
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser/css"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser/docs"
+	"github.com/doITmagic/rag-code-mcp/pkg/parser/gdscript"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser/generic"
 	golang "github.com/doITmagic/rag-code-mcp/pkg/parser/go"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser/html"
@@ -20,7 +21,7 @@ import (
 func TestCanHandleIgnoresExtensionCase(t *testing.T) {
 	analyzers := []parser.Analyzer{
 		golang.NewCodeAnalyzer(), php.NewAnalyzer(), python.NewAnalyzer(), javascript.NewCodeAnalyzer(),
-		css.NewAnalyzer(), docs.NewAnalyzer(), html.NewAnalyzer(),
+		css.NewAnalyzer(), docs.NewAnalyzer(), html.NewAnalyzer(), gdscript.NewAnalyzer(),
 		generic.NewAnalyzer("generic", []string{".txt", ".env"}),
 	}
 	find := func(file string) string {
@@ -34,7 +35,7 @@ func TestCanHandleIgnoresExtensionCase(t *testing.T) {
 	cases := map[string]string{
 		"a.GO": "go", "b.PHP": "php", "c.PY": "python", "d.JS": "javascript", "e.TSX": "javascript",
 		"f.HTML": "html", "g.CSS": "css", "h.MD": "docs", "i.TXT": "generic", "j.ENV": "generic",
-		"k_test.GO": "go", "l.rb": "",
+		"k_test.GO": "go", "l.rb": "", "m.GD": "gdscript", "n.TSCN": "gdscript",
 	}
 	for file, want := range cases {
 		if got := find(file); got != want {

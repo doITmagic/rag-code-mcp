@@ -20,7 +20,7 @@ This tool operates as a stateful, recursive orchestrator over the **Code Graph R
 The tool implements a depth-first search (DFS) with a configurable `depth` (default 2, max 5). 
 
 - **Circular Dependency Detection**: It maintains a `visited` map per-session to detect and flag recursions (e.g., Function A calling Function B which calls Function A). These are visualized with a 🔄 marker.
-- **Polyglot Stitching**: The engine automatically searches across multiple language collections (Go, Python, JS, PHP). If a Go function calls a JavaScript microservice endpoint (indexed as a relation), the tool will attempt to bridge the call graph across languages.
+- **Polyglot Stitching**: The engine automatically searches across multiple language collections (Go, Python, JS, PHP, GDScript, ...). If a Go function calls a JavaScript microservice endpoint (indexed as a relation), the tool will attempt to bridge the call graph across languages.
 
 ## Features
 - **Structural Tree Metadata**: Returns a JSON-ready tree structure (`CallNode`) containing the signature, type, package, and file path for every node in the hierarchy.

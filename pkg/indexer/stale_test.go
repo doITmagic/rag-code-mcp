@@ -3,6 +3,7 @@ package indexer
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sort"
 	"testing"
 )
@@ -191,3 +192,21 @@ func TestMinified_DoesNotSkipSmallCompactJSON(t *testing.T) {
 	}
 }
 
+
+// A scene with embedded resource data has very long lines, but it must still
+// be indexed: the analyzer keeps only the node tree.
+func TestMinified_DoesNotSkipGodotSceneWithEmbeddedData(t *testing.T) {
+	dir := t.TempDir()
+	scenePath := filepath.Join(dir, "level.tscn")
+	data := "[gd_scene format=3]\n\n[sub_resource type=\"ArrayMesh\" id=\"1\"]\ndata = PackedByteArray(" +
+		strings.Repeat("0, ", 20000) + "0)\n\n[node name=\"Level\" type=\"Node3D\"]\n"
+	if err := os.WriteFile(scenePath, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !exceedsLineDensity(scenePath) {
+		t.Fatal("test setup error: scene should exceed the line density threshold")
+	}
+	if shouldSkipFile(scenePath) {
+		t.Fatal("expected Godot scene with embedded data not to be skipped as minified")
+	}
+}

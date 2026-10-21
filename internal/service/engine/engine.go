@@ -437,9 +437,10 @@ func (e *Engine) DetectContextAsRoot(ctx context.Context, root string, triggerAu
 // workspace so the knowledge base is warmed up or synced with disk.
 // connectTriggered limits this to ONCE per WorkspaceID per daemon lifetime,
 // preventing full index scans on every cache miss. The exception is a root
-// with no watcher (start failed, or the root was moved): nothing else would
-// ever pick up new files, so the incremental index re-runs at most once per
-// unwatchedRescanInterval, and IndexWorkspace retries the watcher.
+// with no watcher (start failed, the root was moved, or watch_enabled is
+// false): nothing else would ever pick up new files, so the incremental index
+// re-runs at most once per unwatchedRescanInterval, and IndexWorkspace
+// retries the watcher when watching is enabled.
 func (e *Engine) autoTriggerIndex(wctx *WorkspaceContext) {
 	if e.config != nil && !e.config.Workspace.AutoIndex {
 		return
@@ -455,7 +456,7 @@ func (e *Engine) autoTriggerIndex(wctx *WorkspaceContext) {
 		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 		return
 	}
-	if e.watchers == nil || e.watchers.Watching(wctx.Root) {
+	if e.watchers != nil && e.watchers.Watching(wctx.Root) {
 		return
 	}
 	// Reserve the slot atomically so concurrent detections do not all pass

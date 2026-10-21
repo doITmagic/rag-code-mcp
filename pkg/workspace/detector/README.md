@@ -18,6 +18,7 @@ The detector identifies workspace roots by:
 - **PHP/Laravel**: `composer.json`, `artisan`
 - **Rust**: `Cargo.toml`
 - **Ruby**: `Gemfile`
+- **Godot**: `project.godot`
 - **Other**: `Dockerfile`, `docker-compose.yml`, `.ragcode`, `.agent`, `.idea`, `.cursor`, etc.
 
 ---

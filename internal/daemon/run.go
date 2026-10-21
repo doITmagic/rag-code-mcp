@@ -28,6 +28,7 @@ import (
 	"github.com/doITmagic/rag-code-mcp/pkg/llm"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/css"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/docs"
+	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/gdscript"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/generic"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/go"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/html"

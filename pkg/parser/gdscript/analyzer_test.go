@@ -197,7 +197,7 @@ func TestScriptMembers(t *testing.T) {
 	if hp.IsPublic || hp.Metadata["has_setget"] != true || hp.Signature != "var _hp := 100" {
 		t.Errorf("setget var = %+v", hp)
 	}
-	if !hasRelation(hp, pkgParser.Relation{TargetName: "clampi", Type: pkgParser.RelCalls}) {
+	if !hasRelation(hp, pkgParser.Relation{TargetName: "clampi", Type: pkgParser.RelCalls, TargetQualifiedName: "CharacterBody2D.clampi"}) {
 		t.Errorf("setter calls not collected: %v", hp.Relations)
 	}
 	if byQualified(t, symbols, "Player.debug").Metadata["is_exported"] != false {
@@ -226,9 +226,10 @@ func TestFunctionRelations(t *testing.T) {
 		t.Errorf("signature = %q", move.Signature)
 	}
 	for _, want := range []pkgParser.Relation{
-		// Bare calls are calls on the script itself.
-		{TargetName: "move_and_slide", Type: pkgParser.RelCalls},
-		{TargetName: "_take_damage", Type: pkgParser.RelCalls},
+		// Bare calls target the script when it declares the method, else
+		// its base class; never a same-named method elsewhere.
+		{TargetName: "move_and_slide", Type: pkgParser.RelCalls, TargetQualifiedName: "CharacterBody2D.move_and_slide"},
+		{TargetName: "_take_damage", Type: pkgParser.RelCalls, TargetQualifiedName: "Player._take_damage"},
 		// Receivers that name a class resolve by qualified name.
 		{TargetName: "heal", Type: pkgParser.RelCalls, Receiver: "self", TargetQualifiedName: "Player.heal"},
 		{TargetName: "move", Type: pkgParser.RelCalls, Receiver: "super", TargetQualifiedName: "CharacterBody2D.move"},
@@ -248,9 +249,9 @@ func TestFunctionRelations(t *testing.T) {
 
 	damage := byQualified(t, symbols, "Player._take_damage")
 	for _, want := range []pkgParser.Relation{
-		{TargetName: "health_changed", Type: pkgParser.RelCalls},
-		{TargetName: "died", Type: pkgParser.RelCalls},
-		{TargetName: "_on_button_pressed", Type: pkgParser.RelCalls},
+		{TargetName: "health_changed", Type: pkgParser.RelCalls, TargetQualifiedName: "Player.health_changed"},
+		{TargetName: "died", Type: pkgParser.RelCalls, TargetQualifiedName: "Player.died"},
+		{TargetName: "_on_button_pressed", Type: pkgParser.RelCalls, TargetQualifiedName: "Player._on_button_pressed"},
 	} {
 		if !hasRelation(damage, want) {
 			t.Errorf("_take_damage missing %+v; got %+v", want, damage.Relations)
@@ -291,14 +292,123 @@ func TestGodot3Syntax(t *testing.T) {
 		t.Error("onready var not marked onready")
 	}
 	hp := byQualified(t, symbols, "old.hp")
-	for _, accessor := range []string{"set_hp", "get_hp"} {
-		if !hasRelation(hp, pkgParser.Relation{TargetName: accessor, Type: pkgParser.RelCalls}) {
+	for accessor, target := range map[string]string{"set_hp": "old.set_hp", "get_hp": "KinematicBody2D.get_hp"} {
+		if !hasRelation(hp, pkgParser.Relation{TargetName: accessor, Type: pkgParser.RelCalls, TargetQualifiedName: target}) {
 			t.Errorf("setget missing %s: %v", accessor, hp.Relations)
 		}
 	}
 	ready := byQualified(t, symbols, "old._ready")
-	if !hasRelation(ready, pkgParser.Relation{TargetName: "_on_pressed", Type: pkgParser.RelCalls}) {
+	if !hasRelation(ready, pkgParser.Relation{TargetName: "_on_pressed", Type: pkgParser.RelCalls, TargetQualifiedName: "KinematicBody2D._on_pressed"}) {
 		t.Errorf("string-form connect handler missing: %v", ready.Relations)
+	}
+}
+
+// Calls on node paths, get_node() results or other expressions are member
+// calls: they keep their receiver and must not resolve to a same-named method
+// of the script itself.
+func TestNonIdentifierReceiversStayMemberCalls(t *testing.T) {
+	src := "extends Node\n\nfunc play():\n\t$AnimationPlayer.play(\"run\")\n\tget_node(\"Sfx\").stop()\n\titems[0].use()\n\tget_tree().create_timer(1.0)\n\n" +
+		"func stop():\n\tpass\n\nfunc use():\n\tpass\n"
+	play := byQualified(t, analyze(t, "music.gd", src), "music.play")
+	for _, want := range []pkgParser.Relation{
+		{TargetName: "play", Type: pkgParser.RelCalls, Receiver: "$AnimationPlayer"},
+		{TargetName: "stop", Type: pkgParser.RelCalls, Receiver: `get_node("Sfx")`},
+		{TargetName: "use", Type: pkgParser.RelCalls, Receiver: "items[0]"},
+		{TargetName: "create_timer", Type: pkgParser.RelCalls, Receiver: "get_tree()"},
+	} {
+		if !hasRelation(play, want) {
+			t.Errorf("missing %+v; got %+v", want, play.Relations)
+		}
+	}
+}
+
+// A bare call inside the script must not target a same-named method of an
+// inner class, and an inner class's bare call must not target the script.
+func TestBareCallsStayInTheirClass(t *testing.T) {
+	src := "extends Node2D\n\nfunc _process(delta):\n\tupdate()\n\nfunc helper():\n\tpass\n\n" +
+		"class Item:\n\tfunc update():\n\t\tpass\n\nclass Other extends Item:\n\tfunc go():\n\t\thelper()\n\t\tupdate()\n"
+	symbols := analyze(t, "outer.gd", src)
+	process := byQualified(t, symbols, "outer._process")
+	if !hasRelation(process, pkgParser.Relation{TargetName: "update", Type: pkgParser.RelCalls, TargetQualifiedName: "Node2D.update"}) {
+		t.Errorf("_process update(): %+v", process.Relations)
+	}
+	goSym := byQualified(t, symbols, "outer.Other.go")
+	for _, want := range []pkgParser.Relation{
+		// Other does not declare helper; its base Item does not either.
+		{TargetName: "helper", Type: pkgParser.RelCalls, TargetQualifiedName: "outer.Item.helper"},
+		// Inherited from the inner base class.
+		{TargetName: "update", Type: pkgParser.RelCalls, TargetQualifiedName: "outer.Item.update"},
+	} {
+		if !hasRelation(goSym, want) {
+			t.Errorf("go missing %+v; got %+v", want, goSym.Relations)
+		}
+	}
+}
+
+func TestReceiverClassChains(t *testing.T) {
+	src := "class_name Foo\nextends Node\n\nfunc run():\n\tInner.make()\n\tInner.Deep.go()\n\tOtherClass.Sub.go()\n\tVector2.from_angle(1.0)\n\n" +
+		"class Inner:\n\tstatic func make():\n\t\tpass\n\tclass Deep:\n\t\tstatic func go():\n\t\t\tpass\n"
+	run := byQualified(t, analyze(t, "foo.gd", src), "Foo.run")
+	for _, want := range []pkgParser.Relation{
+		{TargetName: "make", Type: pkgParser.RelCalls, Receiver: "Inner", TargetQualifiedName: "Foo.Inner.make"},
+		{TargetName: "go", Type: pkgParser.RelCalls, Receiver: "Inner.Deep", TargetQualifiedName: "Foo.Inner.Deep.go"},
+		{TargetName: "go", Type: pkgParser.RelCalls, Receiver: "OtherClass.Sub", TargetQualifiedName: "OtherClass.Sub.go"},
+		{TargetName: "from_angle", Type: pkgParser.RelCalls, Receiver: "Vector2"},
+	} {
+		if !hasRelation(run, want) {
+			t.Errorf("missing %+v; got %+v", want, run.Relations)
+		}
+	}
+}
+
+func TestBareConnectRecordsHandler(t *testing.T) {
+	src := "extends Node\n\nfunc _ready():\n\tconnect(\"died\", self, \"_on_died\")\n\tconnect(\"hit\", _on_hit)\n\n" +
+		"func _on_died():\n\tpass\n\nfunc _on_hit():\n\tpass\n"
+	ready := byQualified(t, analyze(t, "e.gd", src), "e._ready")
+	for _, handler := range []string{"_on_died", "_on_hit"} {
+		if !hasRelation(ready, pkgParser.Relation{TargetName: handler, Type: pkgParser.RelCalls, TargetQualifiedName: "e." + handler}) {
+			t.Errorf("missing handler %s: %+v", handler, ready.Relations)
+		}
+	}
+}
+
+func TestDocComments(t *testing.T) {
+	src := "extends Node\r\n## Class doc.\r\n\r\n## The speed.\r\n@export_range(0, 10)\r\nvar speed := 1\r\n" +
+		"var a = 1 ## Inline doc for a.\r\nvar b = 2\r\n\r\n## Networked.\r\n@rpc(\"any_peer\")\r\nfunc net():\r\n\tpass\r\n" +
+		"\r\nsignal hit(\r\n\tamount: int,\r\n\tsource: Node\r\n)\r\n"
+	symbols := analyze(t, "docs.gd", src)
+	if got := symbols[0].Docstring; got != "Class doc." {
+		t.Errorf("class doc = %q", got)
+	}
+	for qn, want := range map[string]string{
+		"docs.speed": "The speed.",
+		"docs.a":     "Inline doc for a.",
+		"docs.b":     "",
+		"docs.net":   "Networked.",
+	} {
+		if got := byQualified(t, symbols, qn).Docstring; got != want {
+			t.Errorf("%s doc = %q, want %q", qn, got, want)
+		}
+	}
+	if got := byQualified(t, symbols, "docs.net").Metadata["annotations"].([]string); len(got) != 1 || got[0] != "rpc" {
+		t.Errorf("net annotations = %v", got)
+	}
+	if got := byQualified(t, symbols, "docs.hit").Signature; got != "signal hit(amount: int, source: Node)" {
+		t.Errorf("multi-line signal signature = %q", got)
+	}
+}
+
+func TestAnnotationOwnership(t *testing.T) {
+	src := "@tool\n@abstract\nclass_name Shape\nextends Node\n\n@abstract\nfunc area() -> float:\n\treturn 0.0\n\n@export_range(0, 10)\nvar x = 1\n"
+	symbols := analyze(t, "shape.gd", src)
+	if got := strings.Join(symbols[0].Metadata["annotations"].([]string), ","); got != "tool,abstract" {
+		t.Errorf("script annotations = %s", got)
+	}
+	if got := strings.Join(byQualified(t, symbols, "Shape.area").Metadata["annotations"].([]string), ","); got != "abstract" {
+		t.Errorf("area annotations = %s", got)
+	}
+	if got := strings.Join(byQualified(t, symbols, "Shape.x").Metadata["annotations"].([]string), ","); got != "export_range" {
+		t.Errorf("x annotations = %s", got)
 	}
 }
 
@@ -328,7 +438,7 @@ func TestScene(t *testing.T) {
 		t.Fatalf("got %d symbols, want 1", len(symbols))
 	}
 	scene := symbols[0]
-	if scene.Name != "player" || scene.Type != "scene" {
+	if scene.Name != "player.tscn" || scene.QualifiedName != "player.tscn" || scene.Type != "scene" || scene.Package != "player" {
 		t.Fatalf("scene = %+v", scene)
 	}
 	if scene.Signature != "scene player.tscn root=Player (CharacterBody2D)" {
@@ -348,9 +458,11 @@ func TestScene(t *testing.T) {
 		t.Errorf("sub-resource data leaked into content:\n%s", scene.Content)
 	}
 	for _, want := range []pkgParser.Relation{
+		// No project.godot: scripts are known by file name only.
 		{TargetName: "player", Type: pkgParser.RelDependency},
-		{TargetName: "enemy", Type: pkgParser.RelDependency},
-		{TargetName: "_on_enemy_died", Type: pkgParser.RelCalls},
+		{TargetName: "enemy.tscn", Type: pkgParser.RelDependency},
+		// The handler belongs to the script on the target node (the root).
+		{TargetName: "_on_enemy_died", Type: pkgParser.RelCalls, TargetQualifiedName: "player._on_enemy_died"},
 	} {
 		if !hasRelation(scene, want) {
 			t.Errorf("scene missing %+v; got %+v", want, scene.Relations)
@@ -401,12 +513,87 @@ func TestAnalyzeDirectory(t *testing.T) {
 		}
 	}
 	got := strings.Join(classes, ",")
-	for _, want := range []string{"a", "b", "c", "plugin", ".hidden"} {
+	for _, want := range []string{"a", "b.tscn", "c", "plugin", ".hidden"} {
 		if !strings.Contains(","+got+",", ","+want+",") {
 			t.Errorf("missing %s in %s", want, got)
 		}
 	}
 	if strings.Contains(got, "cache") {
 		t.Errorf("hidden .godot directory was analyzed: %s", got)
+	}
+}
+
+// Inside a project, a scene names attached scripts by their class_name, and a
+// connection targets the handler of the script on the target node, so a
+// handler name shared by several scripts still resolves to the right one.
+func TestSceneResolvesScriptClassNames(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"project.godot":    "config_version=5\n",
+		"actors/player.gd": "@tool\nclass_name Player\nextends CharacterBody2D\n",
+		"ui/hud.gd":        "extends Control\n",
+		"levels/level.tscn": `[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://actors/player.gd" id="1"]
+[ext_resource type="Script" path="res://ui/hud.gd" id="2"]
+
+[node name="Level" type="Node2D"]
+
+[node name="Player" type="CharacterBody2D" parent="."]
+script = ExtResource("1")
+
+[node name="HUD" type="Control" parent="."]
+script = ExtResource("2")
+
+[node name="Timer" type="Timer" parent="."]
+
+[connection signal="timeout" from="Timer" to="Player" method="_on_timer_timeout"]
+[connection signal="timeout" from="Timer" to="HUD" method="_on_timer_timeout"]
+[connection signal="ready" from="." to="." method="_on_ready"]
+`,
+	}
+	for name, content := range files {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := NewAnalyzer().Analyze(context.Background(), filepath.Join(root, "levels", "level.tscn"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scene := res.Symbols[0]
+	for _, want := range []pkgParser.Relation{
+		{TargetName: "Player", Type: pkgParser.RelDependency},
+		{TargetName: "hud", Type: pkgParser.RelDependency},
+		{TargetName: "_on_timer_timeout", Type: pkgParser.RelCalls, TargetQualifiedName: "Player._on_timer_timeout"},
+		{TargetName: "_on_timer_timeout", Type: pkgParser.RelCalls, TargetQualifiedName: "hud._on_timer_timeout"},
+		// The root has no script in this scene: name-only.
+		{TargetName: "_on_ready", Type: pkgParser.RelCalls},
+	} {
+		if !hasRelation(scene, want) {
+			t.Errorf("missing %+v; got %+v", want, scene.Relations)
+		}
+	}
+}
+
+// Embedded resource data is serialized as one huge line; it must not reach
+// the parser (it overflowed the stack on large scenes).
+func TestSceneWithLargeEmbeddedData(t *testing.T) {
+	var data strings.Builder
+	data.WriteString("[gd_scene load_steps=2 format=3]\n\n[sub_resource type=\"ArrayMesh\" id=\"1\"]\n_surfaces = [{\n\"vertex_data\": PackedByteArray(")
+	for i := 0; i < 1_000_000; i++ {
+		data.WriteString("255, ")
+	}
+	data.WriteString("0)\n}]\n\n[node name=\"Root\" type=\"Node3D\"]\n\n[node name=\"Mesh\" type=\"MeshInstance3D\" parent=\".\"]\nmesh = SubResource(\"1\")\n")
+	symbols := analyze(t, "big.tscn", data.String())
+	if len(symbols) != 1 || symbols[0].Metadata["root_node"] != "Root" || symbols[0].EndLine != 12 {
+		t.Fatalf("symbols = %+v", symbols)
+	}
+	if !strings.Contains(symbols[0].Content, "Mesh (MeshInstance3D)") {
+		t.Errorf("content = %s", symbols[0].Content)
 	}
 }

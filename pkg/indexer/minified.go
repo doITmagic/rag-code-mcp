@@ -75,8 +75,8 @@ func isLowValueConfigOrKeyMaterial(path string) bool {
 //  2. Content density  — reads ≤256 KiB, counts newlines.
 //
 // Godot scenes (.tscn) skip the density check: embedded meshes and textures
-// are serialized as very long lines, but the analyzer only keeps the node
-// tree and connections, so the scene is still worth indexing.
+// are serialized as very long lines, but the analyzer parses only section
+// headers and script lines, so the node tree is still cheap to index.
 func isMinifiedOrVendored(path string) bool {
 	if matchesMinifiedName(path) {
 		return true

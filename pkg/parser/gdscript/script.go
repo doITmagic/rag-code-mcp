@@ -2,6 +2,7 @@ package gdscript
 
 import (
 	"strings"
+	"unicode"
 
 	"github.com/odvcencio/gotreesitter"
 
@@ -25,9 +26,12 @@ var builtinTypes = map[string]struct{}{
 // classScope is the class that owns the members being extracted: the script
 // itself, or an inner class declared with `class`.
 type classScope struct {
-	name      string
-	qualified string
-	extends   string
+	name        string
+	qualified   string
+	extends     string
+	extendsPath string
+	// members are the methods and signals the class declares itself.
+	members map[string]bool
 }
 
 type scriptParser struct {
@@ -36,6 +40,9 @@ type scriptParser struct {
 	path    string
 	pkg     string
 	symbols []pkgParser.Symbol
+	// inner maps an inner class name to its qualified name ("" when two
+	// inner classes share the name).
+	inner map[string]string
 }
 
 func (a *Analyzer) parseScript(source []byte, path string) ([]pkgParser.Symbol, error) {
@@ -85,6 +92,9 @@ func (sp *scriptParser) parseFile(root *gotreesitter.Node) []pkgParser.Symbol {
 		case "extends_statement":
 			extends, extendsPath = sp.extendsTarget(child)
 		case "annotation":
+			if !sp.fileLevelAnnotation(root, i) {
+				continue
+			}
 			name := sp.annotationName(child)
 			if name == "tool" {
 				isTool = true
@@ -103,7 +113,9 @@ func (sp *scriptParser) parseFile(root *gotreesitter.Node) []pkgParser.Symbol {
 		name = fileStem(sp.path)
 	}
 	sp.pkg = name
-	scope := classScope{name: name, qualified: name, extends: extends}
+	sp.inner = map[string]string{}
+	sp.collectInnerClasses(root, name)
+	scope := classScope{name: name, qualified: name, extends: extends, extendsPath: extendsPath}
 
 	var sig strings.Builder
 	if className != "" {
@@ -164,7 +176,11 @@ func (sp *scriptParser) parseBody(body *gotreesitter.Node, scope classScope) str
 		docEndRow   = -2
 		pendingAnno []string
 		seenMember  bool
+		// The last member symbol and the row it ends on, for inline docs.
+		lastIdx    = -1
+		lastEndRow = -1
 	)
+	scope.members = sp.declared(body)
 	flushDoc := func() {
 		if len(docLines) > 0 && !seenMember && len(classDoc) == 0 {
 			classDoc = docLines
@@ -191,15 +207,27 @@ func (sp *scriptParser) parseBody(body *gotreesitter.Node, scope classScope) str
 				continue
 			}
 			row := int(child.StartPoint().Row)
+			if row == lastEndRow {
+				// `var a = 1 ## doc` documents the member on its own line.
+				if lastIdx >= 0 && sp.symbols[lastIdx].Docstring == "" {
+					sp.symbols[lastIdx].Docstring = line
+				}
+				continue
+			}
 			if row != docEndRow+1 {
 				flushDoc()
 			}
 			docLines = append(docLines, line)
 			docEndRow = row
 		case "annotation":
+			// A doc block stays attached through the annotation lines
+			// between it and its member (`## doc` / `@export_range(...)` / `var`).
+			if len(docLines) > 0 && int(child.StartPoint().Row) == docEndRow+1 {
+				docEndRow = int(child.EndPoint().Row)
+			}
 			// A standalone annotation line (e.g. `@rpc` above a func) applies
 			// to the next member; file-level ones were read by parseFile.
-			if seenMember || !isFileAnnotation(sp.annotationName(child)) {
+			if !sp.fileLevelAnnotation(body, i) {
 				pendingAnno = append(pendingAnno, sp.annotationName(child))
 			}
 		case "function_definition", "constructor_definition":
@@ -220,6 +248,13 @@ func (sp *scriptParser) parseBody(body *gotreesitter.Node, scope classScope) str
 		case "class_definition":
 			sp.addInnerClass(child, scope, takeDoc(child))
 			pendingAnno = nil
+			lastIdx, lastEndRow = -1, -1
+			continue
+		default:
+			continue
+		}
+		if t := sp.typ(child); t != "comment" && t != "annotation" {
+			lastIdx, lastEndRow = len(sp.symbols)-1, int(child.EndPoint().Row)
 		}
 	}
 	flushDoc()
@@ -234,12 +269,73 @@ func isFileAnnotation(name string) bool {
 	return false
 }
 
+// fileLevelAnnotation reports whether the standalone annotation at body's
+// child i applies to the script rather than to the next member: a script
+// annotation (`@tool`, `@icon`, `@abstract`, ...) followed by class_name /
+// extends or by nothing. `@abstract` above a func belongs to the func.
+func (sp *scriptParser) fileLevelAnnotation(body *gotreesitter.Node, i int) bool {
+	if !isFileAnnotation(sp.annotationName(body.Child(i))) {
+		return false
+	}
+	for j := i + 1; j < body.ChildCount(); j++ {
+		switch sp.typ(body.Child(j)) {
+		case "comment", "annotation":
+			continue
+		case "class_name_statement", "extends_statement", "expression_statement":
+			return true
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// declared returns the methods and signals a class body declares itself.
+func (sp *scriptParser) declared(body *gotreesitter.Node) map[string]bool {
+	names := map[string]bool{}
+	for i := 0; i < body.ChildCount(); i++ {
+		c := body.Child(i)
+		switch sp.typ(c) {
+		case "function_definition", "constructor_definition", "signal_statement":
+			if name := sp.text(sp.field(c, "name")); name != "" {
+				names[name] = true
+			} else if sp.typ(c) == "constructor_definition" {
+				names["_init"] = true
+			}
+		}
+	}
+	return names
+}
+
+// collectInnerClasses records every inner class under n by name.
+func (sp *scriptParser) collectInnerClasses(n *gotreesitter.Node, qualified string) {
+	for i := 0; i < n.ChildCount(); i++ {
+		c := n.Child(i)
+		if sp.typ(c) != "class_definition" {
+			continue
+		}
+		name := sp.text(sp.field(c, "name"))
+		if name == "" {
+			continue
+		}
+		q := qualified + "." + name
+		if _, dup := sp.inner[name]; dup {
+			sp.inner[name] = ""
+		} else {
+			sp.inner[name] = q
+		}
+		if body := sp.field(c, "body"); body != nil {
+			sp.collectInnerClasses(body, q)
+		}
+	}
+}
+
 // docCommentLine strips the `##` marker of a GDScript documentation comment.
 func docCommentLine(comment string) (string, bool) {
 	if !strings.HasPrefix(comment, "##") {
 		return "", false
 	}
-	line := strings.TrimPrefix(comment, "##")
+	line := strings.TrimRight(strings.TrimPrefix(comment, "##"), "\r")
 	return strings.TrimPrefix(line, " "), true
 }
 
@@ -363,7 +459,9 @@ func (sp *scriptParser) addSignal(n *gotreesitter.Node, scope classScope, doc st
 		return
 	}
 	sym := sp.newMember(n, name, "signal", scope, doc)
-	sym.Signature = sp.firstLine(n)
+	// Signals have no body, so a multi-line declaration collapses to one line.
+	sym.Signature = strings.Join(strings.Fields(sp.text(n)), " ")
+	sym.Signature = strings.ReplaceAll(strings.ReplaceAll(sym.Signature, "( ", "("), " )", ")")
 	sym.Metadata["gdscript_kind"] = "signal"
 	rels := &relationSet{}
 	if params := sp.field(n, "parameters"); params != nil {
@@ -470,7 +568,8 @@ func (sp *scriptParser) addVariable(n *gotreesitter.Node, scope classScope, doc 
 		// Godot 3 `setget set_hp, get_hp` names the accessor methods.
 		for i := 0; i < setget.ChildCount(); i++ {
 			if c := setget.Child(i); sp.typ(c) == "setter" || sp.typ(c) == "getter" {
-				rels.add(pkgParser.Relation{TargetName: strings.TrimSpace(sp.text(c)), Type: pkgParser.RelCalls})
+				accessor := strings.TrimSpace(sp.text(c))
+				rels.add(pkgParser.Relation{TargetName: accessor, Type: pkgParser.RelCalls, TargetQualifiedName: sp.selfTarget(scope, accessor)})
 			}
 		}
 	}
@@ -492,7 +591,7 @@ func (sp *scriptParser) addInnerClass(n *gotreesitter.Node, scope classScope, do
 	if ext := sp.field(n, "extends"); ext != nil {
 		extends, extendsPath := sp.extendsTarget(ext)
 		sym.Metadata["extends"] = extends
-		inner.extends = extends
+		inner.extends, inner.extendsPath = extends, extendsPath
 		switch {
 		case extends != "":
 			sym.Relations = append(sym.Relations, pkgParser.Relation{TargetName: extends, Type: pkgParser.RelInheritance})
@@ -560,54 +659,61 @@ func (sp *scriptParser) addType(name string, rels *relationSet) {
 	rels.add(pkgParser.Relation{TargetName: name, Type: pkgParser.RelUsesType})
 }
 
-// collectCalls records calls made under n. Bare calls (`foo()`) are calls on
-// the script itself and resolve by name. Member calls keep their receiver
-// and, when the receiver names a class, the qualified target so the indexer
-// can resolve them: `self.foo()` targets the enclosing class, `super.foo()`
-// the base class, `Utils.foo()` the class_name Utils. Other receivers
-// (`sprite.play()`) are left unresolved.
+// collectCalls records calls made under n, each with the qualified name it
+// resolves to when that is known statically, so the indexer never binds a
+// call to a same-named method of an unrelated class:
+//   - `foo()` and `self.foo()` target the enclosing class when it declares
+//     foo, else its base class (`<Base>.foo`).
+//   - `super.foo()` targets the base class.
+//   - `Utils.foo()`, `Inner.foo()` target that class_name / inner class.
+//   - Any other receiver (`sprite.play()`, `$Anim.play()`,
+//     `get_node("x").stop()`) keeps the receiver and stays unresolved.
+//
 // Signal emissions also count as calls to the signal (`died.emit()`,
 // `emit_signal("died")`), and `sig.connect(_on_handler)` as a call to the
 // handler, so find-usages links handlers to where they are wired up.
 func (sp *scriptParser) collectCalls(n *gotreesitter.Node, scope classScope, rels *relationSet) {
+	self := func(name string) {
+		rels.add(pkgParser.Relation{TargetName: name, Type: pkgParser.RelCalls, TargetQualifiedName: sp.selfTarget(scope, name)})
+	}
 	switch sp.typ(n) {
 	case "call":
 		if fn := n.Child(0); fn != nil && sp.typ(fn) == "identifier" {
 			name := sp.text(fn)
-			rels.add(pkgParser.Relation{TargetName: name, Type: pkgParser.RelCalls})
-			if name == "emit_signal" {
+			self(name)
+			switch name {
+			case "emit_signal":
 				if sig := sp.firstStringArg(n); sig != "" {
-					rels.add(pkgParser.Relation{TargetName: sig, Type: pkgParser.RelCalls})
+					self(sig)
+				}
+			case "connect":
+				if handler := sp.connectHandler(n); handler != "" {
+					self(handler)
 				}
 			}
 		}
 	case "attribute_call":
 		if fn := n.Child(0); fn != nil && sp.typ(fn) == "identifier" {
 			name := sp.text(fn)
-			receiver := ""
-			if prev := n.PrevSibling(); prev != nil && sp.typ(prev) == "." {
-				if recv := prev.PrevSibling(); recv != nil && sp.typ(recv) == "identifier" {
-					receiver = sp.text(recv)
-				}
-			}
+			receiver := sp.receiver(n)
 			rels.add(pkgParser.Relation{
 				TargetName:          name,
 				Type:                pkgParser.RelCalls,
 				Receiver:            receiver,
-				TargetQualifiedName: receiverTarget(receiver, scope, name),
+				TargetQualifiedName: sp.receiverTarget(receiver, scope, name),
 			})
 			switch {
-			case name == "new" && receiver != "":
+			case name == "new" && isDottedName(receiver):
 				sp.addType(receiver, rels)
-			case name == "emit" && receiver != "":
-				rels.add(pkgParser.Relation{TargetName: receiver, Type: pkgParser.RelCalls})
+			case name == "emit" && isIdentifier(receiver):
+				self(receiver)
 			case name == "emit_signal":
-				if sig := sp.firstStringArg(n); sig != "" {
-					rels.add(pkgParser.Relation{TargetName: sig, Type: pkgParser.RelCalls})
+				if sig := sp.firstStringArg(n); sig != "" && receiver == "self" {
+					self(sig)
 				}
 			case name == "connect":
 				if handler := sp.connectHandler(n); handler != "" {
-					rels.add(pkgParser.Relation{TargetName: handler, Type: pkgParser.RelCalls})
+					self(handler)
 				}
 			}
 		}
@@ -617,22 +723,101 @@ func (sp *scriptParser) collectCalls(n *gotreesitter.Node, scope classScope, rel
 	}
 }
 
-// receiverTarget returns the qualified name a member call resolves to when
-// its receiver identifies a class, or "" when it does not.
-func receiverTarget(receiver string, scope classScope, method string) string {
-	switch {
-	case receiver == "self":
+// receiver returns the source of what an attribute_call is called on: the
+// part of the enclosing attribute chain before its dot (`sprite`,
+// `$Anim`, `get_tree()`, `Outer.Inner`), whitespace-collapsed.
+func (sp *scriptParser) receiver(call *gotreesitter.Node) string {
+	dot := call.PrevSibling()
+	parent := call.Parent()
+	if dot == nil || sp.typ(dot) != "." || parent == nil {
+		return ""
+	}
+	recv := strings.Join(strings.Fields(string(sp.src[parent.StartByte():dot.StartByte()])), " ")
+	if len(recv) > 120 {
+		recv = recv[:120]
+	}
+	return recv
+}
+
+// selfTarget returns the qualified name of a call on the enclosing class.
+func (sp *scriptParser) selfTarget(scope classScope, method string) string {
+	if scope.members[method] {
 		return scope.qualified + "." + method
-	case receiver == "super":
-		if scope.extends != "" {
-			return scope.extends + "." + method
-		}
-	case receiver != "" && receiver[0] >= 'A' && receiver[0] <= 'Z':
-		if _, builtin := builtinTypes[receiver]; !builtin {
-			return receiver + "." + method
-		}
+	}
+	if base := sp.baseTarget(scope, method); base != "" {
+		return base
+	}
+	// Not declared here and no known base: a qualified name that matches
+	// nothing keeps the call unresolved rather than bound by name alone.
+	return scope.qualified + "." + method
+}
+
+// baseTarget returns the qualified name of method on the class's base.
+func (sp *scriptParser) baseTarget(scope classScope, method string) string {
+	switch {
+	case scope.extends != "":
+		return sp.classTarget(scope.extends, method)
+	case scope.extendsPath != "":
+		return fileStem(scope.extendsPath) + "." + method
 	}
 	return ""
+}
+
+func (sp *scriptParser) receiverTarget(receiver string, scope classScope, method string) string {
+	switch {
+	case receiver == "self":
+		return sp.selfTarget(scope, method)
+	case receiver == "super":
+		return sp.baseTarget(scope, method)
+	case isDottedName(receiver) && receiver[0] >= 'A' && receiver[0] <= 'Z':
+		return sp.classTarget(receiver, method)
+	}
+	return ""
+}
+
+// classTarget qualifies method on a class reference: an inner class of this
+// script (`Inner`, `Inner.Deep`) or a global class_name. Built-in engine
+// types resolve to nothing.
+func (sp *scriptParser) classTarget(class, method string) string {
+	first, rest, _ := strings.Cut(class, ".")
+	if q, ok := sp.inner[first]; ok {
+		if q == "" {
+			return ""
+		}
+		if rest != "" {
+			q += "." + rest
+		}
+		return q + "." + method
+	}
+	if _, builtin := builtinTypes[class]; builtin {
+		return ""
+	}
+	return class + "." + method
+}
+
+func isIdentifier(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		if r != '_' && !unicode.IsLetter(r) && (i == 0 || !unicode.IsDigit(r)) {
+			return false
+		}
+	}
+	return true
+}
+
+// isDottedName reports whether s is a chain of identifiers (`Foo.Bar`).
+func isDottedName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, part := range strings.Split(s, ".") {
+		if !isIdentifier(part) {
+			return false
+		}
+	}
+	return true
 }
 
 func (sp *scriptParser) arguments(call *gotreesitter.Node) []*gotreesitter.Node {

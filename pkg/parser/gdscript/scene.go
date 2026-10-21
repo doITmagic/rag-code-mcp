@@ -1,8 +1,12 @@
 package gdscript
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
+	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/odvcencio/gotreesitter"
@@ -30,18 +34,53 @@ type sceneConnection struct {
 	Method string
 }
 
+// maxOutlineLine bounds the lines outlineSource keeps; headers and
+// `script = ExtResource(...)` lines are far shorter.
+const maxOutlineLine = 16 << 10
+
 // parseScene summarises a text scene (.tscn) as one symbol: its node tree,
 // the scripts attached to nodes, instanced sub-scenes and signal connections.
 // The raw file is mostly serialized property data, so the symbol content is
-// a readable outline rather than the source. Relations point at the attached
-// scripts and instanced scenes (by file name) and at the handler methods of
+// a readable outline rather than the source. Relations point at the classes
+// of attached scripts, at instanced scenes and at the handler methods of
 // signal connections, linking scenes to their scripts.
 func (a *Analyzer) parseScene(source []byte, path string) ([]pkgParser.Symbol, error) {
 	var symbols []pkgParser.Symbol
-	err := a.parse(source, path, func(root *gotreesitter.Node, lang *gotreesitter.Language) {
-		symbols = sceneSymbols(root, lang, source, path)
+	outline := outlineSource(source)
+	err := a.parse(outline, path, func(root *gotreesitter.Node, lang *gotreesitter.Language) {
+		symbols = sceneSymbols(root, lang, outline, path)
 	})
 	return symbols, err
+}
+
+// outlineSource keeps only what the outline reads, section headers and
+// `script = ...` lines, and blanks every other line so line numbers stay put.
+// Embedded resources (decimal PackedByteArray meshes, tile data) are
+// serialized as megabyte-long lines: parsing them cost seconds and gigabytes
+// per scene and overflowed the stack on a 16 MB one.
+func outlineSource(src []byte) []byte {
+	out := make([]byte, 0, 4096)
+	for len(src) > 0 {
+		line, rest, found := bytes.Cut(src, []byte{'\n'})
+		t := bytes.TrimSpace(line)
+		if len(t) <= maxOutlineLine && (isSectionHeader(t) || isScriptProperty(t)) {
+			out = append(out, t...)
+		}
+		if found {
+			out = append(out, '\n')
+		}
+		src = rest
+	}
+	return out
+}
+
+func isSectionHeader(line []byte) bool {
+	return bytes.HasPrefix(line, []byte("[")) && bytes.HasSuffix(line, []byte("]"))
+}
+
+func isScriptProperty(line []byte) bool {
+	rest, ok := bytes.CutPrefix(line, []byte("script"))
+	return ok && bytes.HasPrefix(bytes.TrimLeft(rest, " \t"), []byte("="))
 }
 
 func sceneSymbols(root *gotreesitter.Node, lang *gotreesitter.Language, src []byte, path string) []pkgParser.Symbol {
@@ -85,7 +124,11 @@ func sceneSymbols(root *gotreesitter.Node, lang *gotreesitter.Language, src []by
 		return nil
 	}
 
-	name := fileStem(path)
+	// Named with its extension so player.tscn never collides with the class
+	// of a player.gd that has no class_name.
+	name := filepath.Base(path)
+	classes := newScriptClasses(path)
+	nodeClass := map[string]string{}
 	rels := &relationSet{}
 	var scripts, instances []string
 	var content strings.Builder
@@ -105,13 +148,15 @@ func sceneSymbols(root *gotreesitter.Node, lang *gotreesitter.Language, src []by
 			line += " instance=" + res.Path
 			meta["instance"] = res.Path
 			instances = append(instances, res.Path)
-			rels.add(pkgParser.Relation{TargetName: fileStem(res.Path), Type: pkgParser.RelDependency})
+			rels.add(pkgParser.Relation{TargetName: filepath.Base(res.Path), Type: pkgParser.RelDependency})
 		}
 		if res, ok := resources[n.Script]; ok {
 			line += " script=" + res.Path
 			meta["script"] = res.Path
 			scripts = append(scripts, res.Path)
-			rels.add(pkgParser.Relation{TargetName: fileStem(res.Path), Type: pkgParser.RelDependency})
+			class := classes.of(res.Path)
+			nodeClass[n.Path] = class
+			rels.add(pkgParser.Relation{TargetName: class, Type: pkgParser.RelDependency})
 		}
 		if len(n.Groups) > 0 {
 			line += " groups=" + strings.Join(n.Groups, ",")
@@ -135,9 +180,13 @@ func sceneSymbols(root *gotreesitter.Node, lang *gotreesitter.Language, src []by
 	for _, c := range connections {
 		fmt.Fprintf(&content, "  %s.%s -> %s.%s()\n", display(c.From), c.Signal, display(c.To), c.Method)
 		connMeta = append(connMeta, map[string]any{"signal": c.Signal, "from": c.From, "to": c.To, "method": c.Method})
-		// No receiver: the handler lives in a script attached to another
-		// file, so it can only resolve by name.
-		rels.add(pkgParser.Relation{TargetName: c.Method, Type: pkgParser.RelCalls})
+		// The handler is a method of the script attached to the target node.
+		// Without one in this scene the call can only resolve by name.
+		target := ""
+		if class, ok := nodeClass[display(c.To)]; ok {
+			target = class + "." + c.Method
+		}
+		rels.add(pkgParser.Relation{TargetName: c.Method, Type: pkgParser.RelCalls, TargetQualifiedName: target})
 	}
 
 	signature := "scene " + filepath.Base(path)
@@ -154,7 +203,7 @@ func sceneSymbols(root *gotreesitter.Node, lang *gotreesitter.Language, src []by
 		Name:          name,
 		QualifiedName: name,
 		Type:          "scene",
-		Package:       name,
+		Package:       fileStem(path),
 		Content:       content.String(),
 		Signature:     signature,
 		StartLine:     1,
@@ -248,4 +297,61 @@ func splitList(value string) []string {
 		}
 	}
 	return out
+}
+
+var classNameRe = regexp.MustCompile(`^\s*(?:@\w+(?:\([^)]*\))?\s+)*class_name\s+([A-Za-z_][A-Za-z0-9_]*)`)
+
+// scriptClasses maps res:// script paths to the class their symbols are
+// named by: the script's class_name, read from the file under the project
+// root (the directory holding project.godot), or else its file name.
+type scriptClasses struct {
+	projectRoot string
+	cache       map[string]string
+}
+
+func newScriptClasses(scenePath string) *scriptClasses {
+	sc := &scriptClasses{cache: map[string]string{}}
+	dir := filepath.Dir(scenePath)
+	for i := 0; i < 64; i++ {
+		if _, err := os.Stat(filepath.Join(dir, "project.godot")); err == nil {
+			sc.projectRoot = dir
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return sc
+}
+
+func (sc *scriptClasses) of(resPath string) string {
+	if class, ok := sc.cache[resPath]; ok {
+		return class
+	}
+	class := fileStem(resPath)
+	if rel, ok := strings.CutPrefix(resPath, "res://"); ok && sc.projectRoot != "" {
+		if name := readClassName(filepath.Join(sc.projectRoot, filepath.FromSlash(rel))); name != "" {
+			class = name
+		}
+	}
+	sc.cache[resPath] = class
+	return class
+}
+
+// readClassName returns the class_name a script declares near its top.
+func readClassName(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for lines := 0; scanner.Scan() && lines < 200; lines++ {
+		if m := classNameRe.FindSubmatch(scanner.Bytes()); m != nil {
+			return string(m[1])
+		}
+	}
+	return ""
 }

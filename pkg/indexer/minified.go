@@ -73,9 +73,16 @@ func isLowValueConfigOrKeyMaterial(path string) bool {
 // covers two remaining cases:
 //  1. Filename suffix  (.min.js, .bundle.css, …) — no I/O.
 //  2. Content density  — reads ≤256 KiB, counts newlines.
+//
+// Godot scenes (.tscn) skip the density check: embedded meshes and textures
+// are serialized as very long lines, but the analyzer only keeps the node
+// tree and connections, so the scene is still worth indexing.
 func isMinifiedOrVendored(path string) bool {
 	if matchesMinifiedName(path) {
 		return true
+	}
+	if strings.EqualFold(filepath.Ext(path), ".tscn") {
+		return false
 	}
 	return exceedsLineDensity(path)
 }

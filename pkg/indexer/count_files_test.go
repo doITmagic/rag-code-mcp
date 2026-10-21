@@ -8,6 +8,7 @@ import (
 	// Import parsers so they register via init()
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/css"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/docs"
+	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/gdscript"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/go"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/html"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/javascript"
@@ -154,5 +155,25 @@ func TestCountAllFiles_NodeModulesExcluded(t *testing.T) {
 	}
 	if result.Breakdowns["javascript"][".ts"] != 1 {
 		t.Errorf("expected .ts=1, got %d", result.Breakdowns["javascript"][".ts"])
+	}
+}
+
+// A Godot project counts scripts and scenes as gdscript; the editor cache in
+// .godot/ is hidden and skipped.
+func TestCountAllFiles_GodotProject(t *testing.T) {
+	root := t.TempDir()
+	createFile(t, filepath.Join(root, "project.godot"))
+	createFile(t, filepath.Join(root, "player", "player.gd"))
+	createFile(t, filepath.Join(root, "player", "player.tscn"))
+	createFile(t, filepath.Join(root, "main.tscn"))
+	createFile(t, filepath.Join(root, ".godot", "editor", "cache.gd"))
+
+	result := (&Service{}).CountAllFiles(root, nil)
+	if result.Counts["gdscript"] != 3 {
+		t.Errorf("gdscript count: got %d, want 3 (%v)", result.Counts["gdscript"], result.Counts)
+	}
+	bd := result.Breakdowns["gdscript"]
+	if bd[".gd"] != 1 || bd[".tscn"] != 2 {
+		t.Errorf("gdscript breakdown: got %v, want .gd=1 .tscn=2", bd)
 	}
 }

@@ -19,6 +19,8 @@ func LanguageFromPath(path string) string {
 		return "typescript"
 	case ".py":
 		return "python"
+	case ".gd":
+		return "gdscript"
 	case ".html":
 		return "html"
 	case ".css":

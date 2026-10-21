@@ -45,6 +45,32 @@ func TestDetectFromFilePathMarkers(t *testing.T) {
 	}
 }
 
+// A Godot project without VCS is rooted at its project.godot, not at a
+// script's directory.
+func TestDetectGodotProjectMarker(t *testing.T) {
+	tmp := evalTempDir(t)
+	project := filepath.Join(tmp, "game")
+	scripts := filepath.Join(project, "scripts")
+	if err := os.MkdirAll(scripts, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "project.godot"), []byte("config_version=5\n"), 0o644); err != nil {
+		t.Fatalf("marker: %v", err)
+	}
+	script := filepath.Join(scripts, "player.gd")
+	if err := os.WriteFile(script, []byte("extends Node\n"), 0o644); err != nil {
+		t.Fatalf("file: %v", err)
+	}
+
+	resp, err := New(DefaultOptions()).DetectFromFilePath(context.Background(), script)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Root != project {
+		t.Fatalf("expected root %s, got %s", project, resp.Root)
+	}
+}
+
 func TestDetectMetadataFallback(t *testing.T) {
 	tmp := evalTempDir(t)
 	project := filepath.Join(tmp, "proj")

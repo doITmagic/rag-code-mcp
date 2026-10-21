@@ -84,11 +84,11 @@ collection rebuild; only an explicit recreate request drops collections.
 Moving or removing the workspace root itself stops its watcher and
 forgets it; the root then counts as unwatched (below) until the next index
 of its new path starts a fresh one.
-If the watcher cannot start (or only part of the tree could be watched),
-indexing still runs and the root counts as unwatched: a later workspace
-detection (a search or tool call) re-runs an incremental index, at most once
-a minute, which picks up files created after discovery and retries the
-watcher.
+If the watcher cannot start (or only part of the tree could be watched), or
+`watch_enabled` is false, indexing still runs and the root counts as
+unwatched: a later workspace detection (a search or tool call) re-runs an
+incremental index, at most once a minute, which picks up files created after
+discovery and, when watching is enabled, retries the watcher.
 The inventory is never reused between runs. Direct indexer `IndexWorkspace`
 callers can omit `Options.Scan` to scan normally.
 

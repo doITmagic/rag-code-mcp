@@ -40,6 +40,7 @@ type scriptParser struct {
 	path    string
 	pkg     string
 	symbols []pkgParser.Symbol
+	classes *scriptClasses
 	// inner maps an inner class name to its qualified name ("" when two
 	// inner classes share the name).
 	inner map[string]string
@@ -48,7 +49,7 @@ type scriptParser struct {
 func (a *Analyzer) parseScript(source []byte, path string) ([]pkgParser.Symbol, error) {
 	var symbols []pkgParser.Symbol
 	err := a.parse(source, path, func(root *gotreesitter.Node, lang *gotreesitter.Language) {
-		sp := &scriptParser{src: source, lang: lang, path: path}
+		sp := &scriptParser{src: source, lang: lang, path: path, classes: newScriptClasses(path)}
 		symbols = sp.parseFile(root)
 	})
 	return symbols, err
@@ -159,7 +160,7 @@ func (sp *scriptParser) parseFile(root *gotreesitter.Node) []pkgParser.Symbol {
 	if extends != "" {
 		scriptSym.Relations = append(scriptSym.Relations, pkgParser.Relation{TargetName: extends, Type: pkgParser.RelInheritance})
 	} else if extendsPath != "" {
-		scriptSym.Relations = append(scriptSym.Relations, pkgParser.Relation{TargetName: fileStem(extendsPath), Type: pkgParser.RelInheritance})
+		scriptSym.Relations = append(scriptSym.Relations, pkgParser.Relation{TargetName: sp.classes.of(extendsPath), Type: pkgParser.RelInheritance})
 	}
 
 	scriptDoc := sp.parseBody(root, scope)
@@ -596,7 +597,7 @@ func (sp *scriptParser) addInnerClass(n *gotreesitter.Node, scope classScope, do
 		case extends != "":
 			sym.Relations = append(sym.Relations, pkgParser.Relation{TargetName: extends, Type: pkgParser.RelInheritance})
 		case extendsPath != "":
-			sym.Relations = append(sym.Relations, pkgParser.Relation{TargetName: fileStem(extendsPath), Type: pkgParser.RelInheritance})
+			sym.Relations = append(sym.Relations, pkgParser.Relation{TargetName: sp.classes.of(extendsPath), Type: pkgParser.RelInheritance})
 		}
 	}
 	// Reserve the class's slot so it precedes its members.
@@ -687,9 +688,7 @@ func (sp *scriptParser) collectCalls(n *gotreesitter.Node, scope classScope, rel
 					self(sig)
 				}
 			case "connect":
-				if handler := sp.connectHandler(n); handler != "" {
-					self(handler)
-				}
+				rels.add(sp.connectHandler(n, scope))
 			}
 		}
 	case "attribute_call":
@@ -712,9 +711,7 @@ func (sp *scriptParser) collectCalls(n *gotreesitter.Node, scope classScope, rel
 					self(sig)
 				}
 			case name == "connect":
-				if handler := sp.connectHandler(n); handler != "" {
-					self(handler)
-				}
+				rels.add(sp.connectHandler(n, scope))
 			}
 		}
 	}
@@ -758,7 +755,7 @@ func (sp *scriptParser) baseTarget(scope classScope, method string) string {
 	case scope.extends != "":
 		return sp.classTarget(scope.extends, method)
 	case scope.extendsPath != "":
-		return fileStem(scope.extendsPath) + "." + method
+		return sp.classes.of(scope.extendsPath) + "." + method
 	}
 	return ""
 }
@@ -849,27 +846,45 @@ func (sp *scriptParser) firstStringArg(call *gotreesitter.Node) string {
 // connectHandler returns the method a connect() call wires up: the callable
 // in Godot 4 (`pressed.connect(_on_pressed)`, `connect(self._on_pressed)`) or
 // the method-name string in Godot 3 (`connect("pressed", self, "_on_pressed")`).
-func (sp *scriptParser) connectHandler(call *gotreesitter.Node) string {
+func (sp *scriptParser) connectHandler(call *gotreesitter.Node, scope classScope) pkgParser.Relation {
 	args := sp.arguments(call)
 	if len(args) == 0 {
-		return ""
+		return pkgParser.Relation{}
 	}
+	var name, receiver string
 	if len(args) >= 3 && sp.typ(args[2]) == "string" {
-		return strings.Trim(sp.text(args[2]), `"'`)
-	}
-	for _, a := range args {
+		name = strings.Trim(sp.text(args[2]), `"'`)
+		receiver = strings.Join(strings.Fields(sp.text(args[1])), " ")
+	} else {
+		// Object.connect(signal, callable) starts with the signal name;
+		// Signal.connect(callable) starts directly with the callable.
+		a := args[0]
+		if sp.typ(a) == "string" || sp.typ(a) == "string_name" {
+			if len(args) < 2 {
+				return pkgParser.Relation{}
+			}
+			a = args[1]
+		}
 		switch sp.typ(a) {
 		case "identifier":
-			if name := sp.text(a); name != "self" {
-				return name
+			if sp.text(a) != "self" {
+				name = sp.text(a)
 			}
 		case "attribute":
-			// self._on_pressed: the handler is the last name.
+			// Keep the target before the final dot, including dynamic
+			// expressions, so unknown objects cannot bind by name alone.
 			last := a.Child(a.ChildCount() - 1)
 			if last != nil && sp.typ(last) == "identifier" {
-				return sp.text(last)
+				if dot := last.PrevSibling(); dot != nil && sp.typ(dot) == "." {
+					name = sp.text(last)
+					receiver = strings.Join(strings.Fields(string(sp.src[a.StartByte():dot.StartByte()])), " ")
+				}
 			}
 		}
 	}
-	return ""
+	target := sp.receiverTarget(receiver, scope, name)
+	if receiver == "" {
+		target = sp.selfTarget(scope, name)
+	}
+	return pkgParser.Relation{TargetName: name, Type: pkgParser.RelCalls, Receiver: receiver, TargetQualifiedName: target}
 }

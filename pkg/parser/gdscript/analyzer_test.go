@@ -298,7 +298,7 @@ func TestGodot3Syntax(t *testing.T) {
 		}
 	}
 	ready := byQualified(t, symbols, "old._ready")
-	if !hasRelation(ready, pkgParser.Relation{TargetName: "_on_pressed", Type: pkgParser.RelCalls, TargetQualifiedName: "KinematicBody2D._on_pressed"}) {
+	if !hasRelation(ready, pkgParser.Relation{TargetName: "_on_pressed", Type: pkgParser.RelCalls, Receiver: "self", TargetQualifiedName: "KinematicBody2D._on_pressed"}) {
 		t.Errorf("string-form connect handler missing: %v", ready.Relations)
 	}
 }
@@ -366,7 +366,11 @@ func TestBareConnectRecordsHandler(t *testing.T) {
 		"func _on_died():\n\tpass\n\nfunc _on_hit():\n\tpass\n"
 	ready := byQualified(t, analyze(t, "e.gd", src), "e._ready")
 	for _, handler := range []string{"_on_died", "_on_hit"} {
-		if !hasRelation(ready, pkgParser.Relation{TargetName: handler, Type: pkgParser.RelCalls, TargetQualifiedName: "e." + handler}) {
+		receiver := ""
+		if handler == "_on_died" {
+			receiver = "self"
+		}
+		if !hasRelation(ready, pkgParser.Relation{TargetName: handler, Type: pkgParser.RelCalls, Receiver: receiver, TargetQualifiedName: "e." + handler}) {
 			t.Errorf("missing handler %s: %+v", handler, ready.Relations)
 		}
 	}

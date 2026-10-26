@@ -85,6 +85,11 @@ func symbolKey(r storage.SearchResult) string {
 }
 
 func shortSymbolName(name string) string {
+	// Scene symbols and dependency targets include their extension; the
+	// dot separates the filename, rather than a class and member name.
+	if strings.EqualFold(filepath.Ext(name), ".tscn") {
+		return name
+	}
 	if i := strings.LastIndex(name, "::"); i >= 0 {
 		return name[i+2:]
 	}

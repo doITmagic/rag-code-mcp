@@ -902,6 +902,9 @@ func (s *Service) cleanupStaleFiles(ctx context.Context, root, collection string
 				if delErr := s.store.DeleteByFilter(ctx, collection, "file_path", path); delErr != nil {
 					logger.Instance.Warn("[IDX] Failed to delete points for stale file %s: %v", path, delErr)
 				}
+				// A checkout can abort the next deletion; persist this file's
+				// invalidation even when the rest of the directory is untouched.
+				state.RemoveFile(path)
 			}
 		} else if deleted > 0 {
 			logger.Instance.Info("[IDX] 🧹 Bulk-deleted %d vectors under deleted directory: %s", deleted, prefix)

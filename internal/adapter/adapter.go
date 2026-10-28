@@ -19,8 +19,8 @@ import (
 // Accept header includes text/event-stream for StreamableHTTPHandler compatibility,
 // but JSONResponse=true on the server forces pure JSON responses.
 //
-// Sticky workspace: after the first successful tool response, the daemon sets
-// X-Resolved-Workspace in the response header. The adapter caches this value
+// Sticky workspace: when a tool resolves a workspace, the daemon sets
+// X-Resolved-Workspace in the response header. The adapter keeps the latest value
 // and sends X-Workspace-Root on all subsequent requests, eliminating repeated
 // workspace detection on the daemon side. The workspaceHint parameter from
 // the IDE is intentionally ignored — only the daemon-resolved root is trusted.
@@ -73,8 +73,8 @@ func RunBridge(ctx context.Context, port int, stdin io.Reader, stdout io.Writer,
 			continue
 		}
 
-		// Learn resolved workspace from daemon response header (first successful resolve)
-		if rw := resp.Header.Get("X-Resolved-Workspace"); rw != "" && resolvedWorkspace == "" {
+		// Follow explicit project switches confirmed by the daemon.
+		if rw := resp.Header.Get("X-Resolved-Workspace"); rw != "" {
 			resolvedWorkspace = rw
 		}
 

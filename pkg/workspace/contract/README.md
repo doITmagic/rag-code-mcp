@@ -2,6 +2,11 @@
 
 The `contract` package defines the canonical request/response types and helper functions for workspace resolution, providing a stable API boundary between IDEs and the resolution engine.
 
+Workspace identities preserve Git branch case and preserve path case outside Windows.
+The v2 identity namespace deliberately creates fresh collection IDs for every workspace,
+requiring a one-time reindex after upgrading. Older collections may contain data mixed
+by case-insensitive identities; they are neither reused, copied, nor automatically deleted.
+
 ## 🎯 Objectives
 
 The contract module ensures:

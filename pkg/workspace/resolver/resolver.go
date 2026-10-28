@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/doITmagic/rag-code-mcp/pkg/workspace/contract"
+	"github.com/doITmagic/rag-code-mcp/pkg/workspace/detector"
 	"github.com/doITmagic/rag-code-mcp/pkg/workspace/watch"
 )
 
@@ -336,6 +337,9 @@ func (r *Resolver) handleRoots(ctx context.Context, req contract.ResolveWorkspac
 }
 
 func (r *Resolver) applyNestedOverride(ctx context.Context, candidate *contract.WorkspaceCandidate) {
+	if detector.IsLinkedWorktree(candidate.Root) {
+		return
+	}
 	if r.deps.Registry != nil && candidate.Source != "registry_fallback" {
 		if parentRoot, found := r.deps.Registry.FindParentWorkspace(candidate.Root); found {
 			r.log(ctx, "nested_workspace_override", map[string]any{

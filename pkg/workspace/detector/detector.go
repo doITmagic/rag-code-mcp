@@ -206,6 +206,11 @@ func (d *Detector) walkUp(start string) (*contract.WorkspaceCandidate, *contract
 					firstErr = err
 				}
 			} else if candidate != nil {
+				// A linked worktree can live inside its main checkout, but its
+				// files and branch belong to a separate workspace.
+				if IsLinkedWorktree(dir) {
+					return candidate, nil
+				}
 				tier := d.getCandidateTier(candidate)
 				// Prefer the highest (outermost) valid root within the best tier
 				// so nested submodules or sub-packages don't shadow the repo root.

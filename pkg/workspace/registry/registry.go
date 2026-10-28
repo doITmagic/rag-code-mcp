@@ -14,6 +14,7 @@ import (
 
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/doITmagic/rag-code-mcp/pkg/workspace/contract"
+	"github.com/doITmagic/rag-code-mcp/pkg/workspace/detector"
 	"github.com/doITmagic/rag-code-mcp/pkg/workspace/watch"
 )
 
@@ -178,7 +179,7 @@ func (r *Registry) Upsert(root, name, client string) (*Entry, error) {
 		LastUsedAt:    now,
 	}
 	r.entries[id] = entry
-	r.indexRoot[strings.ToLower(root)] = id
+	r.indexRoot[contract.WorkspacePathKey(root)] = id
 	if name != "" {
 		lower := strings.ToLower(name)
 		r.indexName[lower] = append(r.indexName[lower], id)
@@ -210,7 +211,7 @@ func (r *Registry) PromoteCandidate(ctx context.Context, root, client string, ex
 	r.mu.Lock()
 
 	cleanRoot := filepath.Clean(root)
-	normalized := strings.ToLower(cleanRoot)
+	normalized := contract.WorkspacePathKey(cleanRoot)
 	candidate, ok := r.candidates[normalized]
 	if !ok {
 		r.mu.Unlock()
@@ -281,7 +282,7 @@ func (r *Registry) LookupByID(id string) (*Entry, bool) {
 func (r *Registry) LookupByRoot(root string) (*Entry, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	id, ok := r.indexRoot[strings.ToLower(filepath.Clean(root))]
+	id, ok := r.indexRoot[contract.WorkspacePathKey(root)]
 	if !ok {
 		return nil, false
 	}
@@ -298,7 +299,7 @@ func (r *Registry) FindParentWorkspace(path string) (string, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	cleanPath := strings.ToLower(filepath.Clean(path))
+	cleanPath := contract.WorkspacePathKey(path)
 	if cleanPath == "" {
 		return "", false
 	}
@@ -307,7 +308,7 @@ func (r *Registry) FindParentWorkspace(path string) (string, bool) {
 	var bestLen int
 
 	for _, entry := range r.entries {
-		entryRoot := strings.ToLower(filepath.Clean(entry.Root))
+		entryRoot := contract.WorkspacePathKey(entry.Root)
 		// The path must be strictly inside the entry root (not equal to it).
 		// TrimRight avoids double separator when entryRoot is "/" or "C:\".
 		prefix := strings.TrimRight(entryRoot, string(filepath.Separator)) + string(filepath.Separator)
@@ -337,13 +338,13 @@ type absorbedChild struct {
 // Returns info about absorbed children for post-lock cleanup (FS + audit).
 // MUST be called while r.mu is held.
 func (r *Registry) absorbChildren(parentRoot string) []absorbedChild {
-	cleanParent := strings.ToLower(filepath.Clean(parentRoot))
+	cleanParent := contract.WorkspacePathKey(parentRoot)
 	prefix := strings.TrimRight(cleanParent, string(filepath.Separator)) + string(filepath.Separator)
 
 	var toDelete []string
 	for id, entry := range r.entries {
-		entryRoot := strings.ToLower(filepath.Clean(entry.Root))
-		if entryRoot != cleanParent && strings.HasPrefix(entryRoot, prefix) {
+		entryRoot := contract.WorkspacePathKey(entry.Root)
+		if entryRoot != cleanParent && strings.HasPrefix(entryRoot, prefix) && !detector.IsLinkedWorktree(entry.Root) {
 			toDelete = append(toDelete, id)
 		}
 	}
@@ -353,7 +354,7 @@ func (r *Registry) absorbChildren(parentRoot string) []absorbedChild {
 		child := r.entries[id]
 		absorbed = append(absorbed, absorbedChild{Root: child.Root, ParentRoot: parentRoot})
 		delete(r.entries, id)
-		delete(r.indexRoot, strings.ToLower(filepath.Clean(child.Root)))
+		delete(r.indexRoot, contract.WorkspacePathKey(child.Root))
 		if child.Name != "" {
 			lower := strings.ToLower(child.Name)
 			ids := r.indexName[lower]
@@ -460,7 +461,7 @@ func (r *Registry) Cleanup(cutoff time.Time) error {
 	for id, entry := range r.entries {
 		if entry.LastUsedAt.Before(cutoff) {
 			delete(r.entries, id)
-			delete(r.indexRoot, strings.ToLower(filepath.Clean(entry.Root)))
+			delete(r.indexRoot, contract.WorkspacePathKey(entry.Root))
 			if entry.Name != "" {
 				lower := strings.ToLower(entry.Name)
 				ids := r.indexName[lower]
@@ -498,7 +499,7 @@ func (r *Registry) load() error {
 			r.addEntry(entry)
 		}
 		for _, cand := range store.Candidates {
-			r.candidates[strings.ToLower(cand.Root)] = cand
+			r.candidates[contract.WorkspacePathKey(cand.Root)] = cand
 		}
 		return nil
 	}
@@ -515,11 +516,10 @@ func (r *Registry) load() error {
 }
 
 func (r *Registry) addEntry(entry *Entry) {
-	if entry.ID == "" {
-		entry.ID = hashRoot(entry.Root)
-	}
+	// Re-key legacy case-folded entries from their preserved root spelling.
+	entry.ID = hashRoot(entry.Root)
 	r.entries[entry.ID] = entry
-	r.indexRoot[strings.ToLower(entry.Root)] = entry.ID
+	r.indexRoot[contract.WorkspacePathKey(entry.Root)] = entry.ID
 	if entry.Name != "" {
 		lower := strings.ToLower(entry.Name)
 		r.indexName[lower] = append(r.indexName[lower], entry.ID)
@@ -575,7 +575,7 @@ func (r *Registry) RecordFeedback(ctx context.Context, feedback *contract.PathFe
 
 	r.mu.Lock()
 
-	root := strings.ToLower(filepath.Clean(feedback.SuggestedPath))
+	root := contract.WorkspacePathKey(feedback.SuggestedPath)
 	cand, ok := r.candidates[root]
 	if !ok {
 		cand = &CandidateEntry{
@@ -605,7 +605,7 @@ func (r *Registry) RecordFeedback(ctx context.Context, feedback *contract.PathFe
 }
 
 func hashRoot(root string) string {
-	sum := sha1.Sum([]byte(strings.ToLower(filepath.Clean(root))))
+	sum := sha1.Sum([]byte(contract.WorkspacePathKey(root)))
 	return hex.EncodeToString(sum[:])
 }
 

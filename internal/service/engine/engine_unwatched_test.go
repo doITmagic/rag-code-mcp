@@ -134,3 +134,44 @@ func TestUnwatchedRescanIsPaced(t *testing.T) {
 		t.Fatalf("expected no rescan within the interval, got %d watcher attempts", n)
 	}
 }
+
+// With watch_enabled: false there is no watcher at all, so detections must
+// still re-run the incremental index (paced) instead of never again.
+func TestWatchDisabledReindexesOnDetect(t *testing.T) {
+	old := unwatchedRescanInterval
+	unwatchedRescanInterval = 0
+	t.Cleanup(func() { unwatchedRescanInterval = old })
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\nfunc Work() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := &testStore{existing: map[string]bool{}}
+	cfg := &config.Config{Workspace: config.WorkspaceConfig{AutoIndex: true, WatchEnabled: false}}
+	eng := NewEngine(indexer.NewService(&mockLLM{}, store), search.NewService(&mockLLM{}, store), filepath.Join(t.TempDir(), "registry.json"), cfg)
+	eng.SetResolver(resolver.New(resolver.Dependencies{Detector: &exactRootDetector{}, Registry: eng.registry}))
+	t.Cleanup(eng.Close)
+	if eng.watchers != nil {
+		t.Fatal("expected no watcher manager with watch_enabled: false")
+	}
+
+	wctx, err := eng.DetectContextAsRoot(context.Background(), root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Behave like a daemon that already auto-indexed this workspace once.
+	eng.connectTriggered.Store(wctx.ID, true)
+	before := time.Now()
+	eng.lastIndexed.Store(wctx.ID, before.Add(-time.Hour))
+
+	if _, err := eng.DetectContextAsRoot(context.Background(), root, true); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "detection did not re-run indexing with watching disabled", func() bool {
+		if _, running := eng.indexingJobs.Load(wctx.ID); running {
+			return false
+		}
+		last, ok := eng.lastIndexed.Load(wctx.ID)
+		return ok && !last.(time.Time).Before(before)
+	})
+}

@@ -42,7 +42,7 @@ func DefaultOptions() Options {
 			"build.gradle", "Gemfile", "Package.swift", "tsconfig.json",
 			"tailwind.config.js", "tailwind.config.ts", "vite.config.js",
 			"vite.config.ts", "next.config.js", "deno.json", "Dockerfile",
-			"docker-compose.yml", "mix.exs", "artisan",
+			"docker-compose.yml", "mix.exs", "artisan", "project.godot",
 		},
 		MaxDepth:         10,
 		MetadataFileName: filepath.Join(".ragcode", "root"),

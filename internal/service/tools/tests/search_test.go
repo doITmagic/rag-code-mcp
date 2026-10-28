@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -186,6 +187,11 @@ var _ = Describe("SmartSearchTool (rag_search)", func() {
 
 			It("retains up to top 3 soft fallback results in [0.55, 0.72) when no results pass default floor", func() {
 				mockStore.SearchCodeOnlyFunc = func(ctx context.Context, col string, q storage.SearchQuery) ([]storage.SearchResult, error) {
+					// These Go fixtures belong to one collection. Returning them
+					// for every parser fills the fan-out limit with duplicates.
+					if !strings.HasSuffix(col, "-go") {
+						return nil, nil
+					}
 					return []storage.SearchResult{
 						{
 							Score: 0.70,

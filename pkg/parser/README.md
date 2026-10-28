@@ -14,11 +14,12 @@ graph TD
     C -->|PHP| E[PHP + Laravel + WordPress / WooCommerce / Oxygen]
     C -->|JS / TS / JSX / TSX / Vue| F[JS/TS Tree-sitter + Vue SFC Analyzer]
     C -->|Python| G[Python Analyzer]
+    C -->|GDScript / Godot scenes| M[GDScript Analyzer]
     C -->|HTML / CSS / SCSS| H[HTML & CSS Analyzers]
     C -->|MD / JSON / YAML / TOML| I[Docs Analyzer]
     C -->|Other / .env*| J[Generic Fallback]
 
-    D & E & F & G & H & I & J --> K[Consolidated Result]
+    D & E & F & G & M & H & I & J --> K[Consolidated Result]
     K --> L[Symbol Metadata & CodeChunks]
 ```
 
@@ -51,6 +52,7 @@ Click on each language/framework to see the technical documentation for its anal
 | **WordPress, WooCommerce & Oxygen** | [`/php/wordpress`](./php/wordpress/README.md) | Hooks (`add_action`/`add_filter`/`do_action`/`apply_filters`), CPTs, taxonomies, shortcodes, Gutenberg blocks, widgets, admin/REST, **WooCommerce**, **Oxygen Builder**. | ✅ Production |
 | **JavaScript / TypeScript / React / Vue** | [`/javascript`](./javascript/README.md) | Tree-sitter AST for `.js`/`.ts`/`.jsx`/`.tsx` (React components, classes, abstract classes, interfaces, type aliases, enums) + Vue `.vue` SFCs (Options & `<script setup>` Composition API, composables). | ✅ Production |
 | **Python** | [`/python`](./python/README.md) | Classes, methods, async functions, multi-line signatures, decorators, type hints, mixins, metaclasses. | ✅ Production |
+| **GDScript (Godot)** | [`/gdscript`](./gdscript/README.md) | Tree-sitter AST for `.gd` (script classes, `class_name`/`extends`, methods, signals, enums, `@export`/`@onready` vars, inner classes, `##` docs; Godot 4 & 3) + `.tscn` scene outlines (node tree, attached scripts, signal connections). | ✅ Production |
 | **HTML & Go Templates** | [`/html`](./html/README.md) | Semantic HTML section/element extraction + Go `html/template` & `text/template` blocks (`define`, `block`, `template`, `range`, `with`). | ✅ Production |
 | **CSS / SCSS / LESS** | [`/css`](./css/README.md) | Rulesets, selectors, `@media`, `@keyframes`, CSS custom properties (`--var`), SCSS/LESS variables and `@mixin`. | ✅ Production |
 | **Docs (MD / JSON / YAML / TOML)** | [`/docs`](./docs/README.md) | Markdown heading hierarchy (with code blocks & tables) + structured JSON/YAML/TOML/XML chunking. | ✅ Production |
@@ -66,5 +68,5 @@ Every analyzer returns a `Symbol` structure, ensuring that the embedding and ind
 | `QualifiedName` | `string` | Package/namespace/class-qualified symbol name. |
 | `Type` | `SymbolType` | Kind of symbol (`function`, `method`, `class`, `struct`, `interface`, `trait`, `enum`, `constant`, `section`, etc.). |
 | `Signature` | `string` | Complete symbol signature or header definition. |
-| `Docstring` | `string` | Extracted doc comments (GoDoc, PHPDoc, JSDoc, Python docstrings). |
+| `Docstring` | `string` | Extracted doc comments (GoDoc, PHPDoc, JSDoc, Python docstrings, GDScript `##` comments). |
 | `Metadata` | `map[string]any` | Language/framework-specific attributes (`relations`, `hook_type`, `http_method`, `props`, etc.). |

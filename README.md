@@ -87,6 +87,7 @@ RagCode V2 isn't just a vector database wrapper. It features deep language under
 - **PHP**: Vanilla PHP, Laravel (Eloquent, Routes, Controllers), WordPress (Hooks, Widgets, WooCommerce, Oxygen Builder)
 - **JavaScript & TypeScript**: Vanilla JS/TS, Node.js, React, React Native, Next.js, Vue
 - **Python**: Complete native AST support
+- **GDScript (Godot)**: Scripts (`.gd`) via tree-sitter, plus scene outlines (`.tscn`) linking nodes to their scripts and signal handlers
 - **HTML & CSS**: HTML structural mappings, CSS/SCSS/SASS/LESS via tree-sitter
 - **Documentation**: Markdown, JSON, YAML, XML, TOML, reStructuredText
 

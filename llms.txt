@@ -19,7 +19,7 @@ Unlike generic RAG that splits code into arbitrary text chunks, RagCode:
 - **Semantic chunking** - extracts complete functions, classes, methods (not random 512-token splits)
 - **Rich metadata** - name, type, parameters, return type, dependencies, line numbers
 - **Relationships** - knows class inheritance, method calls, imports
-- **AST parsing** - understands Go, PHP (Laravel, WordPress, WooCommerce, Oxygen Builder), Python, JavaScript/TypeScript (React, Vue), HTML/CSS/SCSS syntax
+- **AST parsing** - understands Go, PHP (Laravel, WordPress, WooCommerce, Oxygen Builder), Python, GDScript (Godot), JavaScript/TypeScript (React, Vue), HTML/CSS/SCSS syntax
 - **Exact + semantic search** - find "UserController" exactly, not just similar text
 - **Complete code units** - AI sees runnable code, not fragments
 - **Evaluation** - Request AI self-evaluation on performance and quality. **Use to share feedback.**
@@ -32,6 +32,7 @@ Unlike generic RAG that splits code into arbitrary text chunks, RagCode:
   - **PHP** — full PHP 8+ AST + **Laravel** (Eloquent models, routes, controllers, middleware, migrations, service providers, Blade) + **WordPress** (hooks/actions/filters, CPTs, taxonomies, shortcodes, Gutenberg blocks, widgets, REST/admin, **WooCommerce**, **Oxygen Builder**)
   - **JavaScript / TypeScript** — tree-sitter AST + **React** (JSX/TSX) + **Vue** Single-File Components (`.vue` Options API & `<script setup>` Composition API, composables)
   - **Python** (classes, async functions, decorators, type hints, mixins, metaclasses)
+  - **GDScript / Godot** (`.gd` script classes, methods, signals, enums, `@export`/`@onready` vars, inner classes; `.tscn` scenes with attached scripts and signal connections)
   - **Web & Docs** — HTML, CSS/SCSS/LESS, Markdown, JSON, YAML, TOML, `.env*`, Dockerfile, Makefile, SQL, Shell
 - **OS:** Linux, macOS, Windows (all require Docker)
 

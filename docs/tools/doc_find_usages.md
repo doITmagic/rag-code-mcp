@@ -24,7 +24,7 @@ By querying the exact path of the payload JSON, the database operates efficientl
 ## Features
 - **Deterministic and Robust**: Resolves complex usage paths correctly regardless of lexical variations or generic terms used by developers. Zero semantic hallucinations!
 - **Relation Context Mapping**: Not only does it return the line numbers and snippets of where something is used, but it also extracts the specific `<type>` of the relation match (e.g. `call` or `implements`), explaining **why** the snippet was returned.
-- **Polyglot Execution**: Iterates across possible language indexes (`go`, `python`, `javascript`, `php`) mapped to the requested workspace dynamically.
+- **Polyglot Execution**: Iterates across possible language indexes (`go`, `python`, `javascript`, `php`, `gdscript`, ...) mapped to the requested workspace dynamically.
 
 ## Use Cases
 - Perfect for safely finding references prior to refactoring a function.

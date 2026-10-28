@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
+	"github.com/doITmagic/rag-code-mcp/pkg/parser/gdscript"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser/javascript"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser/php"
 )
@@ -25,6 +26,7 @@ export class B {
   validate(value) { return value; }
   run(value) { return this.validate(value); }
 }`, javascript.NewCodeAnalyzer()},
+		{"gd", "extends Node\n\nclass A:\n\tfunc validate(value):\n\t\treturn value\n\tfunc run(value):\n\t\treturn self.validate(value)\n\nclass B:\n\tfunc validate(value):\n\t\treturn value\n\tfunc run(value):\n\t\treturn self.validate(value)\n", gdscript.NewAnalyzer()},
 	} {
 		t.Run(tc.ext, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "owners."+tc.ext)

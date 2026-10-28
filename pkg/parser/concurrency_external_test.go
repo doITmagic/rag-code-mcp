@@ -10,6 +10,7 @@ import (
 
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser/docs"
+	"github.com/doITmagic/rag-code-mcp/pkg/parser/gdscript"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser/javascript"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser/php"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser/python"
@@ -22,6 +23,9 @@ func TestStatefulAnalyzersAreConcurrentSafe(t *testing.T) {
 		source    func(int) string
 	}{
 		{"docs", ".json", docs.NewAnalyzer(), func(i int) string { return fmt.Sprintf(`{"value": %d}`, i) }},
+		{"gdscript", ".gd", gdscript.NewAnalyzer(), func(i int) string {
+			return fmt.Sprintf("extends Node\n\nfunc function%d():\n\tpass\n", i)
+		}},
 		{"javascript", ".js", javascript.NewCodeAnalyzer(), func(i int) string {
 			return fmt.Sprintf("export function function%d() { return %d }", i, i)
 		}},

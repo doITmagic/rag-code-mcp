@@ -114,7 +114,10 @@ func TestCleanupStaleFiles(t *testing.T) {
 	mockStore := &mockStore{}
 	svc := NewService(&mockEmbedder{}, mockStore)
 
-	cleaned := svc.cleanupStaleFiles(context.Background(), wsRoot, "test_collection", state, "go")
+	cleaned, err := svc.cleanupStaleFiles(context.Background(), wsRoot, "test_collection", state, "go")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !cleaned {
 		t.Fatal("expected cleanupStaleFiles to return true")
 	}
@@ -658,4 +661,3 @@ func TestSetEmbedBatchSizeAndWorkers(t *testing.T) {
 		t.Fatalf("max concurrent workers = %d, want >= 2 with SetEmbedWorkers(3)", got)
 	}
 }
-

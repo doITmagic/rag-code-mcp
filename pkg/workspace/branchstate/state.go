@@ -40,6 +40,7 @@ type Manager struct {
 	cache     map[string]cachedGitState
 	cacheTTL  time.Duration
 	mu        sync.Mutex
+	stateMu   sync.Mutex
 	logger    Logger
 }
 
@@ -82,6 +83,9 @@ type cachedGitState struct {
 
 // CompareAndUpdate compares current git state with persisted state and updates the file when needed.
 func (m *Manager) CompareAndUpdate(ctx context.Context, workspaceRoot string) (*State, bool, contract.ReasonCode, *contract.ResolveWorkspaceError) {
+	m.stateMu.Lock()
+	defer m.stateMu.Unlock()
+
 	statePath := filepath.Join(workspaceRoot, ".ragcode", "branch_state.json")
 	persisted, err := m.loadState(statePath)
 	if err != nil {
@@ -149,24 +153,15 @@ func (m *Manager) CompareAndUpdate(ctx context.Context, workspaceRoot string) (*
 
 // Annotate implements resolver.BranchAnnotator.
 func (m *Manager) Annotate(ctx context.Context, root string, resp *contract.ResolveWorkspaceResponse) *contract.ResolveWorkspaceError {
-	statePath := filepath.Join(root, ".ragcode", "branch_state.json")
-	persisted, _ := m.loadState(statePath)
-
 	state, reindex, reason, err := m.CompareAndUpdate(ctx, root)
 	if err != nil {
 		return err
 	}
 
 	risk := "low"
-	if state == nil {
-		// No git metadata (not a repo, or no commits yet): there is no branch
-		// to mismatch against. Persisted is nil here forever, so the generic
-		// rule below would flag "high" on every request.
-	} else if persisted == nil {
-		risk = "low"
-	} else if persisted.LastBranch != state.LastBranch {
+	if reason == contract.ReasonBranchChanged {
 		risk = "high"
-	} else if persisted.LastHeadSHA != state.LastHeadSHA {
+	} else if reason == contract.ReasonHeadChanged {
 		risk = "medium"
 	}
 
@@ -206,7 +201,20 @@ func (m *Manager) saveState(path string, state *State) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, encoded, 0o644)
+	// Publish a complete snapshot for other daemon instances and crash recovery.
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".branch-state-*.tmp")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(encoded); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }
 
 func (m *Manager) readGitState(ctx context.Context, root string) (*State, error) {

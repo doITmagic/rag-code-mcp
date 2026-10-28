@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -76,13 +77,13 @@ func (s *Service) SetEmbedWorkers(n int) {
 }
 
 // IndexWorkspace performs a full or incremental index of a workspace.
-func (s *Service) IndexWorkspace(ctx context.Context, root string, collection string, opts Options) error {
+func (s *Service) IndexWorkspace(ctx context.Context, root string, collection string, opts Options) (resultErr error) {
 	root = filepath.Clean(root)
 	scan := opts.Scan
 	if scan != nil && (scan.root != root || !slices.Equal(scan.excludePatterns, opts.ExcludePatterns)) {
 		return fmt.Errorf("workspace scan does not match root or exclusion patterns")
 	}
-	if err := ctx.Err(); err != nil {
+	if err := checkWorkspace(ctx); err != nil {
 		return err
 	}
 	if err := os.Remove(filepath.Join(root, ".ragcode", "state.json")); err != nil && !os.IsNotExist(err) {
@@ -94,6 +95,13 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 		logger.Instance.Warn("Failed to load index state for %s: %v", root, err)
 		state = NewState()
 	}
+	defer func() {
+		if errors.Is(resultErr, ErrWorkspaceChanged) {
+			if err := state.Save(statePath); err != nil {
+				resultErr = fmt.Errorf("%w; saving invalidated file state: %v", resultErr, err)
+			}
+		}
+	}()
 
 	collectionExists, err := s.store.CollectionExists(ctx, collection)
 	if err != nil {
@@ -107,7 +115,10 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 	// 1. Proactive stale vector cleanup for deleted files and directories
 	var staleCleaned bool
 	if !opts.Recreate && collectionExists {
-		staleCleaned = s.cleanupStaleFiles(ctx, root, collection, state, opts.Language)
+		staleCleaned, err = s.cleanupStaleFiles(ctx, root, collection, state, opts.Language)
+		if err != nil {
+			return err
+		}
 	}
 
 	// 2. Reuse the inventory across languages, but check metadata now so edits
@@ -135,6 +146,9 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 		a := parser.GetByFile(path)
 		if a == nil || opts.Language != "" && a.Name() != opts.Language {
 			continue
+		}
+		if err := checkWorkspace(ctx); err != nil {
+			return err
 		}
 		if err := s.store.DeleteByFilter(ctx, collection, "file_path", path); err == nil {
 			state.RemoveFile(path)
@@ -174,6 +188,9 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 			logger.Instance.Error("Failed to get embedding dimensions for %s: %v", collection, err)
 			return fmt.Errorf("failed to get embedding dimensions: %w", err)
 		}
+		if err := checkWorkspace(ctx); err != nil {
+			return err
+		}
 		if err := s.store.CreateCollection(ctx, collection, len(dummy)); err != nil {
 			logger.Instance.Error("Failed to create collection %s: %v", collection, err)
 			return fmt.Errorf("failed to create collection: %w", err)
@@ -202,7 +219,13 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 
 	// Dedicated periodic-save goroutine + stall watchdog: detects silent deadlocks.
 	saveStop := make(chan struct{})
+	saveDone := make(chan struct{})
+	defer func() {
+		close(saveStop)
+		<-saveDone
+	}()
 	go func() {
+		defer close(saveDone)
 		saveTicker := time.NewTicker(10 * time.Second)
 		stallTicker := time.NewTicker(60 * time.Second)
 		defer saveTicker.Stop()
@@ -255,6 +278,9 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 			wsName, opts.Language, fileNum, totalFiles, filepath.Base(path))
 
 		symCount, indexErr := s.IndexFile(ctx, collection, path, state)
+		if errors.Is(indexErr, ErrWorkspaceChanged) {
+			return indexErr
+		}
 		if indexErr != nil {
 			logger.Instance.Warn("[IDX] ws=%s lang=%s ⚠️ %s: %v", wsName, opts.Language, filepath.Base(path), indexErr)
 			fileErrs = append(fileErrs, fmt.Sprintf("%s: %v", path, indexErr))
@@ -274,8 +300,6 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 			opts.Progress(n, totalFiles)
 		}
 	}
-
-	close(saveStop)
 
 	if len(fileErrs) > 0 {
 		logger.Instance.Warn("[IDX] ws=%s lang=%s %d file(s) failed to index", wsName, opts.Language, len(fileErrs))
@@ -362,6 +386,9 @@ func (s *Service) deleteCollectionForRecreate(ctx context.Context, collection st
 	backoff := 50 * time.Millisecond
 
 	for {
+		if err := checkWorkspace(ctx); err != nil {
+			return err
+		}
 		if err := s.store.DeleteCollection(ctx, collection); err != nil {
 			log.Printf("[DEBUG] DeleteCollection %s error: %v", collection, err)
 		}
@@ -391,6 +418,9 @@ func (s *Service) deleteCollectionForRecreate(ctx context.Context, collection st
 }
 
 func (s *Service) IndexFile(ctx context.Context, collection, path string, state *State) (int, error) {
+	if err := checkWorkspace(ctx); err != nil {
+		return 0, err
+	}
 	// We no longer apply a hard 2-minute timeout here.
 	// Files with hundreds of symbols processed on a low-RAM or saturated parallel system
 	// naturally take >2m. The individual embed requests have 30s timeouts which is sufficient protection.
@@ -413,7 +443,12 @@ func (s *Service) IndexFile(ctx context.Context, collection, path string, state 
 	}
 	res.Symbols = symbolsForFile(res.Symbols, path)
 
+	if err := checkWorkspace(ctx); err != nil {
+		return 0, err
+	}
 	// Remove old points for this file if we are updating
+	// Interrupted replacement must remain eligible for indexing on the next run.
+	state.RemoveFile(path)
 	if err := s.store.DeleteByFilter(ctx, collection, "file_path", path); err != nil {
 		logger.Instance.Warn("Failed to delete old points for %s: %v", path, err)
 	}
@@ -425,6 +460,9 @@ func (s *Service) IndexFile(ctx context.Context, collection, path string, state 
 		}
 	}
 
+	if err := checkWorkspace(ctx); err != nil {
+		return 0, err
+	}
 	// Update state
 	if info, err := os.Stat(path); err == nil {
 		state.UpdateFile(path, info)
@@ -448,6 +486,9 @@ func symbolsForFile(symbols []parser.Symbol, path string) []parser.Symbol {
 // RemoveFile deletes every vector indexed for path and forgets it in state.
 // Used for files that no longer exist on disk.
 func (s *Service) RemoveFile(ctx context.Context, collection, path string, state *State) error {
+	if err := checkWorkspace(ctx); err != nil {
+		return err
+	}
 	if err := s.store.DeleteByFilter(ctx, collection, "file_path", path); err != nil {
 		return err
 	}
@@ -683,6 +724,9 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 			end = len(allPoints)
 		}
 
+		if err := checkWorkspace(ctx); err != nil {
+			return err
+		}
 		upsertCtx, upsertCancel := context.WithTimeout(ctx, 30*time.Second)
 		_, err := s.store.Upsert(upsertCtx, collection, allPoints[i:end])
 		upsertCancel()
@@ -819,10 +863,10 @@ func (s *Service) CountAllFiles(root string, excludePatterns []string) FileCount
 // cleanupStaleFiles detects deleted files or directories, cleans up their vectors from Qdrant,
 // and updates the local index state. If targetLanguage is non-empty, only files matching that parser
 // language are removed from state and cleaned from this collection.
-func (s *Service) cleanupStaleFiles(ctx context.Context, root, collection string, state *State, targetLanguage string) bool {
+func (s *Service) cleanupStaleFiles(ctx context.Context, root, collection string, state *State, targetLanguage string) (bool, error) {
 	staleFiles := CollectStaleFiles(state)
 	if len(staleFiles) == 0 {
-		return false
+		return false, nil
 	}
 
 	// Filter stale files to only those matching targetLanguage (if specified)
@@ -838,17 +882,23 @@ func (s *Service) cleanupStaleFiles(ctx context.Context, root, collection string
 	}
 
 	if len(staleFiles) == 0 {
-		return false
+		return false, nil
 	}
 
 	dirPrefixes, individualFiles := GroupByDeletedRoot(staleFiles, root)
 
 	// 1. Bulk delete for entire deleted directories
 	for prefix, files := range dirPrefixes {
+		if err := checkWorkspace(ctx); err != nil {
+			return false, err
+		}
 		deleted, err := s.store.DeleteByPrefix(ctx, collection, "file_path", prefix)
 		if err != nil {
 			logger.Instance.Warn("[IDX] Prefix delete failed for %s: %v, falling back to per-file delete", prefix, err)
 			for _, path := range files {
+				if err := checkWorkspace(ctx); err != nil {
+					return false, err
+				}
 				if delErr := s.store.DeleteByFilter(ctx, collection, "file_path", path); delErr != nil {
 					logger.Instance.Warn("[IDX] Failed to delete points for stale file %s: %v", path, delErr)
 				}
@@ -863,11 +913,14 @@ func (s *Service) cleanupStaleFiles(ctx context.Context, root, collection string
 
 	// 2. Individual file deletions
 	for _, path := range individualFiles {
+		if err := checkWorkspace(ctx); err != nil {
+			return false, err
+		}
 		if err := s.store.DeleteByFilter(ctx, collection, "file_path", path); err != nil {
 			logger.Instance.Warn("[IDX] Failed to delete points for stale file %s: %v", path, err)
 		}
 		state.RemoveFile(path)
 	}
 
-	return true
+	return true, nil
 }

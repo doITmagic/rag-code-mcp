@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -111,7 +112,8 @@ func NewEngine(idx *indexer.Service, srv *search.Service, registryPath string, c
 		detOpts.ExcludePatterns = cfg.Workspace.ExcludePatterns
 	}
 	det := detector.New(detOpts)
-	branchMgr := branchstate.NewManager()
+	// Watch events can arrive immediately after checkout; stale Git state writes to the wrong collection.
+	branchMgr := branchstate.NewManager(branchstate.WithCacheTTL(0))
 
 	var reg *registry.Registry
 	if registryPath != "" {
@@ -261,7 +263,7 @@ func WithResolvedWorkspace(ctx context.Context, path string, workspace *Workspac
 
 // DetectContext resolves the workspace context for a given path using the full resolver cascade.
 // If path is empty, it falls back to the last active workspace from the registry.
-// Results are cached with a 5s TTL to avoid redundant resolver invocations.
+// Explicit paths without Git metadata are cached with a 5s TTL.
 func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceContext, error) {
 	if resolved, ok := ctx.Value(resolvedWorkspaceKey{}).(resolvedWorkspace); ok && resolved.path == path {
 		return resolved.workspace, nil
@@ -270,20 +272,9 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 	hintFromCtx := transport.GetWorkspaceHint(ctx)
 	logger.Instance.Info("[WS-DETECT] ▶ DetectContext called: path=%q, X-Workspace-Hint=%q", path, hintFromCtx)
 
-	// Normalize cache key
-	cacheKey := strings.TrimSpace(path)
-	if entry, ok := e.detectionCache.LoadAndDelete(cacheKey); ok {
-		ce := entry.(*detectionCacheEntry)
-		if time.Now().Before(ce.expiry) {
-			// Re-store valid entry atomically before returning
-			e.detectionCache.Store(cacheKey, ce)
-			logger.Instance.Debug("[WS-DETECT] ◀ Cache hit: root=%s, source=%s", ce.wctx.Root, ce.wctx.DetectionSource)
-			return ce.wctx, nil
-		}
-	}
-
 	req := contract.ResolveWorkspaceRequest{}
 	source := "explicit_file_path"
+	cacheKey := ""
 
 	if strings.TrimSpace(path) == "" {
 		logger.Instance.Info("[WS-DETECT] Tier 1 skipped: no explicit path in request params")
@@ -291,20 +282,16 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 		// Tier 2: Try workspace hint from adapter (IDE's CWD injected via X-Workspace-Hint header)
 		if hint := strings.TrimSpace(hintFromCtx); hint != "" {
 			abs, err := filepath.Abs(hint)
-			if err == nil {
-				// Validate the path actually exists on disk before using it
-				if _, statErr := os.Stat(abs); statErr == nil {
-					req.FilePath = abs
-					source = "hint_fallback"
-					// Use hint as cache key so different IDEs don't share the same empty-string entry
-					cacheKey = abs
-					logger.Instance.Info("[WS-DETECT] ✅ Tier 2 matched: using X-Workspace-Hint=%s", abs)
-				} else {
-					logger.Instance.Warn("[WS-DETECT] Tier 2 skipped: hint path does not exist on disk: %s (err: %v)", abs, statErr)
-				}
-			} else {
-				logger.Instance.Warn("[WS-DETECT] Tier 2 skipped: could not resolve hint to abs path: %v", err)
+			if err != nil {
+				return nil, fmt.Errorf("cannot resolve confirmed workspace %q: %w; provide an explicit file_path to select a workspace", hint, err)
 			}
+			// A lost client binding must not fall through to another client's workspace.
+			if _, err := os.Stat(abs); err != nil {
+				return nil, fmt.Errorf("confirmed workspace %q is unavailable: %w; provide an explicit file_path to select a workspace", abs, err)
+			}
+			req.FilePath = abs
+			source = "hint_fallback"
+			logger.Instance.Info("[WS-DETECT] ✅ Tier 2 matched: using X-Workspace-Hint=%s", abs)
 		} else {
 			logger.Instance.Info("[WS-DETECT] Tier 2 skipped: no X-Workspace-Hint header in request")
 		}
@@ -326,7 +313,21 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 			return nil, fmt.Errorf("failed to resolve path: %w", err)
 		}
 		req.FilePath = abs
+		cacheKey = abs
 		logger.Instance.Info("[WS-DETECT] ✅ Tier 1 matched: using explicit file_path=%s", abs)
+	}
+
+	// Cache explicit paths only; hinted requests must recheck branch metadata.
+	if cacheKey != "" {
+		if entry, ok := e.detectionCache.LoadAndDelete(cacheKey); ok {
+			ce := entry.(*detectionCacheEntry)
+			if time.Now().Before(ce.expiry) {
+				e.detectionCache.Store(cacheKey, ce)
+				transport.SetResponseHeader(ctx, "X-Resolved-Workspace", ce.wctx.Root)
+				logger.Instance.Debug("[WS-DETECT] ◀ Cache hit: root=%s, source=%s", ce.wctx.Root, ce.wctx.DetectionSource)
+				return ce.wctx, nil
+			}
+		}
 	}
 
 	resp, wsErr := e.resolver.Resolve(ctx, req)
@@ -360,14 +361,13 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 		wctx.Root, wctx.ID, wctx.Branch, source, wctx.MismatchRisk)
 
 	// Inform the adapter of the resolved workspace root via response header.
-	// The adapter reads this header once and caches it as sticky X-Workspace-Root
-	// for all subsequent requests — eliminating repeated resolver cascades.
+	// The adapter uses this root as sticky X-Workspace-Root for subsequent requests.
 	transport.SetResponseHeader(ctx, "X-Resolved-Workspace", wctx.Root)
 
 	e.autoTriggerIndex(wctx)
 
 	// Don't cache entries that require reindex or are high-risk — let next call re-evaluate
-	if !wctx.ReindexRequired && wctx.MismatchRisk != "high" {
+	if cacheKey != "" && wctx.Branch == "" && !wctx.ReindexRequired && wctx.MismatchRisk != "high" {
 		e.detectionCache.Store(cacheKey, &detectionCacheEntry{
 			wctx:   wctx,
 			expiry: time.Now().Add(detectionCacheTTL),
@@ -435,8 +435,8 @@ func (e *Engine) DetectContextAsRoot(ctx context.Context, root string, triggerAu
 
 // autoTriggerIndex starts a background incremental index for a resolved
 // workspace so the knowledge base is warmed up or synced with disk.
-// connectTriggered limits this to ONCE per WorkspaceID per daemon lifetime,
-// preventing full index scans on every cache miss. The exception is a root
+// connectTriggered limits this to once per WorkspaceID unless Git state changed,
+// preventing full index scans on every cache miss. Another exception is a root
 // with no watcher (start failed, the root was moved, or watch_enabled is
 // false): nothing else would ever pick up new files, so the incremental index
 // re-runs at most once per unwatchedRescanInterval, and IndexWorkspace
@@ -451,9 +451,10 @@ func (e *Engine) autoTriggerIndex(wctx *WorkspaceContext) {
 	// Calling it directly (not via `go`) avoids the extra scheduling delay
 	// that previously widened the race window between ResumeIndexingOnConnect
 	// and DetectContext. StartIndexingAsync spawns its own goroutine internally.
-	if _, triggered := e.connectTriggered.LoadOrStore(wctx.ID, true); !triggered {
+	_, triggered := e.connectTriggered.LoadOrStore(wctx.ID, true)
+	if !triggered || wctx.ReindexRequired {
 		logger.Instance.Info("[DAEMON] [WS-DETECT] Auto-triggering incremental index for workspace: %s", wctx.Root)
-		e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+		e.startIndexing(wctx.Root, wctx.ID, nil, false, wctx.ReindexRequired)
 		return
 	}
 	if e.watchers != nil && e.watchers.Watching(wctx.Root) {
@@ -1122,6 +1123,10 @@ func (e *Engine) startIndexing(root, id string, changedFiles []string, recreate,
 		if ctx.Err() == nil {
 			finalizeIndexStatus(root, err)
 		}
+		if errors.Is(err, indexer.ErrWorkspaceChanged) {
+			// A checkout interrupted this run; the next request must retry even with a watcher.
+			e.connectTriggered.Delete(id)
+		}
 		if err != nil {
 			logger.Instance.Error("[IDX] ws=%s Background indexing failed: %v", filepath.Base(root), err)
 		} else {
@@ -1149,20 +1154,32 @@ func finalizeIndexStatus(root string, indexErr error) {
 }
 
 // IndexFiles indexes specific files in a workspace.
-func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) error {
+func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) (resultErr error) {
 	wctx, err := e.DetectContextAsRoot(ctx, root, false)
 	if err != nil {
 		return err
 	}
+	if wctx.ReindexRequired {
+		return e.IndexWorkspace(ctx, root, false)
+	}
+	ctx = indexer.WithGitState(ctx, wctx.Root, wctx.Branch, wctx.HeadSHA)
 
 	states := make(map[string]*indexer.State)
-	saveLoadedStates := func() {
+	saveLoadedStates := func() error {
+		var saveErrors []error
 		for col, st := range states {
 			if saveErr := st.Save(indexer.StatePath(wctx.Root, col)); saveErr != nil {
 				logger.Instance.Warn("[IDX] Failed to save state for %s before full workspace fallback: %v", col, saveErr)
+				saveErrors = append(saveErrors, saveErr)
 			}
 		}
+		return errors.Join(saveErrors...)
 	}
+	defer func() {
+		if errors.Is(resultErr, indexer.ErrWorkspaceChanged) {
+			resultErr = errors.Join(resultErr, saveLoadedStates())
+		}
+	}()
 
 	var excludePatterns []string
 	if e.config != nil {
@@ -1230,11 +1247,17 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) er
 		// leaving them until the next full run or a search that notices them.
 		if os.IsNotExist(statErr) {
 			if err := e.indexer.RemoveFile(ctx, collection, p, state); err != nil {
+				if errors.Is(err, indexer.ErrWorkspaceChanged) {
+					return err
+				}
 				logger.Instance.Warn("[IDX] Failed to remove deleted %s: %v", filepath.Base(p), err)
 			}
 			continue
 		}
 		if _, indexErr := e.indexer.IndexFile(ctx, collection, p, state); indexErr != nil {
+			if errors.Is(indexErr, indexer.ErrWorkspaceChanged) {
+				return indexErr
+			}
 			logger.Instance.Warn("[IDX] Failed to index %s: %v", filepath.Base(p), indexErr)
 		}
 	}
@@ -1308,6 +1331,7 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 	if watch.IsInvalidRoot(wctx.Root) {
 		return fmt.Errorf("refusing to index invalid root %s", wctx.Root)
 	}
+	ctx = indexer.WithGitState(ctx, wctx.Root, wctx.Branch, wctx.HeadSHA)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -1439,6 +1463,9 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 				indexer.SaveIndexStatus(wctx.Root, s)
 			},
 		})
+		if errors.Is(err, indexer.ErrWorkspaceChanged) {
+			return err
+		}
 		if err == nil && !ticked {
 			// Nothing changed: every file on disk is already indexed. Without
 			// this the previous (possibly inflated) count would stick.
@@ -1511,9 +1538,13 @@ func (e *Engine) StopWatchers() {
 }
 
 func (e *Engine) handleWatchChange(ctx context.Context, root string, changedFiles []string) error {
-	wctx, err := e.DetectContext(ctx, root)
+	wctx, err := e.DetectContextAsRoot(ctx, root, false)
 	if err != nil {
 		return err
+	}
+	if wctx.ReindexRequired {
+		e.startIndexing(wctx.Root, wctx.ID, nil, false, true)
+		return nil
 	}
 	// StartIndexingAsync atomically queues the batch if a job is already active.
 	e.StartIndexingAsync(wctx.Root, wctx.ID, changedFiles, false)

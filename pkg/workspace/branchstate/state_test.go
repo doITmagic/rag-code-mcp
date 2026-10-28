@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -169,4 +170,74 @@ func TestAnnotate_NoGitIsLowRisk(t *testing.T) {
 	if resp.MismatchRisk != "low" {
 		t.Fatalf("risk = %q, want low", resp.MismatchRisk)
 	}
+}
+
+func TestConcurrentBranchStateResolution(t *testing.T) {
+	root := t.TempDir()
+	manager := NewManager(WithCacheTTL(0))
+	manager.gitRunner = func(_ context.Context, _ string, args ...string) (string, error) {
+		if len(args) == 3 {
+			return "main", nil
+		}
+		return "abc", nil
+	}
+	if err := manager.saveState(filepath.Join(root, ".ragcode", "branch_state.json"), &State{LastBranch: "previous", LastHeadSHA: "previous"}); err != nil {
+		t.Fatal(err)
+	}
+	const callers = 64
+	start := make(chan struct{})
+	responses := make(chan *contract.ResolveWorkspaceResponse, callers)
+	var wg sync.WaitGroup
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			resp := &contract.ResolveWorkspaceResponse{}
+			if err := manager.Annotate(context.Background(), root, resp); err != nil {
+				t.Errorf("concurrent resolution failed: %s", err.Message)
+				return
+			}
+			responses <- resp
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(responses)
+	changed := 0
+	for resp := range responses {
+		if resp.ReindexRequired {
+			changed++
+			if resp.MismatchRisk != "high" {
+				t.Errorf("changed branch risk = %q, want high", resp.MismatchRisk)
+			}
+		} else if resp.MismatchRisk != "low" {
+			t.Errorf("unchanged branch risk = %q, want low", resp.MismatchRisk)
+		}
+	}
+	if changed != 1 {
+		t.Fatalf("branch transition reported %d times, want once", changed)
+	}
+}
+
+func TestConcurrentManagersPublishCompleteBranchState(t *testing.T) {
+	root := t.TempDir()
+	var wg sync.WaitGroup
+	for _, branch := range []string{"main", "feature/longer-branch"} {
+		wg.Add(1)
+		go func(branch string) {
+			defer wg.Done()
+			manager := NewManager(WithCacheTTL(0))
+			manager.gitRunner = func(_ context.Context, _ string, _ ...string) (string, error) {
+				return branch, nil
+			}
+			for i := 0; i < 100; i++ {
+				if err := manager.Annotate(context.Background(), root, &contract.ResolveWorkspaceResponse{}); err != nil {
+					t.Errorf("concurrent manager observed incomplete state: %s", err.Message)
+					return
+				}
+			}
+		}(branch)
+	}
+	wg.Wait()
 }

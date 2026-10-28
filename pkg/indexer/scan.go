@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
+	"github.com/doITmagic/rag-code-mcp/pkg/workspace/detector"
 )
 
 // WorkspaceScan is a per-run inventory shared by all language collections.
@@ -52,7 +53,7 @@ func (s *Service) ScanWorkspace(ctx context.Context, root string, excludePattern
 			if path == scan.root {
 				return nil
 			}
-			if skipDirName(d.Name()) || matchesExcludePatterns(relSlash, d.Name(), scan.excludePatterns) {
+			if skipDirName(d.Name()) || matchesExcludePatterns(relSlash, d.Name(), scan.excludePatterns) || detector.IsLinkedWorktree(path) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -97,9 +98,11 @@ func ExcludedPath(root, path string, isDir bool, excludePatterns []string) bool 
 		return false
 	}
 	parts := strings.Split(filepath.ToSlash(rel), "/")
+	dirPath := root
 	for i, name := range parts {
+		dirPath = filepath.Join(dirPath, name)
 		dir := isDir || i < len(parts)-1
-		if dir && skipDirName(name) || matchesExcludePatterns(strings.Join(parts[:i+1], "/"), name, excludePatterns) {
+		if dir && (skipDirName(name) || detector.IsLinkedWorktree(dirPath)) || matchesExcludePatterns(strings.Join(parts[:i+1], "/"), name, excludePatterns) {
 			return true
 		}
 	}

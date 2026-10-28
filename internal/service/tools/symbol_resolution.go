@@ -12,17 +12,40 @@ import (
 // A short name is not an identity. Prefer an explicit identity, then require
 // a unique candidate in the supplied file or workspace.
 func resolveSymbol(ctx context.Context, eng *engine.Engine, wsID, name, file string) (*storage.SearchResult, string) {
-	results, err := eng.SearchByName(ctx, wsID, name, 100)
+	results, err := searchSymbolCandidates(ctx, eng, wsID, name, 100)
 	if err != nil {
 		return nil, "unresolved"
 	}
-	if len(results) == 0 {
-		results, err = eng.ExactSearchPolyglot(ctx, wsID, map[string]interface{}{"qualified_name": name}, 100)
-		if err != nil {
-			return nil, "unresolved"
+	return uniqueSymbol(results, file)
+}
+
+func searchSymbolCandidates(ctx context.Context, eng *engine.Engine, wsID, name string, limit int) ([]storage.SearchResult, error) {
+	results, err := eng.SearchByName(ctx, wsID, name, limit)
+	if err != nil || len(results) > 0 {
+		return results, err
+	}
+	results, err = eng.ExactSearchPolyglot(ctx, wsID, map[string]interface{}{"qualified_name": name}, limit)
+	if err != nil || len(results) > 0 {
+		return results, err
+	}
+	parts := strings.Split(name, ".")
+	if len(parts) != 2 && len(parts) != 3 {
+		return nil, nil
+	}
+	for _, part := range parts {
+		if part == "" {
+			return nil, nil
 		}
 	}
-	return uniqueSymbol(results, file)
+	// Go stores method ownership in metadata rather than qualified_name.
+	filters := map[string]interface{}{
+		"language": "go", "type": "method", "name": parts[len(parts)-1],
+		"metadata.receiver": parts[len(parts)-2],
+	}
+	if len(parts) == 3 {
+		filters["package"] = parts[0]
+	}
+	return eng.ExactSearchPolyglot(ctx, wsID, filters, limit)
 }
 
 func uniqueSymbol(results []storage.SearchResult, file string) (*storage.SearchResult, string) {

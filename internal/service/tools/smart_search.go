@@ -136,19 +136,13 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 		}
 		sr.meta = searchMetadata{workspaceRoot: wctx.Root, workspaceID: wctx.ID, collection: "exact", detectionSource: wctx.DetectionSource}
 		ctx = engine.WithResolvedWorkspace(ctx, input.FilePath, wctx)
-		exact, err := t.engine.SearchByName(ctx, sr.meta.workspaceID, query, limit)
+		exact, err := searchSymbolCandidates(ctx, t.engine, sr.meta.workspaceID, query, limit)
 		if err != nil {
 			var missing *engine.ErrNoCollectionsFound
 			if errors.As(err, &missing) && input.ExactSymbol != nil && *input.ExactSymbol {
 				return (ToolResponse{Status: "indexing_required", Message: "Index this workspace before exact symbol lookup.", Context: ContextFromWorkspaceWithStatus(wctx, t.engine)}).JSON()
 			}
 			if !errors.As(err, &missing) {
-				return "", err
-			}
-		}
-		if len(exact) == 0 && err == nil {
-			exact, err = t.engine.ExactSearchPolyglot(ctx, sr.meta.workspaceID, map[string]interface{}{"qualified_name": query}, limit)
-			if err != nil {
 				return "", err
 			}
 		}

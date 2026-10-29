@@ -1286,6 +1286,11 @@ func (e *Engine) startIndexing(root, id string, changedFiles []string, recreate,
 			if v, _ := e.connectTriggered.Load(id); v != (failureRetry{}) {
 				e.connectTriggered.Store(id, time.Now().Add(unwatchedRescanInterval))
 			}
+		case len(changedFiles) == 0:
+			// A completed full run (rag_index_workspace, say) is the sync the
+			// first request's auto-trigger would start; queued behind another
+			// workspace, that rerun made this index read as in progress.
+			e.connectTriggered.Store(id, true)
 		default:
 			e.connectTriggered.CompareAndSwap(id, failureRetry{}, true)
 		}

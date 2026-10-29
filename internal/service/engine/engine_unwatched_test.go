@@ -100,6 +100,35 @@ func TestUnwatchedRootReindexesOnDetect(t *testing.T) {
 	}
 }
 
+// A completed rag_index_workspace run already synced the workspace: the next
+// request must not start another full run, which, queued behind another
+// workspace's indexing, made the complete index answer indexing_in_progress.
+func TestExplicitIndexCountsAsFirstAutoIndex(t *testing.T) {
+	eng, root := newUnwatchedTestEngine(t)
+	eng.watchers.SetFactory(func(string, watch.Options, watch.OnChangeFunc) (watch.Watcher, error) {
+		return noopWatcher{}, nil
+	})
+	ctx := context.Background()
+	wctx, err := eng.DetectContextAsRoot(ctx, root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+	waitFor(t, "index did not finish", func() bool {
+		s := indexer.LoadIndexStatus(root)
+		return len(eng.ActiveIndexingJobs()) == 0 && s != nil && s.EndedAt != ""
+	})
+	// Another workspace is indexing.
+	eng.indexingSlot <- struct{}{}
+	defer func() { <-eng.indexingSlot }()
+	if _, err := eng.DetectContext(ctx, filepath.Join(root, "main.go")); err != nil {
+		t.Fatal(err)
+	}
+	if s := indexer.LoadIndexStatus(root); len(eng.ActiveIndexingJobs()) != 0 || s == nil || s.EndedAt == "" {
+		t.Fatalf("request after a completed index started another run: jobs %v, status %+v", eng.ActiveIndexingJobs(), s)
+	}
+}
+
 // With the watcher failing for good, detections must not rescan more often
 // than unwatchedRescanInterval.
 func TestUnwatchedRescanIsPaced(t *testing.T) {

@@ -743,6 +743,7 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 		coll    string
 		results []storage.SearchResult
 		err     error
+		skipped bool
 		elapsed time.Duration
 	}
 
@@ -763,7 +764,7 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 			// The docs collection holds only documentation, which a code-only
 			// search excludes unless the caller is in a docs file.
 			if l == "docs" && !includeDocs && primaryLang != "docs" {
-				resultsChan <- langResult{lang: l, coll: c}
+				resultsChan <- langResult{lang: l, coll: c, skipped: true}
 				return
 			}
 			var res []storage.SearchResult
@@ -791,7 +792,7 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 	var primaryResults []storage.SearchResult
 	var otherResults []storage.SearchResult
 	var firstErr error
-	var existingCollections int
+	var existingCollections, searched int
 	reportLang := primaryLang
 	reportColl := primaryColl
 
@@ -804,6 +805,9 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 			continue
 		}
 		existingCollections++
+		if !lr.skipped {
+			searched++
+		}
 		logger.Instance.Debug("[TIMER] SearchCode lang=%s hits=%d elapsed=%v", lr.lang, len(lr.results), lr.elapsed)
 		if lr.coll == primaryColl {
 			primaryResults = lr.results
@@ -816,7 +820,8 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 
 	// A store failure that leaves nothing must not read as "no results", nor
 	// be answered from the AST fallback as if indexing were still running.
-	if firstErr != nil && len(all) == 0 {
+	// One failing collection (a stale one, say) while others answer is not.
+	if firstErr != nil && searched == 0 {
 		return nil, fmt.Errorf("search failed: %w", firstErr)
 	}
 

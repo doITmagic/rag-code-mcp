@@ -87,3 +87,28 @@ func TestSearchReportsVectorStoreOutage(t *testing.T) {
 		t.Fatalf("%s, want the store error", text)
 	}
 }
+
+// One stale collection (built with another embedding size) failing while the
+// primary answers with nothing is not an outage: the search must still fall
+// back to the AST scan of the workspace.
+func TestSearchSurvivesOneFailingCollection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "signer.go")
+	if err := os.WriteFile(path, []byte("package signer\n\n// DeriveKey derives the signing key.\nfunc DeriveKey() {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	stale := func(_ context.Context, collection string, _ storage.SearchQuery) ([]storage.SearchResult, error) {
+		if strings.HasSuffix(collection, "-python") {
+			return nil, errors.New("wrong vector dimension")
+		}
+		return nil, nil
+	}
+	eng := setupTestEngine(&mockVectorStore{SearchFunc: stale, SearchCodeOnlyFunc: stale})
+	t.Cleanup(eng.Close)
+	text, err := tools.NewSmartSearchTool(eng).Execute(context.Background(), tools.SmartSearchInput{Query: "derive key", FilePath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "DeriveKey") {
+		t.Fatalf("%s, want the fallback hit", text)
+	}
+}

@@ -146,3 +146,33 @@ func TestIndexWorkspaceKeepsLargeGodotScenes(t *testing.T) {
 	}
 	t.Fatalf("large Godot scene was not indexed (%d points)", len(store.upsertPoints))
 }
+
+// A watched file that became skippable (grown past the size cap, now an
+// ignored .env, replaced by a symlink) kept its old points, so rag_search
+// returned a symbol or secret the file no longer holds until a full run.
+func TestIndexFileDropsFileThatBecameSkippable(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "probe.go")
+	writeTestFile(t, path, "package main\nfunc GrownProbe() {}\n")
+	store := &mockStore{}
+	svc := NewService(&mockEmbedder{}, store)
+	state := NewState()
+	if _, err := svc.IndexFile(context.Background(), "go", path, state); err != nil {
+		t.Fatal(err)
+	}
+
+	old := parser.MaxFileSize
+	parser.MaxFileSize = 1 << 10
+	t.Cleanup(func() { parser.MaxFileSize = old })
+	writeTestFile(t, path, "package main\nfunc GrownProbe() {}\n"+strings.Repeat("// padding\n", 200))
+	store.deletedFilters = nil
+	if _, err := svc.IndexFile(context.Background(), "go", path, state); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.deletedFilters) != 1 || store.deletedFilters[0] != path {
+		t.Fatalf("old points of the skipped file were not deleted: %v", store.deletedFilters)
+	}
+	if _, ok := state.GetFileState(path); ok {
+		t.Fatal("skipped file is still tracked in state")
+	}
+}

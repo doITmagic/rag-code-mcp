@@ -464,6 +464,11 @@ func (s *Service) IndexFile(ctx context.Context, collection, path string, state 
 	// Skip generated, low-value, and minified files before parsing/embedding.
 	if ShouldSkipFile(path) {
 		logger.Instance.Debug("[IDX] Skipping excluded file: %s", filepath.Base(path))
+		// Indexed before it became skippable (grown, now ignored, a symlink):
+		// drop its vectors as for a deleted file.
+		if _, tracked := state.GetFileState(path); tracked {
+			return 0, s.RemoveFile(ctx, collection, path, state)
+		}
 		return 0, nil
 	}
 

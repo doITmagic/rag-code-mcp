@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/doITmagic/rag-code-mcp/internal/service/tools"
+	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 )
 
@@ -109,6 +110,42 @@ func TestExactLookupsDuringCollectionRecreate(t *testing.T) {
 		}
 		if response.Status == "error" {
 			t.Errorf("%s: %s", tool, text)
+		}
+	}
+}
+
+// A run that ended without creating any collection (a store error at
+// CreateCollection) is over: reporting it as in progress has clients wait
+// for an index that is not being built.
+func TestExactLookupsAfterFailedIndexAreNotInProgress(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "signer.py")
+	if err := os.WriteFile(path, []byte("def sign(): pass\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	indexer.SaveIndexStatus(root, &indexer.IndexStatus{StartedAt: "2026-01-01T00:00:00Z", EndedAt: "2026-01-01T00:00:01Z",
+		Error: "indexing failed for 1 language(s): python: failed to create collection: Too many open files"})
+	eng := setupTestEngine(&mockVectorStore{CollectionExistsFunc: func(context.Context, string) (bool, error) { return false, nil }})
+	t.Cleanup(eng.Close)
+	calls := map[string]func() (string, error){
+		"find_usages": func() (string, error) {
+			return tools.NewFindUsagesTool(eng).Execute(context.Background(), map[string]interface{}{"symbol_name": "sign", "file_path": path})
+		},
+		"call_hierarchy": func() (string, error) {
+			return tools.NewCallHierarchyTool(eng).Execute(context.Background(), map[string]interface{}{"symbol_name": "sign", "file_path": path})
+		},
+	}
+	for tool, call := range calls {
+		text, err := call()
+		if err != nil {
+			t.Fatalf("%s: %v", tool, err)
+		}
+		var response tools.ToolResponse
+		if err := json.Unmarshal([]byte(text), &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.Status == "indexing_in_progress" {
+			t.Errorf("%s reports a failed, finished run as in progress: %s", tool, text)
 		}
 	}
 }

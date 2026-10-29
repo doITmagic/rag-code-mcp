@@ -148,7 +148,8 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 				Message: fmt.Sprintf("⏳ Workspace '%s' is not indexed yet. Indexing is required for complete call hierarchy results.", wctx.Root),
 				Context: ContextFromWorkspaceWithStatus(wctx, t.engine),
 			}
-			if idx != nil {
+			// A run that ended (failed, say) is no longer in progress.
+			if idx != nil && idx.EndedAt == "" {
 				resp.Status = "indexing_in_progress"
 				resp.Data = map[string]any{"indexing": idx}
 			}

@@ -110,7 +110,8 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 				Message: fmt.Sprintf("⏳ Workspace '%s' is not indexed yet. Indexing is required for complete results.", wctx.Root),
 				Context: ContextFromWorkspaceWithStatus(wctx, t.engine),
 			}
-			if idx != nil {
+			// A run that ended (failed, say) is no longer in progress.
+			if idx != nil && idx.EndedAt == "" {
 				resp.Status = "indexing_in_progress"
 			}
 			return resp.JSON()

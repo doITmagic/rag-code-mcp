@@ -70,6 +70,37 @@ func TestDetectContextRegistryFallbackDoesNotOverrideClientHint(t *testing.T) {
 	}
 }
 
+// A registry fallback is a guess: echoing it as X-Resolved-Workspace makes the
+// adapter send it back as a confirmed root, which drops the fallback warning.
+func TestDetectContextRegistryFallbackIsNotConfirmed(t *testing.T) {
+	fallbackRoot := t.TempDir()
+	reg, err := registry.New(filepath.Join(t.TempDir(), "registry.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.RegisterWorkspace(fallbackRoot, "fallback", "test"); err != nil {
+		t.Fatal(err)
+	}
+	eng := &Engine{
+		config: &config.Config{},
+		resolver: resolver.New(resolver.Dependencies{
+			Detector: &mockDirDetector{root: fallbackRoot},
+			Registry: reg,
+		}),
+	}
+	writer := httptest.NewRecorder()
+	wctx, err := eng.DetectContext(transport.WithResponseWriter(context.Background(), writer), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wctx.Root != fallbackRoot || wctx.DetectionSource != "registry_fallback" {
+		t.Fatalf("fallback resolution = %+v", wctx)
+	}
+	if got := writer.Header().Get("X-Resolved-Workspace"); got != "" {
+		t.Fatalf("registry fallback was confirmed as sticky workspace %q", got)
+	}
+}
+
 func TestDetectContextHintResolvesOnEveryRequest(t *testing.T) {
 	hint, changedRoot := t.TempDir(), t.TempDir()
 	detector := &mockDirDetector{root: hint}

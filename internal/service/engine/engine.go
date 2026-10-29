@@ -389,7 +389,10 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 
 	// Inform the adapter of the resolved workspace root via response header.
 	// The adapter uses this root as sticky X-Workspace-Root for subsequent requests.
-	transport.SetResponseHeader(ctx, "X-Resolved-Workspace", wctx.Root)
+	// A registry fallback is only a guess and must not become the client's root.
+	if source != "registry_fallback" {
+		transport.SetResponseHeader(ctx, "X-Resolved-Workspace", wctx.Root)
+	}
 
 	e.autoTriggerIndex(wctx)
 

@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/doITmagic/rag-code-mcp/internal/service/tools"
 	golang "github.com/doITmagic/rag-code-mcp/pkg/parser/go"
+	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 )
 
 // The fixture store caps a scan at its limit like Qdrant does, so a caller
@@ -50,5 +52,47 @@ func TestUsagesAndCallersAreNotCappedByCandidateLimit(t *testing.T) {
 	}
 	if len(hierarchy.Data.Children) != callers {
 		t.Errorf("call_hierarchy want %d callers, got %d", callers, len(hierarchy.Data.Children))
+	}
+}
+
+// Unexported points count against a scan limit too, so a package with more
+// points than the limit would lose exports that are in the index.
+func TestPackageExportsAreNotCappedByScanLimit(t *testing.T) {
+	const exported, unexported = 200, 900
+	var code strings.Builder
+	code.WriteString("package big\n")
+	for i := 0; i < exported; i++ {
+		fmt.Fprintf(&code, "\nfunc Public%d() {}\n", i)
+	}
+	for i := 0; i < unexported; i++ {
+		fmt.Fprintf(&code, "\nfunc private%d() {}\n", i)
+	}
+	dir, store := indexFixture(t, "go", golang.NewCodeAnalyzer(), map[string]string{"big.go": code.String()})
+	// Qdrant scrolls in point-ID order; put the unexported points first.
+	scan := store.ExactSearchFunc
+	store.ExactSearchFunc = func(ctx context.Context, collection string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error) {
+		found, err := scan(ctx, collection, filters, 0)
+		sort.SliceStable(found, func(i, j int) bool {
+			return found[i].Point.Payload["is_public"] == false && found[j].Point.Payload["is_public"] == true
+		})
+		if limit > 0 && len(found) > limit {
+			found = found[:limit]
+		}
+		return found, err
+	}
+	eng := setupTestEngine(store)
+	t.Cleanup(eng.Close)
+	text, err := tools.NewListPackageExportsTool(eng).Execute(context.Background(), map[string]interface{}{"package": "big", "file_path": filepath.Join(dir, "big.go")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Data map[string][]tools.ExportedSymbol
+	}
+	if err := json.Unmarshal([]byte(text), &response); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(response.Data["function"]); got != exported {
+		t.Errorf("want %d exported functions, got %d", exported, got)
 	}
 }

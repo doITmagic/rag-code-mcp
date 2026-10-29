@@ -96,7 +96,8 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 
 	// Fan-out to all language collections in parallel — zero embedding
 	// Filter only by package; is_public check happens in the results loop
-	// (with graceful fallback for older index entries that predate the is_public field).
+	// (with graceful fallback for older index entries that predate the is_public field),
+	// so the scan is not capped: unexported points would crowd out exports.
 	//
 	// The index stores the short package name (e.g. "indexer"), not the full Go
 	// import path (e.g. "github.com/doITmagic/rag-code-mcp/pkg/indexer").
@@ -109,7 +110,7 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 		"package": filterPackage,
 	}
 
-	allResults, err := t.engine.ExactSearchPolyglot(ctx, wctx.ID, filter, 1000)
+	allResults, err := t.engine.ExactSearchPolyglot(ctx, wctx.ID, filter, 0)
 	if err != nil {
 		var noCollections *engine.ErrNoCollectionsFound
 		if errors.As(err, &noCollections) {

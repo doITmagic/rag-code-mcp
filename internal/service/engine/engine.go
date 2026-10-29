@@ -91,6 +91,10 @@ const detectionCacheTTL = 5 * time.Second
 // tests can shorten it.
 var unwatchedRescanInterval = time.Minute
 
+// failureRetry marks in connectTriggered a workspace whose failed run is
+// being retried, so a retry that fails the same way is not retried again.
+type failureRetry struct{}
+
 func (e *Engine) GetSearchService() *search.Service {
 	return e.search
 }
@@ -476,7 +480,7 @@ func (e *Engine) autoTriggerIndex(wctx *WorkspaceContext) {
 	// and DetectContext. StartIndexingAsync spawns its own goroutine internally.
 	v, triggered := e.connectTriggered.LoadOrStore(wctx.ID, true)
 	// A run in which files failed stored when it may be retried.
-	if retryAt, ok := v.(time.Time); ok && !time.Now().Before(retryAt) && e.connectTriggered.CompareAndSwap(wctx.ID, v, true) {
+	if retryAt, ok := v.(time.Time); ok && !time.Now().Before(retryAt) && e.connectTriggered.CompareAndSwap(wctx.ID, v, failureRetry{}) {
 		triggered = false
 	}
 	if !triggered || wctx.ReindexRequired {
@@ -1166,12 +1170,20 @@ func (e *Engine) startIndexing(root, id string, changedFiles []string, recreate,
 				delete(e.pendingFiles, id)
 				e.pendingMu.Unlock()
 			}
-		case err != nil:
-			// Files that failed stayed out of the saved state: retry them on a
-			// later request even with a watcher, since an outage may already be
-			// over by now. Paced so an outage, or a file that fails on its own
-			// every time, is not rescanned on every request.
+		case errors.Is(err, indexer.ErrEmbedderUnavailable), errors.Is(err, indexer.ErrStoreUnavailable):
+			// A backend is still down: retry on a later request, paced so an
+			// outage is not rescanned on every one.
 			e.connectTriggered.Store(id, time.Now().Add(unwatchedRescanInterval))
+		case err != nil:
+			// Files that failed stayed out of the saved state: retry them once
+			// on a later request even with a watcher, since an outage may have
+			// been over by the end of the run. A file that fails again with the
+			// backends up fails on its own and waits for the next natural run.
+			if v, _ := e.connectTriggered.Load(id); v != (failureRetry{}) {
+				e.connectTriggered.Store(id, time.Now().Add(unwatchedRescanInterval))
+			}
+		default:
+			e.connectTriggered.CompareAndSwap(id, failureRetry{}, true)
 		}
 		if err != nil {
 			logger.Instance.Error("[IDX] ws=%s Background indexing failed: %v", filepath.Base(root), err)

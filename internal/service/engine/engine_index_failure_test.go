@@ -155,6 +155,53 @@ func TestFailingFileDoesNotRerunOnEveryRequest(t *testing.T) {
 	}
 }
 
+// A file that fails on its own with the backends up gets one paced retry,
+// in case an outage was over by the end of the run, then waits for a natural
+// run instead of re-running the workspace every interval and holding the
+// indexing slot other workspaces queue for.
+func TestFailingFileIsRetriedOnce(t *testing.T) {
+	old := unwatchedRescanInterval
+	unwatchedRescanInterval = 200 * time.Millisecond
+	t.Cleanup(func() { unwatchedRescanInterval = old })
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\nfunc Broken() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	provider := &brokenFileLLM{}
+	store := &testStore{existing: map[string]bool{}}
+	cfg := &config.Config{Workspace: config.WorkspaceConfig{AutoIndex: true, WatchEnabled: true}}
+	eng := NewEngine(indexer.NewService(provider, store), search.NewService(provider, store), filepath.Join(t.TempDir(), "registry.json"), cfg)
+	eng.SetResolver(resolver.New(resolver.Dependencies{Detector: &exactRootDetector{}, Registry: eng.registry}))
+	eng.watchers.SetFactory(func(string, watch.Options, watch.OnChangeFunc) (watch.Watcher, error) {
+		return noopWatcher{}, nil
+	})
+	t.Cleanup(eng.Close)
+
+	wctx, err := eng.DetectContextAsRoot(context.Background(), root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.existing[wctx.CollectionName("go")] = true
+	jobDone := func() bool {
+		_, running := eng.indexingJobs.Load(wctx.ID)
+		return !running
+	}
+	eng.connectTriggered.Store(wctx.ID, true)
+	eng.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+	waitFor(t, "indexing did not finish", jobDone)
+	for i := 0; i < 3; i++ {
+		time.Sleep(unwatchedRescanInterval + 50*time.Millisecond)
+		if _, err := eng.DetectContextAsRoot(context.Background(), root, true); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(50 * time.Millisecond)
+		waitFor(t, "indexing did not finish", jobDone)
+	}
+	if n := provider.brokenCalls.Load(); n != 2 {
+		t.Fatalf("failing file was indexed %d times, want the first run and one retry", n)
+	}
+}
+
 // onceFailingLLM fails its first embed call only, like an embedder that
 // blipped mid-run and was back before the run ended.
 type onceFailingLLM struct {

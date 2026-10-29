@@ -800,3 +800,28 @@ func TestStaleCleanupRetriesFailedDeletes(t *testing.T) {
 		t.Fatalf("directory deletes on retry = %v, want [%s]", store.deletedPrefixes, want)
 	}
 }
+
+type dropTrackingStore struct {
+	mockStore
+	dropped bool
+}
+
+func (m *dropTrackingStore) DeleteCollection(context.Context, string) error {
+	m.dropped = true
+	m.collectionMissing = true
+	return nil
+}
+
+// The engine recreates every language collection. One whose files are all
+// gone must still be dropped, or its old vectors stay searchable.
+func TestRecreateDropsCollectionOfLanguageWithoutFiles(t *testing.T) {
+	root := t.TempDir()
+	store := &dropTrackingStore{}
+	svc := NewService(&mockEmbedder{}, store)
+	if err := svc.IndexWorkspace(context.Background(), root, "go", Options{Language: "go", Recreate: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !store.dropped {
+		t.Fatal("recreate kept the collection of a language with no files left")
+	}
+}

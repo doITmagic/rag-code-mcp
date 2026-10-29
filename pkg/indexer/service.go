@@ -157,6 +157,14 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 	}
 
 	if len(changedFiles) == 0 {
+		// Recreate still drops what a language with no files left had indexed.
+		if opts.Recreate && collectionExists {
+			logger.Instance.Info("Dropping collection %s for recreation", collection)
+			if err := s.deleteCollectionForRecreate(ctx, collection); err != nil {
+				return err
+			}
+			staleCleaned = true
+		}
 		if staleCleaned {
 			if saveErr := state.Save(statePath); saveErr != nil {
 				logger.Instance.Warn("Failed to save state after stale cleanup in %s: %v", root, saveErr)

@@ -45,6 +45,8 @@ type CallNode struct {
 	Package    string      `json:"package"`
 	Children   []*CallNode `json:"children,omitempty"`
 	Recursive  bool        `json:"recursive,omitempty"`
+	// OmittedCallers counts callers past maxHierarchyNodes, not listed.
+	OmittedCallers int `json:"omitted_callers,omitempty"`
 }
 
 func (t *CallHierarchyTool) Register(server *mcp.Server) {
@@ -157,8 +159,13 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 		}
 	}
 
+	warning := ""
 	if direction == "incoming" {
-		t.resolveIncoming(ctx, wctx.ID, rootNode, depth, visited)
+		budget := maxHierarchyNodes
+		t.resolveIncoming(ctx, wctx.ID, rootNode, depth, visited, &budget)
+		if omitted := countOmitted(rootNode); omitted > 0 {
+			warning = fmt.Sprintf("Listed the first %d callers; %d more are not listed (see omitted_callers). Query a caller to explore its branch.", maxHierarchyNodes, omitted)
+		}
 	} else {
 		t.resolveOutgoing(ctx, wctx.ID, rootNode, depth, visited)
 	}
@@ -182,6 +189,7 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 	resp := ToolResponse{
 		Status:  "success",
 		Message: sb.String(),
+		Warning: warning,
 		Data:    rootNode,
 		Context: ContextMetadata{
 			WorkspaceRoot:   wctx.Root,
@@ -191,6 +199,15 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 		},
 	}
 	return resp.JSON()
+}
+
+// countOmitted sums the callers left out of node's tree.
+func countOmitted(node *CallNode) int {
+	n := node.OmittedCallers
+	for _, child := range node.Children {
+		n += countOmitted(child)
+	}
+	return n
 }
 
 // collectFiles traverses the CallNode tree and adds unique non-empty FilePath values to seen.
@@ -206,7 +223,11 @@ func collectFiles(node *CallNode, seen map[string]bool) {
 	}
 }
 
-func (t *CallHierarchyTool) resolveIncoming(ctx context.Context, wsID string, node *CallNode, depth int, visited map[string]bool) {
+// maxHierarchyNodes bounds an incoming hierarchy: every caller of a common
+// name, five levels deep, would make a giant response and as many scans.
+const maxHierarchyNodes = 200
+
+func (t *CallHierarchyTool) resolveIncoming(ctx context.Context, wsID string, node *CallNode, depth int, visited map[string]bool, budget *int) {
 	if depth <= 0 || visited[node.SymbolID] {
 		if visited[node.SymbolID] {
 			node.Recursive = true
@@ -257,6 +278,11 @@ func (t *CallHierarchyTool) resolveIncoming(ctx context.Context, wsID string, no
 			continue
 		}
 
+		if *budget <= 0 {
+			node.OmittedCallers++
+			continue
+		}
+		*budget--
 		child := &CallNode{
 			SymbolID: symbolKey(r), symbol: &r, Resolution: edge,
 			Name:     name,
@@ -265,7 +291,10 @@ func (t *CallHierarchyTool) resolveIncoming(ctx context.Context, wsID string, no
 			Package:  fmt.Sprintf("%v", r.Point.Payload["package"]),
 		}
 		node.Children = append(node.Children, child)
-		t.resolveIncoming(ctx, wsID, child, depth-1, visited)
+	}
+	// Direct callers take the node budget before deeper ones.
+	for _, child := range node.Children {
+		t.resolveIncoming(ctx, wsID, child, depth-1, visited, budget)
 	}
 }
 
@@ -335,5 +364,8 @@ func (t *CallHierarchyTool) formatTree(sb *strings.Builder, node *CallNode, inde
 
 	for _, child := range node.Children {
 		t.formatTree(sb, child, indent+1)
+	}
+	if node.OmittedCallers > 0 {
+		sb.WriteString(fmt.Sprintf("%s  └─ … %d more callers not listed\n", prefix, node.OmittedCallers))
 	}
 }

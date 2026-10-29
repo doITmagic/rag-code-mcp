@@ -15,9 +15,10 @@ import (
 )
 
 // The fixture store caps a scan at its limit like Qdrant does, so a caller
-// past a fixed candidate limit would be dropped silently.
+// past a fixed candidate limit would be dropped silently. Every candidate is
+// scanned; the listing is capped, with the real total reported.
 func TestUsagesAndCallersAreNotCappedByCandidateLimit(t *testing.T) {
-	const callers = 120
+	const callers = 300
 	var code strings.Builder
 	code.WriteString("package app\n\nfunc Target() {}\n")
 	for i := 0; i < callers; i++ {
@@ -32,12 +33,15 @@ func TestUsagesAndCallersAreNotCappedByCandidateLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var usages struct{ Data []tools.UsageResult }
+	var usages struct {
+		Message, Warning string
+		Data             []tools.UsageResult
+	}
 	if err := json.Unmarshal([]byte(text), &usages); err != nil {
 		t.Fatal(err)
 	}
-	if len(usages.Data) != callers {
-		t.Errorf("find_usages want %d usages, got %d", callers, len(usages.Data))
+	if !strings.Contains(usages.Message, fmt.Sprintf("**Total usages found:** %d", callers)) || len(usages.Data) != 100 || usages.Warning == "" {
+		t.Errorf("find_usages want %d usages reported, 100 listed and a warning; got %d listed, warning %q", callers, len(usages.Data), usages.Warning)
 	}
 
 	text, err = tools.NewCallHierarchyTool(eng).Execute(context.Background(), map[string]interface{}{
@@ -46,12 +50,15 @@ func TestUsagesAndCallersAreNotCappedByCandidateLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var hierarchy struct{ Data tools.CallNode }
+	var hierarchy struct {
+		Warning string
+		Data    tools.CallNode
+	}
 	if err := json.Unmarshal([]byte(text), &hierarchy); err != nil {
 		t.Fatal(err)
 	}
-	if len(hierarchy.Data.Children) != callers {
-		t.Errorf("call_hierarchy want %d callers, got %d", callers, len(hierarchy.Data.Children))
+	if got := len(hierarchy.Data.Children); got != 200 || got+hierarchy.Data.OmittedCallers != callers || hierarchy.Warning == "" {
+		t.Errorf("call_hierarchy want 200 of %d callers listed and a warning; got %d listed, %d omitted, warning %q", callers, got, hierarchy.Data.OmittedCallers, hierarchy.Warning)
 	}
 }
 

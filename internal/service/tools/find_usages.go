@@ -15,6 +15,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// maxUsages caps the usages one rag_find_usages response lists.
+const maxUsages = 100
+
 type FindUsagesTool struct {
 	engine *engine.Engine
 }
@@ -234,10 +237,21 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 		return usages[i].FilePath < usages[j].FilePath
 	})
 
+	// Every candidate was checked, but a common name must not make a giant
+	// response: list the first maxUsages and report the real total.
+	total, warning := len(usages), ""
+	if total > maxUsages {
+		usages = usages[:maxUsages]
+		warning = fmt.Sprintf("Listed the first %d of %d usages by file and line. Qualify the symbol or narrow file_path to see the rest.", maxUsages, total)
+	}
+
 	// Format a readable markdown response
 	var response strings.Builder
 	response.WriteString(fmt.Sprintf("# Usages of `%s`\n\n", symbolName))
-	response.WriteString(fmt.Sprintf("**Total usages found:** %d\n\n", len(usages)))
+	response.WriteString(fmt.Sprintf("**Total usages found:** %d\n\n", total))
+	if warning != "" {
+		response.WriteString(warning + "\n\n")
+	}
 
 	for _, u := range usages {
 		response.WriteString(fmt.Sprintf("## In %s `%s`\n", u.Type, u.Name))
@@ -274,6 +288,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 	resp := ToolResponse{
 		Status:  "success",
 		Message: "Found symbol usages\n\n" + response.String(),
+		Warning: warning,
 		Data:    usages,
 		Context: ContextMetadata{
 			WorkspaceRoot:   wctx.Root,

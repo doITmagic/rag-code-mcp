@@ -39,6 +39,11 @@ type sceneConnection struct {
 // `script = ExtResource(...)` lines are far shorter.
 const maxOutlineLine = 16 << 10
 
+// maxSceneEntries bounds the nodes and connections the scene symbol lists.
+// Scenes have no size cap, and a point of several MB put every Qdrant
+// response holding it over gRPC's 4 MiB limit. Relations still cover all.
+const maxSceneEntries = 1000
+
 // parseScene summarises a text scene (.tscn) as one symbol: its node tree,
 // the scripts attached to nodes, instanced sub-scenes and signal connections.
 // The raw file is mostly serialized property data, so the symbol content is
@@ -155,8 +160,9 @@ func sceneSymbols(root *gotreesitter.Node, lang *gotreesitter.Language, src []by
 	if len(nodes) > 0 {
 		content.WriteString("Nodes:\n")
 	}
-	nodeMeta := make([]map[string]any, 0, len(nodes))
-	for _, n := range nodes {
+	nodeMeta := make([]map[string]any, 0, min(len(nodes), maxSceneEntries))
+	for i, n := range nodes {
+		listed := i < maxSceneEntries
 		line := "  " + n.Path
 		if n.Type != "" {
 			line += " (" + n.Type + ")"
@@ -165,13 +171,17 @@ func sceneSymbols(root *gotreesitter.Node, lang *gotreesitter.Language, src []by
 		if res, ok := resources[n.Instance]; ok {
 			line += " instance=" + res.Path
 			meta["instance"] = res.Path
-			instances = append(instances, res.Path)
+			if listed {
+				instances = append(instances, res.Path)
+			}
 			rels.add(pkgParser.Relation{TargetName: filepath.Base(res.Path), Type: pkgParser.RelDependency})
 		}
 		if res, ok := resources[n.Script]; ok {
 			line += " script=" + res.Path
 			meta["script"] = res.Path
-			scripts = append(scripts, res.Path)
+			if listed {
+				scripts = append(scripts, res.Path)
+			}
 			class := classes.of(res.Path)
 			nodeClass[n.Path] = class
 			rels.add(pkgParser.Relation{TargetName: class, Type: pkgParser.RelDependency})
@@ -180,8 +190,13 @@ func sceneSymbols(root *gotreesitter.Node, lang *gotreesitter.Language, src []by
 			line += " groups=" + strings.Join(n.Groups, ",")
 			meta["groups"] = n.Groups
 		}
-		content.WriteString(line + "\n")
-		nodeMeta = append(nodeMeta, meta)
+		if listed {
+			content.WriteString(line + "\n")
+			nodeMeta = append(nodeMeta, meta)
+		}
+	}
+	if len(nodes) > maxSceneEntries {
+		fmt.Fprintf(&content, "  ... %d more nodes\n", len(nodes)-maxSceneEntries)
 	}
 
 	if len(connections) > 0 {
@@ -194,10 +209,12 @@ func sceneSymbols(root *gotreesitter.Node, lang *gotreesitter.Language, src []by
 		}
 		return path
 	}
-	connMeta := make([]map[string]any, 0, len(connections))
-	for _, c := range connections {
-		fmt.Fprintf(&content, "  %s.%s -> %s.%s()\n", display(c.From), c.Signal, display(c.To), c.Method)
-		connMeta = append(connMeta, map[string]any{"signal": c.Signal, "from": c.From, "to": c.To, "method": c.Method})
+	connMeta := make([]map[string]any, 0, min(len(connections), maxSceneEntries))
+	for i, c := range connections {
+		if i < maxSceneEntries {
+			fmt.Fprintf(&content, "  %s.%s -> %s.%s()\n", display(c.From), c.Signal, display(c.To), c.Method)
+			connMeta = append(connMeta, map[string]any{"signal": c.Signal, "from": c.From, "to": c.To, "method": c.Method})
+		}
 		// The handler is a method of the script attached to the target node.
 		// Without one in this scene the call can only resolve by name.
 		target := ""
@@ -205,6 +222,9 @@ func sceneSymbols(root *gotreesitter.Node, lang *gotreesitter.Language, src []by
 			target = class + "." + c.Method
 		}
 		rels.add(pkgParser.Relation{TargetName: c.Method, Type: pkgParser.RelCalls, TargetQualifiedName: target})
+	}
+	if len(connections) > maxSceneEntries {
+		fmt.Fprintf(&content, "  ... %d more connections\n", len(connections)-maxSceneEntries)
 	}
 
 	signature := "scene " + filepath.Base(path)

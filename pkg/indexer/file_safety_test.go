@@ -2,6 +2,8 @@ package indexer
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -145,6 +147,37 @@ func TestIndexWorkspaceKeepsLargeGodotScenes(t *testing.T) {
 		}
 	}
 	t.Fatalf("large Godot scene was not indexed (%d points)", len(store.upsertPoints))
+}
+
+// A scene with tens of thousands of nodes produced a point of several MB;
+// any Qdrant response holding it exceeded gRPC's 4 MiB limit and rag_search
+// failed with ResourceExhausted for the whole collection.
+func TestIndexWorkspaceBoundsGodotScenePoint(t *testing.T) {
+	root := t.TempDir()
+	var scene strings.Builder
+	scene.WriteString("[gd_scene format=3]\n\n[node name=\"Root\" type=\"Node2D\"]\n")
+	for i := 0; i < 20000; i++ {
+		fmt.Fprintf(&scene, "\n[node name=\"N%d\" type=\"Sprite2D\" parent=\".\"]\n", i)
+	}
+	writeTestFile(t, filepath.Join(root, "many.tscn"), scene.String())
+
+	store := &mockStore{}
+	svc := NewService(&mockEmbedder{}, store)
+	if err := svc.IndexWorkspace(context.Background(), root, "gdscript", Options{Language: "gdscript"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.upsertPoints) == 0 {
+		t.Fatal("scene was not indexed")
+	}
+	for _, point := range store.upsertPoints {
+		data, err := json.Marshal(point.Payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(data) > 256<<10 {
+			t.Fatalf("scene point payload is %d bytes", len(data))
+		}
+	}
 }
 
 // A '[' in the workspace path or a package directory (proj [v2], Next.js

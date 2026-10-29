@@ -24,7 +24,7 @@ type Registry interface {
 	RecordFeedback(ctx context.Context, feedback *contract.PathFeedback) error
 	PromoteCandidate(ctx context.Context, root, client string, executionSucceeded bool) error
 	RegisterWorkspace(root, name, client string) error
-	GetActiveWorkspace() (string, error)
+	GetActiveWorkspace(usable func(root string) bool) (string, error)
 	// FindParentWorkspace checks if the given path is a subdirectory
 	// of any already-registered workspace. Returns the parent root
 	// and true if found, or ("", false) if no parent exists.
@@ -87,7 +87,11 @@ func (r *Resolver) GetActiveWorkspace() (string, error) {
 	if r.deps.Registry == nil {
 		return "", nil
 	}
-	return r.deps.Registry.GetActiveWorkspace()
+	// A root registered before allowed_workspace_paths was narrowed would be
+	// rejected on every pathless call; fall back to the newest allowed one.
+	return r.deps.Registry.GetActiveWorkspace(func(root string) bool {
+		return r.deps.RootValidator == nil || r.deps.RootValidator.Validate(root) == nil
+	})
 }
 
 // RegisterWorkspace persists a workspace in the registry so it can be

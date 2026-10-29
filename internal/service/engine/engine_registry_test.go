@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
+	"github.com/doITmagic/rag-code-mcp/pkg/workspace/registry"
 )
 
 func TestCorruptRegistryDoesNotPanicWorkspaceDetection(t *testing.T) {
@@ -50,6 +51,39 @@ func TestAllowedWorkspacePathsRejectOutsideRoots(t *testing.T) {
 	}
 	if _, err := eng.DetectContext(context.Background(), filepath.Join(outside, "main.go")); err == nil {
 		t.Fatal("file path outside allowed_workspace_paths was accepted")
+	}
+}
+
+// A workspace registered before allowed_workspace_paths was narrowed must not
+// block the registry fallback: the newest allowed workspace answers instead.
+func TestRegistryFallbackSkipsWorkspaceOutsideAllowedPaths(t *testing.T) {
+	allowed, outside := t.TempDir(), t.TempDir()
+	for _, dir := range []string{allowed, outside} {
+		if err := os.Mkdir(filepath.Join(dir, ".git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	registryPath := filepath.Join(t.TempDir(), "registry.json")
+	reg, err := registry.New(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, root := range []string{allowed, outside} {
+		if err := reg.RegisterWorkspace(root, filepath.Base(root), "test"); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cfg := &config.Config{Workspace: config.WorkspaceConfig{AllowedWorkspacePaths: []string{allowed}}}
+	eng := NewEngine(nil, nil, registryPath, cfg)
+	defer eng.Close()
+
+	wctx, err := eng.DetectContext(context.Background(), "")
+	if err != nil {
+		t.Fatalf("pathless detection: %v", err)
+	}
+	if wctx.Root != allowed || wctx.DetectionSource != "registry_fallback" {
+		t.Fatalf("fallback = %s (%s), want %s", wctx.Root, wctx.DetectionSource, allowed)
 	}
 }
 

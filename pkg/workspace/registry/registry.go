@@ -634,15 +634,15 @@ func hashRoot(root string) string {
 }
 
 // GetActiveWorkspace returns the root path of the most recently used workspace
-// whose root still exists.
-func (r *Registry) GetActiveWorkspace() (string, error) {
+// whose root still exists and that usable, when non-nil, accepts.
+func (r *Registry) GetActiveWorkspace(usable func(root string) bool) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	var latest *Entry
 	for _, entry := range r.entries {
 		if latest == nil || entry.LastUsedAt.After(latest.LastUsedAt) {
-			if _, err := os.Stat(entry.Root); err == nil {
+			if _, err := os.Stat(entry.Root); err == nil && (usable == nil || usable(entry.Root)) {
 				latest = entry
 			}
 		}

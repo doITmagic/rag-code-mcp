@@ -178,7 +178,7 @@ func (f *fakeRegistry) RegisterWorkspace(root, name, client string) error {
 	return nil
 }
 
-func (f *fakeRegistry) GetActiveWorkspace() (string, error) {
+func (f *fakeRegistry) GetActiveWorkspace(func(string) bool) (string, error) {
 	if f.candidate != nil {
 		return f.candidate.Root, nil
 	}

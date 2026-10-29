@@ -32,7 +32,21 @@ func searchSymbolCandidates(ctx context.Context, eng *engine.Engine, wsID, name 
 	if filters == nil {
 		return nil, nil
 	}
-	return eng.ExactSearchPolyglot(ctx, wsID, filters, limit)
+	results, err = eng.ExactSearchPolyglot(ctx, wsID, filters, limit)
+	if err != nil || len(results) > 0 || filters["package"] != nil {
+		return results, err
+	}
+	// A two-part name may also be a Go package.Function or package.Type.
+	results, err = eng.ExactSearchPolyglot(ctx, wsID, map[string]interface{}{
+		"language": "go", "package": filters["metadata.receiver"], "name": filters["name"],
+	}, limit)
+	var symbols []storage.SearchResult
+	for _, r := range results {
+		if r.Point.Payload["type"] != "method" {
+			symbols = append(symbols, r)
+		}
+	}
+	return symbols, err
 }
 
 // goMethodFilters maps [pkg.]Receiver.Method, including (*T).Method, to the

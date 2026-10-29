@@ -274,3 +274,18 @@ WHERE active = 1
 	})
 }
 
+// A UTF-8 byte order mark must not hide the symbol on the first line.
+func TestPythonAnalyzer_BOM(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "bom.py")
+	require.NoError(t, os.WriteFile(f, []byte("\xef\xbb\xbfclass Box:\n    def open(self):\n        return 1\n"), 0644))
+
+	res, err := NewAnalyzer().Analyze(context.Background(), f)
+	require.NoError(t, err)
+
+	names := map[string]int{}
+	for _, sym := range res.Symbols {
+		names[sym.Name] = sym.StartLine
+	}
+	assert.Equal(t, map[string]int{"Box": 1, "open": 2}, names)
+}
+

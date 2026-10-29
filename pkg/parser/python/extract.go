@@ -124,6 +124,8 @@ func (ca *CodeAnalyzer) AnalyzePaths(paths []string) ([]CodeChunk, error) {
 // Uses tree-sitter for accurate AST parsing, with regex as fallback/supplement
 func (ca *CodeAnalyzer) parseAndCollect(filePath string, content []byte) error {
 	content = bytes.ReplaceAll(content, []byte("\r\n"), []byte("\n"))
+	// A UTF-8 BOM would stop the ^-anchored regexes matching line 1.
+	content = bytes.TrimPrefix(content, []byte("\xef\xbb\xbf"))
 	moduleName := ca.extractModuleName(filePath)
 
 	module := &ModuleInfo{

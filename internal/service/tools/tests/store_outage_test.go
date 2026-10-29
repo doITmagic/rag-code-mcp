@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/doITmagic/rag-code-mcp/internal/service/tools"
@@ -55,5 +56,34 @@ func TestExactLookupsReportVectorStoreOutage(t *testing.T) {
 				t.Errorf("%s, %s: status=%s %s, want an error", name, tool, response.Status, response.Message)
 			}
 		}
+	}
+}
+
+// With the collection cache still warm, a store that refuses every search
+// must not be answered from the AST fallback as "indexing in progress".
+func TestSearchReportsVectorStoreOutage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "signer.go")
+	if err := os.WriteFile(path, []byte("package signer\n\n// DeriveKey derives the signing key.\nfunc DeriveKey() {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	down := func(context.Context, string, storage.SearchQuery) ([]storage.SearchResult, error) {
+		return nil, errors.New("connection refused")
+	}
+	eng := setupTestEngine(&mockVectorStore{SearchFunc: down, SearchCodeOnlyFunc: down})
+	t.Cleanup(eng.Close)
+	text, err := tools.NewSmartSearchTool(eng).Execute(context.Background(), tools.SmartSearchInput{Query: "derive signing key", FilePath: path})
+	if err != nil {
+		text = err.Error()
+	} else {
+		var response tools.ToolResponse
+		if err := json.Unmarshal([]byte(text), &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.Status != "error" {
+			t.Fatalf("status=%s %s, want an error", response.Status, text)
+		}
+	}
+	if !strings.Contains(text, "connection refused") {
+		t.Fatalf("%s, want the store error", text)
 	}
 }

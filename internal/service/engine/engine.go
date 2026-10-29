@@ -810,6 +810,12 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 
 	all := append(primaryResults, otherResults...)
 
+	// A store failure that leaves nothing must not read as "no results", nor
+	// be answered from the AST fallback as if indexing were still running.
+	if firstErr != nil && len(all) == 0 {
+		return nil, fmt.Errorf("search failed: %w", firstErr)
+	}
+
 	// If no collections exist at all, the workspace is truly not indexed.
 	// Before returning an error, try a direct AST-based fallback search.
 	if existingCollections == 0 && len(all) == 0 {
@@ -841,9 +847,6 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 		if needsTriggerIndexing {
 			return nil, &ErrIndexingStarted{WorkspaceRoot: wctx.Root, WorkspaceID: wctx.ID}
 		}
-		if firstErr != nil {
-			return nil, fmt.Errorf("search failed: %w", firstErr)
-		}
 		return nil, &ErrNotIndexed{WorkspaceRoot: wctx.Root, Collection: primaryColl, Language: primaryLang}
 	}
 
@@ -859,8 +862,6 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 		fallbackResults := e.FallbackDirectSearch(ctx, wctx.Root, queryText, limit)
 		if len(fallbackResults) > 0 {
 			all = fallbackResults
-		} else if firstErr != nil {
-			return nil, fmt.Errorf("search failed: %w", firstErr)
 		}
 	}
 

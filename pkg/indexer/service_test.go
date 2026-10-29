@@ -57,7 +57,12 @@ type mockStore struct {
 	deletedPrefixes   []string
 	deletedFilters    []string
 	collectionMissing bool
+	vectorSize        uint64 // reported by GetCollectionInfo; 0 means unknown
 	mu                sync.Mutex
+}
+
+func (m *mockStore) GetCollectionInfo(ctx context.Context, collection string) (*storage.CollectionInfo, error) {
+	return &storage.CollectionInfo{VectorSize: m.vectorSize}, nil
 }
 
 func (m *mockStore) Upsert(ctx context.Context, collection string, points []storage.Point) (*storage.UpdateResult, error) {
@@ -852,6 +857,30 @@ func TestRecreateDropsCollectionOfLanguageWithoutFiles(t *testing.T) {
 	}
 	if !store.dropped {
 		t.Fatal("recreate kept the collection of a language with no files left")
+	}
+}
+
+// Switching ollama_embed to a model with another dimension left the old
+// collection in place: every query failed with a vector dimension error and
+// each edited file lost its points when the upsert was rejected.
+func TestIndexWorkspaceRebuildsCollectionOfAnotherDimension(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package main\nfunc A() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := &dropTrackingStore{}
+	svc := NewService(&mockEmbedder{}, store)
+	if err := svc.IndexWorkspace(context.Background(), root, "go", Options{Language: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	// Built with a 768-dim model; the embedder now returns 1024 dims.
+	store.vectorSize = 768
+	store.upsertPoints = nil
+	if err := svc.IndexWorkspace(context.Background(), root, "go", Options{Language: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	if !store.dropped || len(store.upsertPoints) != 1 {
+		t.Fatalf("dropped=%v and indexed %d file(s), want the collection rebuilt with 1", store.dropped, len(store.upsertPoints))
 	}
 }
 

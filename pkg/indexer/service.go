@@ -107,6 +107,9 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 	if err != nil {
 		return fmt.Errorf("check collection: %w", err)
 	}
+	if collectionExists && !opts.Recreate && s.vectorSizeMismatch(ctx, collection) {
+		opts.Recreate = true
+	}
 	if opts.Recreate || !collectionExists {
 		logger.Instance.Info("Rebuilding state for collection %s (recreate=%t, exists=%t)", collection, opts.Recreate, collectionExists)
 		state = NewState()
@@ -410,6 +413,25 @@ func attemptOllamaRestart(ping func() error) {
 		logger.Instance.Warn("⏱️ Ollama not yet ready... (%d/5 attempts)", i+1)
 	}
 	logger.Instance.Error("💀 Ollama FATAL: Did not recover after restart limits.")
+}
+
+// vectorSizeMismatch reports whether collection holds vectors of another size
+// than the embedder returns now (ollama_embed switched to another model):
+// every query and upsert into it would fail, so it has to be rebuilt.
+// When either size cannot be read it reports false and nothing changes.
+func (s *Service) vectorSizeMismatch(ctx context.Context, collection string) bool {
+	info, err := s.store.GetCollectionInfo(ctx, collection)
+	if err != nil || info == nil || info.VectorSize == 0 {
+		return false
+	}
+	embedCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	vec, err := s.embedder.Embed(embedCtx, "test")
+	if err != nil || len(vec) == 0 || uint64(len(vec)) == info.VectorSize {
+		return false
+	}
+	logger.Instance.Warn("[IDX] Collection %s holds %d-dim vectors but the embedding model returns %d; rebuilding it", collection, info.VectorSize, len(vec))
+	return true
 }
 
 func (s *Service) deleteCollectionForRecreate(ctx context.Context, collection string) error {

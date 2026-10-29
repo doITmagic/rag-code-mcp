@@ -927,3 +927,35 @@ func TestIndexWorkspaceKeepsFilesOfUnreadableDirectory(t *testing.T) {
 		t.Fatal("state dropped a file that still exists")
 	}
 }
+
+// slowBatchEmbedder answers one text at a time but cannot finish a batch
+// within the embed budget, like a CPU-only Ollama on large symbols.
+type slowBatchEmbedder struct {
+	mockEmbedder
+}
+
+func (m *slowBatchEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float64, error) {
+	if len(texts) > 1 {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return [][]float64{make([]float64, 1024)}, nil
+}
+
+// TestIndexItems_SlowBatchFallsBackToSingleEmbeds: a batch that runs out of
+// time must not take every symbol in it out of the index.
+func TestIndexItems_SlowBatchFallsBackToSingleEmbeds(t *testing.T) {
+	RegisterTestingT(t)
+
+	mockS := &mockStore{}
+	svc := NewService(&slowBatchEmbedder{}, mockS)
+	symbols := []parser.Symbol{
+		{Name: "Big1", Content: "content", FilePath: "big.ts", StartLine: 1},
+		{Name: "Big2", Content: "content", FilePath: "big.ts", StartLine: 2},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	Expect(svc.IndexItems(ctx, "slow-batch", symbols)).To(Succeed())
+	Expect(mockS.upsertPoints).To(HaveLen(2))
+}

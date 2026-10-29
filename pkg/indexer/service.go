@@ -717,6 +717,22 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 				vectors64, err := s.embedBatch(embedCtx, embedTexts)
 				embedCancel()
 
+				// A batch of large symbols can need several times the budget on
+				// a CPU-only embedder; one at a time, each gets the full budget.
+				if err != nil && len(batch) > 1 && ctx.Err() == nil {
+					vectors64 = vectors64[:0]
+					for _, text := range embedTexts {
+						var one [][]float64
+						embedCtx, embedCancel := context.WithTimeout(ctx, 30*time.Second)
+						one, err = s.embedBatch(embedCtx, []string{text})
+						embedCancel()
+						if err != nil {
+							break
+						}
+						vectors64 = append(vectors64, one[0])
+					}
+				}
+
 				if err != nil {
 					consecutiveFailures++
 					logger.Instance.Warn("Embed failed for batch starting with %s (consecutive failures: %d): %v", batch[0].Name, consecutiveFailures, err)

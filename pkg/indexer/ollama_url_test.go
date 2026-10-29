@@ -19,7 +19,7 @@ import (
 // probe of the default localhost:11434 aborted the remaining embeds while the
 // configured Ollama was healthy again.
 func TestIndexItems_CircuitBreakerPingsConfiguredOllama(t *testing.T) {
-	var embedCalls, heartbeats atomic.Int32
+	var heartbeats atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodHead && r.URL.Path == "/":
@@ -27,8 +27,8 @@ func TestIndexItems_CircuitBreakerPingsConfiguredOllama(t *testing.T) {
 		case r.URL.Path == "/api/ps":
 			_, _ = w.Write([]byte(`{"models":[{"name":"embed-model"}]}`))
 		case r.URL.Path == "/api/embed":
-			// Two failed batches trip the breaker; then the server is healthy.
-			if embedCalls.Add(1) <= circuitBreakerThreshold {
+			// Embeds fail until the breaker probes this server.
+			if heartbeats.Load() == 0 {
 				http.Error(w, `{"error":"transient"}`, http.StatusInternalServerError)
 				return
 			}

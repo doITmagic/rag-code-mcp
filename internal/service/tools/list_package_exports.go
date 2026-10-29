@@ -122,6 +122,10 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 				Message: fmt.Sprintf("⏳ Workspace '%s' is not indexed yet. Indexing is required for complete results.", wctx.Root),
 				Context: ContextFromWorkspaceWithStatus(wctx, t.engine),
 			}
+			// A run that has not created its first collection yet.
+			if idx := resp.Context.IndexingStatus; idx != nil && idx.EndedAt == "" {
+				resp.Status, resp.Message = "indexing_in_progress", fmt.Sprintf("⏳ Indexing of workspace '%s' is in progress; retry shortly.", wctx.Root)
+			}
 			return resp.JSON()
 		}
 
@@ -135,13 +139,19 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 		allResults = filterByImportPath(allResults, packageName, wctx.Root)
 	}
 
-	if len(allResults) == 0 {
-		resp := ToolResponse{
-			Status:  "success",
-			Message: fmt.Sprintf("No exported symbols found in package '%s'", packageName),
-			Context: ContextFromWorkspaceWithStatus(wctx, t.engine),
+	// A run still in progress has not indexed every file yet.
+	idxStatus := t.engine.GetIndexStatus(wctx.Root)
+	partial := idxStatus != nil && idxStatus.EndedAt == ""
+	noExports := func(message string) (string, error) {
+		resp := ToolResponse{Status: "success", Message: message, Context: ContextFromWorkspaceWithStatus(wctx, t.engine)}
+		if partial {
+			resp.Status, resp.Message = "indexing_in_progress", "Indexing is still in progress. "+message+" in the partial index; retry after indexing completes."
 		}
 		return resp.JSON()
+	}
+
+	if len(allResults) == 0 {
+		return noExports(fmt.Sprintf("No exported symbols found in package '%s'", packageName))
 	}
 
 	exports := make(map[string][]ExportedSymbol)
@@ -217,12 +227,7 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 	}
 
 	if len(exports) == 0 {
-		resp := ToolResponse{
-			Status:  "success",
-			Message: fmt.Sprintf("No exported symbols found in package '%s' (after filtering)", packageName),
-			Context: ContextFromWorkspaceWithStatus(wctx, t.engine),
-		}
-		return resp.JSON()
+		return noExports(fmt.Sprintf("No exported symbols found in package '%s' (after filtering)", packageName))
 	}
 
 	// Format response nicely
@@ -272,8 +277,11 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 			WorkspaceRoot:   wctx.Root,
 			DetectionSource: wctx.DetectionSource,
 			Telemetry:       telemetry.CalculateSavings(baselineBytes, actualBytes),
-			IndexingStatus:  t.engine.GetIndexStatus(wctx.Root),
+			IndexingStatus:  idxStatus,
 		},
+	}
+	if partial {
+		resp.Warning = "Indexing is still in progress; this list may be incomplete."
 	}
 
 	return resp.JSON()

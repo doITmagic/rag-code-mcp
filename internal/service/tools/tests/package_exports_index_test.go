@@ -249,3 +249,40 @@ func TestPackageExportsTrailingSlash(t *testing.T) {
 		}
 	}
 }
+
+// During a first index run the tool said "not indexed yet, indexing is
+// required" and then answered "success: no exported symbols" or a short list
+// as complete, so a client sent a redundant index request or took a partial
+// answer as final.
+func TestPackageExportsReportRunningIndex(t *testing.T) {
+	dir, store := indexFixture(t, "go", golang.NewCodeAnalyzer(), map[string]string{
+		"flag.go": "package pflag\n\nfunc Parse() {}\n",
+	})
+	indexer.SaveIndexStatus(dir, &indexer.IndexStatus{StartedAt: "2026-01-01T00:00:00Z"})
+	eng := setupTestEngine(store)
+	t.Cleanup(eng.Close)
+	// The run has not created its first collection yet.
+	empty := setupTestEngine(&mockVectorStore{CollectionExistsFunc: func(context.Context, string) (bool, error) { return false, nil }})
+	t.Cleanup(empty.Close)
+	exports := func(tool *tools.ListPackageExportsTool, pkg string) tools.ToolResponse {
+		text, err := tool.Execute(context.Background(), map[string]interface{}{"package": pkg, "file_path": filepath.Join(dir, "flag.go")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var response tools.ToolResponse
+		if err := json.Unmarshal([]byte(text), &response); err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+
+	if got := exports(tools.NewListPackageExportsTool(eng), "pflag"); got.Status != "success" || got.Warning == "" {
+		t.Errorf("partial exports: status %q warning %q, want success with a partial-index warning", got.Status, got.Warning)
+	}
+	if got := exports(tools.NewListPackageExportsTool(eng), "notyet"); got.Status != "indexing_in_progress" {
+		t.Errorf("package not reached yet: status %q (%s), want indexing_in_progress", got.Status, got.Message)
+	}
+	if got := exports(tools.NewListPackageExportsTool(empty), "pflag"); got.Status != "indexing_in_progress" {
+		t.Errorf("before the first collection: status %q (%s), want indexing_in_progress", got.Status, got.Message)
+	}
+}

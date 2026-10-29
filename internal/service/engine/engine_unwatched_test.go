@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -202,5 +203,39 @@ func TestWatchDisabledReindexesOnDetect(t *testing.T) {
 		}
 		last, ok := eng.lastIndexed.Load(wctx.ID)
 		return ok && !last.(time.Time).Before(before)
+	})
+}
+
+// A root moved away and back stops its watcher. The last watched run must not
+// count against the unwatched rescan pace, or requests in the next minute
+// served stale results and re-armed nothing.
+func TestRootMovedBackIsRewatchedOnNextDetect(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("cannot rename a watched directory on Windows")
+	}
+	eng, root := newUnwatchedTestEngine(t)
+	wctx, err := eng.DetectContextAsRoot(context.Background(), root, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "first run did not start the watcher", func() bool {
+		_, running := eng.indexingJobs.Load(wctx.ID)
+		return !running && eng.watchers.Watching(root)
+	})
+
+	if err := os.Rename(root, root+"-away"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "watcher did not stop for the moved root", func() bool { return !eng.watchers.Watching(root) })
+	if err := os.Rename(root+"-away", root); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := eng.DetectContextAsRoot(context.Background(), root, true); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "detection after the move-back did not rescan and re-watch the root", func() bool {
+		_, running := eng.indexingJobs.Load(wctx.ID)
+		return !running && eng.watchers.Watching(root)
 	})
 }

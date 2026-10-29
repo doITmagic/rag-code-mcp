@@ -64,7 +64,8 @@ type Engine struct {
 	connectTriggered sync.Map
 
 	// lastIndexed records, per workspace ID, when an indexing job last ran or
-	// finished. Paces the rescans of a workspace that has no watcher.
+	// finished (zero if it finished watched). Paces the rescans of a
+	// workspace that has no watcher.
 	lastIndexed sync.Map
 
 	lifecycleCtx    context.Context
@@ -1144,7 +1145,13 @@ func (e *Engine) finishIndexingJob(root, workspaceID string) {
 	e.pendingMu.Lock()
 	e.indexingJobs.Delete(workspaceID)
 	e.pendingMu.Unlock()
-	e.lastIndexed.Store(workspaceID, time.Now())
+	// A run that ended watched does not pace unwatched rescans: if the root
+	// is then moved away and back, the next request must rescan it.
+	if e.watchers != nil && e.watchers.Watching(root) {
+		e.lastIndexed.Store(workspaceID, time.Time{})
+	} else {
+		e.lastIndexed.Store(workspaceID, time.Now())
+	}
 	if e.bgContext().Err() == nil {
 		e.tryStartPendingIndex(root, workspaceID)
 	}

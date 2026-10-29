@@ -1,7 +1,11 @@
 package skills
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -94,6 +98,9 @@ func TestUninstallSkillFromMultipleLocations(t *testing.T) {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			t.Fatal(err)
 		}
+		if err := os.WriteFile(filepath.Join(dir, installedMarker), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	if err := UninstallSkill(skillID, tempDir); err != nil {
@@ -103,6 +110,70 @@ func TestUninstallSkillFromMultipleLocations(t *testing.T) {
 	// Verify both are gone
 	if IsSkillInstalled(skillID, tempDir) {
 		t.Error("skill should be completely removed from all locations")
+	}
+}
+
+// Uninstall must only remove what RagCode installed: a skill the user wrote
+// by hand, committed or not, under the same id is left alone.
+func TestUninstallSkillKeepsUserSkills(t *testing.T) {
+	root := t.TempDir()
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", root, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-q")
+	write := func(rel string) {
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("# my skill\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(".claude/skills/code-review/SKILL.md")
+	run("add", ".")
+	run("commit", "-q", "-m", "skill")
+	write(".cursor/skills/code-review/SKILL.md")
+
+	// A skill RagCode installed sits beside them.
+	var archive bytes.Buffer
+	gz := gzip.NewWriter(&archive)
+	tw := tar.NewWriter(gz)
+	body := []byte("# installed\n")
+	for _, h := range []*tar.Header{
+		{Name: "repo-main/skills/code-review/", Typeflag: tar.TypeDir, Mode: 0o755},
+		{Name: "repo-main/skills/code-review/SKILL.md", Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len(body))},
+	} {
+		if err := tw.WriteHeader(h); err != nil {
+			t.Fatal(err)
+		}
+		if h.Typeflag == tar.TypeReg {
+			_, _ = tw.Write(body)
+		}
+	}
+	_ = tw.Close()
+	_ = gz.Close()
+	installed := filepath.Join(root, ".agent", "skills", "code-review")
+	if err := extractSkillFromTarGz(&archive, "skills/code-review", installed); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := UninstallSkill("code-review", root); err != nil {
+		t.Fatalf("UninstallSkill failed: %v", err)
+	}
+	if _, err := os.Stat(installed); !os.IsNotExist(err) {
+		t.Errorf("installed skill not removed: %v", err)
+	}
+	for _, rel := range []string{".claude/skills/code-review/SKILL.md", ".cursor/skills/code-review/SKILL.md"} {
+		if _, err := os.Stat(filepath.Join(root, rel)); err != nil {
+			t.Errorf("user skill %s removed: %v", rel, err)
+		}
+	}
+	if err := UninstallSkill("code-review", root); err == nil {
+		t.Error("uninstalling only user skills should report an error")
 	}
 }
 

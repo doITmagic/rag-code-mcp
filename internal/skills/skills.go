@@ -12,6 +12,9 @@ import (
 
 var skillIDRegex = regexp.MustCompile(`^[a-z0-9-]+$`)
 
+// installedMarker is written into every skill directory InstallSkill creates.
+const installedMarker = ".ragcode-installed"
+
 // SkillInfo holds the metadata of a skill, compatible with the remote registry format.
 type SkillInfo struct {
 	ID          string `json:"id"`
@@ -129,17 +132,23 @@ func InstallSkill(skillID string, workspaceRoot string, target string, cfg confi
 	return nil
 }
 
-// UninstallSkill removes a skill from all known locations in the workspace
-// (.agent/, .agents/, .claude/, .cursor/).
+// UninstallSkill removes a skill RagCode installed from all known locations
+// in the workspace (.agent/, .agents/, .claude/, .cursor/, .windsurf/).
+// A directory without the install marker is the user's own and is kept.
 func UninstallSkill(skillID string, workspaceRoot string) error {
 	if err := validateSkillID(skillID); err != nil {
 		return err
 	}
 	var lastErr error
 	removed := 0
+	var kept []string
 	for _, base := range skillCandidateDirs(workspaceRoot) {
 		p := filepath.Join(base, skillID)
 		if info, err := os.Stat(p); err == nil && info.IsDir() {
+			if _, err := os.Stat(filepath.Join(p, installedMarker)); err != nil {
+				kept = append(kept, p)
+				continue
+			}
 			if err := os.RemoveAll(p); err != nil {
 				lastErr = err
 			} else {
@@ -148,6 +157,9 @@ func UninstallSkill(skillID string, workspaceRoot string) error {
 		}
 	}
 	if removed == 0 && lastErr == nil {
+		if len(kept) > 0 {
+			return fmt.Errorf("skill '%s' at %s was not installed by RagCode; remove it by hand if you want it gone", skillID, strings.Join(kept, ", "))
+		}
 		return fmt.Errorf("skill '%s' not found in any known location", skillID)
 	}
 	return lastErr

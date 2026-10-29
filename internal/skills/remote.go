@@ -180,5 +180,6 @@ func extractSkillFromTarGz(r io.Reader, skillPath, destDir string) error {
 		return fmt.Errorf("skill path '%s' not found in archive — check the skill ID or registry path", skillPath)
 	}
 
-	return nil
+	// Mark the directory as ours, so uninstall never removes a user's skill.
+	return os.WriteFile(filepath.Join(destDir, installedMarker), []byte(skillPath+"\n"), 0o644)
 }

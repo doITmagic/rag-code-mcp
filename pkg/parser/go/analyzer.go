@@ -182,8 +182,38 @@ func (ca *CodeAnalyzer) analyzeFiles(dir string, files []string) (*PackageInfo, 
 		Imports:     ca.extractImports(astFiles),
 	}
 
-	// Functions
+	// go/doc keeps one func per name (per receiver type for methods), picked
+	// in map order, so init in several files and build-tag variants of a func
+	// or method lost all but a random one. Put the dropped ones back.
+	kept := make(map[token.Pos]bool)
 	for _, fn := range docPkg.Funcs {
+		kept[fn.Decl.Pos()] = true
+	}
+	for _, typ := range docPkg.Types {
+		for _, fn := range append(typ.Funcs, typ.Methods...) {
+			kept[fn.Decl.Pos()] = true
+		}
+	}
+	var droppedFuncs []*doc.Func
+	droppedMethods := make(map[string][]*doc.Func)
+	for _, f := range astFiles {
+		for _, d := range f.Decls {
+			fd, ok := d.(*ast.FuncDecl)
+			if !ok || kept[fd.Pos()] {
+				continue
+			}
+			fn := &doc.Func{Name: fd.Name.Name, Doc: fd.Doc.Text(), Decl: fd}
+			if fd.Recv == nil {
+				droppedFuncs = append(droppedFuncs, fn)
+			} else if len(fd.Recv.List) == 1 {
+				name := recvTypeName(fd.Recv.List[0].Type)
+				droppedMethods[name] = append(droppedMethods[name], fn)
+			}
+		}
+	}
+
+	// Functions
+	for _, fn := range append(docPkg.Funcs, droppedFuncs...) {
 		if !inGroup(fn.Decl.Pos()) {
 			continue
 		}
@@ -200,7 +230,7 @@ func (ca *CodeAnalyzer) analyzeFiles(dir string, files []string) (*PackageInfo, 
 		}
 
 		// Process methods for this type
-		for _, method := range typ.Methods {
+		for _, method := range append(typ.Methods, droppedMethods[typ.Name]...) {
 			if method.Level > 0 || !inGroup(method.Decl.Pos()) {
 				continue
 			}
@@ -260,6 +290,26 @@ func (ca *CodeAnalyzer) analyzeFiles(dir string, files []string) (*PackageInfo, 
 	}
 
 	return info, nil
+}
+
+// recvTypeName returns the base type name of a method receiver (*T[P] -> T).
+func recvTypeName(expr ast.Expr) string {
+	for {
+		switch e := expr.(type) {
+		case *ast.StarExpr:
+			expr = e.X
+		case *ast.ParenExpr:
+			expr = e.X
+		case *ast.IndexExpr:
+			expr = e.X
+		case *ast.IndexListExpr:
+			expr = e.X
+		case *ast.Ident:
+			return e.Name
+		default:
+			return ""
+		}
+	}
 }
 
 // buildFunctionASTMap creates a map from function/method token.Pos to AST FuncDecl Body (with Body intact)

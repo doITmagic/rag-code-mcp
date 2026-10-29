@@ -74,3 +74,37 @@ func TestAnalyzeTestHelpersOnPackageTypes(t *testing.T) {
 		}
 	}
 }
+
+// go/doc keeps one func per name, so init in several files and build-tag
+// variants of a func or method were indexed once, from a random file.
+func TestAnalyzeKeepsSameNamedFuncsInSeveralFiles(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"a.go":            "package dup\n\nfunc init() {}\n",
+		"b.go":            "package dup\n\nfunc init() {}\n",
+		"s.go":            "package dup\n\ntype S struct{}\n",
+		"plat_linux.go":   "//go:build linux\n\npackage dup\n\nfunc Platform() string { return \"linux\" }\n\nfunc (s S) Close() error { return nil }\n",
+		"plat_windows.go": "//go:build windows\n\npackage dup\n\nfunc Platform() string { return \"windows\" }\n\nfunc (s S) Close() error { return nil }\n",
+		"a_test.go":       "package dup\n\nfunc init() {}\n",
+		"b_test.go":       "package dup\n\nfunc init() {}\n",
+	}
+	for name, src := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := NewCodeAnalyzer().Analyze(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]int{}
+	for _, s := range res.Symbols {
+		got[filepath.Base(s.FilePath)+":"+s.Name]++
+	}
+	for _, key := range []string{"a.go:init", "b.go:init", "a_test.go:init", "b_test.go:init",
+		"plat_linux.go:Platform", "plat_windows.go:Platform", "plat_linux.go:Close", "plat_windows.go:Close"} {
+		if got[key] != 1 {
+			t.Errorf("%s indexed %d times, want once (all: %v)", key, got[key], got)
+		}
+	}
+}

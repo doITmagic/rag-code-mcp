@@ -2,6 +2,7 @@ package indexer
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -46,7 +47,28 @@ func isIgnoredEnvFile(path string) bool {
 	}
 	cmd := exec.Command("git", "check-ignore", "-q", "--", filepath.Base(path))
 	cmd.Dir = filepath.Dir(path)
-	return cmd.Run() == nil
+	err := cmd.Run()
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return false
+	}
+	// Exit 0 means ignored. Any other failure (git not on PATH, a repo that
+	// trips safe.directory) leaves the status unknown: fail closed inside a
+	// Git repo, while outside one git exits 128 and the file is kept.
+	return err == nil || insideGitRepo(cmd.Dir)
+}
+
+func insideGitRepo(dir string) bool {
+	for {
+		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+			return true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		dir = parent
+	}
 }
 
 func isGeneratedIDERule(path string) bool {

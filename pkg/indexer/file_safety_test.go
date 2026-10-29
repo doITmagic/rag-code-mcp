@@ -124,6 +124,41 @@ func TestIndexWorkspaceSkipsGitignoredEnvFiles(t *testing.T) {
 	}
 }
 
+// When git cannot run (not on PATH, or a repo owned by another user) the
+// ignore check cannot answer, and a gitignored .env was indexed with its
+// secrets. Inside a Git repo an env file of unknown status is skipped.
+func TestIndexWorkspaceSkipsEnvFilesWhenGitCannotRun(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	root := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", root).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	writeTestFile(t, filepath.Join(root, ".gitignore"), ".env\n*.env\n")
+	writeTestFile(t, filepath.Join(root, ".env"), "API_KEY=ignoredSecretMarker\n")
+	writeTestFile(t, filepath.Join(root, "prod.env"), "DB_PASS=ignoredSecretMarker\n")
+	writeTestFile(t, filepath.Join(root, "notes.txt"), "plain notes\n")
+	for name, env := range map[string][2]string{
+		"git not on PATH":   {"PATH", t.TempDir()},
+		"dubious ownership": {"GIT_TEST_ASSUME_DIFFERENT_OWNER", "1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(env[0], env[1])
+			store := &mockStore{}
+			svc := NewService(&mockEmbedder{}, store)
+			if err := svc.IndexWorkspace(context.Background(), root, "generic", Options{Language: "generic"}); err != nil {
+				t.Fatal(err)
+			}
+			for _, point := range store.upsertPoints {
+				if content, _ := point.Payload["content"].(string); strings.Contains(content, "ignoredSecretMarker") {
+					t.Fatalf("env file of unknown ignore status indexed: %v", point.Payload["file_path"])
+				}
+			}
+		})
+	}
+}
+
 // Godot scenes embed meshes and tile data as megabyte-long lines, so a main
 // level scene often exceeds the size cap; the scene analyzer streams it and
 // keeps only headers, so it must still be indexed.

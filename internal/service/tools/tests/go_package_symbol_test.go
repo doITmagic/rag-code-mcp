@@ -83,6 +83,34 @@ func TestGoImportPathQualifiesSymbol(t *testing.T) {
 	}
 }
 
+// An import path may end in a dotted segment, as gopkg.in/yaml.v3 does; the
+// package itself is still named yaml.
+func TestGoImportPathWithDottedLastSegment(t *testing.T) {
+	dir, store := indexFixture(t, "go", golang.NewCodeAnalyzer(), map[string]string{
+		"go.mod":  "module gopkg.in/yaml.v3\n\ngo 1.22\n",
+		"yaml.go": "package yaml\n\ntype Node struct{}\n\nfunc (n *Node) Encode() {}\n\nfunc Marshal() {}\n",
+	})
+	eng := setupTestEngine(store)
+	t.Cleanup(eng.Close)
+	path := filepath.Join(dir, "go.mod")
+	exact := true
+	for query, want := range map[string]int{
+		"gopkg.in/yaml.v3.Marshal": 1, "gopkg.in/yaml.v3.Node.Encode": 1, "gopkg.in/yaml.v2.Marshal": 0,
+	} {
+		text, err := tools.NewSmartSearchTool(eng).Execute(context.Background(), tools.SmartSearchInput{Query: query, FilePath: path, ExactSymbol: &exact})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var response struct{ Data []map[string]interface{} }
+		if err := json.Unmarshal([]byte(text), &response); err != nil {
+			t.Fatal(err)
+		}
+		if len(response.Data) != want {
+			t.Errorf("%s want %d symbols: %s", query, want, text)
+		}
+	}
+}
+
 // When a type shares its package's name, server.Start reads both as the
 // method server.Start and as the package function Start.
 func TestPackageNamedTypeKeepsBothReadings(t *testing.T) {

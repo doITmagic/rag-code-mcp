@@ -28,40 +28,64 @@ func searchSymbolCandidates(ctx context.Context, eng *engine.Engine, wsID, root,
 	if err != nil || len(results) > 0 {
 		return results, err
 	}
-	importPath, name := splitGoImportPath(name)
+	var symbols []storage.SearchResult
+	for _, reading := range splitGoImportPath(name) {
+		found, err := searchGoQualified(ctx, eng, wsID, reading.name, limit)
+		if err != nil {
+			return nil, err
+		}
+		if reading.importPath != "" {
+			found = filterByImportPath(found, reading.importPath, root)
+		}
+		symbols = append(symbols, found...)
+	}
+	return symbols, nil
+}
+
+func searchGoQualified(ctx context.Context, eng *engine.Engine, wsID, name string, limit int) ([]storage.SearchResult, error) {
 	filters := goMethodFilters(name)
 	if filters == nil {
 		return nil, nil
 	}
 	symbols, err := eng.ExactSearchPolyglot(ctx, wsID, filters, limit)
-	if err == nil && filters["package"] == nil {
-		// A two-part name may also be a Go package.Function or package.Type,
-		// also when a type shares the package's name: keep both readings.
-		results, err = eng.ExactSearchPolyglot(ctx, wsID, map[string]interface{}{
-			"language": "go", "package": filters["metadata.receiver"], "name": filters["name"],
-		}, limit)
-		for _, r := range results {
-			if r.Point.Payload["type"] != "method" {
-				symbols = append(symbols, r)
-			}
-		}
+	if err != nil || filters["package"] != nil {
+		return symbols, err
 	}
-	if importPath != "" {
-		symbols = filterByImportPath(symbols, importPath, root)
+	// A two-part name may also be a Go package.Function or package.Type,
+	// also when a type shares the package's name: keep both readings.
+	results, err := eng.ExactSearchPolyglot(ctx, wsID, map[string]interface{}{
+		"language": "go", "package": filters["metadata.receiver"], "name": filters["name"],
+	}, limit)
+	for _, r := range results {
+		if r.Point.Payload["type"] != "method" {
+			symbols = append(symbols, r)
+		}
 	}
 	return symbols, err
 }
 
+type goImportReading struct{ importPath, name string }
+
 // splitGoImportPath splits github.com/spf13/pflag.FlagSet.Parse into the
 // package's import path and the name within it, pflag.FlagSet.Parse: the
-// index stores only the package's name.
-func splitGoImportPath(name string) (string, string) {
+// index stores only the package's name. A dot may also belong to the path,
+// as in gopkg.in/yaml.v3.Marshal, so the name within the package is read as
+// both Type.Method and Function, its package named by the segment's first
+// dotted part.
+func splitGoImportPath(name string) []goImportReading {
 	i := strings.LastIndex(name, "/")
 	if i < 0 {
-		return "", name
+		return []goImportReading{{name: name}}
 	}
-	pkg, _, _ := strings.Cut(name[i+1:], ".")
-	return name[:i+1] + pkg, name[i+1:]
+	parts := strings.Split(name[i+1:], ".")
+	var readings []goImportReading
+	for k := 1; k <= 2 && k < len(parts); k++ {
+		readings = append(readings, goImportReading{
+			importPath: name[:i+1] + strings.Join(parts[:len(parts)-k], "."),
+			name:       parts[0] + "." + strings.Join(parts[len(parts)-k:], "."),
+		})
+	}
+	return readings
 }
 
 // goMethodFilters maps [pkg.]Receiver.Method, including (*T).Method, to the
@@ -92,25 +116,26 @@ func goMethodFilters(name string) map[string]interface{} {
 // (methods not indexed by receiver), types with embedded fields (promoted
 // methods), external packages and other languages are not modelled here.
 func qualifierRulesOut(ctx context.Context, eng *engine.Engine, wsID, root, name string) bool {
-	importPath, name := splitGoImportPath(name)
-	filters := goMethodFilters(name)
-	if filters == nil {
-		return false
-	}
-	typeFilters := map[string]interface{}{"language": "go", "type": "type", "name": filters["metadata.receiver"]}
-	if pkg, ok := filters["package"]; ok {
-		typeFilters["package"] = pkg
-	}
-	results, err := eng.ExactSearchPolyglot(ctx, wsID, typeFilters, 100)
-	if err != nil {
-		return false
-	}
-	if importPath != "" {
-		results = filterByImportPath(results, importPath, root)
-	}
-	for _, r := range results {
-		if metadata, _ := r.Point.Payload["metadata"].(map[string]interface{}); metadata["kind"] != "interface" && !hasEmbeddedField(metadata) {
-			return true
+	for _, reading := range splitGoImportPath(name) {
+		filters := goMethodFilters(reading.name)
+		if filters == nil {
+			continue
+		}
+		typeFilters := map[string]interface{}{"language": "go", "type": "type", "name": filters["metadata.receiver"]}
+		if pkg, ok := filters["package"]; ok {
+			typeFilters["package"] = pkg
+		}
+		results, err := eng.ExactSearchPolyglot(ctx, wsID, typeFilters, 100)
+		if err != nil {
+			return false
+		}
+		if reading.importPath != "" {
+			results = filterByImportPath(results, reading.importPath, root)
+		}
+		for _, r := range results {
+			if metadata, _ := r.Point.Payload["metadata"].(map[string]interface{}); metadata["kind"] != "interface" && !hasEmbeddedField(metadata) {
+				return true
+			}
 		}
 	}
 	return false

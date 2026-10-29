@@ -64,6 +64,20 @@ func TestPythonModuleCallReachesModuleFunction(t *testing.T) {
 	}
 }
 
+// import pkg.utils as u binds u to the module, so u.helper() calls its helper.
+func TestPythonAliasedModuleCallReachesModuleFunction(t *testing.T) {
+	dir, store := indexFixture(t, "py", python.NewAnalyzer(), map[string]string{
+		"pkg/__init__.py": "",
+		"pkg/utils.py":    "def helper():\n    return 1\n",
+		"pkg/main.py":     "import pkg.utils as u\nfrom pkg import utils as uu\n\n\ndef call_alias():\n    return u.helper()\n\n\ndef call_from_alias():\n    return uu.helper()\n",
+	})
+	eng := setupTestEngine(store)
+	t.Cleanup(eng.Close)
+	if got := pythonCallers(t, tools.NewCallHierarchyTool(eng), filepath.Join(dir, "pkg", "utils.py"), "helper"); !slices.Equal(got, []string{"call_alias", "call_from_alias"}) {
+		t.Fatalf("callers of helper = %v, want [call_alias call_from_alias]", got)
+	}
+}
+
 // super().run() calls the run the class inherits, not its own.
 func TestPythonSuperCallReachesParentMethod(t *testing.T) {
 	dir, store := indexFixture(t, "py", python.NewAnalyzer(), map[string]string{

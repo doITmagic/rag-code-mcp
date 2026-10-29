@@ -209,13 +209,19 @@ func resolveCall(ctx context.Context, eng *engine.Engine, wsID string, source st
 			if err != nil {
 				return nil, "unresolved"
 			}
+			// import pkg.utils as u names the module utils by u.
+			moduleName := receiver
+			imported, isImport := pythonImports(file)[receiver]
+			if isImport {
+				moduleName = imported[strings.LastIndex(imported, ".")+1:]
+			}
 			var module []storage.SearchResult
 			for _, r := range results {
-				if pkg, _ := r.Point.Payload["package"].(string); inPythonModule(pkg, receiver) {
+				if pkg, _ := r.Point.Payload["package"].(string); inPythonModule(pkg, moduleName) {
 					module = append(module, r)
 				}
 			}
-			if _, imported := pythonImports(file)[receiver]; len(module) > 0 || imported {
+			if len(module) > 0 || isImport {
 				return uniqueSymbol(module, "")
 			}
 			// Any other receiver is a value of unknown type, so any method of

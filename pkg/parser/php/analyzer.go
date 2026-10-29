@@ -1102,6 +1102,9 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 					"implements": class.Implements,
 					"uses":       class.Uses,
 					"imports":    class.Imports,
+					// FullName, not "global\Foo": that is what `new Foo()` and
+					// the class's own methods (Foo::m) qualify it as.
+					"qualified_name": class.FullName,
 				},
 			}
 

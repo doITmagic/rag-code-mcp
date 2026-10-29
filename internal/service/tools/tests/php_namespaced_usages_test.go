@@ -84,3 +84,30 @@ func TestPHPNewIsAUsageOfTheClass(t *testing.T) {
 		t.Errorf("usages of Entry = %v, want [make parse]: %s", got, text)
 	}
 }
+
+// A class in the global namespace (no namespace line) is found by `new Foo()`
+// in the same file and by `new \Foo()` from a namespaced file.
+func TestPHPNewOfGlobalClassIsAUsage(t *testing.T) {
+	dir, store := indexFixture(t, "php", php.NewAnalyzer(), map[string]string{
+		"Glob.php": "<?php\nclass Foo {}\nfunction g() { return new Foo(); }\n",
+		"make.php": "<?php\nnamespace App;\nfunction make() { return new \\Foo(); }\n",
+	})
+	eng := setupTestEngine(store)
+	t.Cleanup(eng.Close)
+	text, err := tools.NewFindUsagesTool(eng).Execute(context.Background(), map[string]interface{}{"symbol_name": "Foo", "file_path": filepath.Join(dir, "Glob.php")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct{ Data []tools.UsageResult }
+	if err := json.Unmarshal([]byte(text), &response); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, u := range response.Data {
+		got = append(got, u.Name)
+	}
+	slices.Sort(got)
+	if !slices.Equal(got, []string{"g", "make"}) {
+		t.Errorf("usages of Foo = %v, want [g make]: %s", got, text)
+	}
+}

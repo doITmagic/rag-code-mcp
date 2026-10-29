@@ -46,6 +46,7 @@ type FunctionInfo struct {
 	IsExported  bool         `json:"is_exported"`
 	IsMethod    bool         `json:"is_method"`
 	Receiver    string       `json:"receiver,omitempty"`
+	ReceiverVar string       `json:"-"` // "c" in func (c *T) M()
 	FilePath    string       `json:"file_path,omitempty"`
 	StartLine   int          `json:"start_line,omitempty"`
 	EndLine     int          `json:"end_line,omitempty"`

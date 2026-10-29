@@ -135,11 +135,26 @@ func resolveCall(ctx context.Context, eng *engine.Engine, wsID string, source st
 		}
 		return uniqueSymbol(results, file)
 	}
-	if receiver, _ := rel["receiver"].(string); receiver != "" {
-		return nil, "unresolved"
-	}
 	name, _ := rel["target_name"].(string)
 	language, _ := source.Point.Payload["language"].(string)
+	if receiver, _ := rel["receiver"].(string); receiver != "" {
+		if language != "go" {
+			return nil, "unresolved"
+		}
+		// Go records the receiver's type for calls on the method's own
+		// receiver; that type lives in the caller's package. A promoted
+		// method is not declared on it and falls back to the name.
+		results, err := eng.ExactSearchPolyglot(ctx, wsID, map[string]interface{}{
+			"language": "go", "type": "method", "name": name,
+			"metadata.receiver": receiver, "package": source.Point.Payload["package"],
+		}, 2)
+		if err != nil {
+			return nil, "unresolved"
+		}
+		if len(results) > 0 {
+			return uniqueSymbol(results, "")
+		}
+	}
 	result, status := resolveSymbol(ctx, eng, wsID, name, file)
 	// A Go call keeps only the method name, so the caller's file says nothing
 	// about the receiver's type: only a workspace-unique method is an identity.

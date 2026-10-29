@@ -252,6 +252,9 @@ func (ca *CodeAnalyzer) analyzeFunctionDecl(fset *token.FileSet, fn *doc.Func, a
 	var astBody *ast.BlockStmt
 	if fn.Decl != nil {
 		astBody = astBodyMap[fn.Decl.Pos()]
+		if fn.Decl.Recv != nil && len(fn.Decl.Recv.List) > 0 && len(fn.Decl.Recv.List[0].Names) > 0 {
+			info.ReceiverVar = fn.Decl.Recv.List[0].Names[0].Name
+		}
 	}
 
 	if fn.Decl != nil && astBody != nil {
@@ -782,10 +785,13 @@ func convertPackageInfoToChunks(pi *PackageInfo) []CodeChunk {
 			if idx := strings.LastIndex(call, "."); idx != -1 {
 				name = call[idx+1:]
 			}
-			rels = append(rels, pkgParser.Relation{
-				TargetName: name,
-				Type:       pkgParser.RelCalls,
-			})
+			rel := pkgParser.Relation{TargetName: name, Type: pkgParser.RelCalls}
+			// A call on the method's own receiver variable (c.Get in a method of
+			// c) records the receiver's type, the one Go call whose type is known.
+			if fn.Receiver != "" && fn.ReceiverVar != "" && call == fn.ReceiverVar+"."+name {
+				rel.Receiver = fn.Receiver
+			}
+			rels = append(rels, rel)
 		}
 		// Template file dependencies: template.ParseFiles("layout.html") → RelDependency
 		for _, tplFile := range fn.TemplateFiles {

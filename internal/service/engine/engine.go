@@ -717,6 +717,10 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 		logger.Instance.Info("[IDX] Git state change detected (Head: %s), triggering background re-indexing for %s", wctx.HeadSHA, wctx.Root)
 		needsTriggerIndexing = true
 	}
+	// auto_index: false leaves indexing to an explicit rag_index_workspace.
+	if e.config != nil && !e.config.Workspace.AutoIndex {
+		needsTriggerIndexing = false
+	}
 
 	if needsTriggerIndexing {
 		if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); !alreadyRunning {
@@ -917,18 +921,20 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 		}
 	}
 
+	// auto_index: false leaves indexing to an explicit rag_index_workspace.
+	autoIndex := e.config == nil || e.config.Workspace.AutoIndex
 	if len(available) == 0 {
 		// Trigger background indexing but do NOT block — SmartSearch runs
 		// SearchCode (with fan-out) in parallel and will provide results
 		// from any available language collections.
-		if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); !alreadyRunning {
+		if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); !alreadyRunning && autoIndex {
 			e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 		}
 		logger.Instance.Info("[IDX] ws=%s HybridSearch: requested collections not found — returning empty (indexing in background)", filepath.Base(wctx.Root))
 		return nil, nil
 	}
 
-	if wctx.ReindexRequired {
+	if wctx.ReindexRequired && autoIndex {
 		logger.Instance.Info("[IDX] Git state change detected, triggering background re-indexing for ws=%s", filepath.Base(wctx.Root))
 		if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); !alreadyRunning {
 			e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)

@@ -56,7 +56,7 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 	for _, ch := range chunks {
 		// Class.method tells apart methods that share a name.
 		var qualified string
-		if class, _ := ch.Metadata["class"].(string); class != "" && ch.Type == "method" {
+		if class, _ := ch.Metadata["class"].(string); class != "" && ch.Type == "method" && !redefinesName(ch.Metadata) {
 			qualified = class + "." + ch.Name
 		}
 		symbols = append(symbols, pkgParser.Symbol{
@@ -81,4 +81,17 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 		Symbols:  symbols,
 		Language: "python",
 	}, nil
+}
+
+// redefinesName reports an @overload stub or a property setter/deleter: it
+// shares its name with the implementation or getter, which alone carries the
+// Class.method qualified name so that name stays unique.
+func redefinesName(metadata map[string]any) bool {
+	decorators, _ := metadata["decorators"].([]string)
+	for _, dec := range decorators {
+		if dec == "overload" || strings.HasSuffix(dec, ".overload") || strings.HasSuffix(dec, ".setter") || strings.HasSuffix(dec, ".deleter") {
+			return true
+		}
+	}
+	return false
 }

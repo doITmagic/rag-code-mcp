@@ -188,7 +188,9 @@ func (m *Manager) loadState(path string) (*State, error) {
 	}
 	var state State
 	if err := json.Unmarshal(data, &state); err != nil {
-		return nil, fmt.Errorf("decode branch state json: %w", err)
+		// The file is only a cache: treat a corrupt one as absent so the
+		// caller reindexes and rewrites it instead of failing for good.
+		return nil, nil
 	}
 	return &state, nil
 }

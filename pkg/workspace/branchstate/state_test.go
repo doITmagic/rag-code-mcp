@@ -259,3 +259,33 @@ func TestGitWarningsDoNotLeakIntoState(t *testing.T) {
 		t.Fatalf("branch=%q head=%q", state.LastBranch, state.LastHeadSHA)
 	}
 }
+
+// branch_state.json is only a cache of the last seen branch. A corrupt or
+// empty file (crash, older non-atomic writer, manual edit) must read as
+// absent and be rewritten, not block every tool on the workspace for good.
+func TestCompareAndUpdate_CorruptStateIsRebuilt(t *testing.T) {
+	for name, content := range map[string]string{"garbage": "{garbage", "empty": ""} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			statePath := filepath.Join(root, ".ragcode", "branch_state.json")
+			if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(statePath, []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			manager := &Manager{clock: time.Now, gitRunner: (&fakeGit{branch: "main", sha: "abc"}).run}
+			resp := &contract.ResolveWorkspaceResponse{}
+			if err := manager.Annotate(context.Background(), root, resp); err != nil {
+				t.Fatalf("unexpected err: %s", err.Message)
+			}
+			if !resp.ReindexRequired || resp.Reason != contract.ReasonFirstSeen {
+				t.Fatalf("reindex=%v reason=%q, want first_seen reindex", resp.ReindexRequired, resp.Reason)
+			}
+			state, err := manager.loadState(statePath)
+			if err != nil || state == nil || state.LastBranch != "main" {
+				t.Fatalf("state not rewritten: %+v, %v", state, err)
+			}
+		})
+	}
+}

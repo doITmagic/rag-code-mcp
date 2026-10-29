@@ -82,7 +82,30 @@ func (s *State) Save(path string) error {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0644)
+	// Write a temp file and rename it: a kill during the write must leave the
+	// previous state, not a truncated one that forces a full re-embed.
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), 0644); err != nil {
+		os.Remove(tmp.Name())
+		return err
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		os.Remove(tmp.Name())
+		return err
+	}
+	return nil
 }
 
 // UpdateFile updates the state for a single file.

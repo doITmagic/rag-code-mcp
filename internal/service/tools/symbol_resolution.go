@@ -33,6 +33,16 @@ func searchSymbolCandidates(ctx context.Context, eng *engine.Engine, wsID, root,
 		return results, err
 	}
 	var symbols []storage.SearchResult
+	// PHP Dotenv::load may name the class without its namespace.
+	if i := strings.LastIndex(name, "::"); i > 0 {
+		results, err = eng.ExactSearchPolyglot(ctx, wsID, map[string]interface{}{"language": "php", "type": "method", "name": name[i+2:]}, 0)
+		for _, r := range results {
+			if qualified, _ := r.Point.Payload["qualified_name"].(string); strings.HasSuffix(qualified, "\\"+name) {
+				symbols = append(symbols, r)
+			}
+		}
+		return symbols, err
+	}
 	for _, reading := range splitGoImportPath(name) {
 		found, err := searchGoQualified(ctx, eng, wsID, reading.name, limit)
 		if err != nil {

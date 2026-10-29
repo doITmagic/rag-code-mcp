@@ -29,3 +29,39 @@ func TestExactSearchFindsPackageQualifiedGoFunction(t *testing.T) {
 		t.Fatalf("cache.Load want only the package function: %s", text)
 	}
 }
+
+// When a type shares its package's name, server.Start reads both as the
+// method server.Start and as the package function Start.
+func TestPackageNamedTypeKeepsBothReadings(t *testing.T) {
+	dir, store := indexFixture(t, "go", golang.NewCodeAnalyzer(), map[string]string{
+		"server.go": "package server\n\ntype server struct{}\n\nfunc (s *server) Start() {}\n\nfunc Start() {}\n",
+	})
+	eng := setupTestEngine(store)
+	t.Cleanup(eng.Close)
+	path := filepath.Join(dir, "server.go")
+	exact := true
+	text, err := tools.NewSmartSearchTool(eng).Execute(context.Background(), tools.SmartSearchInput{Query: "server.Start", FilePath: path, ExactSymbol: &exact})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct{ Data []map[string]interface{} }
+	if err := json.Unmarshal([]byte(text), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Data) != 2 {
+		t.Errorf("server.Start want the method and the function: %s", text)
+	}
+	text, err = tools.NewCallHierarchyTool(eng).Execute(context.Background(), map[string]interface{}{
+		"symbol_name": "server.Start", "direction": "incoming", "file_path": path, "depth": 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hierarchy struct{ Status string }
+	if err := json.Unmarshal([]byte(text), &hierarchy); err != nil {
+		t.Fatal(err)
+	}
+	if hierarchy.Status != "ambiguous" {
+		t.Errorf("server.Start hierarchy want ambiguous: %s", text)
+	}
+}

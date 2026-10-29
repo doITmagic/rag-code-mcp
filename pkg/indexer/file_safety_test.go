@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/doITmagic/rag-code-mcp/pkg/parser"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/generic" // register text analyzer
 )
 
@@ -48,5 +49,34 @@ func TestIndexWorkspaceSkipsFileSymlinks(t *testing.T) {
 	}
 	if !kept {
 		t.Fatal("regular workspace file was not indexed")
+	}
+}
+
+// A huge source file (a sparse 3 GB bindata.go) was read whole and OOM-killed
+// the daemon, which then resumed the same run and died again on every start.
+func TestIndexWorkspaceSkipsOversizedFiles(t *testing.T) {
+	old := parser.MaxFileSize
+	parser.MaxFileSize = 1 << 10
+	t.Cleanup(func() { parser.MaxFileSize = old })
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "main.go"), "package main\nfunc Kept() {}\n")
+	big := "package main\nfunc OversizedMarker() {}\n" + strings.Repeat("// padding\n", 200)
+	writeTestFile(t, filepath.Join(root, "bindata.go"), big)
+	writeTestFile(t, filepath.Join(root, "notes.txt"), "OversizedMarker\n"+strings.Repeat("padding\n", 200))
+
+	store := &mockStore{}
+	svc := NewService(&mockEmbedder{}, store)
+	for _, lang := range []string{"go", "generic"} {
+		if err := svc.IndexWorkspace(context.Background(), root, lang, Options{Language: lang}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(store.upsertPoints) == 0 {
+		t.Fatal("regular workspace file was not indexed")
+	}
+	for _, point := range store.upsertPoints {
+		if content, _ := point.Payload["content"].(string); strings.Contains(content, "OversizedMarker") {
+			t.Fatalf("oversized file indexed: %v", point.Payload["file_path"])
+		}
 	}
 }

@@ -37,12 +37,16 @@ func GetByFile(filePath string) Analyzer {
 	return nil
 }
 
-// SkipFile reports whether path exists but must not be read as source because
-// it is not a regular file: a symlink can point outside the workspace, a FIFO
-// blocks its reader forever and a device never ends.
+// MaxFileSize caps the files analyzers read. Larger ones are generated code or
+// data, and parsing one whole can exhaust the daemon's memory.
+var MaxFileSize int64 = 4 << 20
+
+// SkipFile reports whether path exists but must not be read as source: it is
+// larger than MaxFileSize, or not a regular file. A symlink can point outside
+// the workspace, a FIFO blocks its reader forever and a device never ends.
 func SkipFile(path string) bool {
 	info, err := os.Lstat(path)
-	return err == nil && !info.Mode().IsRegular()
+	return err == nil && (!info.Mode().IsRegular() || info.Size() > MaxFileSize)
 }
 
 // SupportedLanguages returns a list of all registered language names.

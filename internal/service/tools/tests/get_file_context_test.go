@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,7 +53,9 @@ var _ = Describe("GetFileContextTool", func() {
 			dir := GinkgoT().TempDir()
 			long := strings.Repeat("x", 70_000)
 			goFile := filepath.Join(dir, "blob.go")
-			Expect(os.WriteFile(goFile, []byte("package blob\n\nvar Blob = \""+long+"\"\n\nfunc Hello() {\n\tprintln(1)\n}\n"), 0o600)).To(Succeed())
+			// Enough ordinary lines that the file does not count as minified.
+			rest := strings.Repeat("// an ordinary comment line\n", 200)
+			Expect(os.WriteFile(goFile, []byte("package blob\n\nvar Blob = \""+long+"\"\n\nfunc Hello() {\n\tprintln(1)\n}\n"+rest), 0o600)).To(Succeed())
 			txtFile := filepath.Join(dir, "notes.txt")
 			Expect(os.WriteFile(txtFile, []byte("one\ntwo\n"+long+"\nfour\nfive\n"), 0o600)).To(Succeed())
 
@@ -75,6 +78,29 @@ var _ = Describe("GetFileContextTool", func() {
 				Expect(resp.Data.ContextType).To(Equal(tc.contextType))
 				Expect(resp.Data.CodeSnippet).To(ContainSubstring(tc.want))
 			}
+		})
+
+		// Parsing a minified bundle whole took minutes and gigabytes, and held
+		// the JavaScript analyzer's lock for every other request meanwhile.
+		It("should read a minified bundle as plain lines without parsing it", func() {
+			var bundle strings.Builder
+			for i := 0; i < 200; i++ {
+				fmt.Fprintf(&bundle, "function bundled%d(a,b){return a+b}", i)
+			}
+			path := filepath.Join(GinkgoT().TempDir(), "app.js")
+			Expect(os.WriteFile(path, []byte(bundle.String()), 0o600)).To(Succeed())
+
+			resJSON, err := tool.Execute(ctx, map[string]interface{}{"file_path": path, "line_number": float64(1)})
+			Expect(err).NotTo(HaveOccurred())
+			var resp struct {
+				Status string                  `json:"status"`
+				Error  string                  `json:"error"`
+				Data   tools.CodeContextResult `json:"data"`
+			}
+			Expect(json.Unmarshal([]byte(resJSON), &resp)).To(Succeed())
+			Expect(resp.Status).To(Equal("success"), resp.Error)
+			Expect(resp.Data.ContextType).To(Equal("naive"))
+			Expect(resp.Data.CodeSnippet).To(ContainSubstring("bundled199"))
 		})
 	})
 })

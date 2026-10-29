@@ -11,6 +11,7 @@ import (
 
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
+	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
 	"github.com/doITmagic/rag-code-mcp/pkg/telemetry"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -182,6 +183,12 @@ func (t *ReadFileContextTool) tryASTContext(ctx context.Context, path string, st
 	analyzer := parser.GetByFile(path)
 	if analyzer == nil {
 		logger.Instance.Debug("Skipping AST context: no analyzer found for %s", path)
+		return result, false
+	}
+	// Parsing a file indexing skips (a minified bundle) can take minutes and
+	// gigabytes; its plain lines answer the request.
+	if indexer.ShouldSkipFile(path) {
+		logger.Instance.Debug("Skipping AST context: %s is excluded from indexing", path)
 		return result, false
 	}
 

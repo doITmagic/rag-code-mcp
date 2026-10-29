@@ -296,7 +296,7 @@ func TestRemoveZedEntryPreservesNumbers(t *testing.T) {
 func TestRemoveFromShellConfigKeepsUserComment(t *testing.T) {
 	home := t.TempDir()
 	binDir := filepath.Join(home, ".ragcode", "bin")
-	user := "# RagCode MCP\nexport QDRANT_API_KEY=mine\n"
+	user := "# RagCode MCP\nexport QDRANT_API_KEY=mine\n# RagCode MCP\nalias rc=\"" + binDir + "/rag-code-mcp --http-port 39555\"\n"
 	rc := filepath.Join(home, ".bashrc")
 	if err := os.WriteFile(rc, []byte(user+"\n# RagCode MCP\nexport PATH=\""+binDir+":$PATH\"\n"), 0o600); err != nil {
 		t.Fatal(err)

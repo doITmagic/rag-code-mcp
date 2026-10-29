@@ -173,12 +173,13 @@ func removeFromShellConfig(home, binDir string) {
 			continue
 		}
 
+		pathLine := `export PATH="` + binDir + `:$PATH"`
 		lines := strings.Split(original, "\n")
 		var cleaned []string
 		for i := 0; i < len(lines); i++ {
 			// Only the pair the installer writes; a user's own "# RagCode MCP"
 			// comment over other lines is theirs.
-			if strings.TrimSpace(lines[i]) == "# RagCode MCP" && i+1 < len(lines) && strings.Contains(lines[i+1], binDir) {
+			if strings.TrimSpace(lines[i]) == "# RagCode MCP" && i+1 < len(lines) && strings.TrimSpace(lines[i+1]) == pathLine {
 				i++
 				continue
 			}

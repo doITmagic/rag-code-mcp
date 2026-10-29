@@ -103,7 +103,7 @@ func (m *Manager) CompareAndUpdate(ctx context.Context, workspaceRoot string) (*
 	current, err := m.readGitState(ctx, workspaceRoot)
 	if err != nil {
 		if errors.Is(err, ErrGitMetadataUnavailable) {
-			m.log(ctx, "branchstate.git_metadata_unavailable", map[string]any{"workspace_root": workspaceRoot})
+			m.log(ctx, "branchstate.git_metadata_unavailable", map[string]any{"workspace_root": workspaceRoot, "error": err.Error()})
 			return nil, false, contract.ReasonRootsUnavailable, nil
 		}
 		return nil, false, "", &contract.ResolveWorkspaceError{
@@ -279,6 +279,12 @@ func gitCommand(ctx context.Context, root string, args ...string) (string, error
 		// workspace.
 		if strings.Contains(text, "not a git repository") || strings.Contains(text, "unknown revision") {
 			return "", ErrGitMetadataUnavailable
+		}
+		// Git that cannot run (missing from the daemon's PATH) or refuses a
+		// repo owned by another user (safe.directory) leaves the workspace
+		// usable without branches; keep git's hint in the error.
+		if errors.Is(err, exec.ErrNotFound) || strings.Contains(text, "dubious ownership") {
+			return "", fmt.Errorf("%w: %v %s", ErrGitMetadataUnavailable, err, strings.TrimSpace(stderr.String()))
 		}
 		return "", err
 	}

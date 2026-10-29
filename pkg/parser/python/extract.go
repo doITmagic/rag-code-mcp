@@ -1183,9 +1183,6 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 
 			chunks = append(chunks, chunk)
 			for _, method := range class.Methods {
-				if method.IsProperty {
-					continue
-				}
 				methodChunk := CodeChunk{
 					Name:      method.Name,
 					Type:      "method",

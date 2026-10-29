@@ -289,3 +289,29 @@ func TestPythonAnalyzer_BOM(t *testing.T) {
 	assert.Equal(t, map[string]int{"Box": 1, "open": 2}, names)
 }
 
+// A @property getter is a method like its @x.setter and must be indexed.
+func TestPythonAnalyzer_PropertyIndexed(t *testing.T) {
+	code := `class Signer:
+    @property
+    def secret_key(self):
+        return self.secret_keys[-1]
+
+    @secret_key.setter
+    def secret_key(self, value):
+        self.secret_keys = [value]
+`
+	f := filepath.Join(t.TempDir(), "signer.py")
+	require.NoError(t, os.WriteFile(f, []byte(code), 0644))
+
+	res, err := NewAnalyzer().Analyze(context.Background(), f)
+	require.NoError(t, err)
+
+	var lines []int
+	for _, sym := range res.Symbols {
+		if sym.Name == "secret_key" {
+			lines = append(lines, sym.StartLine)
+		}
+	}
+	assert.ElementsMatch(t, []int{3, 7}, lines)
+}
+

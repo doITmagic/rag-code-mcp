@@ -53,6 +53,10 @@ func LoadState(path string) (*State, error) {
 	if err := json.Unmarshal(data, state); err != nil {
 		return nil, err
 	}
+	// "files": null leaves a nil map that UpdateFile would panic on.
+	if state.Files == nil {
+		state.Files = make(map[string]FileState)
+	}
 
 	return state, nil
 }

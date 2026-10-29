@@ -1122,3 +1122,27 @@ func TestRecreateWithReadOnlyStateDirStillIndexes(t *testing.T) {
 		t.Fatalf("recreate dropped=%v and indexed %d file(s), want 1", store.dropped, len(store.upsertPoints))
 	}
 }
+
+// A state file holding {"files": null} must be indexed over, not crash the
+// daemon with a nil map write on every run.
+func TestIndexWorkspaceSurvivesNullFilesState(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "source.go"), []byte("package sample\nfunc ComputeInvoiceTotal() {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	statePath := StatePath(root, "main-go")
+	if err := os.MkdirAll(filepath.Dir(statePath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, []byte(`{"files": null}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store := &mockStore{}
+	svc := NewService(&mockEmbedder{}, store)
+	if err := svc.IndexWorkspace(context.Background(), root, "main-go", Options{Language: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.upsertPoints) == 0 {
+		t.Fatal("nothing indexed")
+	}
+}

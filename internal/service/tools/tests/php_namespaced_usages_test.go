@@ -111,3 +111,30 @@ func TestPHPNewOfGlobalClassIsAUsage(t *testing.T) {
 		t.Errorf("usages of Foo = %v, want [g make]: %s", got, text)
 	}
 }
+
+// Foo::create() in a global class method names the global class Foo, not a
+// class in a "global" namespace.
+func TestPHPStaticCallBetweenGlobalClassesIsAUsage(t *testing.T) {
+	dir, store := indexFixture(t, "php", php.NewAnalyzer(), map[string]string{
+		"Foo.php": "<?php\nclass Foo {\n  public static function create() { return 1; }\n}\n",
+		"B.php":   "<?php\nclass B {\n  public function b() { return Foo::create(); }\n}\nfunction f() { return Foo::create(); }\n",
+	})
+	eng := setupTestEngine(store)
+	t.Cleanup(eng.Close)
+	text, err := tools.NewFindUsagesTool(eng).Execute(context.Background(), map[string]interface{}{"symbol_name": "Foo::create", "file_path": filepath.Join(dir, "Foo.php")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct{ Data []tools.UsageResult }
+	if err := json.Unmarshal([]byte(text), &response); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, u := range response.Data {
+		got = append(got, u.Name)
+	}
+	slices.Sort(got)
+	if !slices.Equal(got, []string{"b", "f"}) {
+		t.Errorf("usages of Foo::create = %v, want [b f]: %s", got, text)
+	}
+}

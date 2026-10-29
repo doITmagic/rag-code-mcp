@@ -1164,7 +1164,7 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 						owner := call.Object
 						if imported, ok := class.Imports[owner]; ok {
 							owner = imported
-						} else if !strings.HasPrefix(owner, "\\") && class.Namespace != "" {
+						} else if !strings.HasPrefix(owner, "\\") && class.Namespace != "" && class.Namespace != "global" {
 							owner = class.Namespace + "\\" + owner
 						}
 						rel.TargetQualifiedName = strings.TrimPrefix(owner, "\\") + "::" + call.Method

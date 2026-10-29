@@ -1367,6 +1367,38 @@ type callCollector struct {
 	visitor.Null
 	v     *symbolCollector
 	calls []MethodCall
+	// nested holds the source ranges of class members and functions declared
+	// in the body: those are symbols of their own and keep their calls.
+	nested [][2]int
+}
+
+func (c *callCollector) skip(n ast.Vertex) {
+	if p := n.GetPosition(); p != nil {
+		c.nested = append(c.nested, [2]int{p.StartPos, p.EndPos})
+	}
+}
+
+func (c *callCollector) inNested(n ast.Vertex) bool {
+	if p := n.GetPosition(); p != nil {
+		for _, r := range c.nested {
+			if p.StartPos >= r[0] && p.EndPos <= r[1] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// The traverser visits a node before its children, so a nested declaration
+// is recorded before any call inside it.
+func (c *callCollector) StmtClass(n *ast.StmtClass) {
+	for _, s := range n.Stmts {
+		c.skip(s)
+	}
+}
+
+func (c *callCollector) StmtFunction(n *ast.StmtFunction) {
+	c.skip(n)
 }
 
 func (c *callCollector) addMethodCall(varNode, methodNode ast.Vertex) {
@@ -1385,20 +1417,32 @@ func (c *callCollector) addMethodCall(varNode, methodNode ast.Vertex) {
 }
 
 func (c *callCollector) ExprMethodCall(n *ast.ExprMethodCall) {
+	if c.inNested(n) {
+		return
+	}
 	c.addMethodCall(n.Var, n.Method)
 }
 
 func (c *callCollector) ExprNullsafeMethodCall(n *ast.ExprNullsafeMethodCall) {
+	if c.inNested(n) {
+		return
+	}
 	c.addMethodCall(n.Var, n.Method)
 }
 
 func (c *callCollector) ExprFunctionCall(n *ast.ExprFunctionCall) {
+	if c.inNested(n) {
+		return
+	}
 	if name := c.v.extractName(n.Function); name != "" {
 		c.calls = append(c.calls, MethodCall{Method: name})
 	}
 }
 
 func (c *callCollector) ExprStaticCall(n *ast.ExprStaticCall) {
+	if c.inNested(n) {
+		return
+	}
 	call := MethodCall{Static: true, Object: c.v.extractName(n.Class)}
 	if methodNode, ok := n.Call.(*ast.Identifier); ok {
 		call.Method = string(methodNode.Value)

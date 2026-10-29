@@ -197,3 +197,29 @@ function top() {
 	require.NotNil(t, top)
 	assert.True(t, hasPHPRelation(top.Relations, "inFunctionAssign", pkgParser.RelCalls), "got %v", top.Relations)
 }
+
+// Calls inside an anonymous class or a function declared in a method body
+// belong to those symbols, not to the enclosing method.
+func TestPHPRelations_NestedDeclarationsKeepTheirCalls(t *testing.T) {
+	code := `<?php
+class Svc {
+    public function outer() {
+        $h = new class(argCall()) { public function inner() { innerOnly(); } };
+        function nestedFn() { nestedOnly(); }
+        return outerOnly();
+    }
+}
+`
+	f := filepath.Join(t.TempDir(), "svc.php")
+	require.NoError(t, os.WriteFile(f, []byte(code), 0644))
+
+	res, err := NewAnalyzer().Analyze(context.Background(), f)
+	require.NoError(t, err)
+
+	outer := findPHPSymbol(res.Symbols, "outer")
+	require.NotNil(t, outer)
+	assert.True(t, hasPHPRelation(outer.Relations, "outerOnly", pkgParser.RelCalls), "got %v", outer.Relations)
+	assert.True(t, hasPHPRelation(outer.Relations, "argCall", pkgParser.RelCalls), "got %v", outer.Relations)
+	assert.False(t, hasPHPRelation(outer.Relations, "innerOnly", pkgParser.RelCalls), "got %v", outer.Relations)
+	assert.False(t, hasPHPRelation(outer.Relations, "nestedOnly", pkgParser.RelCalls), "got %v", outer.Relations)
+}

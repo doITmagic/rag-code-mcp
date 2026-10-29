@@ -112,8 +112,10 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 		state = NewState()
 		// Drop the old snapshot before the collection: a crash before the
 		// first save would otherwise leave it claiming files with no vectors.
+		// Like every state save, this is best-effort: a read-only .ragcode
+		// must not stop the rebuild.
 		if err := os.Remove(statePath); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("reset index state: %w", err)
+			logger.Instance.Warn("Failed to reset index state in %s: %v", root, err)
 		}
 	}
 

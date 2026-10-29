@@ -994,3 +994,33 @@ func TestRecreateCrashBeforeStateSaveReindexesOnNextRun(t *testing.T) {
 		t.Fatalf("re-indexed %d file(s) after the crash, want 2", len(store.upsertPoints))
 	}
 }
+
+// A .ragcode the daemon cannot write (left by a run as another user, say)
+// only costs the saved state; a recreate must still rebuild the collection.
+func TestRecreateWithReadOnlyStateDirStillIndexes(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package main\nfunc A() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := &dropTrackingStore{}
+	svc := NewService(&mockEmbedder{}, store)
+	if err := svc.IndexWorkspace(context.Background(), root, "go", Options{Language: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, ".ragcode")
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	if f, err := os.Create(filepath.Join(dir, "probe")); err == nil {
+		f.Close()
+		t.Skip("running with permissions that ignore a read-only directory")
+	}
+	store.upsertPoints = nil
+	if err := svc.IndexWorkspace(context.Background(), root, "go", Options{Language: "go", Recreate: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !store.dropped || len(store.upsertPoints) != 1 {
+		t.Fatalf("recreate dropped=%v and indexed %d file(s), want 1", store.dropped, len(store.upsertPoints))
+	}
+}

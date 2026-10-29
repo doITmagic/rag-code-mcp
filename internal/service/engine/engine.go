@@ -110,6 +110,13 @@ func NewEngine(idx *indexer.Service, srv *search.Service, registryPath string, c
 	detOpts := detector.DefaultOptions()
 	if cfg != nil {
 		detOpts.ExcludePatterns = cfg.Workspace.ExcludePatterns
+		home, _ := os.UserHomeDir()
+		for _, p := range cfg.Workspace.AllowedWorkspacePaths {
+			if home != "" && (p == "~" || strings.HasPrefix(p, "~/")) {
+				p = filepath.Join(home, p[1:])
+			}
+			detOpts.AllowedRoots = append(detOpts.AllowedRoots, p)
+		}
 	}
 	det := detector.New(detOpts)
 	// Watch events can arrive immediately after checkout; stale Git state writes to the wrong collection.
@@ -126,6 +133,7 @@ func NewEngine(idx *indexer.Service, srv *search.Service, registryPath string, c
 
 	deps := resolver.Dependencies{
 		Detector:        det,
+		RootValidator:   det,
 		BranchAnnotator: branchMgr,
 	}
 	// A nil *Registry in the interface field is non-nil and panics on first use.

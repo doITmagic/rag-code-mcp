@@ -337,6 +337,11 @@ func (d *Detector) detectFromMetadata(start string) (*contract.WorkspaceCandidat
 	return candidate, nil
 }
 
+// Validate implements resolver.RootValidator using Options.AllowedRoots.
+func (d *Detector) Validate(root string) *contract.ResolveWorkspaceError {
+	return d.ensureAllowed(root)
+}
+
 func (d *Detector) ensureAllowed(path string) *contract.ResolveWorkspaceError {
 	if len(d.opts.AllowedRoots) == 0 {
 		return nil

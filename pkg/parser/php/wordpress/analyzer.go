@@ -687,8 +687,12 @@ func isWordPressByFilesystem(dir string) bool {
 	return false
 }
 
-// readFilePrefix reads up to maxBytes from the file and returns nil if the file doesn't exist.
+// readFilePrefix reads up to maxBytes from the file and returns nil if the file doesn't exist
+// or is not a regular file: a sibling FIFO named *.php would block the open forever.
 func readFilePrefix(path string, maxBytes int) []byte {
+	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
+		return nil
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil

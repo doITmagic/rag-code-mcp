@@ -9,7 +9,8 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/python" // register Python analyzer
+	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/php/wordpress" // register PHP analyzer and WordPress detection
+	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/python"        // register Python analyzer
 )
 
 // Opening a FIFO with no writer blocks forever, which stalled the run and,
@@ -17,7 +18,9 @@ import (
 func TestIndexWorkspaceSkipsFIFOs(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "main.go"), "package main\nfunc Kept() {}\n")
-	for _, name := range []string{"fifo.go", "fifo.py"} {
+	// WordPress detection reads the other *.php files next to an indexed one.
+	writeTestFile(t, filepath.Join(root, "a.php"), "<?php\nfunction kept() {}\n")
+	for _, name := range []string{"fifo.go", "fifo.py", "fifo.php"} {
 		if err := syscall.Mkfifo(filepath.Join(root, name), 0o600); err != nil {
 			t.Skipf("mkfifo unavailable: %v", err)
 		}
@@ -27,7 +30,7 @@ func TestIndexWorkspaceSkipsFIFOs(t *testing.T) {
 	svc := NewService(&mockEmbedder{}, store)
 	done := make(chan error, 1)
 	go func() {
-		for _, lang := range []string{"go", "python"} {
+		for _, lang := range []string{"go", "python", "php"} {
 			if err := svc.IndexWorkspace(context.Background(), root, lang, Options{Language: lang}); err != nil {
 				done <- err
 				return

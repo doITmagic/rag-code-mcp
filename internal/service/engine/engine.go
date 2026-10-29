@@ -119,14 +119,20 @@ func NewEngine(idx *indexer.Service, srv *search.Service, registryPath string, c
 	if registryPath != "" {
 		if r, err := registry.New(registryPath); err == nil {
 			reg = r
+		} else {
+			logger.Instance.Warn("[DAEMON] Workspace registry %s unavailable, continuing without it: %v", registryPath, err)
 		}
 	}
 
-	res := resolver.New(resolver.Dependencies{
+	deps := resolver.Dependencies{
 		Detector:        det,
-		Registry:        reg,
 		BranchAnnotator: branchMgr,
-	})
+	}
+	// A nil *Registry in the interface field is non-nil and panics on first use.
+	if reg != nil {
+		deps.Registry = reg
+	}
+	res := resolver.New(deps)
 
 	var watcherMgr *watch.Manager
 	if cfg != nil && cfg.Workspace.WatchEnabled && cfg.Workspace.AutoIndex {

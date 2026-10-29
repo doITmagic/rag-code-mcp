@@ -43,3 +43,22 @@ func TestPythonSelfCallReachesInheritedMethod(t *testing.T) {
 		t.Fatalf("callers of Base.helper = %v, want [run]", got)
 	}
 }
+
+// utils.helper2() calls the function of the project's utils module, while
+// json.dumps() is not the project's own dumps.
+func TestPythonModuleCallReachesModuleFunction(t *testing.T) {
+	dir, store := indexFixture(t, "py", python.NewAnalyzer(), map[string]string{
+		"utils.py": "def helper2(x):\n    return x\n\n\ndef dumps(obj):\n    return obj\n",
+		"main.py":  "import json\nimport utils\n\n\ndef main():\n    return utils.helper2(1)\n\n\ndef save(obj):\n    return json.dumps(obj)\n",
+	})
+	eng := setupTestEngine(store)
+	t.Cleanup(eng.Close)
+	tool := tools.NewCallHierarchyTool(eng)
+	path := filepath.Join(dir, "utils.py")
+	if got := pythonCallers(t, tool, path, "helper2"); len(got) != 1 || got[0] != "main" {
+		t.Errorf("callers of helper2 = %v, want [main]", got)
+	}
+	if got := pythonCallers(t, tool, path, "dumps"); len(got) != 0 {
+		t.Errorf("callers of dumps = %v, want none", got)
+	}
+}

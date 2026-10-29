@@ -199,6 +199,21 @@ func resolveCall(ctx context.Context, eng *engine.Engine, wsID string, source st
 		return uniqueSymbol(results, file)
 	}
 	if receiver != "" {
+		// Python utils.helper() calls a function of a project module named
+		// utils, so json.dumps() does not reach a project's own dumps.
+		if language == "python" {
+			results, err := eng.ExactSearchPolyglot(ctx, wsID, map[string]interface{}{"language": "python", "type": "function", "name": name}, 100)
+			if err != nil {
+				return nil, "unresolved"
+			}
+			var module []storage.SearchResult
+			for _, r := range results {
+				if pkg, _ := r.Point.Payload["package"].(string); pkg == receiver || strings.HasSuffix(pkg, "."+receiver) {
+					module = append(module, r)
+				}
+			}
+			return uniqueSymbol(module, "")
+		}
 		if language != "go" {
 			return nil, "unresolved"
 		}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -151,6 +152,20 @@ func TestUpdateMCPConfigToleratesBOM(t *testing.T) {
 	}
 	if cfg.Servers["other"] == nil || cfg.Servers["ragcode"] == nil {
 		t.Fatalf("want both servers, got %v", cfg.Servers)
+	}
+}
+
+// Only the stdio adapter starts the daemon, so with the default transport a
+// running daemon must not turn IDE entries into URLs that stop working once
+// the daemon is gone (reboot, upgrade).
+func TestAutoTransportStaysStdioWhileDaemonRuns(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	if got := resolveTransport("auto", ln.Addr().(*net.TCPAddr).Port); got != "stdio" {
+		t.Fatalf("auto with a running daemon = %q, want stdio", got)
 	}
 }
 

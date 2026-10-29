@@ -36,7 +36,7 @@ var (
 	assumeYes     = flag.Bool("y", true, "Automatic yes to prompts (non-interactive)")
 	idesFlag      = flag.String("ides", "auto", "Comma-separated IDE list to configure (auto, codex, vs-code, claude, claude-cli, cursor, windsurf, antigravity, gemini-cli, zed)")
 	configureOnly = flag.Bool("configure-only", false, "Configure IDE integrations using the installed binary; do not reinstall binaries or services")
-	transportFlag = flag.String("transport", "auto", "MCP transport: 'auto' (SSE if server running, else stdio), 'stdio' (binary), 'sse' (URL)")
+	transportFlag = flag.String("transport", "auto", "MCP transport: 'auto' (stdio), 'stdio' (binary), 'sse' (URL; needs a daemon you keep running)")
 	ssePortFlag   = flag.Int("sse-port", 39000, "Port where the rag-code-mcp daemon listens, its --http-port (used for --transport=sse|auto)")
 )
 
@@ -635,7 +635,7 @@ func printBanner() {
 // --- Transport resolution ---
 
 // resolveTransport determines the effective transport mode.
-// 'auto': uses SSE if server is already running on the configured port, else stdio.
+// 'auto': uses stdio, even while the daemon runs on the configured port.
 // 'sse':  always uses SSE URL config.
 // 'stdio': always uses binary command config.
 func resolveTransport(mode string, port int) string {
@@ -645,11 +645,11 @@ func resolveTransport(mode string, port int) string {
 	case "stdio":
 		return "stdio"
 	default: // auto
+		// Only the stdio adapter starts the daemon: a URL entry stops
+		// working as soon as the daemon is gone (reboot, upgrade).
 		if isPortOpen(port) {
-			success(fmt.Sprintf("SSE server detected on port %d → configuring IDEs with SSE URL transport", port))
-			return "sse"
+			log(fmt.Sprintf("Daemon running on port %d; configuring stdio anyway so IDEs can restart it (--transport=sse for a URL entry)", port))
 		}
-		log(fmt.Sprintf("No SSE server on port %d → configuring IDEs with stdio (binary) transport", port))
 		return "stdio"
 	}
 }

@@ -1153,7 +1153,7 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 				}
 				// Add calls as relations
 				for _, call := range method.Calls {
-					rel := pkgParser.Relation{TargetName: call.Method, Type: pkgParser.RelCalls, Receiver: call.Object}
+					rel := pkgParser.Relation{TargetName: call.Method, Type: pkgParser.RelCalls, Receiver: call.Object, TargetQualifiedName: call.Class}
 					if call.Object == "this" || call.Object == "self" {
 						rel.TargetQualifiedName = class.FullName + "::" + call.Method
 					}
@@ -1314,7 +1314,7 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 			}
 			// Add calls as relations
 			for _, call := range fn.Calls {
-				chunk.Relations = append(chunk.Relations, pkgParser.Relation{TargetName: call.Method, Type: pkgParser.RelCalls, Receiver: call.Object})
+				chunk.Relations = append(chunk.Relations, pkgParser.Relation{TargetName: call.Method, Type: pkgParser.RelCalls, Receiver: call.Object, TargetQualifiedName: call.Class})
 			}
 			chunks = append(chunks, chunk)
 		}
@@ -1452,6 +1452,29 @@ func (c *callCollector) ExprStaticCall(n *ast.ExprStaticCall) {
 	if call.Method != "" {
 		c.calls = append(c.calls, call)
 	}
+}
+
+// ExprNew records `new Entry(...)` as a call to the class, as the JS parser
+// does, so usages and call hierarchies show where a class is created.
+func (c *callCollector) ExprNew(n *ast.ExprNew) {
+	if c.inNested(n) {
+		return
+	}
+	name := c.v.extractName(n.Class)
+	switch strings.ToLower(name) {
+	case "", "self", "static", "parent":
+		return
+	}
+	class := strings.TrimPrefix(name, "\\")
+	if !strings.HasPrefix(name, "\\") {
+		head, _, _ := strings.Cut(name, "\\")
+		if _, ok := c.v.imports[head]; ok {
+			class = resolveClassName(name, c.v.imports)
+		} else if ns := c.v.analyzer.currentNamespace; ns != "" {
+			class = ns + "\\" + name
+		}
+	}
+	c.calls = append(c.calls, MethodCall{Method: class[strings.LastIndex(class, "\\")+1:], Class: class})
 }
 
 func resolveClassName(name string, imports map[string]string) string {

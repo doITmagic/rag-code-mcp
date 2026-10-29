@@ -148,6 +148,7 @@ type MethodCall struct {
 	Static bool     `json:"static,omitempty"`
 	Object string   `json:"object,omitempty"` // Variable name ($this, $variable)
 	Method string   `json:"method"`           // Method or function name
+	Class  string   `json:"class,omitempty"`  // FQN of the class a `new` creates; Method is its short name
 	Args   []string `json:"args,omitempty"`   // Arguments
 }
 

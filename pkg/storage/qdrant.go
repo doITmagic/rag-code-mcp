@@ -197,33 +197,48 @@ func (s *QdrantStore) ExactSearch(ctx context.Context, collection string, filter
 		}
 	}
 
-	lim := uint32(10)
+	// A limit of zero or less returns every match, a page at a time: callers
+	// that filter candidates in memory must not lose those past one page.
+	lim := uint32(256)
 	if limit > 0 {
 		lim = uint32(limit)
 	}
 
 	withPayload := true
-	res, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
-		CollectionName: collection,
-		Filter:         &qdrant.Filter{Must: qFilters},
-		Limit:          ptr(lim),
-		WithPayload:    &qdrant.WithPayloadSelector{SelectorOptions: &qdrant.WithPayloadSelector_Enable{Enable: withPayload}},
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	results := make([]SearchResult, 0, len(res))
-	for _, p := range res {
-		results = append(results, SearchResult{
-			Point: Point{
-				ID:      pointIDToString(p.Id),
-				Payload: s.payloadToMap(p.Payload),
-			},
-			Score: 1.0,
+	results := make([]SearchResult, 0)
+	var offset *qdrant.PointId
+	for {
+		res, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
+			CollectionName: collection,
+			Filter:         &qdrant.Filter{Must: qFilters},
+			Limit:          ptr(lim),
+			Offset:         offset,
+			WithPayload:    &qdrant.WithPayloadSelector{SelectorOptions: &qdrant.WithPayloadSelector_Enable{Enable: withPayload}},
 		})
+		if err != nil {
+			return nil, err
+		}
+
+		advanced := 0
+		for _, p := range res {
+			// The offset point is inclusive: it was the last one of the previous page.
+			if offset != nil && p.Id.String() == offset.String() {
+				continue
+			}
+			advanced++
+			results = append(results, SearchResult{
+				Point: Point{
+					ID:      pointIDToString(p.Id),
+					Payload: s.payloadToMap(p.Payload),
+				},
+				Score: 1.0,
+			})
+		}
+		if limit > 0 || len(res) < int(lim) || advanced == 0 {
+			return results, nil
+		}
+		offset = res[len(res)-1].Id
 	}
-	return results, nil
 }
 
 // toCondition converts a filter key-value pair into a Qdrant condition.

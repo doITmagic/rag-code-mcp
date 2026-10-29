@@ -66,6 +66,7 @@ type VectorStore interface {
 
 	// ExactSearch performs a metadata-only filter scan without vector comparison.
 	// Uses Qdrant Scroll internally — no embedding, no HNSW traversal.
+	// A limit of zero or less returns every match.
 	ExactSearch(ctx context.Context, collection string, filters map[string]interface{}, limit int) ([]SearchResult, error)
 
 	// DeleteByFilter removes points matching a specific metadata filter.

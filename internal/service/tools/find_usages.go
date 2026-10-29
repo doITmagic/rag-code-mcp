@@ -96,7 +96,9 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 	}
 
 	idx := t.engine.GetIndexStatus(wctx.Root)
-	allResults, err := t.engine.ExactSearchPolyglot(ctx, wctx.ID, filter, 100)
+	// Every candidate: calls that resolve elsewhere are dropped below, so a
+	// capped scan would lose real usages past the cap.
+	allResults, err := t.engine.ExactSearchPolyglot(ctx, wctx.ID, filter, 0)
 	if err != nil {
 		var noCollections *engine.ErrNoCollectionsFound
 		if errors.As(err, &noCollections) {

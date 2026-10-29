@@ -219,11 +219,13 @@ func (t *CallHierarchyTool) resolveIncoming(ctx context.Context, wsID string, no
 	visited[node.SymbolID] = true
 	defer delete(visited, node.SymbolID)
 
-	// ExactSearchPolyglot fans out to all language collections in parallel
+	// ExactSearchPolyglot fans out to all language collections in parallel.
+	// Every candidate: those whose calls resolve elsewhere are dropped below.
+	short := shortSymbolName(node.Name)
 	res, err := t.engine.ExactSearchPolyglot(ctx, wsID, map[string]interface{}{
-		"relations[].target_name": shortSymbolName(node.Name),
+		"relations[].target_name": short,
 		"relations[].type":        "calls",
-	}, 20)
+	}, 0)
 	if err != nil {
 		return
 	}
@@ -234,7 +236,7 @@ func (t *CallHierarchyTool) resolveIncoming(ctx context.Context, wsID string, no
 		if rels, ok := r.Point.Payload["relations"].([]interface{}); ok {
 			for _, relRaw := range rels {
 				if rel, ok := relRaw.(map[string]interface{}); ok {
-					if rel["type"] == "calls" {
+					if rel["type"] == "calls" && rel["target_name"] == short {
 						target, status := resolveCall(ctx, t.engine, wsID, r, rel)
 						if callMayTarget(r, rel, target, status, *node.symbol) {
 							edge = status

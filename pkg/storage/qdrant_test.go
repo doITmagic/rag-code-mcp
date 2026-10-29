@@ -293,6 +293,29 @@ func TestExactSearchUsesScrollNotQuery(t *testing.T) {
 	}
 }
 
+// TestExactSearchWithoutLimitReadsEveryPage verifies that limit 0 scrolls on
+// from the last point of each full page, whose repeat is skipped.
+func TestExactSearchWithoutLimitReadsEveryPage(t *testing.T) {
+	page := func(from, to int) []*qdrant.RetrievedPoint {
+		var points []*qdrant.RetrievedPoint
+		for i := from; i < to; i++ {
+			points = append(points, &qdrant.RetrievedPoint{Id: qdrant.NewIDNum(uint64(i))})
+		}
+		return points
+	}
+	fake := &fakeQdrantClient{scrollResponses: []scrollResponse{{points: page(0, 256)}, {points: page(255, 300)}}}
+	results, err := NewQdrantStoreWithClient(fake).ExactSearch(context.Background(), "col", map[string]interface{}{"name": "Foo"}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 300 || len(fake.scrollRequests) != 2 {
+		t.Fatalf("want 300 results from 2 scrolls, got %d from %d", len(results), len(fake.scrollRequests))
+	}
+	if fake.scrollRequests[1].Offset.GetNum() != 255 {
+		t.Fatalf("second page must start at the last point, got %v", fake.scrollRequests[1].Offset)
+	}
+}
+
 // TestExactSearchNestedArrayFilter verifies that "relations[].target_name"
 // produces a Qdrant NestedCondition (not a plain FieldCondition).
 func TestExactSearchNestedArrayFilter(t *testing.T) {

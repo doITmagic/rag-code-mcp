@@ -825,3 +825,36 @@ func TestRecreateDropsCollectionOfLanguageWithoutFiles(t *testing.T) {
 		t.Fatal("recreate kept the collection of a language with no files left")
 	}
 }
+
+// A directory added to exclude_patterns after it was indexed is pruned by the
+// scanner, so its files never reach the per-file exclusion check; their
+// vectors must still be removed.
+func TestIndexWorkspaceDropsNewlyExcludedDirectory(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "private", "secret.go")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("package private\nfunc Secret() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := &mockStore{}
+	svc := NewService(&mockEmbedder{}, store)
+	if err := svc.IndexWorkspace(context.Background(), root, "go", Options{Language: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	store.deletedFilters = nil
+	if err := svc.IndexWorkspace(context.Background(), root, "go", Options{Language: "go", ExcludePatterns: []string{"private"}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.deletedFilters) != 1 || store.deletedFilters[0] != path {
+		t.Fatalf("deletes = %v, want [%s]", store.deletedFilters, path)
+	}
+	state, err := LoadState(StatePath(root, "go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, tracked := state.GetFileState(path); tracked {
+		t.Fatal("state still tracks the excluded file")
+	}
+}

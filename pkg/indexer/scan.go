@@ -20,7 +20,6 @@ type WorkspaceScan struct {
 	root            string
 	excludePatterns []string
 	files           map[string][]string
-	excluded        map[string][]string
 }
 
 // ScanWorkspace walks the workspace once, grouping supported files by language
@@ -35,7 +34,6 @@ func (s *Service) ScanWorkspace(ctx context.Context, root string, excludePattern
 		root:            filepath.Clean(root),
 		excludePatterns: append([]string(nil), excludePatterns...),
 		files:           make(map[string][]string),
-		excluded:        make(map[string][]string),
 	}
 	err := filepath.WalkDir(scan.root, func(path string, d os.DirEntry, err error) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -64,7 +62,6 @@ func (s *Service) ScanWorkspace(ctx context.Context, root string, excludePattern
 		}
 		lang := a.Name()
 		if matchesExcludePatterns(relSlash, d.Name(), scan.excludePatterns) || shouldSkipFile(path) {
-			scan.excluded[lang] = append(scan.excluded[lang], path)
 			return nil
 		}
 		scan.files[lang] = append(scan.files[lang], path)

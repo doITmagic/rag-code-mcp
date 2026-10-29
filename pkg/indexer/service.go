@@ -130,19 +130,28 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 		}
 	}
 	var changedFiles []string
+	scanned := make(map[string]bool)
 	for _, path := range languageFiles(scan.files, opts.Language) {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		scanned[path] = true
 		info, err := os.Stat(path)
 		if err == nil && !info.IsDir() && state.IsChanged(path, info) {
 			changedFiles = append(changedFiles, path)
 		}
 	}
-	for _, path := range languageFiles(scan.excluded, opts.Language) {
-		if _, ok := state.GetFileState(path); !ok {
-			continue
+	// Tracked files the scan no longer yields were excluded after they were
+	// indexed: by a pattern, a skip rule, or a whole pruned directory.
+	var unscanned []string
+	state.mu.RLock()
+	for path := range state.Files {
+		if !scanned[path] {
+			unscanned = append(unscanned, path)
 		}
+	}
+	state.mu.RUnlock()
+	for _, path := range unscanned {
 		a := parser.GetByFile(path)
 		if a == nil || opts.Language != "" && a.Name() != opts.Language {
 			continue

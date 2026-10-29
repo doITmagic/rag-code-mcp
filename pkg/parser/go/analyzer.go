@@ -387,7 +387,7 @@ func (ca *CodeAnalyzer) analyzeTypeDecl(fset *token.FileSet, typ *doc.Type, astB
 
 		for _, spec := range typ.Decl.Specs {
 			if ts, ok := spec.(*ast.TypeSpec); ok {
-				info.Kind = ca.getTypeKind(ts.Type)
+				info.Kind = ca.getTypeKind(ts)
 				if structType, ok := ts.Type.(*ast.StructType); ok {
 					info.Fields = ca.extractFields(structType)
 				}
@@ -705,8 +705,11 @@ func (ca *CodeAnalyzer) exprToString(expr ast.Expr) string {
 	}
 }
 
-func (ca *CodeAnalyzer) getTypeKind(expr ast.Expr) string {
-	switch expr.(type) {
+func (ca *CodeAnalyzer) getTypeKind(ts *ast.TypeSpec) string {
+	if ts.Assign.IsValid() {
+		return "alias"
+	}
+	switch ts.Type.(type) {
 	case *ast.StructType:
 		return "struct"
 	case *ast.InterfaceType:
@@ -720,7 +723,8 @@ func (ca *CodeAnalyzer) getTypeKind(expr ast.Expr) string {
 	case *ast.FuncType:
 		return "function"
 	default:
-		return "alias"
+		// A defined type over a named or basic type: show that type.
+		return types.ExprString(ts.Type)
 	}
 }
 

@@ -546,3 +546,25 @@ func (d *Derived) DerivedMethod() string {
 	})
 }
 
+// Only `type A = B` is an alias; a defined type shows its underlying type.
+func TestDefinedTypeIsNotAnAlias(t *testing.T) {
+	dir := t.TempDir()
+	src := "package flag\n\ntype ErrorHandling int\n\ntype Allow struct{}\n\ntype Whitelist = Allow\n"
+	if err := os.WriteFile(filepath.Join(dir, "flag.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := NewCodeAnalyzer().Analyze(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, s := range res.Symbols {
+		got[s.Name] = s.Signature
+	}
+	want := map[string]string{"ErrorHandling": "int ErrorHandling", "Allow": "struct Allow", "Whitelist": "alias Whitelist"}
+	for name, sig := range want {
+		if got[name] != sig {
+			t.Errorf("%s signature = %q, want %q", name, got[name], sig)
+		}
+	}
+}

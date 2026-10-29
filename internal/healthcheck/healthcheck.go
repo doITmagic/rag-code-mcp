@@ -388,7 +388,7 @@ func GetRemediation(results []CheckResult, models []string) string {
 			case "Qdrant":
 				remediation += `
   Start Qdrant with Docker:
-    docker run -d -p 6333:6333 \
+    docker run -d -p 6333:6333 -p 6334:6334 \
       -v $(pwd)/qdrant_data:/qdrant/storage \
       qdrant/qdrant
 

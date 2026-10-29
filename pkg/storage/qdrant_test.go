@@ -397,3 +397,20 @@ func TestCreateCollectionSetsHNSWAndOptimizers(t *testing.T) {
 		t.Fatalf("expected MemmapThreshold=10000, got %d", req.OptimizersConfig.GetMemmapThreshold())
 	}
 }
+
+// The configured URL names Qdrant's REST port; gRPC is on the next one. A
+// remapped Qdrant (-p 16333:6333 -p 16334:6334) passed the REST health check
+// and then failed every gRPC call against the REST listener.
+func TestParseQdrantURLUsesGRPCPortNextToREST(t *testing.T) {
+	cases := map[string]int{
+		"":                       6334,
+		"http://localhost":       6334,
+		"http://localhost:6333":  6334,
+		"http://localhost:16333": 16334,
+	}
+	for raw, want := range cases {
+		if _, port := ParseQdrantURL(raw); port != want {
+			t.Errorf("ParseQdrantURL(%q) port = %d, want %d", raw, port, want)
+		}
+	}
+}

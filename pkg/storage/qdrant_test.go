@@ -407,6 +407,8 @@ func TestParseQdrantURLUsesGRPCPortNextToREST(t *testing.T) {
 		"http://localhost":       6334,
 		"http://localhost:6333":  6334,
 		"http://localhost:16333": 16334,
+		// Qdrant's own gRPC port is already the one to use, as it always was.
+		"http://localhost:6334": 6334,
 	}
 	for raw, want := range cases {
 		if _, port := ParseQdrantURL(raw); port != want {

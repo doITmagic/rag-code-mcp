@@ -596,6 +596,7 @@ func ptr[T any](v T) *T {
 // ParseQdrantURL parses host and gRPC port from a URL like http://localhost:6333.
 // The URL names the REST port, which the health checks use; the Qdrant
 // go-client needs gRPC, which Qdrant serves on the next port (6333/6334).
+// A URL that already names Qdrant's gRPC port 6334 keeps it.
 func ParseQdrantURL(rawURL string) (host string, port int) {
 	host = "localhost"
 	port = 6334
@@ -612,6 +613,9 @@ func ParseQdrantURL(rawURL string) (host string, port int) {
 	if p := u.Port(); p != "" {
 		if n, err := strconv.Atoi(p); err == nil {
 			port = n + 1
+			if n == 6334 {
+				port = n
+			}
 		}
 	}
 	return

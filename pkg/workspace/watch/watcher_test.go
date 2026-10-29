@@ -162,3 +162,60 @@ func TestWatcherReportsDirectoriesTheScannerIndexes(t *testing.T) {
 		}
 	}
 }
+
+// A file written without pause (a dev-server log, nohup.out) restarted the
+// debounce on every event, so an edit made meanwhile was not indexed until
+// the writes stopped, for hours with a long-running server.
+func TestWatcherFlushesWhileAFileKeepsChanging(t *testing.T) {
+	root := t.TempDir()
+	changed := make(chan []string, 64)
+	fw, err := NewFileWatcher(root, Options{Debounce: 50 * time.Millisecond}, func(_ context.Context, _ string, files []string) error {
+		changed <- files
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fw.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(fw.Stop)
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		log := filepath.Join(root, "dev-server.log")
+		for {
+			select {
+			case <-stop:
+				return
+			case <-time.After(10 * time.Millisecond):
+				if f, err := os.OpenFile(log, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
+					f.WriteString("line\n")
+					f.Close()
+				}
+			}
+		}
+	}()
+	defer func() { close(stop); <-done }()
+
+	edit := filepath.Join(root, "main.go")
+	time.Sleep(30 * time.Millisecond)
+	if err := os.WriteFile(edit, []byte("package main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case files := <-changed:
+			for _, f := range files {
+				if f == edit {
+					return
+				}
+			}
+		case <-deadline:
+			t.Fatal("edit not reported while another file kept changing")
+		}
+	}
+}

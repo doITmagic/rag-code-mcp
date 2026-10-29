@@ -42,6 +42,11 @@ var defaultHiddenAllowlist = map[string]struct{}{
 
 const defaultDebounce = 1 * time.Second
 
+// maxWaitDebounces caps, in debounce periods, how long events can keep
+// postponing a batch. A file written without pause (a dev-server log) would
+// otherwise hold back every edit until the writes stop.
+const maxWaitDebounces = 10
+
 // Options configures watcher behavior.
 type Options struct {
 	Debounce        time.Duration
@@ -66,6 +71,7 @@ type FileWatcher struct {
 	onChange        func(context.Context, string, []string) error
 	exclude         map[string]struct{}
 	changedFiles    map[string]struct{}
+	pendingSince    time.Time // first event of the batch not yet flushed
 	rootGone        func()
 }
 
@@ -244,8 +250,18 @@ func (fw *FileWatcher) triggerDebouncedIndex() {
 		fw.timer.Stop()
 	}
 
-	fw.timer = time.AfterFunc(fw.debounce, func() {
+	now := time.Now()
+	if fw.pendingSince.IsZero() {
+		fw.pendingSince = now
+	}
+	delay := fw.debounce
+	if left := fw.pendingSince.Add(maxWaitDebounces * fw.debounce).Sub(now); left < delay {
+		delay = max(left, 0)
+	}
+
+	fw.timer = time.AfterFunc(delay, func() {
 		fw.mu.Lock()
+		fw.pendingSince = time.Time{}
 		files := make([]string, 0, len(fw.changedFiles))
 		for f := range fw.changedFiles {
 			files = append(files, f)

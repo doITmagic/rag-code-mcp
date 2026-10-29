@@ -99,3 +99,26 @@ func TestRunBridgeRefreshesResolvedWorkspace(t *testing.T) {
 	assert.Equal(t, len(steps), hitCount)
 	assert.Contains(t, stdout.String(), "daemon returned HTTP 500")
 }
+
+// A notification gets 202 with an empty body from the daemon; the adapter must
+// not turn it into a blank stdout line, which line-based MCP clients reject.
+func TestRunBridgeSkipsEmptyNotificationReply(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if !bytes.Contains(body, []byte(`"id"`)) {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":1,"result":{}}`)
+	}))
+	defer server.Close()
+
+	stdin := strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized"}` + "\n" +
+		`{"jsonrpc":"2.0","id":1,"method":"ping"}` + "\n")
+	var stdout bytes.Buffer
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	err := adapter.RunBridge(ctx, server.Listener.Addr().(*net.TCPAddr).Port, stdin, &stdout, "")
+	require.NoError(t, err)
+	assert.Equal(t, `{"jsonrpc":"2.0","id":1,"result":{}}`+"\n", stdout.String())
+}

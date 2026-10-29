@@ -94,6 +94,10 @@ func RunBridge(ctx context.Context, port int, stdin io.Reader, stdout io.Writer,
 
 		// Trim trailing newlines and write as single line
 		body = bytes.TrimRight(body, "\n\r")
+		// Notifications get 202 with no body: nothing to relay.
+		if len(bytes.TrimSpace(body)) == 0 {
+			continue
+		}
 		fmt.Fprintf(stdout, "%s\n", body)
 	}
 

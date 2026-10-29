@@ -82,6 +82,19 @@ func TestJSGlobalReceiverCallsNoProjectMethod(t *testing.T) {
 	}
 }
 
+// import * as money from './money' makes money.f() a call of money.ts's f.
+func TestJSNamespaceImportCallReachesFunction(t *testing.T) {
+	dir, store := indexFixture(t, "ts", javascript.NewCodeAnalyzer(), map[string]string{
+		"money.ts": "export function centsToDisplay(c: number) { return c; }\n",
+		"main.ts":  "import * as money from './money';\nexport function showTotal(c: number) { return money.centsToDisplay(c); }\n",
+	})
+	eng := setupTestEngine(store)
+	t.Cleanup(eng.Close)
+	if got := pythonCallers(t, tools.NewCallHierarchyTool(eng), filepath.Join(dir, "money.ts"), "centsToDisplay"); !slices.Equal(got, []string{"showTotal"}) {
+		t.Errorf("callers of centsToDisplay = %v, want [showTotal]", got)
+	}
+}
+
 // $this->m() may call a method the class inherits from a parent or a trait.
 func TestPHPThisCallReachesInheritedMethod(t *testing.T) {
 	dir, store := indexFixture(t, "php", php.NewAnalyzer(), map[string]string{

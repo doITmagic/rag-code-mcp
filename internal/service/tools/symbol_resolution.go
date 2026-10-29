@@ -252,6 +252,14 @@ func resolveCall(ctx context.Context, eng *engine.Engine, wsID string, source st
 				if len(results) > 0 {
 					return uniqueSymbol(results, "")
 				}
+				// import * as money from './money' names money.ts's functions.
+				results, err = eng.ExactSearchPolyglot(ctx, wsID, map[string]interface{}{"type": "function", "name": name, "package": receiver}, 2)
+				if err != nil {
+					return nil, "unresolved"
+				}
+				if len(results) > 0 {
+					return uniqueSymbol(results, "")
+				}
 				// console.log() and Object.create() call a global or a class
 				// the project does not index, not an instance of its classes.
 				head, _, _ := strings.Cut(receiver, ".")

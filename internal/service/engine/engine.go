@@ -785,12 +785,14 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 				resultsChan <- langResult{lang: l, coll: c, skipped: true}
 				return
 			}
-			var res []storage.SearchResult
-			var sErr error
-			if includeDocs {
-				res, sErr = e.search.SearchWithVector(ctx, c, vector, limit)
-			} else {
-				res, sErr = e.search.SearchCodeWithVector(ctx, c, vector, limit)
+			res, gone, sErr := e.searchRecreated(ctx, c, func() ([]storage.SearchResult, error) {
+				if includeDocs {
+					return e.search.SearchWithVector(ctx, c, vector, limit)
+				}
+				return e.search.SearchCodeWithVector(ctx, c, vector, limit)
+			})
+			if gone {
+				return
 			}
 			elapsed := time.Since(gt)
 			if sErr != nil {
@@ -958,7 +960,9 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 
 	var results []storage.SearchResult
 	for _, target := range available {
-		found, err := e.search.HybridSearch(ctx, target.collection, queryText, limit, target.includeDocs)
+		found, _, err := e.searchRecreated(ctx, target.collection, func() ([]storage.SearchResult, error) {
+			return e.search.HybridSearch(ctx, target.collection, queryText, limit, target.includeDocs)
+		})
 		if err != nil {
 			return nil, fmt.Errorf("hybrid search failed: %w", err)
 		}
@@ -978,6 +982,26 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 		MismatchRisk:    wctx.MismatchRisk,
 		DetectionSource: wctx.DetectionSource,
 	}, nil
+}
+
+// searchRecreated runs search against coll. A recreate drops coll while the
+// search service still caches it as existing, so a failed search drops the
+// cached entry and looks again: a collection that is gone is reported as such
+// (being rebuilt, not a failure), and one rebuilt meanwhile is searched again.
+func (e *Engine) searchRecreated(ctx context.Context, coll string, search func() ([]storage.SearchResult, error)) (res []storage.SearchResult, gone bool, err error) {
+	if res, err = search(); err == nil {
+		return res, false, nil
+	}
+	e.search.InvalidateCollectionCache(coll)
+	exists, chkErr := e.search.CollectionExists(ctx, coll)
+	if chkErr != nil {
+		return nil, false, err
+	}
+	if !exists {
+		return nil, true, nil
+	}
+	res, err = search()
+	return res, false, err
 }
 
 // ExactSearchPolyglot performs a metadata-only filter scan (Qdrant Scroll) across
@@ -1018,14 +1042,11 @@ func (e *Engine) ExactSearchPolyglot(ctx context.Context, wsID string, filters m
 				return
 			}
 
-			res, sErr := e.search.ExactSearch(ctx, coll, filters, limit)
-			if sErr != nil {
-				// A recreate drops the collection while the cache still says
-				// it exists: that is a collection being rebuilt, not a failure.
-				e.search.InvalidateCollectionCache(coll)
-				if exists, err := e.search.CollectionExists(ctx, coll); err == nil && !exists {
-					return
-				}
+			res, gone, sErr := e.searchRecreated(ctx, coll, func() ([]storage.SearchResult, error) {
+				return e.search.ExactSearch(ctx, coll, filters, limit)
+			})
+			if gone {
+				return
 			}
 			atomic.AddInt32(&existingCollections, 1)
 			if sErr != nil {

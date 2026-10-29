@@ -203,3 +203,60 @@ func TestSearchSurvivesOneFailingCollection(t *testing.T) {
 		t.Fatalf("%s, want the fallback hit", text)
 	}
 }
+
+// A semantic rag_search during a recreate's drop-to-rebuild window, while the
+// search service still caches the dropped collection as existing, must not
+// fail with the store's "Collection doesn't exist" error, nor when the
+// collection is already rebuilt by the time the search looks again.
+func TestSemanticSearchDuringCollectionRecreate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "count.go")
+	if err := os.WriteFile(path, []byte("package count\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	notFound := errors.New("rpc error: code = NotFound desc = Not found: Collection doesn't exist!")
+	for name, rebuilt := range map[string]bool{"dropped": false, "rebuilt before the recheck": true} {
+		t.Run(name, func(t *testing.T) {
+			var dropped, recreated atomic.Bool
+			semantic := func(context.Context, string, storage.SearchQuery) ([]storage.SearchResult, error) {
+				if dropped.Load() && !recreated.Load() {
+					return nil, notFound
+				}
+				return nil, nil
+			}
+			store := &mockVectorStore{
+				CollectionExistsFunc: func(_ context.Context, name string) (bool, error) {
+					if !strings.HasSuffix(name, "-go") {
+						return false, nil
+					}
+					// The cache answers until a lookup reaches the store, which
+					// sees the collection rebuilt in the "rebuilt" case.
+					if dropped.Load() && rebuilt {
+						recreated.Store(true)
+					}
+					return !dropped.Load() || recreated.Load(), nil
+				},
+				SearchFunc:         semantic,
+				SearchCodeOnlyFunc: semantic,
+			}
+			eng := setupTestEngine(store)
+			t.Cleanup(eng.Close)
+			search := tools.NewSmartSearchTool(eng)
+			// Warms the collection cache with the -go collection.
+			if _, err := search.Execute(context.Background(), tools.SmartSearchInput{Query: "newCountValue", FilePath: path}); err != nil {
+				t.Fatal(err)
+			}
+			dropped.Store(true)
+			text, err := search.Execute(context.Background(), tools.SmartSearchInput{Query: "newCountValue", FilePath: path})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var response tools.ToolResponse
+			if err := json.Unmarshal([]byte(text), &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.Status == "error" {
+				t.Errorf("rag_search: %s", text)
+			}
+		})
+	}
+}

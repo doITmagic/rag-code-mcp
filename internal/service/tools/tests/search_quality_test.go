@@ -317,3 +317,41 @@ func TestSearchCapsLargeSymbolContent(t *testing.T) {
 		t.Fatalf("content of %d bytes, want the start of BigTable cut with a note: %.300s", len(content), content)
 	}
 }
+
+// rag_find_usages copied each caller's whole body into its snippet and its
+// markdown, so one call from a data-heavy function returned megabytes.
+func TestFindUsagesCapsLargeCallerSnippet(t *testing.T) {
+	old := tools.MaxResultContent
+	tools.MaxResultContent = 1 << 10
+	t.Cleanup(func() { tools.MaxResultContent = old })
+	var src strings.Builder
+	src.WriteString("def helper(rows):\n    return rows\n\n\ndef big():\n    rows = [\n")
+	for i := 0; i < 200; i++ {
+		fmt.Fprintf(&src, "        (%d, 'row %d'),\n", i, i)
+	}
+	src.WriteString("    ]\n    return helper(rows)\n")
+	dir, store := indexFixture(t, "py", python.NewAnalyzer(), map[string]string{"table.py": src.String()})
+	eng := setupTestEngine(store)
+	t.Cleanup(eng.Close)
+	text, err := tools.NewFindUsagesTool(eng).Execute(context.Background(), map[string]interface{}{"symbol_name": "helper", "file_path": filepath.Join(dir, "table.py")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Message string
+		Data    []tools.UsageResult
+	}
+	if err := json.Unmarshal([]byte(text), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Data) != 1 || response.Data[0].Name != "big" {
+		t.Fatalf("want the one usage in big: %.500s", text)
+	}
+	snippet := response.Data[0].Snippet
+	if !strings.HasPrefix(snippet, "def big():") || len(snippet) > 2<<10 || !strings.Contains(snippet, "content truncated") {
+		t.Fatalf("snippet of %d bytes, want the start of big cut with a note: %.300s", len(snippet), snippet)
+	}
+	if len(response.Message) > 3<<10 {
+		t.Fatalf("markdown of %d bytes carries the whole caller", len(response.Message))
+	}
+}

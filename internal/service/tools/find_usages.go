@@ -215,7 +215,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 			FilePath:    resultFilePath,
 			StartLine:   startLine,
 			Package:     pkg,
-			Snippet:     code,
+			Snippet:     capContent(code),
 			MatchReason: matchedRelations,
 		}
 		usages = append(usages, usage)

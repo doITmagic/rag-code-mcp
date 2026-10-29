@@ -206,6 +206,35 @@ func TestRetryableProvider_ErrorNoRetry(t *testing.T) {
 	}
 }
 
+// hangingProvider never answers an embed, like a hung Ollama.
+type hangingProvider struct {
+	fakeProvider
+}
+
+func (h *hangingProvider) Embed(ctx context.Context, text string) ([]float64, error) {
+	h.embedCalls++
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// An attempt that used up its timeout is not retried: with the daemon's
+// 3 x 30 s policy a query against a hung Ollama waited 93 s.
+func TestRetryableProvider_EmbedTimeoutNotRetried(t *testing.T) {
+	base := &hangingProvider{}
+	r := NewRetryableProvider(base, 3, 100*time.Millisecond)
+
+	start := time.Now()
+	if _, err := r.Embed(context.Background(), "query"); err == nil {
+		t.Fatal("expected an error from a hung provider")
+	}
+	if base.embedCalls != 1 {
+		t.Errorf("expected 1 embed call, got %d", base.embedCalls)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("Embed took %v, want about one timeout", elapsed)
+	}
+}
+
 type closableFakeProvider struct {
 	fakeProvider
 	closed bool

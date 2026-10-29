@@ -120,15 +120,27 @@ func (r *RetryableProvider) GenerateStream(ctx context.Context, prompt string, o
 	return r.provider.GenerateStream(ctx, prompt, opts...)
 }
 
-// Embed generates embeddings with retry logic
-func (r *RetryableProvider) Embed(ctx context.Context, text string) ([]float64, error) {
-	var result []float64
-	err := utils.Retry(r.maxRetries, time.Second, func() error {
+// retryEmbed runs fn with a per-attempt timeout. An attempt that ran out of
+// time is not repeated: against a hung or overloaded Ollama each retry only
+// adds the full timeout again, which kept a search waiting 93 s.
+func (r *RetryableProvider) retryEmbed(ctx context.Context, fn func(context.Context) error) error {
+	timedOut := false
+	return utils.RetryWithContext(r.maxRetries, time.Second, func() error {
 		timeoutCtx, cancel := context.WithTimeout(ctx, r.timeout)
 		defer cancel()
 
+		err := fn(timeoutCtx)
+		timedOut = timeoutCtx.Err() != nil
+		return err
+	}, func(error) bool { return !timedOut })
+}
+
+// Embed generates embeddings with retry logic
+func (r *RetryableProvider) Embed(ctx context.Context, text string) ([]float64, error) {
+	var result []float64
+	err := r.retryEmbed(ctx, func(ctx context.Context) error {
 		var err error
-		result, err = r.provider.Embed(timeoutCtx, text)
+		result, err = r.provider.Embed(ctx, text)
 		return err
 	})
 	return result, err
@@ -150,12 +162,9 @@ func (r *RetryableProvider) EmbedBatch(ctx context.Context, texts []string) ([][
 	}
 
 	var result [][]float64
-	err := utils.Retry(r.maxRetries, time.Second, func() error {
-		timeoutCtx, cancel := context.WithTimeout(ctx, r.timeout)
-		defer cancel()
-
+	err := r.retryEmbed(ctx, func(ctx context.Context) error {
 		var err error
-		result, err = batch.EmbedBatch(timeoutCtx, texts)
+		result, err = batch.EmbedBatch(ctx, texts)
 		return err
 	})
 	return result, err

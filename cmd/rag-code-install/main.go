@@ -88,28 +88,11 @@ func main() {
 	execPath, _ := os.Executable()
 	sourceDir := filepath.Dir(execPath)
 
-	// Required files: rag-code-mcp (binary) + config.yaml
-	// If either is missing from sourceDir, download the latest release.
-	// rag-code-install is the running binary — no need to check or copy itself.
-	requiredFiles := []string{"rag-code-mcp", "config.yaml"}
 	optionalResources := []string{"README.md", "llms.txt", "LICENSE"}
 
-	// Check if required files are present
-	needsDownload := false
-	for _, f := range requiredFiles {
-		name := f
-		if runtime.GOOS == "windows" && f == "rag-code-mcp" {
-			name += ".exe"
-		}
-		if _, err := os.Stat(filepath.Join(sourceDir, name)); os.IsNotExist(err) {
-			needsDownload = true
-			break
-		}
-	}
-
-	// Download only if rag-code-mcp or config.yaml is missing
+	// Download only if rag-code-mcp is missing
 	tempDir := ""
-	if needsDownload {
+	if needsDownload(sourceDir) {
 		log("Required files missing in current directory. Downloading latest release...")
 		var err error
 		tempDir, err = downloadAndExtractLatest()
@@ -141,19 +124,7 @@ func main() {
 		success("Installed binary: rag-code-mcp")
 	}
 
-	// Install config.yaml (preserve existing)
-	{
-		src := filepath.Join(sourceDir, "config.yaml")
-		dst := filepath.Join(binPath, "config.yaml")
-		if _, err := os.Stat(dst); err == nil {
-			log("config.yaml already exists - keeping existing configuration.")
-			checkConfigUpgrade(dst)
-		} else if err := copyFile(src, dst); err != nil {
-			warn("Could not install config.yaml: " + err.Error())
-		} else {
-			success("Installed resource: config.yaml")
-		}
-	}
+	installConfig(sourceDir, binPath)
 
 	// Copy optional resources (silently skip if missing)
 	for _, r := range optionalResources {
@@ -179,6 +150,39 @@ func main() {
 	runHealthCheck(binPath)
 
 	success("RagCode MCP installation completed successfully!")
+}
+
+// needsDownload reports whether sourceDir lacks the server binary.
+// rag-code-install is the running binary, so it is not checked. config.yaml
+// is not required either: release archives do not ship one at their root.
+func needsDownload(sourceDir string) bool {
+	name := "rag-code-mcp"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	_, err := os.Stat(filepath.Join(sourceDir, name))
+	return os.IsNotExist(err)
+}
+
+// installConfig installs config.yaml, preserving an existing one. Without a
+// config.yaml next to the installer, the embedded default is written.
+func installConfig(sourceDir, binPath string) {
+	src := filepath.Join(sourceDir, "config.yaml")
+	dst := filepath.Join(binPath, "config.yaml")
+	if _, err := os.Stat(dst); err == nil {
+		log("config.yaml already exists - keeping existing configuration.")
+		checkConfigUpgrade(dst)
+	} else if _, err := os.Stat(src); os.IsNotExist(err) {
+		if err := config.EnsureConfigExists(dst); err != nil {
+			warn("Could not install config.yaml: " + err.Error())
+		} else {
+			success("Installed default config.yaml")
+		}
+	} else if err := copyFile(src, dst); err != nil {
+		warn("Could not install config.yaml: " + err.Error())
+	} else {
+		success("Installed resource: config.yaml")
+	}
 }
 
 func setupEnvironment() {

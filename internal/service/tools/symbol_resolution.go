@@ -74,8 +74,8 @@ func goMethodFilters(name string) map[string]interface{} {
 
 // qualifierRulesOut reports whether an unresolved name's qualifier was
 // checked: it names an indexed Go type, which has no such method. Interfaces
-// (methods not indexed by receiver), external packages and other languages
-// are not modelled here.
+// (methods not indexed by receiver), types with embedded fields (promoted
+// methods), external packages and other languages are not modelled here.
 func qualifierRulesOut(ctx context.Context, eng *engine.Engine, wsID, name string) bool {
 	filters := goMethodFilters(name)
 	if filters == nil {
@@ -90,7 +90,19 @@ func qualifierRulesOut(ctx context.Context, eng *engine.Engine, wsID, name strin
 		return false
 	}
 	for _, r := range results {
-		if metadata, _ := r.Point.Payload["metadata"].(map[string]interface{}); metadata["kind"] != "interface" {
+		if metadata, _ := r.Point.Payload["metadata"].(map[string]interface{}); metadata["kind"] != "interface" && !hasEmbeddedField(metadata) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasEmbeddedField reports whether a Go struct has an embedded field, which
+// the analyzer stores as a field without a name.
+func hasEmbeddedField(metadata map[string]interface{}) bool {
+	fields, _ := metadata["fields"].([]interface{})
+	for _, raw := range fields {
+		if field, _ := raw.(map[string]interface{}); field["name"] == "" {
 			return true
 		}
 	}

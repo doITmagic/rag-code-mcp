@@ -104,3 +104,27 @@ func TestQualifierWithoutIndexedTypeKeepsUsages(t *testing.T) {
 		}
 	}
 }
+
+// A method promoted through an embedded field is not declared on the outer
+// type, yet Outer.Do names it and o.Do() is a usage.
+func TestPromotedGoMethodKeepsUsages(t *testing.T) {
+	dir, store := indexFixture(t, "go", golang.NewCodeAnalyzer(), map[string]string{
+		"embed.go": "package embed\n\ntype Inner struct{}\n\nfunc (Inner) Do() {}\n\ntype Outer struct{ Inner }\n\n" +
+			"func CallOuter() { var o Outer; o.Do() }\n",
+	})
+	eng := setupTestEngine(store)
+	t.Cleanup(eng.Close)
+	for _, query := range []string{"Outer.Do", "embed.Outer.Do"} {
+		text, err := tools.NewFindUsagesTool(eng).Execute(context.Background(), map[string]interface{}{"symbol_name": query, "file_path": filepath.Join(dir, "x.go")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var response struct{ Data []tools.UsageResult }
+		if err := json.Unmarshal([]byte(text), &response); err != nil {
+			t.Fatal(err)
+		}
+		if len(response.Data) != 1 || response.Data[0].Name != "CallOuter" {
+			t.Errorf("%s: want usage in CallOuter: %s", query, text)
+		}
+	}
+}

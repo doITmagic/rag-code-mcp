@@ -141,3 +141,70 @@ func TestIndexFilesRebuildsCorruptState(t *testing.T) {
 		t.Fatal("rebuilt state does not track the edited file")
 	}
 }
+
+// A directory indexed as plain files that becomes a linked worktree is
+// excluded from then on; the watcher batch must drop its vectors from the
+// parent instead of skipping it, or the parent keeps serving its code.
+func TestIndexFilesDropsDirectoryThatBecameLinkedWorktree(t *testing.T) {
+	root := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false"}, args...)...)
+		cmd.Dir = root
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package main\nfunc A() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("init", "-q", "-b", "main")
+	git("add", "a.go")
+	git("commit", "-qm", "initial")
+	git("branch", "stale")
+	wt := filepath.Join(root, "wt-stale")
+	shared := filepath.Join(wt, "shared.go")
+	if err := os.MkdirAll(wt, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(shared, []byte("package wt\nfunc Shared() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := &hookLLM{}
+	store := &branchIndexStore{
+		indexOrderStore: indexOrderStore{testStore: testStore{existing: map[string]bool{}}},
+		names:           map[string][]string{},
+	}
+	eng := NewEngine(indexer.NewService(provider, store), search.NewService(provider, store), filepath.Join(t.TempDir(), "registry.json"), &config.Config{})
+	t.Cleanup(eng.Close)
+	ctx := context.Background()
+	if err := eng.IndexWorkspace(ctx, root, false); err != nil {
+		t.Fatal(err)
+	}
+	wctx, err := eng.DetectContextAsRoot(ctx, root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statePath := indexer.StatePath(wctx.Root, wctx.CollectionName("go"))
+	if state, _ := indexer.LoadState(statePath); state == nil {
+		t.Fatal("no state")
+	} else if _, ok := state.GetFileState(shared); !ok {
+		t.Fatal("setup: plain directory was not indexed")
+	}
+
+	if err := os.RemoveAll(wt); err != nil {
+		t.Fatal(err)
+	}
+	git("worktree", "add", "-q", wt, "stale")
+	if err := eng.IndexFiles(ctx, root, []string{wt, shared}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := indexer.LoadState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := state.GetFileState(shared); ok {
+		t.Fatal("parent still holds the vectors of a directory that is now a linked worktree")
+	}
+}

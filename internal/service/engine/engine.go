@@ -1306,6 +1306,12 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) (r
 		// skip what a full run would never index instead of indexing it now
 		// and dropping it on the next run, or rescanning for a mkdir in tmp/.
 		if indexer.ExcludedPath(wctx.Root, p, isDir, excludePatterns) {
+			// An indexed directory that became excluded (now a linked
+			// worktree): the full run drops the vectors it still holds.
+			if isDir && wasIndexedDir(p) {
+				saveLoadedStates()
+				return e.IndexWorkspace(ctx, root, false)
+			}
 			continue
 		}
 		// Moving a populated directory into the workspace, out of it, or into

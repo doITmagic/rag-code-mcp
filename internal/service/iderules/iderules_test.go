@@ -112,11 +112,36 @@ func TestWriteNeverClobbersExistingClaudeMd(t *testing.T) {
 	}
 }
 
+// v1Rules is the legacy rule file RagCode v1 wrote, byte for byte.
+const v1Rules = `# RagCode MCP - Semantic Search Rules
+# This file is automatically managed by RagCode MCP.
+
+## ⚖️ The Golden Rule
+**For any information about the code (location, structure, logic, or usage), you MUST use RagCode MCP tools. Never guess code details from memory; always search the local index first.**
+
+## Available Tools
+- search_code: Primary entry point for semantic search.
+- get_function_details: Get full implementation of a function.
+- find_type_definition: Get struct/interface definitions.
+- list_package_exports: See what a module offers.
+- search_docs: Find project documentation.
+
+## Usage Guidelines
+- Always provide 'file_path' to tools to ensure they detect the correct project context.
+- Use 'hybrid_search' if looking for exact variable names or error messages.
+- If the tool says "workspace not indexed", use 'index_workspace' once.
+`
+
 func TestRemoveLegacyOnlyTouchesRagCodeFiles(t *testing.T) {
 	root := t.TempDir()
 	ours := filepath.Join(root, ".cursorrules")
 	theirs := filepath.Join(root, ".roomodes")
-	if err := os.WriteFile(ours, []byte(legacyHeader+"\n## Available Tools\n"), 0o644); err != nil {
+	if err := os.WriteFile(ours, []byte(strings.ReplaceAll(v1Rules, "\n", "\r\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// RagCode's file that the user extended now holds their rules too.
+	extended := filepath.Join(root, ".windsurfrules")
+	if err := os.WriteFile(extended, []byte(v1Rules+"\n## My own team rules\nAlways write tests.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// A hand-written file that merely names the server is still the user's.
@@ -134,7 +159,7 @@ func TestRemoveLegacyOnlyTouchesRagCodeFiles(t *testing.T) {
 	if _, err := os.Stat(ours); !os.IsNotExist(err) {
 		t.Error(".cursorrules written by RagCode should have been removed")
 	}
-	for _, keep := range []string{theirs, cline} {
+	for _, keep := range []string{theirs, cline, extended} {
 		if info, err := os.Stat(keep); err != nil || info.IsDir() {
 			t.Errorf("hand-written %s must be left alone: %v", filepath.Base(keep), err)
 		}

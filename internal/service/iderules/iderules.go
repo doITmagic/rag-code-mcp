@@ -8,6 +8,8 @@
 package iderules
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -196,18 +198,29 @@ func write(path, content string) {
 // naming tools that no longer exist.
 var Legacy = []string{".cursorrules", ".windsurfrules", ".clinerules", ".clauderules", ".roomodes"}
 
-// legacyHeader opens every legacy rule file RagCode wrote. Merely mentioning
-// "RagCode MCP" proves nothing: users name the server in their own rules.
-const legacyHeader = "# RagCode MCP - Semantic Search Rules\n# This file is automatically managed by RagCode MCP.\n"
+// legacySums are the SHA-256 sums of every legacy rule body RagCode ever
+// wrote. Only an unchanged one is RagCode's: users name the server in their
+// own rules, and some extended the file RagCode created.
+var legacySums = map[string]bool{
+	"b36a0a7f863c1ffc5bbf45766816634e236336f4d524a7dd67bf4f68f8c79458": true,
+	"5dec4aabbf9d51e40e142baa3e607bf9a5f5724152316abfc167671714571826": true,
+	"99d7228eaccc57a284ff97fa90b5303d93fe0e75b66f00add9401c44d01b9c5e": true,
+	"67fc8510c59eb6701624a86259e8c243aa301a1a4187348de37266307dcc8b2d": true,
+	"ec59a63960c8f4d0f901c1dbe13df4b16f0a4780e6e7234f762434b9575b069c": true,
+}
 
 // RemoveLegacy deletes the legacy rule files, but only the ones RagCode wrote:
 // .clinerules and .roomodes are also valid hand-written config, so a file
-// without the RagCode header is left alone.
+// that is not an unchanged RagCode body is left alone.
 func RemoveLegacy(root string) {
 	for _, name := range Legacy {
 		path := filepath.Join(root, name)
 		data, err := os.ReadFile(path)
-		if err != nil || !strings.HasPrefix(strings.ReplaceAll(string(data), "\r\n", "\n"), legacyHeader) {
+		if err != nil {
+			continue
+		}
+		sum := sha256.Sum256([]byte(strings.ReplaceAll(string(data), "\r\n", "\n")))
+		if !legacySums[hex.EncodeToString(sum[:])] {
 			continue
 		}
 		if err := os.Remove(path); err != nil {

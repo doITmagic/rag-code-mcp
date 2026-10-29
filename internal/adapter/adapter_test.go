@@ -154,6 +154,8 @@ func TestRunBridgeRejectsOversizedLineAndContinues(t *testing.T) {
 	lines := strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n")
 	require.Len(t, lines, 2)
 	assert.Contains(t, lines[0], `"code":-32000`)
+	// The client matches the error to its pending request by id.
+	assert.Contains(t, lines[0], `"id":1,`)
 	assert.Equal(t, `{"jsonrpc":"2.0","id":2,"result":{}}`, lines[1])
 }
 

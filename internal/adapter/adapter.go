@@ -54,7 +54,8 @@ func RunBridge(ctx context.Context, port int, stdin io.Reader, stdout io.Writer,
 			return err
 		}
 		if tooLong {
-			writeJSONRPCError(stdout, "", fmt.Errorf("request exceeds %dMB limit", maxLineSize/(1024*1024)))
+			// raw holds only the line's start, which usually carries the id.
+			writeJSONRPCError(stdout, string(raw), fmt.Errorf("request exceeds %dMB limit", maxLineSize/(1024*1024)))
 			continue
 		}
 		line := string(raw)
@@ -134,7 +135,8 @@ func RunBridge(ctx context.Context, port int, stdin io.Reader, stdout io.Writer,
 }
 
 // readLine reads one line without its line ending. A line longer than limit is
-// read to its end and discarded, and tooLong is reported instead.
+// read to its end and discarded, and tooLong is reported with only its first
+// 4KB as line.
 func readLine(r *bufio.Reader, limit int) (line []byte, tooLong bool, err error) {
 	for {
 		chunk, isPrefix, err := r.ReadLine()
@@ -144,7 +146,7 @@ func readLine(r *bufio.Reader, limit int) (line []byte, tooLong bool, err error)
 		if !tooLong {
 			line = append(line, chunk...)
 			if len(line) > limit {
-				line, tooLong = nil, true
+				line, tooLong = bytes.Clone(line[:min(len(line), 4096)]), true
 			}
 		}
 		if !isPrefix {
@@ -156,14 +158,9 @@ func readLine(r *bufio.Reader, limit int) (line []byte, tooLong bool, err error)
 // writeJSONRPCError writes a JSON-RPC error response to the writer.
 // Extracts the ID from the original message so the client can match it.
 func writeJSONRPCError(w io.Writer, originalMsg string, proxyErr error) {
-	var parsed map[string]any
-	var id any
-	if json.Unmarshal([]byte(originalMsg), &parsed) == nil {
-		id = parsed["id"]
-	}
 	errResp := map[string]any{
 		"jsonrpc": "2.0",
-		"id":      id,
+		"id":      requestID(originalMsg),
 		"error": map[string]any{
 			"code":    -32000,
 			"message": fmt.Sprintf("adapter: %v", proxyErr),
@@ -171,4 +168,27 @@ func writeJSONRPCError(w io.Writer, originalMsg string, proxyErr error) {
 	}
 	data, _ := json.Marshal(errResp)
 	fmt.Fprintf(w, "%s\n", data)
+}
+
+// requestID returns the top-level "id" of a JSON-RPC message, or nil. It reads
+// only up to the id, so it also works on the start of a truncated message.
+func requestID(msg string) json.RawMessage {
+	dec := json.NewDecoder(strings.NewReader(msg))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return nil
+	}
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return nil
+		}
+		var val json.RawMessage
+		if err := dec.Decode(&val); err != nil {
+			return nil
+		}
+		if key == "id" {
+			return val
+		}
+	}
+	return nil
 }

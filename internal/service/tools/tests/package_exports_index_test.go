@@ -102,3 +102,17 @@ func TestPackageExportsFullImportPathSelectsOnePackage(t *testing.T) {
 		t.Fatalf("cache exports = %d functions, want 2", got)
 	}
 }
+
+func TestPackageExportsKeepSameNamedMethods(t *testing.T) {
+	root := t.TempDir()
+	writeGoFiles(t, root, map[string]string{
+		"cache.go": "package cache\ntype Memory struct{}\nfunc (Memory) Get() string { return \"memory\" }\ntype Disk struct{}\nfunc (Disk) Get() string { return \"disk\" }\n",
+	})
+	var signatures []string
+	for _, sym := range listExports(t, indexGoTree(t, root), "cache", filepath.Join(root, "cache.go"))["method"] {
+		signatures = append(signatures, sym.Signature)
+	}
+	if len(signatures) != 2 {
+		t.Fatalf("cache methods = %v, want Memory.Get and Disk.Get", signatures)
+	}
+}

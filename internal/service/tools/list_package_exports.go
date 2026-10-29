@@ -167,7 +167,8 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 			continue
 		}
 
-		key := fmt.Sprintf("%s:%s", symType, name)
+		// Name alone is not unique: Memory.Get and Disk.Get are both "method:Get".
+		key := fmt.Sprintf("%s:%s:%v:%v", symType, name, result.Point.Payload["file_path"], result.Point.Payload["start_line"])
 		if seenNames[key] {
 			continue
 		}

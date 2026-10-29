@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -185,14 +186,14 @@ func TestRunBridgeSkipsEmptyNotificationReply(t *testing.T) {
 // A request the daemon received before dying must not be sent again to the
 // restarted daemon: it may be what killed it, or not be safe to run twice.
 func TestRunBridgeDoesNotResendDeliveredRequest(t *testing.T) {
-	delivered := 0
+	var delivered atomic.Int32
 	handler := func(die func(w http.ResponseWriter)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/health" {
 				_, _ = io.WriteString(w, `{"status":"ok"}`)
 				return
 			}
-			delivered++
+			delivered.Add(1)
 			die(w)
 		}
 	}
@@ -226,7 +227,7 @@ func TestRunBridgeDoesNotResendDeliveredRequest(t *testing.T) {
 	defer cancel()
 	err := adapter.RunBridge(ctx, dying.Listener.Addr().(*net.TCPAddr).Port, stdin, &stdout, "", restart)
 	require.NoError(t, err)
-	assert.Equal(t, 1, delivered)
+	assert.Equal(t, int32(1), delivered.Load())
 	assert.Equal(t, 0, restarts)
 	assert.Contains(t, stdout.String(), `"id":1`)
 	assert.Contains(t, stdout.String(), "daemon unreachable")

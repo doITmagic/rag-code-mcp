@@ -880,7 +880,10 @@ func updateMCPConfig(ideKey, displayName, path, binPath, transport string, ssePo
 	}
 
 	collectionKey := "mcpServers"
-	if ideKey == "vs-code" || ideKey == "copilot" {
+	if ideKey == "vs-code" {
+		// VS Code's mcp.json reads only "servers".
+		collectionKey = "servers"
+	} else if ideKey == "copilot" {
 		// New GitHub copilot uses "mcpServers" normally now, but leaving "servers" as fallback check
 		if _, exists := configMap["servers"]; exists {
 			collectionKey = "servers"

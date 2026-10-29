@@ -153,3 +153,21 @@ func TestUpdateMCPConfigToleratesBOM(t *testing.T) {
 		t.Fatalf("want both servers, got %v", cfg.Servers)
 	}
 }
+
+// VS Code reads MCP servers from "servers" only; an entry under "mcpServers"
+// in a freshly created mcp.json is never loaded.
+func TestVSCodeMCPConfigCreatedWithServersKey(t *testing.T) {
+	home := isolate(t)
+	t.Setenv("APPDATA", filepath.Join(home, "AppData"))
+	configureIDEs([]string{"vs-code"}, filepath.Join(home, ".ragcode", "bin"), "stdio", 39000)
+
+	path := resolveIDEPaths(home)["vs-code"].path
+	cfg, ok := readJSONConfig(path)
+	if !ok {
+		t.Fatalf("cannot read %s", path)
+	}
+	servers, _ := cfg["servers"].(map[string]interface{})
+	if servers["ragcode"] == nil || cfg["mcpServers"] != nil {
+		t.Fatalf("ragcode not under \"servers\": %v", cfg)
+	}
+}

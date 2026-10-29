@@ -142,6 +142,11 @@ func (r *Resolver) handleWorkspaceRoot(ctx context.Context, root string) (*contr
 	if root == "" {
 		return nil, nil
 	}
+	// File paths are resolved through symlinks; a root must use the same
+	// spelling or one directory gets two workspace identities.
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
 	r.log(ctx, "workspace_root", map[string]any{"root": root, "source": "workspace_root"})
 	candidate := &contract.WorkspaceCandidate{Root: root, Reason: contract.ReasonExplicitWorkspaceRoot, Source: "workspace_root", Confidence: 1.0}
 

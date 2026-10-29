@@ -169,6 +169,10 @@ func shortSymbolName(name string) string {
 	if i := strings.LastIndex(name, "::"); i >= 0 {
 		return name[i+2:]
 	}
+	// PHP namespaces: App\Models\User is referenced as User.
+	if i := strings.LastIndex(name, "\\"); i >= 0 {
+		return name[i+1:]
+	}
 	if i := strings.LastIndex(name, "."); i >= 0 {
 		return name[i+1:]
 	}

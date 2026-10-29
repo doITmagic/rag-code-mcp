@@ -10,6 +10,7 @@ import (
 	"github.com/doITmagic/rag-code-mcp/pkg/parser/gdscript"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser/javascript"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser/php"
+	"github.com/doITmagic/rag-code-mcp/pkg/parser/python"
 )
 
 func TestStoredCallsKeepClassIdentity(t *testing.T) {
@@ -89,5 +90,60 @@ func TestLocalRelationsDoNotGuessDynamicTargets(t *testing.T) {
 	r := symbols[2].Relations[0]
 	if r.TargetID != "" || r.Resolution != "unresolved" {
 		t.Fatalf("guessed dynamic receiver: %+v", r)
+	}
+}
+
+// A Python call on another object (json.dumps, self.data.get) must not bind
+// to a same-file symbol of that name; self.method binds to its own class.
+func TestPythonReceiverCallsResolveByOwner(t *testing.T) {
+	code := `import json
+
+
+class Cache:
+    def get(self, key):
+        return self.data.get(key)
+
+    def load(self, key):
+        return self.get(key)
+
+
+class Store:
+    def get(self, key):
+        return None
+
+
+def dumps(obj):
+    return json.dumps(obj)
+
+
+def handler(request):
+    return request.args.get("x")
+`
+	path := filepath.Join(t.TempDir(), "cache.py")
+	if err := os.WriteFile(path, []byte(code), 0600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := python.NewAnalyzer().Analyze(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolveLocalRelations(res.Symbols)
+	names := map[string]string{}
+	for _, s := range res.Symbols {
+		names[s.ID] = s.Name
+		if s.QualifiedName != "" {
+			names[s.ID] = s.QualifiedName
+		}
+	}
+	got := map[string]string{}
+	for _, s := range res.Symbols {
+		for _, r := range s.Relations {
+			if r.Type == parser.RelCalls && r.Resolution == "resolved" {
+				got[names[s.ID]+" -> "+r.TargetName] = names[r.TargetID]
+			}
+		}
+	}
+	if len(got) != 1 || got["Cache.load -> get"] != "Cache.get" {
+		t.Fatalf("resolved calls = %v, want only Cache.load -> Cache.get", got)
 	}
 }

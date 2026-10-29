@@ -1205,7 +1205,7 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 				}
 				// Add method call relations
 				for _, call := range method.Calls {
-					methodChunk.Relations = append(methodChunk.Relations, pkgParser.Relation{TargetName: call.Name, Type: pkgParser.RelCalls})
+					methodChunk.Relations = append(methodChunk.Relations, pyCallRelation(call, method.ClassName))
 				}
 				// Add type dependency relations
 				for _, dep := range method.TypeDeps {
@@ -1235,7 +1235,7 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 			}
 			// Add function call relations
 			for _, call := range fn.Calls {
-				chunk.Relations = append(chunk.Relations, pkgParser.Relation{TargetName: call.Name, Type: pkgParser.RelCalls})
+				chunk.Relations = append(chunk.Relations, pyCallRelation(call, ""))
 			}
 			chunks = append(chunks, chunk)
 		}
@@ -1474,6 +1474,18 @@ func (ca *CodeAnalyzer) extractClassDependencies(class *ClassInfo, _ []ImportInf
 		}
 	}
 	return deps
+}
+
+// pyCallRelation keeps the receiver, so obj.get( is not taken for a same-file
+// get; self/cls and ClassName calls name their Class.method target.
+func pyCallRelation(call MethodCall, class string) pkgParser.Relation {
+	r := pkgParser.Relation{TargetName: call.Name, Type: pkgParser.RelCalls, Receiver: call.Receiver}
+	if class != "" && (call.Receiver == "self" || call.Receiver == "cls") {
+		r.TargetQualifiedName = class + "." + call.Name
+	} else if call.ClassName != "" {
+		r.TargetQualifiedName = call.ClassName + "." + call.Name
+	}
+	return r
 }
 
 func isKeywordOrBuiltin(name string) bool {

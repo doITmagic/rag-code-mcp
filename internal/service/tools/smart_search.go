@@ -42,7 +42,7 @@ func (t *SmartSearchTool) Description() string {
 		"Simply provide your query — the tool combines semantic and hybrid search, " +
 		"merges results by relevance score, and adapts the response format automatically: " +
 		"results return full source code or compact summaries; scores are ranking signals, not confidence probabilities. " +
-		"No need to choose a search mode. Provide 'file_path' for faster workspace detection, or omit it for Auto-Discovery. " +
+		"No need to choose a search mode. Always provide 'file_path': the absolute path of a file or directory in the project you are working on. Without it the server can only guess the project from the last one used, which may be a different project. " +
 		"CamelCase, snake_case and qualified identifiers use exact symbol lookup. Set 'exact_symbol' to override this detection. " +
 		"Set 'include_full_content' to true to force full source code in all results, overriding compact mode. " +
 		"Set 'include_docs' to true to also search project documentation (README, guides, Markdown files) alongside code. " +

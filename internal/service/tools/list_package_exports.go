@@ -32,7 +32,7 @@ func NewListPackageExportsTool(eng *engine.Engine) *ListPackageExportsTool {
 func (t *ListPackageExportsTool) Name() string { return "rag_list_package_exports" }
 func (t *ListPackageExportsTool) Description() string {
 	return "List all public functions, classes, and types in a package/module deterministically. Returns a structured list with symbol names, types, and signatures. Use to explore an unfamiliar package or find the right function to call. Works for Go packages, PHP namespaces, Python modules. " +
-		"OPTIONAL: Provide 'file_path' of the file you are currently working on for faster workspace detection. If omitted, the server will Auto-Discover the workspace from the last active project."
+		"Always provide 'file_path': the absolute path of a file or directory in the project you are working on. Without it the server can only guess the project from the last one used, which may be a different project."
 }
 
 type ListPackageExportsInput struct {

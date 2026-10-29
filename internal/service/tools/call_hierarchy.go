@@ -25,7 +25,7 @@ func NewCallHierarchyTool(eng *engine.Engine) *CallHierarchyTool {
 
 func (t *CallHierarchyTool) Name() string { return "rag_call_hierarchy" }
 func (t *CallHierarchyTool) Description() string {
-	return "Explore recursive call relationships (caller/callee) for a symbol to understand the execution flow. Supports discovering who calls a function ('incoming') or what a function calls ('outgoing'), up to a specified depth. Provide 'file_path' for better context resolution; if omitted, falls back to the last active workspace."
+	return "Explore recursive call relationships (caller/callee) for a symbol to understand the execution flow. Supports discovering who calls a function ('incoming') or what a function calls ('outgoing'), up to a specified depth. Always provide 'file_path': the absolute path of a file or directory in the project you are working on. Without it the server can only guess the project from the last one used, which may be a different project."
 }
 
 type CallHierarchyInput struct {

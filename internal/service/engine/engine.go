@@ -467,8 +467,10 @@ func (e *Engine) autoTriggerIndex(wctx *WorkspaceContext) {
 	// and DetectContext. StartIndexingAsync spawns its own goroutine internally.
 	_, triggered := e.connectTriggered.LoadOrStore(wctx.ID, true)
 	if !triggered || wctx.ReindexRequired {
+		// Queue a full run when a job is busy; otherwise this trigger (for
+		// example the retry after an aborted run) would be dropped.
 		logger.Instance.Info("[DAEMON] [WS-DETECT] Auto-triggering incremental index for workspace: %s", wctx.Root)
-		e.startIndexing(wctx.Root, wctx.ID, nil, false, wctx.ReindexRequired)
+		e.startIndexing(wctx.Root, wctx.ID, nil, false, true)
 		return
 	}
 	if e.watchers != nil && e.watchers.Watching(wctx.Root) {

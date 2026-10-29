@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
 )
@@ -49,5 +50,21 @@ func TestAllowedWorkspacePathsRejectOutsideRoots(t *testing.T) {
 	}
 	if _, err := eng.DetectContext(context.Background(), filepath.Join(outside, "main.go")); err == nil {
 		t.Fatal("file path outside allowed_workspace_paths was accepted")
+	}
+}
+
+func TestAutoTriggerQueuesRunWhileWorkspaceIsBusy(t *testing.T) {
+	cfg := &config.Config{Workspace: config.WorkspaceConfig{AutoIndex: true}}
+	eng := NewEngine(nil, nil, "", cfg)
+	defer eng.Close()
+	// A watcher batch is running when the retry after an aborted run arrives.
+	eng.indexingJobs.Store("ws", time.Now())
+
+	eng.autoTriggerIndex(&WorkspaceContext{Root: t.TempDir(), ID: "ws"})
+
+	eng.pendingMu.Lock()
+	defer eng.pendingMu.Unlock()
+	if !eng.pendingOverflow["ws"] {
+		t.Fatal("trigger was dropped instead of queued behind the running job")
 	}
 }

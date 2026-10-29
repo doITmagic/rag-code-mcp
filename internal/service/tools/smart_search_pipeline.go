@@ -281,7 +281,7 @@ func resultToMap(m mergedResult, includeContent bool, query string, includeReaso
 		"end_line":   m.endLine,
 	}
 	if includeContent {
-		item["content"] = m.content
+		item["content"] = capContent(m.content)
 	}
 	if m.docstring != "" {
 		item["docstring"] = m.docstring
@@ -293,6 +293,25 @@ func resultToMap(m mergedResult, includeContent bool, query string, includeReaso
 		item["match_reasons"] = scoring.DetectMatchReasons(query, m.name, m.signature, m.content, m.docstring)
 	}
 	return item
+}
+
+// MaxResultContent caps the bytes of source one rag_search result returns. The
+// index stores a symbol's whole body, and one data-heavy class can hold
+// megabytes.
+var MaxResultContent = 32 << 10
+
+// capContent cuts content to MaxResultContent at a line end and says how much
+// was left out.
+func capContent(content string) string {
+	if len(content) <= MaxResultContent {
+		return content
+	}
+	cut := content[:MaxResultContent]
+	if i := strings.LastIndexByte(cut, '\n'); i > 0 {
+		cut = cut[:i+1]
+	}
+	return fmt.Sprintf("%s... [content truncated, %d more bytes; use rag_read_file_context with start_line/end_line for the rest]",
+		strings.ToValidUTF8(cut, ""), len(content)-len(cut))
 }
 
 // buildResultsMessage returns the appropriate message based on mode and fallback state.

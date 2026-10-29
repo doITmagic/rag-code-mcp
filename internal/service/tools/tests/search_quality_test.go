@@ -11,6 +11,7 @@ import (
 
 	"github.com/doITmagic/rag-code-mcp/internal/service/tools"
 	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
+	"github.com/doITmagic/rag-code-mcp/pkg/parser/python"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 	"github.com/doITmagic/rag-code-mcp/pkg/telemetry"
 )
@@ -281,5 +282,38 @@ func TestExactSearchBeforeFirstCollectionReportsRunningIndex(t *testing.T) {
 	}
 	if response.Status != "indexing_in_progress" {
 		t.Fatalf("%s, want indexing_in_progress while the first index runs", text)
+	}
+}
+
+// One exact hit on a data-heavy class returned its whole 2.3 MB body, a tool
+// result big enough to overflow an MCP client's context.
+func TestSearchCapsLargeSymbolContent(t *testing.T) {
+	old := tools.MaxResultContent
+	tools.MaxResultContent = 1 << 10
+	t.Cleanup(func() { tools.MaxResultContent = old })
+	var src strings.Builder
+	src.WriteString("class BigTable:\n    ROWS = [\n")
+	for i := 0; i < 200; i++ {
+		fmt.Fprintf(&src, "        (%d, 'row %d'),\n", i, i)
+	}
+	src.WriteString("    ]\n")
+	dir, store := indexFixture(t, "py", python.NewAnalyzer(), map[string]string{"table.py": src.String()})
+	eng := setupTestEngine(store)
+	t.Cleanup(eng.Close)
+	exact := true
+	text, err := tools.NewSmartSearchTool(eng).Execute(context.Background(), tools.SmartSearchInput{Query: "BigTable", FilePath: filepath.Join(dir, "table.py"), ExactSymbol: &exact})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct{ Data []map[string]interface{} }
+	if err := json.Unmarshal([]byte(text), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Data) != 1 {
+		t.Fatalf("want one BigTable result: %s", text)
+	}
+	content, _ := response.Data[0]["content"].(string)
+	if !strings.HasPrefix(content, "class BigTable:") || len(content) > 2<<10 || !strings.Contains(content, "content truncated") {
+		t.Fatalf("content of %d bytes, want the start of BigTable cut with a note: %.300s", len(content), content)
 	}
 }

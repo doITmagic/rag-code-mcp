@@ -128,7 +128,7 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 	// The short-name filter above also matches every other package with the same
 	// last segment (api/cache and storage/cache); a full path picks among them.
 	if filterPackage != packageName {
-		allResults = filterByImportPath(allResults, packageName)
+		allResults = filterByImportPath(allResults, packageName, wctx.Root)
 	}
 
 	if len(allResults) == 0 {
@@ -275,27 +275,38 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 	return resp.JSON()
 }
 
-// filterByImportPath keeps the results whose directory shares the most trailing
+// filterByImportPath keeps the results whose location shares the most trailing
 // path segments with importPath. The module prefix is not known here, so a
-// longest-suffix match is used instead of an exact comparison.
-func filterByImportPath(results []storage.SearchResult, importPath string) []storage.SearchResult {
+// longest-suffix match is used instead of an exact comparison; a location
+// that differs from importPath inside the workspace is another package.
+func filterByImportPath(results []storage.SearchResult, importPath, root string) []storage.SearchResult {
 	want := strings.Split(strings.Trim(importPath, "/"), "/")
-	matched := func(r storage.SearchResult) int {
-		fp, _ := r.Point.Payload["file_path"].(string)
-		dir := strings.Split(filepath.ToSlash(filepath.Dir(fp)), "/")
+	score := func(location string) int {
+		var have []string
+		if rel, err := filepath.Rel(root, location); err == nil && rel != "." {
+			have = strings.Split(filepath.ToSlash(rel), "/")
+		}
 		n := 0
-		for n < len(want) && n < len(dir) && want[len(want)-1-n] == dir[len(dir)-1-n] {
+		for n < len(want) && n < len(have) && want[len(want)-1-n] == have[len(have)-1-n] {
 			n++
+		}
+		if n < len(want) && n < len(have) {
+			return -1
 		}
 		return n
 	}
-	best := 0
+	// Go packages are directories; JS and Python modules are files.
+	matched := func(r storage.SearchResult) int {
+		fp, _ := r.Point.Payload["file_path"].(string)
+		return max(score(filepath.Dir(fp)), score(strings.TrimSuffix(fp, filepath.Ext(fp))))
+	}
+	best := -1
 	for _, r := range results {
 		best = max(best, matched(r))
 	}
 	var kept []storage.SearchResult
 	for _, r := range results {
-		if matched(r) == best {
+		if best >= 0 && matched(r) == best {
 			kept = append(kept, r)
 		}
 	}

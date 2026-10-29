@@ -103,6 +103,57 @@ func TestPackageExportsFullImportPathSelectsOnePackage(t *testing.T) {
 	}
 }
 
+// A full path must not fall back to a namesake in another directory.
+func TestPackageExportsFullImportPathOfUnindexedPackage(t *testing.T) {
+	root := t.TempDir()
+	writeGoFiles(t, root, map[string]string{
+		"go.mod":                 "module example.com/project\ngo 1.25\n",
+		"storage/cache/cache.go": "package cache\nfunc StorageOnly() {}\n",
+	})
+	file := filepath.Join(root, "go.mod")
+	if got := listExports(t, indexGoTree(t, root), "example.com/project/api/cache", file); len(got) != 0 {
+		t.Fatalf("example.com/project/api/cache exports = %v, want none", got)
+	}
+	// The module's root package still matches its import path.
+	writeGoFiles(t, root, map[string]string{"root.go": "package project\nfunc RootOnly() {}\n"})
+	if got := listExports(t, indexGoTree(t, root), "example.com/project", file)["function"]; len(got) != 1 || got[0].Name != "RootOnly" {
+		t.Fatalf("example.com/project exports = %v, want [RootOnly]", got)
+	}
+}
+
+// JS and Python modules are files: their package is the file stem.
+func TestPackageExportsPathOfFileModule(t *testing.T) {
+	root := t.TempDir()
+	writeGoFiles(t, root, map[string]string{"go.mod": "module example.com/project\ngo 1.25\n"})
+	point := func(name, language, path string) storage.SearchResult {
+		return storage.SearchResult{Point: storage.Point{ID: name, Payload: map[string]interface{}{
+			"name": name, "type": "function", "package": "format", "language": language,
+			"file_path": filepath.Join(root, path), "is_public": true,
+		}}}
+	}
+	points := []storage.SearchResult{
+		point("GoFormat", "go", "x/format/format.go"),
+		point("jsFormat", "javascript", "src/utils/format.js"),
+		point("py_format", "python", "lib/format.py"),
+	}
+	store := &mockVectorStore{ExactSearchFunc: func(_ context.Context, collection string, filters map[string]interface{}, _ int) ([]storage.SearchResult, error) {
+		var found []storage.SearchResult
+		for _, p := range points {
+			if strings.HasSuffix(collection, "-"+p.Point.Payload["language"].(string)) && p.Point.Payload["package"] == filters["package"] {
+				found = append(found, p)
+			}
+		}
+		return found, nil
+	}}
+	file := filepath.Join(root, "go.mod")
+	for request, want := range map[string]string{"src/utils/format": "jsFormat", "lib/format": "py_format", "example.com/project/x/format": "GoFormat"} {
+		got := listExports(t, store, request, file)["function"]
+		if len(got) != 1 || got[0].Name != want {
+			t.Errorf("%s exports = %v, want [%s]", request, got, want)
+		}
+	}
+}
+
 func TestPackageExportsKeepSameNamedMethods(t *testing.T) {
 	root := t.TempDir()
 	writeGoFiles(t, root, map[string]string{

@@ -239,7 +239,8 @@ func TestCountAllFilesSkipsLowValueFiles(t *testing.T) {
 		"package-lock.json":             true,
 		"go.sum":                        true,
 	} {
-		if got := shouldSkipFile(path); got != want {
+		// Outside a Git repository: a .env is skipped only when Git ignores it.
+		if got := shouldSkipFile(filepath.Join(root, path)); got != want {
 			t.Errorf("shouldSkipFile(%q) = %v, want %v", path, got, want)
 		}
 	}

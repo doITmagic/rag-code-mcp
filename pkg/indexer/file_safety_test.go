@@ -3,6 +3,7 @@ package indexer
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -78,5 +79,37 @@ func TestIndexWorkspaceSkipsOversizedFiles(t *testing.T) {
 		if content, _ := point.Payload["content"].(string); strings.Contains(content, "OversizedMarker") {
 			t.Fatalf("oversized file indexed: %v", point.Payload["file_path"])
 		}
+	}
+}
+
+// An ignored .env holds real secrets; rag_search returned them verbatim.
+func TestIndexWorkspaceSkipsGitignoredEnvFiles(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	root := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", root).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	writeTestFile(t, filepath.Join(root, ".gitignore"), ".env\n.env.production\n")
+	writeTestFile(t, filepath.Join(root, ".env"), "DB_PASSWORD=ignoredSecretMarker\n")
+	writeTestFile(t, filepath.Join(root, ".env.production"), "API_KEY=ignoredSecretMarker\n")
+	writeTestFile(t, filepath.Join(root, ".env.example"), "DB_PASSWORD=changeme\n")
+
+	store := &mockStore{}
+	svc := NewService(&mockEmbedder{}, store)
+	if err := svc.IndexWorkspace(context.Background(), root, "generic", Options{Language: "generic"}); err != nil {
+		t.Fatal(err)
+	}
+	example := false
+	for _, point := range store.upsertPoints {
+		content, _ := point.Payload["content"].(string)
+		if strings.Contains(content, "ignoredSecretMarker") {
+			t.Fatalf("gitignored env file indexed: %v", point.Payload["file_path"])
+		}
+		example = example || strings.Contains(content, "changeme")
+	}
+	if !example {
+		t.Fatal("tracked .env.example was not indexed")
 	}
 }

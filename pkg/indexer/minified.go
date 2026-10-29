@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -29,7 +30,21 @@ var minifiedSuffixes = []string{
 }
 
 func shouldSkipFile(path string) bool {
-	return parser.SkipFile(path) || isLowValueConfigOrKeyMaterial(path) || isGeneratedLockfile(path) || isGeneratedIDERule(path) || isMinifiedOrVendored(path)
+	return parser.SkipFile(path) || isLowValueConfigOrKeyMaterial(path) || isIgnoredEnvFile(path) ||
+		isGeneratedLockfile(path) || isGeneratedIDERule(path) || isMinifiedOrVendored(path)
+}
+
+// isIgnoredEnvFile reports whether path is a .env file Git ignores. A
+// committed .env.example documents settings; an ignored .env holds the real
+// secrets and must not become searchable.
+func isIgnoredEnvFile(path string) bool {
+	base := strings.ToLower(filepath.Base(path))
+	if base != ".env" && !strings.HasPrefix(base, ".env.") {
+		return false
+	}
+	cmd := exec.Command("git", "check-ignore", "-q", "--", filepath.Base(path))
+	cmd.Dir = filepath.Dir(path)
+	return cmd.Run() == nil
 }
 
 func isGeneratedIDERule(path string) bool {

@@ -121,6 +121,29 @@ func TestPackageExportsFullImportPathOfUnindexedPackage(t *testing.T) {
 	}
 }
 
+// A nested module's import path starts at its own go.mod, not at the workspace
+// root above it, even when its directory is named differently.
+func TestPackageExportsFullImportPathInNestedModule(t *testing.T) {
+	root := t.TempDir()
+	writeGoFiles(t, root, map[string]string{
+		".git/HEAD":                     "ref: refs/heads/main\n",
+		"go.work":                       "go 1.25\nuse ./server\n",
+		"server/go.mod":                 "module github.com/acme/api\ngo 1.25\n",
+		"server/storage/cache/cache.go": "package cache\nfunc StorageOnly() {}\n",
+		"server/api/cache/cache.go":     "package cache\nfunc APIOnly() {}\n",
+	})
+	store := indexGoTree(t, root)
+	for _, file := range []string{filepath.Join(root, "go.work"), filepath.Join(root, "server/go.mod")} {
+		got := listExports(t, store, "github.com/acme/api/storage/cache", file)["function"]
+		if len(got) != 1 || got[0].Name != "StorageOnly" {
+			t.Errorf("file_path=%s: github.com/acme/api/storage/cache exports = %v, want [StorageOnly]", file, got)
+		}
+		if got := listExports(t, store, "github.com/acme/api/other/cache", file); len(got) != 0 {
+			t.Errorf("file_path=%s: github.com/acme/api/other/cache exports = %v, want none", file, got)
+		}
+	}
+}
+
 // JS and Python modules are files: their package is the file stem.
 func TestPackageExportsPathOfFileModule(t *testing.T) {
 	root := t.TempDir()

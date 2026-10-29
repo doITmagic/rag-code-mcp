@@ -276,16 +276,40 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 }
 
 // filterByImportPath keeps the results whose location shares the most trailing
-// path segments with importPath. The module prefix is not known here, so a
-// longest-suffix match is used instead of an exact comparison; a location
-// that differs from importPath inside the workspace is another package.
+// path segments with importPath. A Go package directory is prefixed with the
+// module path of its nearest go.mod; other locations are taken relative to
+// root, whose module prefix is not known, so a longest-suffix match is used
+// instead of an exact comparison; a location that differs from importPath
+// inside the workspace is another package.
 func filterByImportPath(results []storage.SearchResult, importPath, root string) []storage.SearchResult {
 	want := strings.Split(strings.Trim(importPath, "/"), "/")
-	score := func(location string) int {
-		var have []string
-		if rel, err := filepath.Rel(root, location); err == nil && rel != "." {
-			have = strings.Split(filepath.ToSlash(rel), "/")
+	relSegments := func(base, location string) []string {
+		if rel, err := filepath.Rel(base, location); err == nil && rel != "." {
+			return strings.Split(filepath.ToSlash(rel), "/")
 		}
+		return nil
+	}
+	goPaths := map[string][]string{}
+	goPath := func(dir string) []string {
+		if have, ok := goPaths[dir]; ok {
+			return have
+		}
+		have := relSegments(root, dir)
+		for mod := dir; ; mod = filepath.Dir(mod) {
+			if data, err := os.ReadFile(filepath.Join(mod, "go.mod")); err == nil {
+				if path := modulePath(data); path != "" {
+					have = append(strings.Split(path, "/"), relSegments(mod, dir)...)
+				}
+				break
+			}
+			if mod == root || mod == filepath.Dir(mod) {
+				break
+			}
+		}
+		goPaths[dir] = have
+		return have
+	}
+	score := func(have []string) int {
 		n := 0
 		for n < len(want) && n < len(have) && want[len(want)-1-n] == have[len(have)-1-n] {
 			n++
@@ -298,7 +322,7 @@ func filterByImportPath(results []storage.SearchResult, importPath, root string)
 	// Go packages are directories; JS and Python modules are files.
 	matched := func(r storage.SearchResult) int {
 		fp, _ := r.Point.Payload["file_path"].(string)
-		return max(score(filepath.Dir(fp)), score(strings.TrimSuffix(fp, filepath.Ext(fp))))
+		return max(score(goPath(filepath.Dir(fp))), score(relSegments(root, strings.TrimSuffix(fp, filepath.Ext(fp)))))
 	}
 	best := -1
 	for _, r := range results {
@@ -311,6 +335,16 @@ func filterByImportPath(results []storage.SearchResult, importPath, root string)
 		}
 	}
 	return kept
+}
+
+// modulePath returns the module path declared in a go.mod file.
+func modulePath(gomod []byte) string {
+	for _, line := range strings.Split(string(gomod), "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "module"); ok && (rest == "" || rest[0] == ' ' || rest[0] == '\t') {
+			return strings.Trim(strings.TrimSpace(rest), "\"`")
+		}
+	}
+	return ""
 }
 
 // isExported returns true if name is exported by Go naming convention (first rune is uppercase).

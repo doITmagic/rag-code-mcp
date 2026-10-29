@@ -281,7 +281,13 @@ func resultToMap(m mergedResult, includeContent bool, query string, includeReaso
 		"end_line":   m.endLine,
 	}
 	if includeContent {
-		item["content"] = capContent(m.content)
+		content := m.content
+		// Parsers store vars, constants, properties and TS types without
+		// content; their lines on disk are the source.
+		if content == "" && m.startLine > 0 {
+			content, _ = readLines(m.filePath, m.startLine, m.endLine)
+		}
+		item["content"] = capContent(content)
 	}
 	if m.docstring != "" {
 		item["docstring"] = m.docstring

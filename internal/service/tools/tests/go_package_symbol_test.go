@@ -30,6 +30,28 @@ func TestExactSearchFindsPackageQualifiedGoFunction(t *testing.T) {
 	}
 }
 
+// include_full_content promised full source but returned "" for symbols the
+// parsers store without content, such as a Go var.
+func TestFullContentSearchReturnsSourceOfVar(t *testing.T) {
+	dir, store := indexFixture(t, "go", golang.NewCodeAnalyzer(), map[string]string{
+		"flag.go": "package flag\n\nimport \"errors\"\n\n// ErrHelp is returned for -help.\nvar ErrHelp = errors.New(\"pflag: help requested\")\n",
+	})
+	eng := setupTestEngine(store)
+	t.Cleanup(eng.Close)
+	exact := true
+	text, err := tools.NewSmartSearchTool(eng).Execute(context.Background(), tools.SmartSearchInput{Query: "ErrHelp", FilePath: filepath.Join(dir, "flag.go"), ExactSymbol: &exact, IncludeFullContent: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct{ Data []map[string]interface{} }
+	if err := json.Unmarshal([]byte(text), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Data) != 1 || response.Data[0]["content"] != "var ErrHelp = errors.New(\"pflag: help requested\")" {
+		t.Fatalf("want the source of var ErrHelp: %s", text)
+	}
+}
+
 // A full import path names one package; a.Client.Get's callers exclude
 // b.Client.Twice, which calls b.Client.Get on its own receiver.
 func TestGoImportPathQualifiesSymbol(t *testing.T) {

@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -342,5 +343,38 @@ func symbolFixture(name, signature string) parser.Symbol {
 		StartLine: 1,
 		EndLine:   3,
 		Language:  "go",
+	}
+}
+
+// A nested linked worktree is another branch; the indexer excludes it from the
+// parent, so the fallback must not return its symbols as the parent's.
+func TestFallbackDirectSearchSkipsNestedLinkedWorktree(t *testing.T) {
+	root, eng := setupFallbackWorkspace(t)
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false"}, args...)...)
+		cmd.Dir = root
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
+	}
+	git("init", "-q")
+	git("commit", "-qm", "initial", "--allow-empty")
+	linked := filepath.Join(root, "wt", "feat")
+	git("worktree", "add", "-q", "-b", "feature", linked)
+	if err := os.WriteFile(filepath.Join(linked, "feature.go"), []byte("package feat\n\nfunc FeatureBranchOnly() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, r := range eng.FallbackDirectSearch(context.Background(), root, "FeatureBranchOnly", 10) {
+		if r.Point.Payload["name"] == "FeatureBranchOnly" {
+			t.Fatalf("parent fallback returned a symbol from linked worktree %s", linked)
+		}
+	}
+	if results := eng.FallbackDirectSearch(context.Background(), root, "Calculator", 10); len(results) == 0 {
+		t.Fatal("parent symbols must still be found")
+	}
+	if results := eng.FallbackDirectSearch(context.Background(), linked, "FeatureBranchOnly", 10); len(results) == 0 {
+		t.Fatal("the worktree's own fallback search must still find its symbols")
 	}
 }

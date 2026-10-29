@@ -16,6 +16,7 @@ import (
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
 	"github.com/doITmagic/rag-code-mcp/pkg/scoring"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
+	"github.com/doITmagic/rag-code-mcp/pkg/workspace/detector"
 )
 
 // ─── Fallback Direct Search ──────────────────────────────────────────────────
@@ -90,10 +91,11 @@ func (e *Engine) FallbackDirectSearch(ctx context.Context, workspaceRoot, query 
 			return nil
 		}
 
-		// Directory exclusion — same rules as indexer
+		// Directory exclusion — like the indexer, nested linked worktrees are
+		// another branch and do not belong to this workspace
 		if d.IsDir() {
 			name := d.Name()
-			if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" {
+			if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" || path != workspaceRoot && detector.IsLinkedWorktree(path) {
 				return filepath.SkipDir
 			}
 			for _, p := range excludePatterns {

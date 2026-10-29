@@ -322,6 +322,11 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 	debug.FreeOSMemory()
 	logger.Instance.Info("[IDX] ws=%s lang=%s 🧹 Released parser caches, drained arena pools, forced GC", wsName, opts.Language)
 
+	// Failed files are not in the saved state, so the next run retries them;
+	// reporting success would hide that they have no vectors meanwhile.
+	if len(fileErrs) > 0 {
+		return fmt.Errorf("%d of %d file(s) failed to index: %s", len(fileErrs), totalFiles, fileErrs[0])
+	}
 	return nil
 }
 

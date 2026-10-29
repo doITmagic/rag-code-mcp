@@ -661,3 +661,39 @@ func TestSetEmbedBatchSizeAndWorkers(t *testing.T) {
 		t.Fatalf("max concurrent workers = %d, want >= 2 with SetEmbedWorkers(3)", got)
 	}
 }
+
+type failingEmbedder struct {
+	mockEmbedder
+	fail atomic.Bool
+}
+
+func (m *failingEmbedder) Embed(ctx context.Context, text string) ([]float64, error) {
+	if m.fail.Load() {
+		return nil, errors.New("embedding service unavailable")
+	}
+	return m.mockEmbedder.Embed(ctx, text)
+}
+
+// A run where a file fails to embed (Ollama down mid-run) must not report
+// success, and the next run must retry the file.
+func TestIndexWorkspaceReportsAndRetriesFailedFiles(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\nfunc Work() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	embedder := &failingEmbedder{}
+	embedder.fail.Store(true)
+	store := &mockStore{}
+	svc := NewService(embedder, store)
+
+	if err := svc.IndexWorkspace(context.Background(), root, "go", Options{Language: "go"}); err == nil {
+		t.Fatal("indexing reported success although the only file failed to embed")
+	}
+	embedder.fail.Store(false)
+	if err := svc.IndexWorkspace(context.Background(), root, "go", Options{Language: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.upsertPoints) != 1 {
+		t.Fatalf("upserted %d points after recovery, want 1 (failed file not retried)", len(store.upsertPoints))
+	}
+}

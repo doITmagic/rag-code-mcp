@@ -1139,8 +1139,9 @@ func (e *Engine) startIndexing(root, id string, changedFiles []string, recreate,
 		if ctx.Err() == nil {
 			finalizeIndexStatus(root, err)
 		}
-		if errors.Is(err, indexer.ErrWorkspaceChanged) {
-			// A checkout interrupted this run; the next request must retry even with a watcher.
+		if err != nil {
+			// A checkout interrupted this run, or files failed and stayed out
+			// of the saved state; the next request must retry even with a watcher.
 			e.connectTriggered.Delete(id)
 		}
 		if err != nil {
@@ -1214,6 +1215,7 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) (r
 
 	// Resolve the collection per file: one watcher batch can mix languages,
 	// and taking the first file's language sent the rest to the wrong one.
+	var failed []string
 	for _, p := range files {
 		info, statErr := os.Stat(p)
 		isDir := statErr == nil && info.IsDir()
@@ -1267,6 +1269,7 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) (r
 					return err
 				}
 				logger.Instance.Warn("[IDX] Failed to remove deleted %s: %v", filepath.Base(p), err)
+				failed = append(failed, fmt.Sprintf("%s: %v", p, err))
 			}
 			continue
 		}
@@ -1275,6 +1278,7 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) (r
 				return indexErr
 			}
 			logger.Instance.Warn("[IDX] Failed to index %s: %v", filepath.Base(p), indexErr)
+			failed = append(failed, fmt.Sprintf("%s: %v", p, indexErr))
 		}
 	}
 
@@ -1284,6 +1288,9 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) (r
 		}
 	}
 	e.refreshIndexCounts(wctx.Root)
+	if len(failed) > 0 {
+		return fmt.Errorf("%d of %d file(s) failed to index: %s", len(failed), len(files), failed[0])
+	}
 	return nil
 }
 

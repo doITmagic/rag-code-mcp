@@ -252,8 +252,24 @@ func (ca *CodeAnalyzer) analyzeFunctionDecl(fset *token.FileSet, fn *doc.Func, a
 	var astBody *ast.BlockStmt
 	if fn.Decl != nil {
 		astBody = astBodyMap[fn.Decl.Pos()]
-		if fn.Decl.Recv != nil && len(fn.Decl.Recv.List) > 0 && len(fn.Decl.Recv.List[0].Names) > 0 {
-			info.ReceiverVar = fn.Decl.Recv.List[0].Names[0].Name
+		if recv := fn.Decl.Recv; astBody != nil && recv != nil && len(recv.List) > 0 && len(recv.List[0].Names) > 0 {
+			// Match by the parser's object, not the name: a local that shadows
+			// the receiver (for _, s := range s.ls) is a different object.
+			if obj := recv.List[0].Names[0].Obj; obj != nil {
+				ast.Inspect(astBody, func(n ast.Node) bool {
+					if call, ok := n.(*ast.CallExpr); ok {
+						if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+							if id, ok := sel.X.(*ast.Ident); ok && id.Obj == obj {
+								if info.ReceiverCalls == nil {
+									info.ReceiverCalls = map[string]bool{}
+								}
+								info.ReceiverCalls[id.Name+"."+sel.Sel.Name] = true
+							}
+						}
+					}
+					return true
+				})
+			}
 		}
 	}
 
@@ -788,7 +804,7 @@ func convertPackageInfoToChunks(pi *PackageInfo) []CodeChunk {
 			rel := pkgParser.Relation{TargetName: name, Type: pkgParser.RelCalls}
 			// A call on the method's own receiver variable (c.Get in a method of
 			// c) records the receiver's type, the one Go call whose type is known.
-			if fn.Receiver != "" && fn.ReceiverVar != "" && call == fn.ReceiverVar+"."+name {
+			if fn.Receiver != "" && fn.ReceiverCalls[call] {
 				rel.Receiver = fn.Receiver
 			}
 			rels = append(rels, rel)

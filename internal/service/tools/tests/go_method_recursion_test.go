@@ -47,3 +47,33 @@ func TestGoMethodKeepsRecursiveSelfCall(t *testing.T) {
 		t.Errorf("PromptCache.Get callers want itself, marked recursive: %s", text)
 	}
 }
+
+// A range variable that shadows the receiver is not the receiver: s.Close()
+// on it calls Listener.Close, not Server.Close recursively.
+func TestGoMethodShadowedReceiverIsNotSelfCall(t *testing.T) {
+	dir, store := indexFixture(t, "go", golang.NewCodeAnalyzer(), map[string]string{
+		"l.go": "package srv\n\ntype Listener struct{}\n\nfunc (l *Listener) Close() error { return nil }\n",
+		"s.go": "package srv\n\ntype Server struct{ ls []*Listener }\n\n" +
+			"func (s *Server) Close() error {\n\tfor _, s := range s.ls {\n\t\ts.Close()\n\t}\n\treturn nil\n}\n",
+	})
+	eng := setupTestEngine(store)
+	t.Cleanup(eng.Close)
+	path := filepath.Join(dir, "s.go")
+	usagesOf := func(symbol string) []tools.UsageResult {
+		text, err := tools.NewFindUsagesTool(eng).Execute(context.Background(), map[string]interface{}{"symbol_name": symbol, "file_path": path})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var usages struct{ Data []tools.UsageResult }
+		if err := json.Unmarshal([]byte(text), &usages); err != nil {
+			t.Fatal(err)
+		}
+		return usages.Data
+	}
+	if got := usagesOf("Server.Close"); len(got) != 0 {
+		t.Errorf("Server.Close usages want none, got %+v", got)
+	}
+	if got := usagesOf("Listener.Close"); len(got) != 1 || got[0].FilePath != path {
+		t.Errorf("Listener.Close usages want the call in Server.Close, got %+v", got)
+	}
+}

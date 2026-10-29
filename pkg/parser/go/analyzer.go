@@ -145,12 +145,28 @@ func (ca *CodeAnalyzer) analyzeFiles(dir string, files []string) (*PackageInfo, 
 	// only mines them for examples), so test groups go through doc.New,
 	// which takes the files as given.
 	var docPkg *doc.Package
+	inGroup := func(token.Pos) bool { return true }
 	if len(files) > 0 && strings.HasSuffix(files[0], "_test.go") {
 		astPkg := &ast.Package{Name: astFiles[0].Name.Name, Files: make(map[string]*ast.File, len(astFiles))}
+		group := make(map[*token.File]bool, len(astFiles))
 		for _, f := range astFiles {
 			astPkg.Files[fset.File(f.Pos()).Name()] = f
+			group[fset.File(f.Pos())] = true
+		}
+		// go/doc drops funcs and methods tied to a type it has no declaration
+		// for (setUp() *T with T in a non-test file), so give it the package's
+		// own files and keep only the test files' symbols below.
+		siblings, _ := filepath.Glob(filepath.Join(dir, "*.go"))
+		for _, path := range siblings {
+			if strings.HasSuffix(path, "_test.go") {
+				continue
+			}
+			if f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution); err == nil && f.Name.Name == astPkg.Name {
+				astPkg.Files[path] = f
+			}
 		}
 		docPkg = doc.New(astPkg, "./", doc.AllDecls|doc.AllMethods)
+		inGroup = func(pos token.Pos) bool { return group[fset.File(pos)] }
 	} else {
 		var err error
 		docPkg, err = doc.NewFromFiles(fset, astFiles, "./", doc.AllDecls|doc.AllMethods)
@@ -168,19 +184,24 @@ func (ca *CodeAnalyzer) analyzeFiles(dir string, files []string) (*PackageInfo, 
 
 	// Functions
 	for _, fn := range docPkg.Funcs {
+		if !inGroup(fn.Decl.Pos()) {
+			continue
+		}
 		fnInfo := ca.analyzeFunctionDecl(fset, fn, astFuncMap)
 		info.Functions = append(info.Functions, fnInfo)
 	}
 
 	// Types + methods
 	for _, typ := range docPkg.Types {
-		typeInfo := ca.analyzeTypeDecl(fset, typ, astFuncMap)
-		typeIdx := len(info.Types) // Save index before append
-		info.Types = append(info.Types, typeInfo)
+		typeIdx := -1
+		if inGroup(typ.Decl.Pos()) {
+			typeIdx = len(info.Types) // Save index before append
+			info.Types = append(info.Types, ca.analyzeTypeDecl(fset, typ, astFuncMap))
+		}
 
 		// Process methods for this type
 		for _, method := range typ.Methods {
-			if method.Level > 0 {
+			if method.Level > 0 || !inGroup(method.Decl.Pos()) {
 				continue
 			}
 			methodInfo := ca.analyzeFunctionDecl(fset, method, astFuncMap, typ.Name) // pass receiver name
@@ -189,8 +210,10 @@ func (ca *CodeAnalyzer) analyzeFiles(dir string, files []string) (*PackageInfo, 
 			info.Functions = append(info.Functions, methodInfo)
 
 			// Add to TypeInfo.Methods (modify the slice element directly)
-			info.Types[typeIdx].Methods = append(info.Types[typeIdx].Methods,
-				ca.convertFunctionToMethodInfo(methodInfo, typ.Name))
+			if typeIdx >= 0 {
+				info.Types[typeIdx].Methods = append(info.Types[typeIdx].Methods,
+					ca.convertFunctionToMethodInfo(methodInfo, typ.Name))
+			}
 		}
 
 		// Process constructor/factory functions associated with this type.
@@ -198,25 +221,40 @@ func (ca *CodeAnalyzer) analyzeFiles(dir string, files []string) (*PackageInfo, 
 		// from the top-level Funcs list into typ.Funcs. Without this loop they
 		// were silently dropped from the index (BUG-003).
 		for _, fn := range typ.Funcs {
+			if !inGroup(fn.Decl.Pos()) {
+				continue
+			}
 			fnInfo := ca.analyzeFunctionDecl(fset, fn, astFuncMap)
 			info.Functions = append(info.Functions, fnInfo)
 		}
 
 		// Process typed constants and variables associated with this type (e.g., iota enums).
 		for _, c := range typ.Consts {
+			if !inGroup(c.Decl.Pos()) {
+				continue
+			}
 			constInfo := ca.analyzeConstantDecl(fset, c)
 			info.Constants = append(info.Constants, constInfo...)
 		}
 		for _, v := range typ.Vars {
+			if !inGroup(v.Decl.Pos()) {
+				continue
+			}
 			varInfo := ca.analyzeVariableDecl(fset, v)
 			info.Variables = append(info.Variables, varInfo...)
 		}
 	} // Consts and vars
 	for _, c := range docPkg.Consts {
+		if !inGroup(c.Decl.Pos()) {
+			continue
+		}
 		constInfo := ca.analyzeConstantDecl(fset, c)
 		info.Constants = append(info.Constants, constInfo...)
 	}
 	for _, v := range docPkg.Vars {
+		if !inGroup(v.Decl.Pos()) {
+			continue
+		}
 		varInfo := ca.analyzeVariableDecl(fset, v)
 		info.Variables = append(info.Variables, varInfo...)
 	}

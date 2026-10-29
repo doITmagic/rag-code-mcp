@@ -42,3 +42,35 @@ func TestAnalyzeIncludesTestFiles(t *testing.T) {
 		t.Fatalf("TestAdd should record a call to Add, got %v", calls)
 	}
 }
+
+// Test helpers returning, or methods on, a type declared in the package's
+// non-test files must be indexed once, and the package's own symbols must
+// not be duplicated by the test group.
+func TestAnalyzeTestHelpersOnPackageTypes(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"box.go":      "package box\n\ntype Box struct{}\n\nfunc NewBox() *Box { return &Box{} }\n",
+		"box_test.go": "package box\n\nimport \"testing\"\n\nfunc setUpBox() *Box { return NewBox() }\n\nfunc (b *Box) testOnly() {}\n\nfunc TestBox(t *testing.T) { setUpBox().testOnly() }\n",
+	}
+	for name, src := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := NewCodeAnalyzer().Analyze(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	count := map[string]int{}
+	for _, s := range res.Symbols {
+		got[s.Name] = filepath.Base(s.FilePath)
+		count[s.Name]++
+	}
+	want := map[string]string{"Box": "box.go", "NewBox": "box.go", "setUpBox": "box_test.go", "testOnly": "box_test.go", "TestBox": "box_test.go"}
+	for name, file := range want {
+		if got[name] != file || count[name] != 1 {
+			t.Errorf("%s: file %q count %d, want %q once (all: %v)", name, got[name], count[name], file, count)
+		}
+	}
+}

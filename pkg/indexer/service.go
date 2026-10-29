@@ -465,6 +465,10 @@ func (s *Service) IndexFile(ctx context.Context, collection, path string, state 
 	info, statErr := os.Stat(path)
 	res, err := a.Analyze(ctx, path)
 	if err != nil {
+		// Deleted after the scan listed it: drop its vectors, not a failure.
+		if _, missing := os.Stat(path); os.IsNotExist(missing) {
+			return 0, s.RemoveFile(ctx, collection, path, state)
+		}
 		logger.Instance.Error("Analyze failed for %s: %v", path, err)
 		return 0, fmt.Errorf("analyze failed: %w", err)
 	}

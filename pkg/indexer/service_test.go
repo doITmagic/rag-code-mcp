@@ -740,6 +740,33 @@ func TestIndexWorkspacePicksUpEditMadeDuringEmbedding(t *testing.T) {
 	t.Fatalf("edited content never indexed; upserted %d point(s)", len(store.upsertPoints))
 }
 
+// A file deleted after the scan listed it is gone, not a failure of the run.
+func TestIndexWorkspaceSkipsFileDeletedDuringRun(t *testing.T) {
+	root := t.TempDir()
+	for name, symbol := range map[string]string{"a.go": "First", "z.go": "Second"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("package main\nfunc "+symbol+"() {}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deleted := filepath.Join(root, "z.go")
+	embedder := &editingEmbedder{edit: func() {
+		if err := os.Remove(deleted); err != nil {
+			t.Error(err)
+		}
+	}}
+	svc := NewService(embedder, &mockStore{})
+	if err := svc.IndexWorkspace(context.Background(), root, "go", Options{Language: "go"}); err != nil {
+		t.Fatalf("deleting a file during the run failed it: %v", err)
+	}
+	state, err := LoadState(StatePath(root, "go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, tracked := state.GetFileState(deleted); tracked {
+		t.Fatal("deleted file kept in state")
+	}
+}
+
 type deleteFailStore struct {
 	mockStore
 	fail bool

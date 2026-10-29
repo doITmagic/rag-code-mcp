@@ -90,7 +90,7 @@ func TestIntegration_DaemonStartAndToolsList(t *testing.T) {
 	input := `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}` + "\n"
 	stdout := &bytes.Buffer{}
 
-	err := adapter.RunBridge(context.Background(), port, strings.NewReader(input), stdout, "/test/workspace")
+	err := adapter.RunBridge(context.Background(), port, strings.NewReader(input), stdout, "/test/workspace", nil)
 	require.NoError(t, err)
 
 	var resp map[string]any
@@ -125,7 +125,7 @@ func TestIntegration_MultipleAdaptersConcurrent(t *testing.T) {
 			}
 
 			stdout := &bytes.Buffer{}
-			errors[idx] = adapter.RunBridge(context.Background(), port, strings.NewReader(input), stdout, "")
+			errors[idx] = adapter.RunBridge(context.Background(), port, strings.NewReader(input), stdout, "", nil)
 			results[idx] = stdout.String()
 		}(i)
 	}

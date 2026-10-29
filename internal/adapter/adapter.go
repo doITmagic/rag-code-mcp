@@ -25,8 +25,11 @@ import (
 // workspace detection on the daemon side. The workspaceHint parameter from
 // the IDE is intentionally ignored — only the daemon-resolved root is trusted.
 //
+// When the daemon is unreachable and not healthy, restart (if non-nil) is
+// called to start it again and the request is retried once.
+//
 // Returns nil on stdin EOF (normal IDE shutdown).
-func RunBridge(ctx context.Context, port int, stdin io.Reader, stdout io.Writer, workspaceHint string) error {
+func RunBridge(ctx context.Context, port int, stdin io.Reader, stdout io.Writer, workspaceHint string, restart func() error) error {
 	client := &http.Client{
 		Timeout: 5 * time.Minute, // prevent indefinite hangs on stalled daemon
 	}
@@ -57,21 +60,33 @@ func RunBridge(ctx context.Context, port int, stdin io.Reader, stdout io.Writer,
 			continue
 		}
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-			fmt.Sprintf("http://127.0.0.1:%d/mcp", port), bytes.NewReader([]byte(line)))
-		if err != nil {
-			writeJSONRPCError(stdout, line, fmt.Errorf("create request: %w", err))
-			continue
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Accept", "application/json, text/event-stream")
+		post := func() (*http.Response, error) {
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+				fmt.Sprintf("http://127.0.0.1:%d/mcp", port), strings.NewReader(line))
+			if err != nil {
+				return nil, fmt.Errorf("create request: %w", err)
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Accept", "application/json, text/event-stream")
 
-		// Send confirmed workspace root if we already learned it
-		if resolvedWorkspace != "" {
-			req.Header.Set("X-Workspace-Root", resolvedWorkspace)
+			// Send confirmed workspace root if we already learned it
+			if resolvedWorkspace != "" {
+				req.Header.Set("X-Workspace-Root", resolvedWorkspace)
+			}
+			return client.Do(req)
 		}
 
-		resp, err := client.Do(req)
+		resp, err := post()
+		// The daemon died: start it again and retry this request once.
+		if err != nil && restart != nil && ctx.Err() == nil {
+			if running, _ := IsDaemonRunning(port); !running {
+				if rerr := restart(); rerr != nil {
+					err = fmt.Errorf("%w; restart failed: %v", err, rerr)
+				} else {
+					resp, err = post()
+				}
+			}
+		}
 		if err != nil {
 			writeJSONRPCError(stdout, line, fmt.Errorf("daemon unreachable: %w", err))
 			continue

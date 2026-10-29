@@ -112,13 +112,18 @@ func runAdapter(version string, httpPort int, daemonArgs []string) {
 		running = false
 	}
 
+	binaryPath, err := os.Executable()
+	if err != nil {
+		log.Fatalf("Cannot determine binary path: %v", err)
+	}
+	restart := func() error {
+		logger.Instance.Warn("Daemon on port %d is gone, starting it again...", httpPort)
+		return adapter.StartDaemon(binaryPath, httpPort, daemonArgs...)
+	}
+
 	// Start daemon if not running
 	if !running {
 		logger.Instance.Info("Starting daemon on port %d...", httpPort)
-		binaryPath, err := os.Executable()
-		if err != nil {
-			log.Fatalf("Cannot determine binary path: %v", err)
-		}
 		if err := adapter.StartDaemon(binaryPath, httpPort, daemonArgs...); err != nil {
 			log.Fatalf("Failed to start daemon: %v", err)
 		}
@@ -129,7 +134,7 @@ func runAdapter(version string, httpPort int, daemonArgs []string) {
 	workspaceHint, _ := os.Getwd()
 	logger.Instance.Info("Adapter bridging stdin ↔ daemon on port %d (workspace_hint=%s)", httpPort, workspaceHint)
 
-	if err := adapter.RunBridge(context.Background(), httpPort, os.Stdin, os.Stdout, workspaceHint); err != nil {
+	if err := adapter.RunBridge(context.Background(), httpPort, os.Stdin, os.Stdout, workspaceHint, restart); err != nil {
 		logger.Instance.Error("Adapter bridge error: %v", err)
 		os.Exit(1)
 	}

@@ -50,7 +50,7 @@ func TestRunBridge(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	err = adapter.RunBridge(ctx, port, stdin, &stdout, "/test/workspace")
+	err = adapter.RunBridge(ctx, port, stdin, &stdout, "/test/workspace", nil)
 	require.NoError(t, err)
 
 	// Validate results
@@ -94,10 +94,47 @@ func TestRunBridgeRefreshesResolvedWorkspace(t *testing.T) {
 	var stdout bytes.Buffer
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	err := adapter.RunBridge(ctx, server.Listener.Addr().(*net.TCPAddr).Port, stdin, &stdout, "/untrusted-cwd")
+	err := adapter.RunBridge(ctx, server.Listener.Addr().(*net.TCPAddr).Port, stdin, &stdout, "/untrusted-cwd", nil)
 	require.NoError(t, err)
 	assert.Equal(t, len(steps), hitCount)
 	assert.Contains(t, stdout.String(), "daemon returned HTTP 500")
+}
+
+// A daemon that died mid-session is started again instead of failing every
+// later request with "daemon unreachable".
+func TestRunBridgeRestartsDeadDaemon(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			_, _ = io.WriteString(w, `{"status":"ok"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":1,"result":{}}`)
+	})
+	dead := httptest.NewServer(handler)
+	port := dead.Listener.Addr().(*net.TCPAddr).Port
+	dead.Close()
+
+	restarts := 0
+	restart := func() error {
+		restarts++
+		ln, err := net.Listen("tcp", dead.Listener.Addr().String())
+		if err != nil {
+			return err
+		}
+		srv := &httptest.Server{Listener: ln, Config: &http.Server{Handler: handler}}
+		srv.Start()
+		t.Cleanup(srv.Close)
+		return nil
+	}
+
+	stdin := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}` + "\n")
+	var stdout bytes.Buffer
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := adapter.RunBridge(ctx, port, stdin, &stdout, "", restart)
+	require.NoError(t, err)
+	assert.Equal(t, 1, restarts)
+	assert.Equal(t, `{"jsonrpc":"2.0","id":1,"result":{}}`+"\n", stdout.String())
 }
 
 // One oversized request must get a JSON-RPC error, not end the whole session.
@@ -112,7 +149,7 @@ func TestRunBridgeRejectsOversizedLineAndContinues(t *testing.T) {
 	var stdout bytes.Buffer
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	err := adapter.RunBridge(ctx, server.Listener.Addr().(*net.TCPAddr).Port, stdin, &stdout, "")
+	err := adapter.RunBridge(ctx, server.Listener.Addr().(*net.TCPAddr).Port, stdin, &stdout, "", nil)
 	require.NoError(t, err)
 	lines := strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n")
 	require.Len(t, lines, 2)
@@ -138,7 +175,7 @@ func TestRunBridgeSkipsEmptyNotificationReply(t *testing.T) {
 	var stdout bytes.Buffer
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	err := adapter.RunBridge(ctx, server.Listener.Addr().(*net.TCPAddr).Port, stdin, &stdout, "")
+	err := adapter.RunBridge(ctx, server.Listener.Addr().(*net.TCPAddr).Port, stdin, &stdout, "", nil)
 	require.NoError(t, err)
 	assert.Equal(t, `{"jsonrpc":"2.0","id":1,"result":{}}`+"\n", stdout.String())
 }

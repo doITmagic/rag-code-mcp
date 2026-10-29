@@ -30,6 +30,59 @@ func TestExactSearchFindsPackageQualifiedGoFunction(t *testing.T) {
 	}
 }
 
+// A full import path names one package; a.Client.Get's callers exclude
+// b.Client.Twice, which calls b.Client.Get on its own receiver.
+func TestGoImportPathQualifiesSymbol(t *testing.T) {
+	dir, store := indexFixture(t, "go", golang.NewCodeAnalyzer(), map[string]string{
+		"go.mod":      "module example.com/edge\n\ngo 1.22\n",
+		"a/client.go": "package a\n\ntype Client struct{}\n\nfunc (c *Client) Get() {}\n\nfunc Fetch(c *Client) { c.Get() }\n",
+		"b/client.go": "package b\n\ntype Client struct{}\n\nfunc (c *Client) Get() {}\n\nfunc (c *Client) Twice() { c.Get() }\n",
+	})
+	eng := setupTestEngine(store)
+	t.Cleanup(eng.Close)
+	path := filepath.Join(dir, "go.mod")
+	exact := true
+	for query, want := range map[string]int{
+		"example.com/edge/a.Client.Get": 1, "example.com/edge/a.Fetch": 1, "example.com/other/a.Client.Get": 0,
+	} {
+		text, err := tools.NewSmartSearchTool(eng).Execute(context.Background(), tools.SmartSearchInput{Query: query, FilePath: path, ExactSymbol: &exact})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var response struct{ Data []map[string]interface{} }
+		if err := json.Unmarshal([]byte(text), &response); err != nil {
+			t.Fatal(err)
+		}
+		if len(response.Data) != want {
+			t.Errorf("%s want %d symbols: %s", query, want, text)
+		}
+	}
+	text, err := tools.NewFindUsagesTool(eng).Execute(context.Background(), map[string]interface{}{"symbol_name": "example.com/edge/a.Client.Get", "file_path": path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var usages struct{ Data []tools.UsageResult }
+	if err := json.Unmarshal([]byte(text), &usages); err != nil {
+		t.Fatal(err)
+	}
+	if len(usages.Data) != 1 || usages.Data[0].Name != "Fetch" {
+		t.Errorf("usages want only Fetch: %s", text)
+	}
+	text, err = tools.NewCallHierarchyTool(eng).Execute(context.Background(), map[string]interface{}{
+		"symbol_name": "example.com/edge/a.Client.Get", "direction": "incoming", "file_path": path, "depth": 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hierarchy struct{ Data tools.CallNode }
+	if err := json.Unmarshal([]byte(text), &hierarchy); err != nil {
+		t.Fatal(err)
+	}
+	if hierarchy.Data.Resolution != "resolved" || len(hierarchy.Data.Children) != 1 {
+		t.Errorf("hierarchy want resolved with caller Fetch: %s", text)
+	}
+}
+
 // When a type shares its package's name, server.Start reads both as the
 // method server.Start and as the package function Start.
 func TestPackageNamedTypeKeepsBothReadings(t *testing.T) {

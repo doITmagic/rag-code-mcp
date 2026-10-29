@@ -11,15 +11,15 @@ import (
 
 // A short name is not an identity. Prefer an explicit identity, then require
 // a unique candidate in the supplied file or workspace.
-func resolveSymbol(ctx context.Context, eng *engine.Engine, wsID, name, file string) (*storage.SearchResult, string) {
-	results, err := searchSymbolCandidates(ctx, eng, wsID, name, 100)
+func resolveSymbol(ctx context.Context, eng *engine.Engine, wsID, root, name, file string) (*storage.SearchResult, string) {
+	results, err := searchSymbolCandidates(ctx, eng, wsID, root, name, 100)
 	if err != nil {
 		return nil, "unresolved"
 	}
 	return uniqueSymbol(results, file)
 }
 
-func searchSymbolCandidates(ctx context.Context, eng *engine.Engine, wsID, name string, limit int) ([]storage.SearchResult, error) {
+func searchSymbolCandidates(ctx context.Context, eng *engine.Engine, wsID, root, name string, limit int) ([]storage.SearchResult, error) {
 	results, err := eng.SearchByName(ctx, wsID, name, limit)
 	if err != nil || len(results) > 0 {
 		return results, err
@@ -28,25 +28,40 @@ func searchSymbolCandidates(ctx context.Context, eng *engine.Engine, wsID, name 
 	if err != nil || len(results) > 0 {
 		return results, err
 	}
+	importPath, name := splitGoImportPath(name)
 	filters := goMethodFilters(name)
 	if filters == nil {
 		return nil, nil
 	}
 	symbols, err := eng.ExactSearchPolyglot(ctx, wsID, filters, limit)
-	if err != nil || filters["package"] != nil {
-		return symbols, err
-	}
-	// A two-part name may also be a Go package.Function or package.Type,
-	// also when a type shares the package's name: keep both readings.
-	results, err = eng.ExactSearchPolyglot(ctx, wsID, map[string]interface{}{
-		"language": "go", "package": filters["metadata.receiver"], "name": filters["name"],
-	}, limit)
-	for _, r := range results {
-		if r.Point.Payload["type"] != "method" {
-			symbols = append(symbols, r)
+	if err == nil && filters["package"] == nil {
+		// A two-part name may also be a Go package.Function or package.Type,
+		// also when a type shares the package's name: keep both readings.
+		results, err = eng.ExactSearchPolyglot(ctx, wsID, map[string]interface{}{
+			"language": "go", "package": filters["metadata.receiver"], "name": filters["name"],
+		}, limit)
+		for _, r := range results {
+			if r.Point.Payload["type"] != "method" {
+				symbols = append(symbols, r)
+			}
 		}
 	}
+	if importPath != "" {
+		symbols = filterByImportPath(symbols, importPath, root)
+	}
 	return symbols, err
+}
+
+// splitGoImportPath splits github.com/spf13/pflag.FlagSet.Parse into the
+// package's import path and the name within it, pflag.FlagSet.Parse: the
+// index stores only the package's name.
+func splitGoImportPath(name string) (string, string) {
+	i := strings.LastIndex(name, "/")
+	if i < 0 {
+		return "", name
+	}
+	pkg, _, _ := strings.Cut(name[i+1:], ".")
+	return name[:i+1] + pkg, name[i+1:]
 }
 
 // goMethodFilters maps [pkg.]Receiver.Method, including (*T).Method, to the
@@ -76,7 +91,8 @@ func goMethodFilters(name string) map[string]interface{} {
 // checked: it names an indexed Go type, which has no such method. Interfaces
 // (methods not indexed by receiver), types with embedded fields (promoted
 // methods), external packages and other languages are not modelled here.
-func qualifierRulesOut(ctx context.Context, eng *engine.Engine, wsID, name string) bool {
+func qualifierRulesOut(ctx context.Context, eng *engine.Engine, wsID, root, name string) bool {
+	importPath, name := splitGoImportPath(name)
 	filters := goMethodFilters(name)
 	if filters == nil {
 		return false
@@ -88,6 +104,9 @@ func qualifierRulesOut(ctx context.Context, eng *engine.Engine, wsID, name strin
 	results, err := eng.ExactSearchPolyglot(ctx, wsID, typeFilters, 100)
 	if err != nil {
 		return false
+	}
+	if importPath != "" {
+		results = filterByImportPath(results, importPath, root)
 	}
 	for _, r := range results {
 		if metadata, _ := r.Point.Payload["metadata"].(map[string]interface{}); metadata["kind"] != "interface" && !hasEmbeddedField(metadata) {
@@ -167,11 +186,11 @@ func resolveCall(ctx context.Context, eng *engine.Engine, wsID string, source st
 			return uniqueSymbol(results, "")
 		}
 	}
-	result, status := resolveSymbol(ctx, eng, wsID, name, file)
+	result, status := resolveSymbol(ctx, eng, wsID, "", name, file)
 	// A Go call keeps only the method name, so the caller's file says nothing
 	// about the receiver's type: only a workspace-unique method is an identity.
 	if language == "go" && result != nil && result.Point.Payload["type"] == "method" {
-		result, status = resolveSymbol(ctx, eng, wsID, name, "")
+		result, status = resolveSymbol(ctx, eng, wsID, "", name, "")
 	}
 	// New indexes distinguish free calls from member calls. Legacy indexes
 	// without resolution metadata can still expose unique name-only edges.

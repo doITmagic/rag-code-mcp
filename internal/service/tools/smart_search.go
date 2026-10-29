@@ -144,7 +144,7 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 		}
 		sr.meta = searchMetadata{workspaceRoot: wctx.Root, workspaceID: wctx.ID, collection: "exact", detectionSource: wctx.DetectionSource}
 		ctx = engine.WithResolvedWorkspace(ctx, input.FilePath, wctx)
-		exact, err := searchSymbolCandidates(ctx, t.engine, sr.meta.workspaceID, query, searchLimit)
+		exact, err := searchSymbolCandidates(ctx, t.engine, sr.meta.workspaceID, sr.meta.workspaceRoot, query, searchLimit)
 		if err != nil {
 			var missing *engine.ErrNoCollectionsFound
 			if errors.As(err, &missing) && input.ExactSymbol != nil && *input.ExactSymbol {

@@ -2,8 +2,6 @@ package tests
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -17,11 +15,7 @@ import (
 func indexFixture(t *testing.T, ext string, analyzer parser.Analyzer, files map[string]string) (string, *mockVectorStore) {
 	t.Helper()
 	dir := t.TempDir()
-	for name, code := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(code), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
+	writeGoFiles(t, dir, files)
 	parsed, err := analyzer.Analyze(context.Background(), dir)
 	if err != nil {
 		t.Fatal(err)

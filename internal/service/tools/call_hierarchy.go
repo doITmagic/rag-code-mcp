@@ -125,7 +125,7 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 	rootNode := &CallNode{Name: symbolName}
 
 	// Try to find root symbol info
-	rootRes, resolution := resolveSymbol(ctx, t.engine, wctx.ID, symbolName, filePath)
+	rootRes, resolution := resolveSymbol(ctx, t.engine, wctx.ID, wctx.Root, symbolName, filePath)
 	rootNode.Resolution = resolution
 	if resolution == "ambiguous" {
 		return (ToolResponse{Status: "ambiguous", Message: "Multiple symbols match; provide a qualified symbol name or its file_path."}).JSON()

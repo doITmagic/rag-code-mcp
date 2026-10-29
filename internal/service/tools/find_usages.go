@@ -87,7 +87,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 	}
 
 	// Fan-out to all language collections in parallel — zero embedding
-	targetSymbol, resolution := resolveSymbol(ctx, t.engine, wctx.ID, symbolName, filePath)
+	targetSymbol, resolution := resolveSymbol(ctx, t.engine, wctx.ID, wctx.Root, symbolName, filePath)
 	if resolution == "ambiguous" {
 		return (ToolResponse{Status: "ambiguous", Message: "Multiple symbols match; provide a qualified symbol name or its file_path."}).JSON()
 	}
@@ -115,7 +115,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 
 		return "", fmt.Errorf("usage search failed: %w", err)
 	}
-	if targetSymbol == nil && qualifierRulesOut(ctx, t.engine, wctx.ID, symbolName) {
+	if targetSymbol == nil && qualifierRulesOut(ctx, t.engine, wctx.ID, wctx.Root, symbolName) {
 		return (ToolResponse{
 			Status:  "no_results",
 			Message: fmt.Sprintf("No indexed symbol matches qualified name '%s'.", symbolName),

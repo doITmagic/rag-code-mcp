@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -264,6 +265,9 @@ func (t *ReadFileContextTool) tryASTContext(ctx context.Context, path string, st
 	return result, false
 }
 
+// maxSnippetLine caps how much of one line streamLines returns.
+const maxSnippetLine = 16 << 10
+
 // streamLines reads only the necessary fallback lines efficiently
 func (t *ReadFileContextTool) streamLines(path string, start, end, ctxLines int) (CodeContextResult, error) {
 	logger.Instance.Debug("Executing streamLines fallback for file: %s", path)
@@ -294,28 +298,42 @@ func (t *ReadFileContextTool) streamLines(path string, start, end, ctxLines int)
 	}
 	maxLine := end + ctxLines
 
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(nil, int(parser.MaxFileSize)) // lines over 64 KB (bundles, data) are still read
+	// Lines of any length are read (a one-line bundle has megabytes), but only
+	// their first maxSnippetLine bytes are kept, so memory and the response
+	// stay bounded.
+	reader := bufio.NewReaderSize(f, maxSnippetLine)
 	currentLine := 1
 	var builder strings.Builder
 
-	for scanner.Scan() {
+	for {
+		chunk, err := reader.ReadSlice('\n')
+		line := strings.TrimRight(string(chunk), "\r\n")
+		skipped := 0
+		for err == bufio.ErrBufferFull {
+			chunk, err = reader.ReadSlice('\n')
+			skipped += len(chunk)
+		}
+		if err != nil && err != io.EOF {
+			return result, err
+		}
+		if len(chunk) == 0 && skipped == 0 && err == io.EOF {
+			break
+		}
+		if skipped > 0 {
+			line = fmt.Sprintf("%s ... [line truncated, %d more bytes]", strings.ToValidUTF8(line, ""), skipped)
+		}
 		if currentLine >= minLine && currentLine <= maxLine {
 			// Add a simple marker for the actual targeted lines
 			marker := "   │ "
 			if currentLine >= start && currentLine <= end {
 				marker = "-> ┃ "
 			}
-			builder.WriteString(fmt.Sprintf("%4d %s%s\n", currentLine, marker, scanner.Text()))
+			builder.WriteString(fmt.Sprintf("%4d %s%s\n", currentLine, marker, line))
 		}
-		if currentLine >= maxLine {
+		if currentLine >= maxLine || err == io.EOF {
 			break
 		}
 		currentLine++
-	}
-
-	if err := scanner.Err(); err != nil {
-		return result, err
 	}
 
 	result = CodeContextResult{

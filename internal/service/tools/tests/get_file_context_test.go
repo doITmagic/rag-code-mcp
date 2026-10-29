@@ -12,6 +12,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/doITmagic/rag-code-mcp/internal/service/tools"
+	"github.com/doITmagic/rag-code-mcp/pkg/parser"
 )
 
 var _ = Describe("GetFileContextTool", func() {
@@ -101,6 +102,29 @@ var _ = Describe("GetFileContextTool", func() {
 			Expect(resp.Status).To(Equal("success"), resp.Error)
 			Expect(resp.Data.ContextType).To(Equal("naive"))
 			Expect(resp.Data.CodeSnippet).To(ContainSubstring("bundled199"))
+		})
+
+		// A one-line file over the size cap (a 10 MB bundle) failed with
+		// "token too long", and a long line went whole into the response.
+		It("should read a single line longer than the file size cap", func() {
+			old := parser.MaxFileSize
+			parser.MaxFileSize = 64 << 10
+			DeferCleanup(func() { parser.MaxFileSize = old })
+			path := filepath.Join(GinkgoT().TempDir(), "bundle.txt")
+			Expect(os.WriteFile(path, []byte("start"+strings.Repeat("x", 100<<10)+"\n"), 0o600)).To(Succeed())
+
+			resJSON, err := tool.Execute(ctx, map[string]interface{}{"file_path": path, "line_number": float64(1)})
+			Expect(err).NotTo(HaveOccurred())
+			var resp struct {
+				Status string                  `json:"status"`
+				Error  string                  `json:"error"`
+				Data   tools.CodeContextResult `json:"data"`
+			}
+			Expect(json.Unmarshal([]byte(resJSON), &resp)).To(Succeed())
+			Expect(resp.Status).To(Equal("success"), resp.Error)
+			Expect(resp.Data.CodeSnippet).To(ContainSubstring("start"))
+			Expect(resp.Data.CodeSnippet).To(ContainSubstring("line truncated"))
+			Expect(len(resp.Data.CodeSnippet)).To(BeNumerically("<", 32<<10))
 		})
 	})
 })

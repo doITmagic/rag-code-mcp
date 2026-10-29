@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
 	"github.com/doITmagic/rag-code-mcp/internal/transport"
@@ -154,6 +155,37 @@ func TestDetectContextMissingFallbackRootIsActionable(t *testing.T) {
 	_, err = eng.DetectContext(context.Background(), "")
 	if err == nil || !strings.Contains(err.Error(), "file_path") || strings.Contains(err.Error(), "git") {
 		t.Fatalf("missing fallback root error = %v, want an actionable file_path hint", err)
+	}
+}
+
+// A deleted newest workspace must not block the fallback to an older one
+// that still exists.
+func TestDetectContextFallbackSkipsMissingNewestRoot(t *testing.T) {
+	older, gone := t.TempDir(), filepath.Join(t.TempDir(), "gone")
+	if err := os.MkdirAll(gone, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	registryPath := filepath.Join(t.TempDir(), "registry.json")
+	reg, err := registry.New(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, root := range []string{older, gone} {
+		if err := reg.RegisterWorkspace(root, filepath.Base(root), "test"); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := os.RemoveAll(gone); err != nil {
+		t.Fatal(err)
+	}
+	eng := NewEngine(nil, nil, registryPath, &config.Config{})
+	wctx, err := eng.DetectContext(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wctx.Root != older {
+		t.Fatalf("fallback root = %q, want the existing %q", wctx.Root, older)
 	}
 }
 

@@ -3,6 +3,7 @@ package adapter
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -84,6 +85,13 @@ func waitForDaemon(port int, exited <-chan error) error {
 			if running, _ := IsDaemonRunning(port); running {
 				return nil
 			}
+			// No daemon answers, yet the port cannot be bound: another
+			// program's socket (often an outgoing connection) holds it.
+			ln, lerr := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+			if lerr != nil {
+				return fmt.Errorf("daemon exited before becoming ready (%v): port %d is in use by another program; free it or set a different --http-port", err, port)
+			}
+			ln.Close()
 			return fmt.Errorf("daemon exited before becoming ready (%v); the cause (e.g. Ollama or Qdrant unreachable) is in the RagCode log", err)
 		case <-time.After(500 * time.Millisecond):
 		}

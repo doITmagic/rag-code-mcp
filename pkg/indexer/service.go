@@ -753,6 +753,7 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 							continue
 						}
 						consecutiveFailures = 0
+						s.lastActivity.Store(time.Now().Unix())
 						emit(batch[i], text, one[0])
 					}
 					continue

@@ -991,6 +991,44 @@ func TestIndexItems_SingleEmbedFailureKeepsRestOfBatch(t *testing.T) {
 	Expect(mockS.upsertPoints).To(HaveLen(2))
 }
 
+// activitySpyEmbedder fails every batch and records, at each single embed,
+// the stall watchdog's last activity time.
+type activitySpyEmbedder struct {
+	mockEmbedder
+	svc      *Service
+	activity []int64
+}
+
+func (m *activitySpyEmbedder) EmbedBatch(_ context.Context, texts []string) ([][]float64, error) {
+	if len(texts) > 1 {
+		return nil, errors.New("embed failed")
+	}
+	m.activity = append(m.activity, m.svc.lastActivity.Load())
+	return [][]float64{make([]float64, 1024)}, nil
+}
+
+// TestIndexItems_SingleEmbedsKeepWatchdogAlive: the single embeds of a failed
+// batch can take minutes; each one that succeeds is progress, or the stall
+// watchdog restarts Ollama in the middle of a working embed.
+func TestIndexItems_SingleEmbedsKeepWatchdogAlive(t *testing.T) {
+	RegisterTestingT(t)
+
+	embedder := &activitySpyEmbedder{}
+	svc := NewService(embedder, &mockStore{})
+	embedder.svc = svc
+	svc.SetEmbedBatchSize(3)
+	symbols := []parser.Symbol{
+		{Name: "A", Content: "content", FilePath: "a.ts", StartLine: 1},
+		{Name: "B", Content: "content", FilePath: "a.ts", StartLine: 2},
+		{Name: "C", Content: "content", FilePath: "a.ts", StartLine: 3},
+	}
+
+	svc.lastActivity.Store(0)
+	Expect(svc.IndexItems(context.Background(), "activity", symbols)).To(Succeed())
+	Expect(embedder.activity).To(HaveLen(3))
+	Expect(embedder.activity[1]).NotTo(BeZero(), "no activity recorded after the first single embed")
+}
+
 // A process killed after a recreate dropped the collection, and before the
 // first state save, must not leave the old state on disk claiming files whose
 // vectors are gone: the next run would see no changes and never re-embed them.

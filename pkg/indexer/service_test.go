@@ -739,3 +739,64 @@ func TestIndexWorkspacePicksUpEditMadeDuringEmbedding(t *testing.T) {
 	}
 	t.Fatalf("edited content never indexed; upserted %d point(s)", len(store.upsertPoints))
 }
+
+type deleteFailStore struct {
+	mockStore
+	fail bool
+}
+
+func (m *deleteFailStore) DeleteByFilter(ctx context.Context, collection, field string, value interface{}) error {
+	if m.fail {
+		return errors.New("vector store unavailable")
+	}
+	return m.mockStore.DeleteByFilter(ctx, collection, field, value)
+}
+
+func (m *deleteFailStore) DeleteByPrefix(ctx context.Context, collection, key, prefix string) (int, error) {
+	if m.fail {
+		return 0, errors.New("vector store unavailable")
+	}
+	return m.mockStore.DeleteByPrefix(ctx, collection, key, prefix)
+}
+
+// A deleted file whose vectors could not be removed (vector store briefly
+// down) must stay in state, so the next run deletes them instead of leaving
+// them searchable forever.
+func TestStaleCleanupRetriesFailedDeletes(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "gone.go")
+	dir := filepath.Join(root, "removed")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{file, filepath.Join(dir, "one.go")} {
+		if err := os.WriteFile(path, []byte("package main\nfunc Work() {}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store := &deleteFailStore{}
+	svc := NewService(&mockEmbedder{}, store)
+	if err := svc.IndexWorkspace(context.Background(), root, "go", Options{Language: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(file); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	store.fail = true
+	_ = svc.IndexWorkspace(context.Background(), root, "go", Options{Language: "go"})
+	store.fail = false
+	store.deletedFilters, store.deletedPrefixes = nil, nil
+	if err := svc.IndexWorkspace(context.Background(), root, "go", Options{Language: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.deletedFilters) != 1 || store.deletedFilters[0] != file {
+		t.Fatalf("file deletes on retry = %v, want [%s]", store.deletedFilters, file)
+	}
+	if want := dir + string(os.PathSeparator); len(store.deletedPrefixes) != 1 || store.deletedPrefixes[0] != want {
+		t.Fatalf("directory deletes on retry = %v, want [%s]", store.deletedPrefixes, want)
+	}
+}

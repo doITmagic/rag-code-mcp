@@ -903,23 +903,28 @@ func (s *Service) cleanupStaleFiles(ctx context.Context, root, collection string
 			return false, err
 		}
 		deleted, err := s.store.DeleteByPrefix(ctx, collection, "file_path", prefix)
-		if err != nil {
-			logger.Instance.Warn("[IDX] Prefix delete failed for %s: %v, falling back to per-file delete", prefix, err)
+		if err == nil {
+			if deleted > 0 {
+				logger.Instance.Info("[IDX] 🧹 Bulk-deleted %d vectors under deleted directory: %s", deleted, prefix)
+			}
 			for _, path := range files {
-				if err := checkWorkspace(ctx); err != nil {
-					return false, err
-				}
-				if delErr := s.store.DeleteByFilter(ctx, collection, "file_path", path); delErr != nil {
-					logger.Instance.Warn("[IDX] Failed to delete points for stale file %s: %v", path, delErr)
-				}
-				// A checkout can abort the next deletion; persist this file's
-				// invalidation even when the rest of the directory is untouched.
 				state.RemoveFile(path)
 			}
-		} else if deleted > 0 {
-			logger.Instance.Info("[IDX] 🧹 Bulk-deleted %d vectors under deleted directory: %s", deleted, prefix)
+			continue
 		}
+		logger.Instance.Warn("[IDX] Prefix delete failed for %s: %v, falling back to per-file delete", prefix, err)
 		for _, path := range files {
+			if err := checkWorkspace(ctx); err != nil {
+				return false, err
+			}
+			// A file whose vectors were not deleted stays in state so the next
+			// run retries; otherwise they would stay searchable for good.
+			if delErr := s.store.DeleteByFilter(ctx, collection, "file_path", path); delErr != nil {
+				logger.Instance.Warn("[IDX] Failed to delete points for stale file %s: %v", path, delErr)
+				continue
+			}
+			// A checkout can abort the next deletion; persist this file's
+			// invalidation even when the rest of the directory is untouched.
 			state.RemoveFile(path)
 		}
 	}
@@ -931,6 +936,7 @@ func (s *Service) cleanupStaleFiles(ctx context.Context, root, collection string
 		}
 		if err := s.store.DeleteByFilter(ctx, collection, "file_path", path); err != nil {
 			logger.Instance.Warn("[IDX] Failed to delete points for stale file %s: %v", path, err)
+			continue
 		}
 		state.RemoveFile(path)
 	}

@@ -184,16 +184,21 @@ func resolveCall(ctx context.Context, eng *engine.Engine, wsID string, source st
 		return uniqueSymbol(results, "")
 	}
 	file, _ := source.Point.Payload["file_path"].(string)
+	name, _ := rel["target_name"].(string)
+	language, _ := source.Point.Payload["language"].(string)
+	receiver, _ := rel["receiver"].(string)
 	if qualified, _ := rel["target_qualified_name"].(string); qualified != "" {
 		results, err := eng.ExactSearchPolyglot(ctx, wsID, map[string]interface{}{"qualified_name": qualified}, 100)
+		// Python self.helper() may call a method the class inherits.
+		if err == nil && len(results) == 0 && language == "python" && (receiver == "self" || receiver == "cls") {
+			results, err = eng.ExactSearchPolyglot(ctx, wsID, map[string]interface{}{"language": "python", "type": "method", "name": name}, 100)
+		}
 		if err != nil {
 			return nil, "unresolved"
 		}
 		return uniqueSymbol(results, file)
 	}
-	name, _ := rel["target_name"].(string)
-	language, _ := source.Point.Payload["language"].(string)
-	if receiver, _ := rel["receiver"].(string); receiver != "" {
+	if receiver != "" {
 		if language != "go" {
 			return nil, "unresolved"
 		}

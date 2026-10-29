@@ -3,6 +3,7 @@ package resolver
 import (
 	context "context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -180,7 +181,18 @@ func (r *Resolver) handleFilePath(ctx context.Context, path string) (*contract.R
 					normalizedPath = filepath.Clean(path)
 				}
 				parentDir := filepath.Dir(normalizedPath)
-				if parentRoot, found := r.deps.Registry.FindParentWorkspace(parentDir); found {
+				parentRoot, found := r.deps.Registry.FindParentWorkspace(parentDir)
+				// Skip registered roots that are gone (a removed nested
+				// worktree); their git state cannot be read.
+				for found {
+					if _, err := os.Stat(parentRoot); !os.IsNotExist(err) {
+						break
+					}
+					next, ok := r.deps.Registry.FindParentWorkspace(parentRoot)
+					found = ok && next != parentRoot
+					parentRoot = next
+				}
+				if found {
 					r.log(ctx, "registry_fallback", map[string]any{
 						"original_path":  path,
 						"parent_root":    parentRoot,

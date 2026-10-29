@@ -3,6 +3,7 @@ package resolver
 import (
 	context "context"
 	"os"
+	"path/filepath"
 	"strings"
 	testing "testing"
 
@@ -331,16 +332,17 @@ func TestResolveFilePathRegistryFallback(t *testing.T) {
 		Message: "stat path: no such file or directory",
 		Reason:  contract.ReasonInvalidPath,
 	}}
-	reg := &fakeRegistry{parentRoot: "/home/user/project"}
+	root := t.TempDir()
+	reg := &fakeRegistry{parentRoot: root}
 	r := New(Dependencies{Detector: detector, Registry: reg})
-	req := contract.ResolveWorkspaceRequest{FilePath: "/home/user/project/main.go"}
+	req := contract.ResolveWorkspaceRequest{FilePath: filepath.Join(root, "main.go")}
 
 	resp, err := r.Resolve(context.Background(), req)
 	if err != nil {
 		t.Fatalf("expected registry fallback to succeed, got error: %v", err)
 	}
-	if resp.ResolvedRoot != "/home/user/project" {
-		t.Fatalf("expected root /home/user/project, got %s", resp.ResolvedRoot)
+	if resp.ResolvedRoot != root {
+		t.Fatalf("expected root %s, got %s", root, resp.ResolvedRoot)
 	}
 	if resp.PathResolutionSource != "registry_fallback" {
 		t.Fatalf("expected source registry_fallback, got %s", resp.PathResolutionSource)

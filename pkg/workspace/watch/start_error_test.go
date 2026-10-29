@@ -62,3 +62,28 @@ func TestFileWatcherStartFailsWhenRootIsSymlink(t *testing.T) {
 		})
 	}
 }
+
+// A directory nobody may read (a Docker volume such as pgdata/) holds nothing
+// the indexer could read either; it must not turn off watching for the rest.
+func TestFileWatcherStartsDespiteUnreadableDirectory(t *testing.T) {
+	root := t.TempDir()
+	locked := filepath.Join(root, "pgdata")
+	if err := os.Mkdir(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	if _, err := os.ReadDir(locked); err == nil {
+		t.Skip("directory permissions are not enforced for this user")
+	}
+	fw, err := NewFileWatcher(root, Options{}, func(context.Context, string, []string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fw.Start(); err != nil {
+		t.Fatalf("Start failed because of one unreadable directory: %v", err)
+	}
+	fw.Stop()
+}

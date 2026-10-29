@@ -141,7 +141,9 @@ func (fw *FileWatcher) addDirectoryTree(root string) error {
 			if fw.shouldSkipDir(path, d.Name(), isRoot) {
 				return filepath.SkipDir
 			}
-			if err := fw.watcher.Add(path); err != nil && (isRoot || !os.IsNotExist(err)) {
+			// A directory we may not read holds nothing the indexer can read
+			// either, so missing its events loses no edit.
+			if err := fw.watcher.Add(path); err != nil && (isRoot || !os.IsNotExist(err) && !os.IsPermission(err)) {
 				logger.Instance.Warn("Unable to watch %s: %v", path, err)
 				if firstErr == nil {
 					firstErr = fmt.Errorf("watch %s: %w", path, err)

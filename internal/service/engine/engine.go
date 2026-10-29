@@ -1397,6 +1397,14 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) (r
 		if a == nil {
 			continue
 		}
+		// A directory that stops being excluded fires no event (a nested
+		// linked worktree whose admin dir was removed or pruned). Its first
+		// edited file is in a directory no indexed file lives in, and its
+		// siblings were never indexed either: rediscover them.
+		if dir := filepath.Dir(p); statErr == nil && dir != wctx.Root && !indexer.ShouldSkipFile(p) && !wasIndexedDir(dir) {
+			saveLoadedStates()
+			return e.IndexWorkspace(ctx, root, false)
+		}
 		collection := wctx.CollectionName(a.Name())
 		state := states[collection]
 		if state == nil {

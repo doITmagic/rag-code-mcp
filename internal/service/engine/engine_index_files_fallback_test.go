@@ -208,3 +208,64 @@ func TestIndexFilesDropsDirectoryThatBecameLinkedWorktree(t *testing.T) {
 		t.Fatal("parent still holds the vectors of a directory that is now a linked worktree")
 	}
 }
+
+// The reverse: a nested linked worktree whose admin dir vanished (removed,
+// or pruned after a plain mv) is a plain directory again, but no event says
+// so. The next edit in it must index the whole directory, not just that file.
+func TestIndexFilesIndexesDirectoryThatStoppedBeingLinkedWorktree(t *testing.T) {
+	root := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false"}, args...)...)
+		cmd.Dir = root
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
+	}
+	write := func(path, content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(root, "a.go"), "package main\nfunc A() {}\n")
+	write(filepath.Join(root, "internal", "marker", "shared.go"), "package marker\nfunc Shared() {}\n")
+	git("init", "-q", "-b", "main")
+	git("add", ".")
+	git("commit", "-qm", "initial")
+	wt := filepath.Join(root, "wt-prunelive")
+	git("worktree", "add", "-q", wt, "-b", "prunelive")
+
+	store := &branchIndexStore{
+		indexOrderStore: indexOrderStore{testStore: testStore{existing: map[string]bool{}}},
+		names:           map[string][]string{},
+	}
+	eng := NewEngine(indexer.NewService(&mockLLM{}, store), search.NewService(&mockLLM{}, store), filepath.Join(t.TempDir(), "registry.json"), &config.Config{})
+	t.Cleanup(eng.Close)
+	ctx := context.Background()
+	if err := eng.IndexWorkspace(ctx, root, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(root, ".git", "worktrees", "wt-prunelive")); err != nil {
+		t.Fatal(err)
+	}
+	edited := filepath.Join(wt, "internal", "marker", "pl.go")
+	write(edited, "package marker\nfunc Pl() {}\n")
+	if err := eng.IndexFiles(ctx, root, []string{edited}); err != nil {
+		t.Fatal(err)
+	}
+	wctx, err := eng.DetectContextAsRoot(ctx, root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := indexer.LoadState(indexer.StatePath(wctx.Root, wctx.CollectionName("go")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := state.GetFileState(filepath.Join(wt, "internal", "marker", "shared.go")); !ok {
+		t.Fatal("only the edited file of the now plain directory was indexed")
+	}
+}

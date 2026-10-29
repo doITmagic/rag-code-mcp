@@ -38,3 +38,37 @@ func TestStickyRootWithoutMarkersStaysSearchable(t *testing.T) {
 		t.Fatalf("confirmed markerless workspace cannot be searched: %v", err)
 	}
 }
+
+// A confirmed markerless subdirectory of a project must not resolve to the
+// project root that marker detection finds above it.
+func TestStickyRootInsideMarkedParentStaysOnConfirmedRoot(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "sub")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parent, "go.mod"), []byte("module sample\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "source.go"), []byte("package sample\nfunc Work() {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store := &testStore{existing: map[string]bool{}}
+	provider := &mockLLM{}
+	eng := NewEngine(indexer.NewService(provider, store), search.NewService(provider, store), filepath.Join(t.TempDir(), "registry.json"), &config.Config{})
+	defer eng.Close()
+	if err := eng.IndexWorkspace(context.Background(), root, false); err != nil {
+		t.Fatal(err)
+	}
+	// Another client's workspace becomes the last active one.
+	if err := eng.IndexWorkspace(context.Background(), t.TempDir(), false); err != nil {
+		t.Fatal(err)
+	}
+	wctx, err := eng.DetectContext(transport.WithWorkspaceHint(context.Background(), root), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wctx.Root != root {
+		t.Fatalf("sticky root resolved to %q, want the confirmed root %q", wctx.Root, root)
+	}
+}

@@ -304,7 +304,15 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 			if _, err := os.Stat(abs); err != nil {
 				return nil, fmt.Errorf("confirmed workspace %q is unavailable: %w; provide an explicit file_path to select a workspace", abs, err)
 			}
+			// A root confirmed by an explicit workspace_root may have no project
+			// markers, or sit below a directory that has them, so marker
+			// detection would lose it or switch to that parent.
 			req.FilePath = abs
+			if e.registry != nil {
+				if _, ok := e.registry.LookupByRoot(abs); ok {
+					req.FilePath, req.WorkspaceRoot = "", abs
+				}
+			}
 			source = "hint_fallback"
 			logger.Instance.Info("[WS-DETECT] ✅ Tier 2 matched: using X-Workspace-Hint=%s", abs)
 		} else {
@@ -312,7 +320,7 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 		}
 
 		// Tier 3: Fall back to last active workspace from registry
-		if req.FilePath == "" {
+		if req.FilePath == "" && req.WorkspaceRoot == "" {
 			active, err := e.GetActiveWorkspace()
 			if err != nil || active == "" {
 				logger.Instance.Warn("[WS-DETECT] ❌ All tiers exhausted — no workspace detected")
@@ -346,13 +354,6 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 	}
 
 	resp, wsErr := e.resolver.Resolve(ctx, req)
-	if wsErr != nil && source == "hint_fallback" && e.registry != nil {
-		// A root confirmed by an explicit workspace_root may have no project
-		// markers, so marker detection cannot find it again.
-		if _, ok := e.registry.LookupByRoot(req.FilePath); ok {
-			resp, wsErr = e.resolver.Resolve(ctx, contract.ResolveWorkspaceRequest{WorkspaceRoot: req.FilePath})
-		}
-	}
 	if wsErr != nil {
 		return nil, fmt.Errorf("workspace detection failed: %s", wsErr.Message)
 	}

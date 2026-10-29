@@ -1210,6 +1210,10 @@ func (e *Engine) startIndexing(root, id string, changedFiles []string, recreate,
 				e.pendingMu.Lock()
 				e.pendingReplay[id] = true
 				e.pendingOverflow[id] = true
+				if recreate {
+					// Recreate drops collections one language at a time.
+					e.pendingRecreate[id] = true
+				}
 				delete(e.pendingFiles, id)
 				e.pendingMu.Unlock()
 			}

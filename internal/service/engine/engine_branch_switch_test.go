@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -148,7 +149,10 @@ func (p *roundTripLLM) Embed(ctx context.Context, text string) ([]float64, error
 }
 
 func (s *branchIndexStore) DeleteCollection(_ context.Context, collection string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	delete(s.existing, collection)
+	delete(s.names, collection)
 	return nil
 }
 
@@ -181,6 +185,10 @@ func TestInterruptedIndexIsCompletedWithoutRequest(t *testing.T) {
 			write("a.go", "StableFirst")
 			write("m.go", "MiddleSecond")
 			write("z.go", "BaselineThird")
+			// Python is indexed after Go, so the interruption never reaches it.
+			if err := os.WriteFile(filepath.Join(root, "p.py"), []byte("def python_only():\n    pass\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
 			git("add", ".")
 			git("commit", "-qm", "baseline")
 			git("switch", "-qc", "variant")
@@ -206,8 +214,13 @@ func TestInterruptedIndexIsCompletedWithoutRequest(t *testing.T) {
 				t.Fatal(err)
 			}
 			collection := wctx.CollectionName("go")
+			pyCollection := wctx.CollectionName("python")
 			store.mu.Lock()
 			store.names[collection] = nil
+			if !autoTriggered {
+				// A stale point the recreate must drop.
+				store.names[pyCollection] = []string{"Stale"}
+			}
 			store.mu.Unlock()
 			// Interrupt the run in m.go, after a.go is saved; z.go differs between the branches.
 			provider.symbol = "MiddleSecond"
@@ -235,6 +248,11 @@ func TestInterruptedIndexIsCompletedWithoutRequest(t *testing.T) {
 			})
 			if s := indexer.LoadIndexStatus(root); s == nil || s.Error != "" || s.EndedAt == "" {
 				t.Fatalf("completed index reports %+v", s)
+			}
+			store.mu.Lock()
+			defer store.mu.Unlock()
+			if names := store.names[pyCollection]; len(names) == 0 || slices.Contains(names, "Stale") {
+				t.Fatalf("python collection after the interrupted run: %v", names)
 			}
 		})
 	}

@@ -55,16 +55,18 @@ func StartDaemon(binaryPath string, port int, extraArgs ...string) error {
 		return fmt.Errorf("failed to start daemon: %w", err)
 	}
 
-	// Don't wait for the daemon process — it runs independently
-	go func() { _ = cmd.Wait() }()
+	// Don't wait for the daemon process — it runs independently; only
+	// report when it exits so a failed start is not polled for 60s.
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
 
-	return waitForDaemon(port)
+	return waitForDaemon(port, exited)
 }
 
 // waitForDaemon polls the daemon health endpoint until ready (max 60s): on a cold
 // start the daemon only listens after the embedding model is loaded, which
-// takes well over 10s on CPU.
-func waitForDaemon(port int) error {
+// takes well over 10s on CPU. It stops early when the started process exits.
+func waitForDaemon(port int, exited <-chan error) error {
 	url := fmt.Sprintf("http://127.0.0.1:%d/health", port)
 	client := &http.Client{Timeout: 2 * time.Second}
 
@@ -76,7 +78,15 @@ func waitForDaemon(port int) error {
 				return nil
 			}
 		}
-		time.Sleep(500 * time.Millisecond)
+		select {
+		case err := <-exited:
+			// A daemon started by another adapter may own the port.
+			if running, _ := IsDaemonRunning(port); running {
+				return nil
+			}
+			return fmt.Errorf("daemon exited before becoming ready (%v); the cause (e.g. Ollama or Qdrant unreachable) is in the RagCode log", err)
+		case <-time.After(500 * time.Millisecond):
+		}
 	}
 
 	return fmt.Errorf("daemon did not become ready within 60s (port: %d)", port)

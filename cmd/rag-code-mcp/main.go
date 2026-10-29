@@ -124,10 +124,14 @@ func runAdapter(version string, httpPort int, daemonArgs []string) {
 	// Start daemon if not running
 	if !running {
 		logger.Instance.Info("Starting daemon on port %d...", httpPort)
+		// Keep bridging on failure: each request then gets a JSON-RPC error
+		// with the cause and retries the start, so the session recovers once
+		// the missing dependency is back.
 		if err := adapter.StartDaemon(binaryPath, httpPort, daemonArgs...); err != nil {
-			log.Fatalf("Failed to start daemon: %v", err)
+			logger.Instance.Error("Failed to start daemon: %v", err)
+		} else {
+			logger.Instance.Info("Daemon started successfully")
 		}
-		logger.Instance.Info("Daemon started successfully")
 	}
 
 	// Bridge stdin ↔ daemon via local TCP port

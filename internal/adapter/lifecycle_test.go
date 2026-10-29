@@ -2,11 +2,16 @@ package adapter_test
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/doITmagic/rag-code-mcp/internal/adapter"
 	"github.com/doITmagic/rag-code-mcp/internal/daemon"
@@ -44,4 +49,24 @@ func TestIsDaemonRunning_Failure(t *testing.T) {
 	running, version := adapter.IsDaemonRunning(12345)
 	assert.False(t, running)
 	assert.Empty(t, version)
+}
+
+// A daemon that exits at once (e.g. a dependency is down) must be reported
+// right away, not after the full readiness timeout.
+func TestStartDaemonReportsEarlyExit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a shell script as the daemon binary")
+	}
+	bin := filepath.Join(t.TempDir(), "daemon.sh")
+	require.NoError(t, os.WriteFile(bin, []byte("#!/bin/sh\nexit 1\n"), 0o700))
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := ln.Addr().(*net.TCPAddr).Port
+	require.NoError(t, ln.Close())
+
+	start := time.Now()
+	err = adapter.StartDaemon(bin, port)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exited")
+	assert.Less(t, time.Since(start), 10*time.Second)
 }

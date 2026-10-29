@@ -8,11 +8,11 @@ import (
 	"github.com/VKCOM/php-parser/pkg/ast"
 	"github.com/VKCOM/php-parser/pkg/conf"
 	"github.com/VKCOM/php-parser/pkg/errors"
-	"github.com/VKCOM/php-parser/pkg/parser"
 	"github.com/VKCOM/php-parser/pkg/version"
 	"github.com/VKCOM/php-parser/pkg/visitor"
 
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
+	"github.com/doITmagic/rag-code-mcp/pkg/parser/php"
 )
 
 // RouteAnalyzer parses Laravel route files
@@ -52,7 +52,7 @@ func (ra *RouteAnalyzer) analyzeFile(filePath string) ([]Route, error) {
 
 	// Parse PHP
 	var parserErrors []*errors.Error
-	rootNode, err := parser.Parse(content, conf.Config{
+	rootNode, err := php.Parse(content, conf.Config{
 		Version: &version.Version{Major: 8, Minor: 0},
 		ErrorHandlerFunc: func(e *errors.Error) {
 			parserErrors = append(parserErrors, e)

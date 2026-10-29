@@ -7,12 +7,12 @@ import (
 	"github.com/VKCOM/php-parser/pkg/ast"
 	"github.com/VKCOM/php-parser/pkg/conf"
 	"github.com/VKCOM/php-parser/pkg/errors"
-	"github.com/VKCOM/php-parser/pkg/parser"
 	"github.com/VKCOM/php-parser/pkg/version"
 	"github.com/VKCOM/php-parser/pkg/visitor"
 	"github.com/VKCOM/php-parser/pkg/visitor/traverser"
 
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
+	"github.com/doITmagic/rag-code-mcp/pkg/parser/php"
 )
 
 // MigrationAnalyzer parses Laravel migration files
@@ -50,7 +50,7 @@ func (ma *MigrationAnalyzer) analyzeFile(filePath string) ([]Migration, error) {
 	}
 
 	var parserErrors []*errors.Error
-	rootNode, err := parser.Parse(content, conf.Config{
+	rootNode, err := php.Parse(content, conf.Config{
 		Version: &version.Version{Major: 8, Minor: 0},
 		ErrorHandlerFunc: func(e *errors.Error) {
 			parserErrors = append(parserErrors, e)

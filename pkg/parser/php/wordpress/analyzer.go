@@ -10,7 +10,6 @@ import (
 	"github.com/VKCOM/php-parser/pkg/ast"
 	"github.com/VKCOM/php-parser/pkg/conf"
 	"github.com/VKCOM/php-parser/pkg/errors"
-	"github.com/VKCOM/php-parser/pkg/parser"
 	"github.com/VKCOM/php-parser/pkg/version"
 
 	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
@@ -480,7 +479,7 @@ func (a *Analyzer) convertToChunks(info *WordPressInfo) []php.CodeChunk {
 
 // parsePHP parses PHP source code and returns the AST root
 func (a *Analyzer) parsePHP(content []byte) (ast.Vertex, error) {
-	rootNode, err := parser.Parse(content, conf.Config{
+	rootNode, err := php.Parse(content, conf.Config{
 		Version: &version.Version{Major: 8, Minor: 0},
 		ErrorHandlerFunc: func(e *errors.Error) {
 			// Ignore parser errors for analysis

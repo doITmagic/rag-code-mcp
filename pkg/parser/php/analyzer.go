@@ -10,7 +10,6 @@ import (
 	"github.com/VKCOM/php-parser/pkg/ast"
 	"github.com/VKCOM/php-parser/pkg/conf"
 	"github.com/VKCOM/php-parser/pkg/errors"
-	"github.com/VKCOM/php-parser/pkg/parser"
 	"github.com/VKCOM/php-parser/pkg/version"
 	"github.com/VKCOM/php-parser/pkg/visitor"
 	"github.com/VKCOM/php-parser/pkg/visitor/traverser"
@@ -169,7 +168,7 @@ func (ca *CodeAnalyzer) parseAndCollect(filePath string, content []byte) error {
 func (ca *CodeAnalyzer) parsePHPSource(content []byte) (ast.Vertex, []*errors.Error, error) {
 	var parserErrors []*errors.Error
 
-	rootNode, err := parser.Parse(content, conf.Config{
+	rootNode, err := Parse(content, conf.Config{
 		Version: &version.Version{Major: 8, Minor: 1},
 		ErrorHandlerFunc: func(e *errors.Error) {
 			parserErrors = append(parserErrors, e)

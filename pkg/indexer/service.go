@@ -266,12 +266,12 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 					logger.Instance.Warn("[IDX] ws=%s lang=%s ⚠️ STALL: no embed activity for %ds [%d/%d] (stall #%d)",
 						wsName, opts.Language, elapsedSinceActivity, current, totalFiles, stallCount)
 					if stallCount >= 2 {
-						if err := healthcheck.PingOllama(""); err != nil {
+						if err := s.pingOllama(); err != nil {
 							logger.Instance.Error("[IDX] ws=%s lang=%s ❌ Ollama unresponsive: %v — forcing restart", wsName, opts.Language, err)
 						} else {
 							logger.Instance.Error("[IDX] ws=%s lang=%s ❌ Ollama ping OK but embed goroutine STALLED — forcing restart", wsName, opts.Language)
 						}
-						attemptOllamaRestart()
+						attemptOllamaRestart(s.pingOllama)
 					}
 					if stallCount >= 3 {
 						buf := make([]byte, 8192)
@@ -352,12 +352,12 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 // attemptOllamaRestart tries to restart Ollama when it becomes unresponsive.
 // Process-killing recovery is only executed when RAGCODE_ALLOW_OLLAMA_RESTART=1 is set;
 // otherwise it only polls for Ollama HTTP heartbeat recovery without killing user processes.
-func attemptOllamaRestart() {
+func attemptOllamaRestart(ping func() error) {
 	if os.Getenv("RAGCODE_ALLOW_OLLAMA_RESTART") != "1" {
 		logger.Instance.Warn("⏳ Ollama unresponsive; waiting up to 15s for HTTP heartbeat recovery (set RAGCODE_ALLOW_OLLAMA_RESTART=1 to allow forced service restart)...")
 		for i := 0; i < 5; i++ {
 			time.Sleep(3 * time.Second)
-			if err := healthcheck.PingOllama(""); err == nil {
+			if err := ping(); err == nil {
 				logger.Instance.Info("🎉 Ollama HTTP API is online again. Resuming indexing.")
 				return
 			}
@@ -396,7 +396,7 @@ func attemptOllamaRestart() {
 	logger.Instance.Info("⏳ Waiting for Ollama HTTP heartbeat to return (max 15s)...")
 	for i := 0; i < 5; i++ {
 		time.Sleep(3 * time.Second)
-		if err := healthcheck.PingOllama(""); err == nil {
+		if err := ping(); err == nil {
 			logger.Instance.Info("🎉 Ollama HTTP API is FULLY ONLINE after recovery! Resuming indexing.")
 			return
 		}
@@ -578,6 +578,18 @@ func unwrapOllamaProvider(p llm.Provider) (*llm.OllamaLLMProvider, bool) {
 	return nil, false
 }
 
+// pingOllama checks the Ollama the embedder talks to. Probing the default
+// address instead would judge a different, or absent, instance whenever
+// llm.ollama_base_url is set.
+func (s *Service) pingOllama() error {
+	if op, ok := unwrapOllamaProvider(s.embedder); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		return op.Heartbeat(ctx)
+	}
+	return healthcheck.PingOllama("")
+}
+
 // ensureOllamaAlive checks if Ollama is responsive and the embedding model is loaded.
 // If not, it attempts a restart and model reload. Returns an error only if recovery fails.
 // Respects the parent context — returns immediately if ctx is cancelled.
@@ -589,9 +601,9 @@ func (s *Service) ensureOllamaAlive(ctx context.Context) error {
 	default:
 	}
 
-	if err := healthcheck.PingOllama(""); err != nil {
+	if err := s.pingOllama(); err != nil {
 		logger.Instance.Warn("🔌 Circuit breaker: Ollama is unresponsive, attempting restart...")
-		attemptOllamaRestart()
+		attemptOllamaRestart(s.pingOllama)
 
 		// Wait for recovery with short polling — exit early on context cancellation
 		for i := 0; i < 10; i++ {
@@ -600,7 +612,7 @@ func (s *Service) ensureOllamaAlive(ctx context.Context) error {
 				return fmt.Errorf("context cancelled during Ollama recovery: %w", ctx.Err())
 			case <-time.After(3 * time.Second):
 			}
-			if err := healthcheck.PingOllama(""); err == nil {
+			if err := s.pingOllama(); err == nil {
 				logger.Instance.Info("✅ Circuit breaker: Ollama recovered after restart")
 				break
 			}

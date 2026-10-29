@@ -682,6 +682,18 @@ func primaryLanguage(root, filePath string) string {
 	return lang
 }
 
+// nothingToIndex reports whether the last finished run found no file of
+// lang. Its collection is then missing by design (a docs-only or Rust
+// workspace has no Go collection), and indexing again cannot create it.
+func nothingToIndex(root, lang string) bool {
+	s := indexer.LoadIndexStatus(root)
+	if s == nil || s.EndedAt == "" || s.Error != "" {
+		return false
+	}
+	// The status keeps only languages with files on disk.
+	return s.Languages[lang].OnDisk == 0
+}
+
 // SearchCode detects the workspace from filePath, resolves the correct collection,
 // embeds the query ONCE, then fans out in parallel to all language collections.
 // includeDocs=false searches code only. Triggers background indexing if needed.
@@ -708,8 +720,9 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 		return nil, fmt.Errorf("failed to check collection: %w", err)
 	}
 
+	indexedEmpty := !primaryExists && nothingToIndex(wctx.Root, primaryLang)
 	needsTriggerIndexing := false
-	if !primaryExists {
+	if !primaryExists && !indexedEmpty {
 		needsTriggerIndexing = true
 	}
 
@@ -831,7 +844,8 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 
 	// If no collections exist at all, the workspace is truly not indexed.
 	// Before returning an error, try a direct AST-based fallback search.
-	if existingCollections == 0 && len(all) == 0 {
+	// An indexed workspace with nothing to index falls through to "no results".
+	if existingCollections == 0 && len(all) == 0 && !indexedEmpty {
 		// Ensure background indexing is triggered
 		if needsTriggerIndexing {
 			if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); !alreadyRunning {
@@ -927,7 +941,7 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 		// Trigger background indexing but do NOT block — SmartSearch runs
 		// SearchCode (with fan-out) in parallel and will provide results
 		// from any available language collections.
-		if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); !alreadyRunning && autoIndex {
+		if _, alreadyRunning := e.indexingJobs.Load(wctx.ID); !alreadyRunning && autoIndex && !nothingToIndex(wctx.Root, lang) {
 			e.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 		}
 		logger.Instance.Info("[IDX] ws=%s HybridSearch: requested collections not found — returning empty (indexing in background)", filepath.Base(wctx.Root))

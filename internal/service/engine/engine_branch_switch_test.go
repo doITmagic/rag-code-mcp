@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
@@ -128,4 +130,95 @@ func TestWatchedWorkspaceReindexesWhenGitStateChanges(t *testing.T) {
 		_, completed := eng.lastIndexed.Load(wctx.ID)
 		return completed
 	})
+}
+
+// roundTripLLM runs onEmbed, once set, the first time it embeds the symbol.
+type roundTripLLM struct {
+	mockLLM
+	once    sync.Once
+	symbol  string
+	onEmbed func()
+}
+
+func (p *roundTripLLM) Embed(ctx context.Context, text string) ([]float64, error) {
+	if p.onEmbed != nil && strings.Contains(text, p.symbol) {
+		p.once.Do(p.onEmbed)
+	}
+	return p.mockLLM.Embed(ctx, text)
+}
+
+func (s *branchIndexStore) DeleteCollection(_ context.Context, collection string) error {
+	delete(s.existing, collection)
+	return nil
+}
+
+// A checkout that interrupts a run leaves the collection partial: it must be
+// completed without waiting for a request, and the watcher batch the checkout
+// produced must not stand in for the files the interrupted run never reached.
+func TestInterruptedIndexIsCompletedWithoutRequest(t *testing.T) {
+	root := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false"}, args...)...)
+		cmd.Dir = root
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Errorf("git %v: %v: %s", args, err, output)
+		}
+	}
+	write := func(name, symbol string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, name), []byte("package main\nfunc "+symbol+"() {}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("init", "-q", "-b", "baseline")
+	write("a.go", "StableFirst")
+	write("m.go", "MiddleSecond")
+	write("z.go", "BaselineThird")
+	git("add", ".")
+	git("commit", "-qm", "baseline")
+	git("switch", "-qc", "variant")
+	write("z.go", "VariantThird")
+	git("commit", "-qam", "variant")
+	git("switch", "-q", "baseline")
+
+	store := &branchIndexStore{
+		indexOrderStore: indexOrderStore{testStore: testStore{existing: map[string]bool{}}},
+		names:           map[string][]string{},
+	}
+	provider := &roundTripLLM{}
+	eng := NewEngine(indexer.NewService(provider, store), search.NewService(provider, store), filepath.Join(t.TempDir(), "registry.json"), &config.Config{})
+	t.Cleanup(eng.Close)
+	if err := eng.IndexWorkspace(context.Background(), root, false); err != nil {
+		t.Fatal(err)
+	}
+	wctx, err := eng.DetectContextAsRoot(context.Background(), root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	collection := wctx.CollectionName("go")
+	store.mu.Lock()
+	store.names[collection] = nil
+	store.mu.Unlock()
+	// Interrupt the run in m.go, after a.go is saved; z.go differs between the branches.
+	provider.symbol = "MiddleSecond"
+	provider.onEmbed = func() {
+		git("switch", "-q", "variant")
+		git("switch", "-q", "baseline")
+		if err := eng.handleWatchChange(context.Background(), root, []string{filepath.Join(root, "z.go")}); err != nil {
+			t.Error(err)
+		}
+	}
+	// A recreate starts from an empty collection, like rag_index_workspace recreate=true.
+	eng.StartIndexingAsync(wctx.Root, wctx.ID, nil, true)
+	waitFor(t, "interrupted index was not completed", func() bool {
+		store.mu.Lock()
+		names := strings.Join(store.names[collection], ",")
+		store.mu.Unlock()
+		return len(eng.ActiveIndexingJobs()) == 0 && strings.Contains(names, "StableFirst") &&
+			strings.Contains(names, "MiddleSecond") && strings.Contains(names, "BaselineThird")
+	})
+	if s := indexer.LoadIndexStatus(root); s == nil || s.Error != "" || s.EndedAt == "" {
+		t.Fatalf("completed index reports %+v", s)
+	}
 }

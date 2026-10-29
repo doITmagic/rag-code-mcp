@@ -1156,6 +1156,16 @@ func (e *Engine) startIndexing(root, id string, changedFiles []string, recreate,
 		case errors.Is(err, indexer.ErrWorkspaceChanged):
 			// A checkout interrupted this run; the next request must retry even with a watcher.
 			e.connectTriggered.Delete(id)
+			// Rerun it in full now: a checkout that changed no file wakes no
+			// watcher, and a queued watcher batch would mark the partial index
+			// complete. A replayed run interrupted again waits for a request,
+			// so a Git state that never settles cannot loop.
+			if !queueFullRun {
+				e.pendingMu.Lock()
+				e.pendingOverflow[id] = true
+				delete(e.pendingFiles, id)
+				e.pendingMu.Unlock()
+			}
 		case err != nil:
 			// Files that failed stayed out of the saved state: retry them on a
 			// later request even with a watcher, since an outage may already be

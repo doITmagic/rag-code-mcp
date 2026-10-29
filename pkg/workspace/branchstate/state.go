@@ -257,9 +257,13 @@ func (m *Manager) readGitState(ctx context.Context, root string) (*State, error)
 func gitCommand(ctx context.Context, root string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = root
-	out, err := cmd.CombinedOutput()
+	// Keep stderr out of the value: Git warnings would otherwise become part
+	// of the branch name and HEAD SHA.
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		text := strings.ToLower(string(out))
+		text := strings.ToLower(stderr.String())
 		// A fresh `git init` has no HEAD commit yet ("unknown revision"): there
 		// is no branch state to track, which is not a reason to reject the
 		// workspace.

@@ -241,3 +241,21 @@ func TestConcurrentManagersPublishCompleteBranchState(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestGitWarningsDoNotLeakIntoState(t *testing.T) {
+	root := t.TempDir()
+	for _, args := range [][]string{{"init", "-q", "-b", "main"}, {"-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x"}, {"config", "core.fsyncObjectFiles", "true"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	state, _, _, rerr := NewManager().CompareAndUpdate(context.Background(), root)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if state.LastBranch != "main" || len(state.LastHeadSHA) != 40 {
+		t.Fatalf("branch=%q head=%q", state.LastBranch, state.LastHeadSHA)
+	}
+}

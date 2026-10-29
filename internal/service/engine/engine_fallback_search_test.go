@@ -398,18 +398,34 @@ func TestFallbackDirectSearchSkipsFilesIndexingSkips(t *testing.T) {
 	}
 }
 
+// slowAnalyzer stands in for a parse that ignores ctx and takes seconds.
+type slowAnalyzer struct {
+	parser.Analyzer
+	release chan struct{}
+}
+
+func (a slowAnalyzer) Analyze(context.Context, string) (*parser.Result, error) {
+	select {
+	case <-a.release:
+	case <-time.After(3 * time.Second):
+	}
+	return nil, nil
+}
+
 // Analyzers do not observe ctx, so one large ordinary file (a 1 MB JS file
 // took 14s) ran the search far past its budget while the client waited.
+// A stub stands in for that parse: a real one, abandoned, would keep the JS
+// analyzer locked into later tests.
 func TestFallbackDirectSearchStopsAtItsBudget(t *testing.T) {
 	old := fallbackTimeout
 	fallbackTimeout = 100 * time.Millisecond
 	t.Cleanup(func() { fallbackTimeout = old })
+	original := parser.GetByName("javascript")
+	release := make(chan struct{})
+	parser.Register(slowAnalyzer{Analyzer: original, release: release})
+	t.Cleanup(func() { close(release); parser.Register(original) })
 	root, eng := setupFallbackWorkspace(t)
-	var src strings.Builder
-	for i := 0; src.Len() < 512<<10; i++ {
-		fmt.Fprintf(&src, "function ordinaryFunction%d(a, b) {\n  return a + b;\n}\n", i)
-	}
-	if err := os.WriteFile(filepath.Join(root, "app.js"), []byte(src.String()), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "app.js"), []byte("function ordinaryFunction7() {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	start := time.Now()

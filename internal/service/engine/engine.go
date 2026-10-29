@@ -345,6 +345,13 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 	}
 
 	resp, wsErr := e.resolver.Resolve(ctx, req)
+	if wsErr != nil && source == "hint_fallback" && e.registry != nil {
+		// A root confirmed by an explicit workspace_root may have no project
+		// markers, so marker detection cannot find it again.
+		if _, ok := e.registry.LookupByRoot(req.FilePath); ok {
+			resp, wsErr = e.resolver.Resolve(ctx, contract.ResolveWorkspaceRequest{WorkspaceRoot: req.FilePath})
+		}
+	}
 	if wsErr != nil {
 		return nil, fmt.Errorf("workspace detection failed: %s", wsErr.Message)
 	}

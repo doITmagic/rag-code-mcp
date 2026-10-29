@@ -1,8 +1,11 @@
 package tools
 
 import (
+	"bufio"
 	"context"
+	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
@@ -208,11 +211,26 @@ func resolveCall(ctx context.Context, eng *engine.Engine, wsID string, source st
 			}
 			var module []storage.SearchResult
 			for _, r := range results {
-				if pkg, _ := r.Point.Payload["package"].(string); pkg == receiver || strings.HasSuffix(pkg, "."+receiver) {
+				if pkg, _ := r.Point.Payload["package"].(string); inPythonModule(pkg, receiver) {
 					module = append(module, r)
 				}
 			}
-			return uniqueSymbol(module, "")
+			if _, imported := pythonImports(file)[receiver]; len(module) > 0 || imported {
+				return uniqueSymbol(module, "")
+			}
+			// Any other receiver is a value of unknown type, so any method of
+			// that name is a candidate; super() is not one of its own class.
+			results, err = eng.ExactSearchPolyglot(ctx, wsID, map[string]interface{}{"language": "python", "type": "method", "name": name}, 100)
+			if err != nil {
+				return nil, "unresolved"
+			}
+			var methods []storage.SearchResult
+			for _, r := range results {
+				if receiver != "super()" || pythonClass(r) != pythonClass(source) {
+					methods = append(methods, r)
+				}
+			}
+			return uniqueSymbol(methods, "")
 		}
 		if language != "go" {
 			// The receiver's type is unknown, so any method of that name is a
@@ -265,10 +283,12 @@ func callMayTarget(source storage.SearchResult, rel map[string]interface{}, reso
 	}
 	// A member call reaches only a method, and in PHP and JS/TS a bare call
 	// reaches no method, so JSON.parse() does not reach a project's parse().
+	// A Python call on a module reaches that module's function.
 	language, _ := source.Point.Payload["language"].(string)
 	receiver, _ := rel["receiver"].(string)
 	isMethod := target.Point.Payload["type"] == "method"
-	if language != "go" && language != "python" && receiver != "" && !isMethod {
+	pkg, _ := target.Point.Payload["package"].(string)
+	if language != "go" && receiver != "" && !isMethod && !(language == "python" && inPythonModule(pkg, receiver)) {
 		return false
 	}
 	if (language == "php" || language == "javascript" || language == "typescript") && receiver == "" && isMethod {
@@ -277,6 +297,79 @@ func callMayTarget(source storage.SearchResult, rel map[string]interface{}, reso
 	// JS/TS name a method Class.method; the call names only the method.
 	name, _ := target.Point.Payload["name"].(string)
 	return status == "ambiguous" && rel["target_name"] == shortSymbolName(name) && symbolKey(source) != symbolKey(target)
+}
+
+// inPythonModule reports whether a Python package is the module named, which
+// may be the last part of its dotted name.
+func inPythonModule(pkg, module string) bool {
+	return pkg == module || strings.HasSuffix(pkg, "."+module)
+}
+
+func pythonClass(r storage.SearchResult) interface{} {
+	metadata, _ := r.Point.Payload["metadata"].(map[string]interface{})
+	return metadata["class"]
+}
+
+var (
+	pyImportRe     = regexp.MustCompile(`^\s*import\s+(.+)`)
+	pyFromImportRe = regexp.MustCompile(`^\s*from\s+(\S+)\s+import\s+(.+)`)
+)
+
+// pythonImports maps each name a Python file's imports bind to the module it
+// names: import a.b binds a and b, while import a.b as m and from a import b
+// as m bind m to a.b. A from-import may also bind a class or another value.
+func pythonImports(path string) map[string]string {
+	imports := map[string]string{}
+	// Never open a FIFO or device that took an indexed file's place.
+	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
+		return imports
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return imports
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(nil, 1<<20)
+	from, inParens := "", false
+	for scanner.Scan() {
+		line, _, _ := strings.Cut(scanner.Text(), "#")
+		names, isFrom := "", inParens
+		if inParens {
+			names = line
+		} else if m := pyFromImportRe.FindStringSubmatch(line); m != nil {
+			from, names, isFrom = strings.Trim(m[1], "."), m[2], true
+		} else if m := pyImportRe.FindStringSubmatch(line); m != nil {
+			names = m[1]
+		}
+		// from a import (b,\n c) continues on the next lines.
+		if isFrom {
+			inParens = (inParens || strings.Contains(names, "(")) && !strings.Contains(names, ")")
+		}
+		for _, part := range strings.Split(names, ",") {
+			fields := strings.Fields(strings.Trim(part, " \t()\\"))
+			if len(fields) == 0 {
+				continue
+			}
+			module := fields[0]
+			if isFrom {
+				module = strings.Trim(from+"."+module, ".")
+			}
+			if len(fields) == 3 && fields[1] == "as" {
+				imports[fields[2]] = module
+				continue
+			}
+			if isFrom {
+				imports[fields[0]] = module
+				continue
+			}
+			segments := strings.Split(module, ".")
+			for i, segment := range segments {
+				imports[segment] = strings.Join(segments[:i+1], ".")
+			}
+		}
+	}
+	return imports
 }
 
 func symbolKey(r storage.SearchResult) string {

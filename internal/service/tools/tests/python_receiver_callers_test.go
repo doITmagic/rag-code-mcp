@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/doITmagic/rag-code-mcp/internal/service/tools"
@@ -60,5 +61,52 @@ func TestPythonModuleCallReachesModuleFunction(t *testing.T) {
 	}
 	if got := pythonCallers(t, tool, path, "dumps"); len(got) != 0 {
 		t.Errorf("callers of dumps = %v, want none", got)
+	}
+}
+
+// super().run() calls the run the class inherits, not its own.
+func TestPythonSuperCallReachesParentMethod(t *testing.T) {
+	dir, store := indexFixture(t, "py", python.NewAnalyzer(), map[string]string{
+		"base.py":  "class Base:\n    def run(self):\n        return 1\n",
+		"child.py": "from base import Base\n\n\nclass Child(Base):\n    def run(self):\n        return super().run()\n",
+	})
+	eng := setupTestEngine(store)
+	t.Cleanup(eng.Close)
+	if got := pythonCallers(t, tools.NewCallHierarchyTool(eng), filepath.Join(dir, "base.py"), "Base.run"); len(got) != 1 || got[0] != "run" {
+		t.Fatalf("callers of Base.run = %v, want [run]", got)
+	}
+}
+
+// signer.sign() on a value of unknown type may call any method sign, but no
+// free function sign; json.dumps() calls an imported module, not a method.
+func TestPythonInstanceCallReachesMethod(t *testing.T) {
+	dir, store := indexFixture(t, "py", python.NewAnalyzer(), map[string]string{
+		"signer.py":     "class Signer:\n    def sign(self, v):\n        return v\n",
+		"other.py":      "class Other:\n    def sign(self, v):\n        return v\n",
+		"helpers.py":    "def sign(v):\n    return v\n",
+		"serializer.py": "class Serializer:\n    def dumps(self, o):\n        return o\n",
+		"main.py":       "import json as _json\nfrom signer import Signer\n\n\ndef use():\n    signer = Signer()\n    return signer.sign(1)\n\n\ndef dump(o):\n    return _json.dumps(o)\n",
+	})
+	eng := setupTestEngine(store)
+	t.Cleanup(eng.Close)
+	tool := tools.NewCallHierarchyTool(eng)
+	for file, want := range map[string][]string{"signer.py": {"use"}, "other.py": {"use"}, "helpers.py": nil} {
+		if got := pythonCallers(t, tool, filepath.Join(dir, file), "sign"); !slices.Equal(got, want) {
+			t.Errorf("callers of sign in %s = %v, want %v", file, got, want)
+		}
+	}
+	if got := pythonCallers(t, tool, filepath.Join(dir, "serializer.py"), "Serializer.dumps"); len(got) != 0 {
+		t.Errorf("callers of Serializer.dumps = %v, want none", got)
+	}
+	text, err := tools.NewFindUsagesTool(eng).Execute(context.Background(), map[string]interface{}{"symbol_name": "Signer.sign", "file_path": filepath.Join(dir, "signer.py")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct{ Data []tools.UsageResult }
+	if err := json.Unmarshal([]byte(text), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Data) != 1 || response.Data[0].Name != "use" {
+		t.Errorf("usages of Signer.sign want [use]: %s", text)
 	}
 }

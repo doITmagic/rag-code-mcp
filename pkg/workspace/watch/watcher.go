@@ -14,6 +14,8 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
+// defaultExcludeDirs lists only directories the scanner never enters either.
+// Skipping one it indexes (build, dist) would leave its files stale.
 var defaultExcludeDirs = map[string]struct{}{
 	".git":         {},
 	".idea":        {},
@@ -24,11 +26,7 @@ var defaultExcludeDirs = map[string]struct{}{
 	".ragcode":     {},
 	"node_modules": {},
 	"vendor":       {},
-	"dist":         {},
-	"build":        {},
-	"target":       {},
 	".venv":        {},
-	"__pycache__":  {},
 }
 
 var defaultHiddenAllowlist = map[string]struct{}{
@@ -307,7 +305,7 @@ func (fw *FileWatcher) isExcludedPath(path string) bool {
 			return true
 		}
 	}
-	_, excluded := fw.exclude[strings.ToLower(parts[len(parts)-1])]
+	_, excluded := fw.exclude[parts[len(parts)-1]]
 	return excluded
 }
 
@@ -315,7 +313,8 @@ func (fw *FileWatcher) shouldSkipDir(path, base string, isRoot bool) bool {
 	if isRoot {
 		return false
 	}
-	if _, skip := fw.exclude[strings.ToLower(base)]; skip {
+	// Case-sensitive, like the scanner's patterns: "dist" does not prune Dist/.
+	if _, skip := fw.exclude[base]; skip {
 		return true
 	}
 	if strings.HasPrefix(base, ".") {
@@ -337,7 +336,7 @@ func normalizeExclude(patterns []string) map[string]struct{} {
 		if trimmed == "" {
 			continue
 		}
-		result[strings.ToLower(trimmed)] = struct{}{}
+		result[trimmed] = struct{}{}
 	}
 	return result
 }

@@ -119,3 +119,46 @@ func TestRenamedDirectoryReportsNestedEventsUnderNewPath(t *testing.T) {
 		}
 	}
 }
+
+// The scanner indexes build/, Dist/, target/ and __pycache__/ unless the
+// configured patterns name them exactly, so the watcher must report edits
+// there too; it used to drop them and the indexed copies went stale.
+func TestWatcherReportsDirectoriesTheScannerIndexes(t *testing.T) {
+	root := t.TempDir()
+	dirs := []string{"build", "Dist", "target", "__pycache__"}
+	for _, dir := range dirs {
+		if err := os.Mkdir(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	changed := make(chan []string, 16)
+	fw, err := NewFileWatcher(root, Options{Debounce: 20 * time.Millisecond, ExcludePatterns: []string{"dist"}},
+		func(_ context.Context, _ string, files []string) error {
+			changed <- files
+			return nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fw.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(fw.Stop)
+	for _, dir := range dirs {
+		if err := os.WriteFile(filepath.Join(root, dir, "probe.py"), []byte("x = 1\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seen := map[string]bool{}
+	deadline := time.After(3 * time.Second)
+	for len(seen) < len(dirs) {
+		select {
+		case files := <-changed:
+			for _, f := range files {
+				seen[filepath.Base(filepath.Dir(f))] = true
+			}
+		case <-deadline:
+			t.Fatalf("watcher reported only %v, want all of %v", seen, dirs)
+		}
+	}
+}

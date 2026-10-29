@@ -31,17 +31,28 @@ func RunBridge(ctx context.Context, port int, stdin io.Reader, stdout io.Writer,
 		Timeout: 5 * time.Minute, // prevent indefinite hangs on stalled daemon
 	}
 
-	scanner := bufio.NewScanner(stdin)
-	// Allow up to 10MB per line (large MCP responses)
-	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+	reader := bufio.NewReaderSize(stdin, 64*1024)
+	// Allow up to 10MB per line; a longer line is drained and rejected.
+	const maxLineSize = 10 * 1024 * 1024
 
 	// Sticky workspace: learned from the daemon's X-Resolved-Workspace
 	// response header. Once set, sent as X-Workspace-Root on every
 	// subsequent request.
 	var resolvedWorkspace string
 
-	for scanner.Scan() {
-		line := scanner.Text()
+	for {
+		raw, tooLong, err := readLine(reader, maxLineSize)
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if tooLong {
+			writeJSONRPCError(stdout, "", fmt.Errorf("request exceeds %dMB limit", maxLineSize/(1024*1024)))
+			continue
+		}
+		line := string(raw)
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
@@ -100,8 +111,26 @@ func RunBridge(ctx context.Context, port int, stdin io.Reader, stdout io.Writer,
 		}
 		fmt.Fprintf(stdout, "%s\n", body)
 	}
+}
 
-	return scanner.Err()
+// readLine reads one line without its line ending. A line longer than limit is
+// read to its end and discarded, and tooLong is reported instead.
+func readLine(r *bufio.Reader, limit int) (line []byte, tooLong bool, err error) {
+	for {
+		chunk, isPrefix, err := r.ReadLine()
+		if err != nil {
+			return nil, false, err
+		}
+		if !tooLong {
+			line = append(line, chunk...)
+			if len(line) > limit {
+				line, tooLong = nil, true
+			}
+		}
+		if !isPrefix {
+			return line, tooLong, nil
+		}
+	}
 }
 
 // writeJSONRPCError writes a JSON-RPC error response to the writer.

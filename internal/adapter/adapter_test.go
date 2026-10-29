@@ -100,6 +100,26 @@ func TestRunBridgeRefreshesResolvedWorkspace(t *testing.T) {
 	assert.Contains(t, stdout.String(), "daemon returned HTTP 500")
 }
 
+// One oversized request must get a JSON-RPC error, not end the whole session.
+func TestRunBridgeRejectsOversizedLineAndContinues(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":2,"result":{}}`)
+	}))
+	defer server.Close()
+
+	huge := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"x":"` + strings.Repeat("a", 10*1024*1024) + `"}}`
+	stdin := strings.NewReader(huge + "\n" + `{"jsonrpc":"2.0","id":2,"method":"ping"}` + "\n")
+	var stdout bytes.Buffer
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := adapter.RunBridge(ctx, server.Listener.Addr().(*net.TCPAddr).Port, stdin, &stdout, "")
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n")
+	require.Len(t, lines, 2)
+	assert.Contains(t, lines[0], `"code":-32000`)
+	assert.Equal(t, `{"jsonrpc":"2.0","id":2,"result":{}}`, lines[1])
+}
+
 // A notification gets 202 with an empty body from the daemon; the adapter must
 // not turn it into a blank stdout line, which line-based MCP clients reject.
 func TestRunBridgeSkipsEmptyNotificationReply(t *testing.T) {

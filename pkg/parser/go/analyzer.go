@@ -969,6 +969,9 @@ func (ca *CodeAnalyzer) extractCodeFromFile(filePath string, startLine, endLine 
 
 	var lines []string
 	scanner := bufio.NewScanner(file)
+	// A long line above the symbol (an embedded asset) would otherwise end
+	// the scan and leave the symbol without code.
+	scanner.Buffer(nil, int(pkgParser.MaxFileSize))
 	lineNum := 1
 
 	for scanner.Scan() {

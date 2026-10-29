@@ -282,6 +282,7 @@ func (t *ReadFileContextTool) streamLines(path string, start, end, ctxLines int)
 	maxLine := end + ctxLines
 
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(nil, int(parser.MaxFileSize)) // lines over 64 KB (bundles, data) are still read
 	currentLine := 1
 	var builder strings.Builder
 

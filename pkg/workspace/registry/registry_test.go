@@ -95,6 +95,30 @@ func TestRegistryRecoversFromCorruptFile(t *testing.T) {
 	}
 }
 
+// A null entry or candidate in registry.json must be skipped, not crash the
+// daemon at every start.
+func TestRegistrySkipsNullElements(t *testing.T) {
+	for name, content := range map[string]string{
+		"entry":     `{"version":"v2","entries":[null,{"root":"/one","name":"one"}]}`,
+		"v1":        `[null,{"root":"/one","name":"one"}]`,
+		"candidate": `{"version":"v2","entries":[{"root":"/one","name":"one"}],"candidates":[null]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			tmp := filepath.Join(t.TempDir(), "registry.json")
+			if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			r, err := New(tmp)
+			if err != nil {
+				t.Fatalf("new registry: %v", err)
+			}
+			if _, ok := r.LookupByRoot("/one"); !ok {
+				t.Fatal("valid entry next to the null one was lost")
+			}
+		})
+	}
+}
+
 func TestRegistryCleanup(t *testing.T) {
 	tmp := filepath.Join(t.TempDir(), "registry.json")
 	r, err := New(tmp)

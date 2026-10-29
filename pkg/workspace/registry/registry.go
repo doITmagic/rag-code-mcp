@@ -518,6 +518,9 @@ func (r *Registry) load() error {
 			r.addEntry(entry)
 		}
 		for _, cand := range store.Candidates {
+			if cand == nil {
+				continue
+			}
 			r.candidates[contract.WorkspacePathKey(cand.Root)] = cand
 		}
 		return nil
@@ -540,6 +543,10 @@ func (r *Registry) load() error {
 }
 
 func (r *Registry) addEntry(entry *Entry) {
+	// A null element in registry.json unmarshals to nil.
+	if entry == nil {
+		return
+	}
 	// Re-key legacy case-folded entries from their preserved root spelling.
 	entry.ID = hashRoot(entry.Root)
 	r.entries[entry.ID] = entry

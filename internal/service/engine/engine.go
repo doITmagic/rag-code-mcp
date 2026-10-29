@@ -87,7 +87,8 @@ type detectionCacheEntry struct {
 const detectionCacheTTL = 5 * time.Second
 
 // unwatchedRescanInterval paces incremental rescans of a workspace with no
-// watcher. A var so tests can shorten it.
+// watcher, and retries of a run that failed on a backend outage. A var so
+// tests can shorten it.
 var unwatchedRescanInterval = time.Minute
 
 func (e *Engine) GetSearchService() *search.Service {
@@ -472,7 +473,11 @@ func (e *Engine) autoTriggerIndex(wctx *WorkspaceContext) {
 	// Calling it directly (not via `go`) avoids the extra scheduling delay
 	// that previously widened the race window between ResumeIndexingOnConnect
 	// and DetectContext. StartIndexingAsync spawns its own goroutine internally.
-	_, triggered := e.connectTriggered.LoadOrStore(wctx.ID, true)
+	v, triggered := e.connectTriggered.LoadOrStore(wctx.ID, true)
+	// A run that failed on a backend outage stored when it may be retried.
+	if retryAt, ok := v.(time.Time); ok && !time.Now().Before(retryAt) && e.connectTriggered.CompareAndSwap(wctx.ID, v, true) {
+		triggered = false
+	}
 	if !triggered || wctx.ReindexRequired {
 		// Queue a full run when a job is busy; otherwise this trigger (for
 		// example the retry after an aborted run) would be dropped.
@@ -1146,10 +1151,15 @@ func (e *Engine) startIndexing(root, id string, changedFiles []string, recreate,
 		if ctx.Err() == nil {
 			finalizeIndexStatus(root, err)
 		}
-		if err != nil {
-			// A checkout interrupted this run, or files failed and stayed out
-			// of the saved state; the next request must retry even with a watcher.
+		switch {
+		case errors.Is(err, indexer.ErrWorkspaceChanged):
+			// A checkout interrupted this run; the next request must retry even with a watcher.
 			e.connectTriggered.Delete(id)
+		case errors.Is(err, indexer.ErrEmbedderUnavailable), errors.Is(err, indexer.ErrStoreUnavailable):
+			// Files stayed out of the saved state because a backend was down:
+			// retry on a later request, paced so an outage is not rescanned on
+			// every one. Files that fail on their own wait for the next natural run.
+			e.connectTriggered.Store(id, time.Now().Add(unwatchedRescanInterval))
 		}
 		if err != nil {
 			logger.Instance.Error("[IDX] ws=%s Background indexing failed: %v", filepath.Base(root), err)
@@ -1226,6 +1236,7 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) (r
 	// Resolve the collection per file: one watcher batch can mix languages,
 	// and taking the first file's language sent the rest to the wrong one.
 	var failed []string
+	var failedCollection string
 	for _, p := range files {
 		info, statErr := os.Stat(p)
 		isDir := statErr == nil && info.IsDir()
@@ -1280,6 +1291,7 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) (r
 				}
 				logger.Instance.Warn("[IDX] Failed to remove deleted %s: %v", filepath.Base(p), err)
 				failed = append(failed, fmt.Sprintf("%s: %v", p, err))
+				failedCollection = collection
 			}
 			continue
 		}
@@ -1289,6 +1301,7 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) (r
 			}
 			logger.Instance.Warn("[IDX] Failed to index %s: %v", filepath.Base(p), indexErr)
 			failed = append(failed, fmt.Sprintf("%s: %v", p, indexErr))
+			failedCollection = collection
 		}
 	}
 
@@ -1299,7 +1312,11 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) (r
 	}
 	e.refreshIndexCounts(wctx.Root)
 	if len(failed) > 0 {
-		return fmt.Errorf("%d of %d file(s) failed to index: %s", len(failed), len(files), failed[0])
+		err := fmt.Errorf("%d of %d file(s) failed to index: %s", len(failed), len(files), failed[0])
+		if backendErr := e.indexer.CheckBackends(ctx, failedCollection); backendErr != nil && ctx.Err() == nil {
+			err = fmt.Errorf("%w; %w", err, backendErr)
+		}
+		return err
 	}
 	return nil
 }
@@ -1459,6 +1476,7 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 	indexer.SaveIndexStatus(wctx.Root, s)
 
 	var indexErrors []string
+	var failedCollection string
 	for _, lang := range languages {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -1512,14 +1530,18 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 		if err != nil {
 			logger.Instance.Error("[IDX] ws=%s lang=%s ❌ failed: %v", wsName, lang, err)
 			indexErrors = append(indexErrors, fmt.Sprintf("%s: %v", lang, err))
+			failedCollection = collection
 		} else {
 			logger.Instance.Info("[IDX] ws=%s lang=%s ✓ done", wsName, lang)
 		}
 	}
 
 	if len(indexErrors) > 0 {
-		return fmt.Errorf("indexing failed for %d language(s): %s. Check if Ollama is running and the embedding model is available",
-			len(indexErrors), strings.Join(indexErrors, "; "))
+		err := fmt.Errorf("indexing failed for %d language(s): %s", len(indexErrors), strings.Join(indexErrors, "; "))
+		if backendErr := e.indexer.CheckBackends(ctx, failedCollection); backendErr != nil && ctx.Err() == nil {
+			err = fmt.Errorf("%w; %w", err, backendErr)
+		}
+		return fmt.Errorf("%w. Check if Ollama is running and the embedding model is available", err)
 	}
 
 	return nil

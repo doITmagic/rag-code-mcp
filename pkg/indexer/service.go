@@ -521,6 +521,26 @@ func (s *Service) RemoveFile(ctx context.Context, collection, path string, state
 	return nil
 }
 
+// ErrEmbedderUnavailable and ErrStoreUnavailable mark a run whose files failed
+// because a backend was down, rather than because of the files themselves.
+var (
+	ErrEmbedderUnavailable = errors.New("embedding service unavailable")
+	ErrStoreUnavailable    = errors.New("vector store unavailable")
+)
+
+// CheckBackends probes the store and the embedder once. Callers use it after
+// files failed to tell an outage, worth retrying soon, from files that fail
+// on their own and would fail again on every retry.
+func (s *Service) CheckBackends(ctx context.Context, collection string) error {
+	if _, err := s.store.CollectionExists(ctx, collection); err != nil {
+		return fmt.Errorf("%w: %v", ErrStoreUnavailable, err)
+	}
+	if _, err := s.embedder.Embed(ctx, "test"); err != nil {
+		return fmt.Errorf("%w: %v", ErrEmbedderUnavailable, err)
+	}
+	return nil
+}
+
 // circuitBreakerThreshold is the number of consecutive embed failures that
 // triggers an Ollama health check and potential restart before continuing.
 const circuitBreakerThreshold = 2

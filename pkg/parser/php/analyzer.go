@@ -1534,10 +1534,11 @@ func (ca *CodeAnalyzer) isLaravelByFilesystem(filePath string) bool {
 			return true
 		}
 
-		// Also check for composer.json with laravel/framework
+		// Also check for composer.json with laravel/framework. Only a regular
+		// file is read: opening a FIFO named composer.json would block forever.
 		composerPath := filepath.Join(dir, "composer.json")
-		if content, err := os.ReadFile(composerPath); err == nil {
-			if strings.Contains(string(content), "laravel/framework") {
+		if info, err := os.Stat(composerPath); err == nil && info.Mode().IsRegular() {
+			if content, err := os.ReadFile(composerPath); err == nil && strings.Contains(string(content), "laravel/framework") {
 				ca.laravelCache[dir] = true
 				ca.laravelCache[startDir] = true
 				return true

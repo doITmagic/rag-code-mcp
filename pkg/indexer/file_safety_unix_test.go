@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/php/laravel"   // register Laravel detection
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/php/wordpress" // register PHP analyzer and WordPress detection
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/python"        // register Python analyzer
 )
@@ -18,9 +19,10 @@ import (
 func TestIndexWorkspaceSkipsFIFOs(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "main.go"), "package main\nfunc Kept() {}\n")
-	// WordPress detection reads the other *.php files next to an indexed one.
+	// WordPress detection reads the other *.php files next to an indexed one,
+	// Laravel detection reads composer.json there and in the parents.
 	writeTestFile(t, filepath.Join(root, "a.php"), "<?php\nfunction kept() {}\n")
-	for _, name := range []string{"fifo.go", "fifo.py", "fifo.php"} {
+	for _, name := range []string{"fifo.go", "fifo.py", "fifo.php", "composer.json"} {
 		if err := syscall.Mkfifo(filepath.Join(root, name), 0o600); err != nil {
 			t.Skipf("mkfifo unavailable: %v", err)
 		}

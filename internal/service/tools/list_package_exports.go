@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"unicode"
@@ -13,6 +14,7 @@ import (
 	"golang.org/x/text/language"
 
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
+	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 	"github.com/doITmagic/rag-code-mcp/pkg/telemetry"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -121,6 +123,12 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 
 		resp := ToolResponse{Status: "error", Error: fmt.Sprintf("package export search failed: %v", err)}
 		return resp.JSON()
+	}
+
+	// The short-name filter above also matches every other package with the same
+	// last segment (api/cache and storage/cache); a full path picks among them.
+	if filterPackage != packageName {
+		allResults = filterByImportPath(allResults, packageName)
 	}
 
 	if len(allResults) == 0 {
@@ -264,6 +272,33 @@ func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]in
 	}
 
 	return resp.JSON()
+}
+
+// filterByImportPath keeps the results whose directory shares the most trailing
+// path segments with importPath. The module prefix is not known here, so a
+// longest-suffix match is used instead of an exact comparison.
+func filterByImportPath(results []storage.SearchResult, importPath string) []storage.SearchResult {
+	want := strings.Split(strings.Trim(importPath, "/"), "/")
+	matched := func(r storage.SearchResult) int {
+		fp, _ := r.Point.Payload["file_path"].(string)
+		dir := strings.Split(filepath.ToSlash(filepath.Dir(fp)), "/")
+		n := 0
+		for n < len(want) && n < len(dir) && want[len(want)-1-n] == dir[len(dir)-1-n] {
+			n++
+		}
+		return n
+	}
+	best := 0
+	for _, r := range results {
+		best = max(best, matched(r))
+	}
+	var kept []storage.SearchResult
+	for _, r := range results {
+		if matched(r) == best {
+			kept = append(kept, r)
+		}
+	}
+	return kept
 }
 
 // isExported returns true if name is exported by Go naming convention (first rune is uppercase).

@@ -154,6 +154,20 @@ func TestUpdateMCPConfigToleratesBOM(t *testing.T) {
 	}
 }
 
+// With --transport sse and no --sse-port, IDEs must point at the port the
+// daemon listens on by default (rag-code-mcp --http-port 39000).
+func TestSSETransportDefaultsToDaemonPort(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mcp.json")
+	if !updateMCPConfig("cursor", "Cursor", path, "/bin/rag-code-mcp", "sse", *ssePortFlag) {
+		t.Fatal("configure failed")
+	}
+	cfg, _ := readJSONConfig(path)
+	entry := cfg["mcpServers"].(map[string]interface{})["ragcode"].(map[string]interface{})
+	if entry["url"] != "http://localhost:39000/mcp" {
+		t.Fatalf("url = %v, want the daemon's default port 39000", entry["url"])
+	}
+}
+
 // VS Code reads MCP servers from "servers" only; an entry under "mcpServers"
 // in a freshly created mcp.json is never loaded.
 func TestVSCodeMCPConfigCreatedWithServersKey(t *testing.T) {

@@ -37,7 +37,7 @@ var (
 	idesFlag      = flag.String("ides", "auto", "Comma-separated IDE list to configure (auto, codex, vs-code, claude, claude-cli, cursor, windsurf, antigravity, gemini-cli, zed)")
 	configureOnly = flag.Bool("configure-only", false, "Configure IDE integrations using the installed binary; do not reinstall binaries or services")
 	transportFlag = flag.String("transport", "auto", "MCP transport: 'auto' (SSE if server running, else stdio), 'stdio' (binary), 'sse' (URL)")
-	ssePortFlag   = flag.Int("sse-port", 3000, "Port where rag-code-mcp SSE server listens (used for --transport=sse|auto)")
+	ssePortFlag   = flag.Int("sse-port", 39000, "Port where the rag-code-mcp daemon listens, its --http-port (used for --transport=sse|auto)")
 )
 
 const (

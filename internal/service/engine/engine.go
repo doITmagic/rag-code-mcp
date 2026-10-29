@@ -87,7 +87,7 @@ type detectionCacheEntry struct {
 const detectionCacheTTL = 5 * time.Second
 
 // unwatchedRescanInterval paces incremental rescans of a workspace with no
-// watcher, and retries of a run that failed on a backend outage. A var so
+// watcher, and retries of a run in which files failed. A var so
 // tests can shorten it.
 var unwatchedRescanInterval = time.Minute
 
@@ -475,7 +475,7 @@ func (e *Engine) autoTriggerIndex(wctx *WorkspaceContext) {
 	// that previously widened the race window between ResumeIndexingOnConnect
 	// and DetectContext. StartIndexingAsync spawns its own goroutine internally.
 	v, triggered := e.connectTriggered.LoadOrStore(wctx.ID, true)
-	// A run that failed on a backend outage stored when it may be retried.
+	// A run in which files failed stored when it may be retried.
 	if retryAt, ok := v.(time.Time); ok && !time.Now().Before(retryAt) && e.connectTriggered.CompareAndSwap(wctx.ID, v, true) {
 		triggered = false
 	}
@@ -1156,10 +1156,11 @@ func (e *Engine) startIndexing(root, id string, changedFiles []string, recreate,
 		case errors.Is(err, indexer.ErrWorkspaceChanged):
 			// A checkout interrupted this run; the next request must retry even with a watcher.
 			e.connectTriggered.Delete(id)
-		case errors.Is(err, indexer.ErrEmbedderUnavailable), errors.Is(err, indexer.ErrStoreUnavailable):
-			// Files stayed out of the saved state because a backend was down:
-			// retry on a later request, paced so an outage is not rescanned on
-			// every one. Files that fail on their own wait for the next natural run.
+		case err != nil:
+			// Files that failed stayed out of the saved state: retry them on a
+			// later request even with a watcher, since an outage may already be
+			// over by now. Paced so an outage, or a file that fails on its own
+			// every time, is not rescanned on every request.
 			e.connectTriggered.Store(id, time.Now().Add(unwatchedRescanInterval))
 		}
 		if err != nil {

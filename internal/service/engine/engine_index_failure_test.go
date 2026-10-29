@@ -154,3 +154,72 @@ func TestFailingFileDoesNotRerunOnEveryRequest(t *testing.T) {
 		t.Fatalf("failing file was re-indexed on every request: %d attempts", n)
 	}
 }
+
+// onceFailingLLM fails its first embed call only, like an embedder that
+// blipped mid-run and was back before the run ended.
+type onceFailingLLM struct {
+	mockLLM
+	calls atomic.Int32
+}
+
+func (p *onceFailingLLM) Embed(context.Context, string) ([]float64, error) {
+	if p.calls.Add(1) == 1 {
+		return nil, errors.New("connection refused")
+	}
+	return []float64{0.1}, nil
+}
+
+// Files that failed during an outage that was over by the end of the run
+// must still be retried later in a watched workspace, paced like any retry.
+func TestFileFailedInTransientOutageIsRetriedWithWatcher(t *testing.T) {
+	old := unwatchedRescanInterval
+	unwatchedRescanInterval = 300 * time.Millisecond
+	t.Cleanup(func() { unwatchedRescanInterval = old })
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\nfunc Work() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	provider := &onceFailingLLM{}
+	store := &testStore{existing: map[string]bool{}}
+	cfg := &config.Config{Workspace: config.WorkspaceConfig{AutoIndex: true, WatchEnabled: true}}
+	eng := NewEngine(indexer.NewService(provider, store), search.NewService(provider, store), filepath.Join(t.TempDir(), "registry.json"), cfg)
+	eng.SetResolver(resolver.New(resolver.Dependencies{Detector: &exactRootDetector{}, Registry: eng.registry}))
+	eng.watchers.SetFactory(func(string, watch.Options, watch.OnChangeFunc) (watch.Watcher, error) {
+		return noopWatcher{}, nil
+	})
+	t.Cleanup(eng.Close)
+
+	wctx, err := eng.DetectContextAsRoot(context.Background(), root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.existing[wctx.CollectionName("go")] = true
+	jobDone := func() bool {
+		_, running := eng.indexingJobs.Load(wctx.ID)
+		return !running
+	}
+	eng.connectTriggered.Store(wctx.ID, true)
+	eng.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
+	waitFor(t, "indexing did not finish", jobDone)
+	if s := indexer.LoadIndexStatus(root); s == nil || s.Error == "" {
+		t.Fatalf("index status hides the failed file: %+v", s)
+	}
+
+	before := provider.calls.Load()
+	if _, err := eng.DetectContextAsRoot(context.Background(), root, true); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	waitFor(t, "indexing did not finish", jobDone)
+	if provider.calls.Load() != before {
+		t.Fatal("a request right after the failed run retried at once")
+	}
+	time.Sleep(unwatchedRescanInterval)
+	if _, err := eng.DetectContextAsRoot(context.Background(), root, true); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "file that failed during a recovered outage was never retried", func() bool { return provider.calls.Load() > before && jobDone() })
+	if s := indexer.LoadIndexStatus(root); s == nil || s.Error != "" {
+		t.Fatalf("retry did not succeed: %+v", s)
+	}
+}

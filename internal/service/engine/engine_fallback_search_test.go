@@ -397,3 +397,24 @@ func TestFallbackDirectSearchSkipsFilesIndexingSkips(t *testing.T) {
 		t.Fatalf("fallback searched a minified bundle: %v in %v", r.Point.Payload["name"], r.Point.Payload["file_path"])
 	}
 }
+
+// Analyzers do not observe ctx, so one large ordinary file (a 1 MB JS file
+// took 14s) ran the search far past its budget while the client waited.
+func TestFallbackDirectSearchStopsAtItsBudget(t *testing.T) {
+	old := fallbackTimeout
+	fallbackTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { fallbackTimeout = old })
+	root, eng := setupFallbackWorkspace(t)
+	var src strings.Builder
+	for i := 0; src.Len() < 512<<10; i++ {
+		fmt.Fprintf(&src, "function ordinaryFunction%d(a, b) {\n  return a + b;\n}\n", i)
+	}
+	if err := os.WriteFile(filepath.Join(root, "app.js"), []byte(src.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	eng.FallbackDirectSearch(context.Background(), root, "ordinaryFunction7", 10)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("fallback with a %v budget took %v", fallbackTimeout, elapsed)
+	}
+}

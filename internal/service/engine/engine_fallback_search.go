@@ -40,12 +40,12 @@ const (
 	// response times bounded (~2-3s for typical projects).
 	fallbackMaxFiles = 200
 
-	// fallbackTimeout is the hard time limit for the entire fallback scan.
-	fallbackTimeout = 5 * time.Second
-
 	// fallbackMinScore discards symbols with very low relevance.
 	fallbackMinScore = 0.05
 )
+
+// fallbackTimeout is the hard time limit for the entire fallback scan.
+var fallbackTimeout = 5 * time.Second
 
 // FallbackDirectSearch walks the workspace, parses files with the AST parsers,
 // and scores symbols against the query using lexical fuzzy matching.
@@ -129,10 +129,27 @@ func (e *Engine) FallbackDirectSearch(ctx context.Context, workspaceRoot, query 
 
 		filesScanned++
 
-		// Parse the file — extract symbols via AST
-		result, parseErr := analyzer.Analyze(ctx, path)
-		if parseErr != nil || result == nil {
-			return nil
+		// Parse the file — extract symbols via AST. Analyzers do not observe
+		// ctx, so stop waiting when the budget runs out; the abandoned parse
+		// finishes in the background (bounded by parser.MaxFileSize).
+		type analyzed struct {
+			result *parser.Result
+			err    error
+		}
+		done := make(chan analyzed, 1)
+		go func() {
+			result, err := analyzer.Analyze(ctx, path)
+			done <- analyzed{result, err}
+		}()
+		var result *parser.Result
+		select {
+		case <-ctx.Done():
+			return filepath.SkipAll
+		case a := <-done:
+			if a.err != nil || a.result == nil {
+				return nil
+			}
+			result = a.result
 		}
 
 		// Score each symbol against the query

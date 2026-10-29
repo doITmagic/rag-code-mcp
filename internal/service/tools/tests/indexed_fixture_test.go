@@ -31,9 +31,9 @@ func indexFixture(t *testing.T, ext string, analyzer parser.Analyzer, files map[
 	}
 	store.ExactSearchFunc = func(_ context.Context, collection string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error) {
 		var found []storage.SearchResult
+		// Points live in their analyzer's collection: TypeScript in javascript.
 		for _, point := range points {
-			language, _ := point.Payload["language"].(string)
-			if strings.HasSuffix(collection, "-"+language) && payloadMatches(point.Payload, filters) {
+			if strings.HasSuffix(collection, "-"+analyzer.Name()) && payloadMatches(point.Payload, filters) {
 				found = append(found, storage.SearchResult{Point: point, Score: 1})
 			}
 		}

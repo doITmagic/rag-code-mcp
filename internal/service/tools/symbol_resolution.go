@@ -215,7 +215,18 @@ func resolveCall(ctx context.Context, eng *engine.Engine, wsID string, source st
 			return uniqueSymbol(module, "")
 		}
 		if language != "go" {
-			return nil, "unresolved"
+			// The receiver's type is unknown, so any method of that name is a
+			// candidate, unless a JS/TS Class.method() names another class.
+			if language == "javascript" || language == "typescript" {
+				results, err := eng.ExactSearchPolyglot(ctx, wsID, map[string]interface{}{"type": "method", "name": receiver + "." + name}, 2)
+				if err != nil {
+					return nil, "unresolved"
+				}
+				if len(results) > 0 {
+					return uniqueSymbol(results, "")
+				}
+			}
+			return nil, "ambiguous"
 		}
 		// Go records the receiver's type for calls on the method's own
 		// receiver; that type lives in the caller's package. A promoted
@@ -252,7 +263,9 @@ func callMayTarget(source storage.SearchResult, rel map[string]interface{}, reso
 	if resolved != nil {
 		return symbolKey(*resolved) == symbolKey(target)
 	}
-	return status == "ambiguous" && rel["target_name"] == target.Point.Payload["name"] && symbolKey(source) != symbolKey(target)
+	// JS/TS name a method Class.method; the call names only the method.
+	name, _ := target.Point.Payload["name"].(string)
+	return status == "ambiguous" && rel["target_name"] == shortSymbolName(name) && symbolKey(source) != symbolKey(target)
 }
 
 func symbolKey(r storage.SearchResult) string {

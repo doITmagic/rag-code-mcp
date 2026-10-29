@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/doITmagic/rag-code-mcp/internal/config"
@@ -123,6 +124,31 @@ func TestDetectContextRelativePathUsesClientRoot(t *testing.T) {
 	}
 	if wctx.Root != clientRoot {
 		t.Fatalf("relative path resolved to %q, want client root %q", wctx.Root, clientRoot)
+	}
+}
+
+// A deleted or moved workspace that is still the newest registry entry must
+// fail with an error that tells the agent how to recover.
+func TestDetectContextMissingFallbackRootIsActionable(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "gone")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	registryPath := filepath.Join(t.TempDir(), "registry.json")
+	reg, err := registry.New(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.RegisterWorkspace(root, "gone", "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatal(err)
+	}
+	eng := NewEngine(nil, nil, registryPath, &config.Config{})
+	_, err = eng.DetectContext(context.Background(), "")
+	if err == nil || !strings.Contains(err.Error(), "file_path") || strings.Contains(err.Error(), "git") {
+		t.Fatalf("missing fallback root error = %v, want an actionable file_path hint", err)
 	}
 }
 

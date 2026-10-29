@@ -330,6 +330,9 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 				logger.Instance.Warn("[WS-DETECT] ❌ All tiers exhausted — no workspace detected")
 				return nil, fmt.Errorf("❌ No workspace detected. Please provide the 'file_path' of the file you are currently working on to help detect the project context.")
 			}
+			if _, err := os.Stat(active); err != nil {
+				return nil, fmt.Errorf("last used workspace %q is unavailable: %w; provide the 'file_path' of the file you are currently working on to select a workspace", active, err)
+			}
 			req.WorkspaceRoot = active
 			source = "registry_fallback"
 			logger.Instance.Info("[WS-DETECT] ✅ Tier 3 matched: using registry fallback=%s", active)

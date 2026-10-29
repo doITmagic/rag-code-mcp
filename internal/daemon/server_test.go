@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"strconv"
 	"testing"
 	"time"
@@ -60,6 +61,46 @@ func TestListenAndServe_Success(t *testing.T) {
 	err = json.NewDecoder(resp.Body).Decode(&health)
 	require.NoError(t, err)
 	assert.Equal(t, "test-1.0", health.Version)
+}
+
+// Routes beside /mcp (pprof in debug mode) must get the same DNS-rebinding
+// protection the SDK gives /mcp: a foreign Host header is refused.
+func TestListenAndServe_RejectsForeignHost(t *testing.T) {
+	port, err := getFreePort()
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ready := make(chan struct{})
+	go func() {
+		_ = daemon.ListenAndServe(ctx, daemon.ListenConfig{
+			Port:    port,
+			Version: "test-1.0",
+			Handler: http.HandlerFunc(pprof.Cmdline),
+			OnReady: func() { close(ready) },
+		})
+	}()
+	select {
+	case <-ready:
+	case <-time.After(5 * time.Second):
+		t.Fatal("daemon did not start in time")
+	}
+
+	for host, want := range map[string]int{
+		"evil.example.com":                       http.StatusForbidden,
+		"evil.example.com:" + strconv.Itoa(port): http.StatusForbidden,
+		"127.0.0.1:" + strconv.Itoa(port):        http.StatusOK,
+		"localhost:" + strconv.Itoa(port):        http.StatusOK,
+	} {
+		req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:"+strconv.Itoa(port)+"/debug/pprof/cmdline", nil)
+		require.NoError(t, err)
+		req.Host = host
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		resp.Body.Close()
+		assert.Equal(t, want, resp.StatusCode, "Host %s", host)
+	}
 }
 
 func TestListenAndServe_PortConflict(t *testing.T) {

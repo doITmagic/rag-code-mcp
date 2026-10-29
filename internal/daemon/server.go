@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -47,7 +49,15 @@ func ListenAndServe(ctx context.Context, cfg ListenConfig) error {
 		return fmt.Errorf("failed to bind TCP port %s (address in use?): %w", addr, err)
 	}
 
-	tcpServer := &http.Server{Handler: mux}
+	// DNS rebinding protection for every route, as the SDK does for /mcp only:
+	// pprof and /health are served beside it on the same listener.
+	tcpServer := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isLoopbackHost(r.Host) {
+			http.Error(w, fmt.Sprintf("Forbidden: invalid Host header %q", r.Host), http.StatusForbidden)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})}
 	go func() {
 		if serveErr := tcpServer.Serve(tcpListener); serveErr != nil && serveErr != http.ErrServerClosed {
 			logger.Instance.Error("TCP server error: %v", serveErr)
@@ -78,4 +88,17 @@ func ListenAndServe(ctx context.Context, cfg ListenConfig) error {
 	}
 
 	return nil
+}
+
+// isLoopbackHost mirrors the go-sdk's loopback check on a Host header.
+func isLoopbackHost(host string) bool {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	if host == "localhost" {
+		return true
+	}
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.IsLoopback()
 }

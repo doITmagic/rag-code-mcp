@@ -229,19 +229,26 @@ func resolveCall(ctx context.Context, eng *engine.Engine, wsID string, source st
 			if err != nil {
 				return nil, "unresolved"
 			}
-			// import pkg.utils as u names the module utils by u.
-			moduleName := receiver
+			// import pkg.utils as u names the module pkg.utils by u, which
+			// outside a package with __init__.py is indexed as utils.
+			moduleNames := []string{receiver}
 			imported, isImport := pythonImports(file)[receiver]
 			if isImport {
-				moduleName = imported[strings.LastIndex(imported, ".")+1:]
+				moduleNames = []string{imported.module, imported.module[strings.LastIndex(imported.module, ".")+1:]}
 			}
 			var module []storage.SearchResult
-			for _, r := range results {
-				if pkg, _ := r.Point.Payload["package"].(string); inPythonModule(pkg, moduleName) {
-					module = append(module, r)
+			for _, moduleName := range moduleNames {
+				for _, r := range results {
+					if pkg, _ := r.Point.Payload["package"].(string); inPythonModule(pkg, moduleName) {
+						module = append(module, r)
+					}
+				}
+				if len(module) > 0 {
+					break
 				}
 			}
-			if len(module) > 0 || isImport {
+			// from db import session may bind a value, not a module.
+			if len(module) > 0 || isImport && !imported.from {
 				return uniqueSymbol(module, "")
 			}
 			// Any other receiver is a value of unknown type, so any method of
@@ -373,11 +380,18 @@ var (
 	pyFromImportRe = regexp.MustCompile(`^\s*from\s+(\S+)\s+import\s+(.+)`)
 )
 
+// pythonImport is the dotted path a name is imported from; a from-import may
+// bind a class or another value rather than a module.
+type pythonImport struct {
+	module string
+	from   bool
+}
+
 // pythonImports maps each name a Python file's imports bind to the module it
 // names: import a.b binds a and b, while import a.b as m and from a import b
-// as m bind m to a.b. A from-import may also bind a class or another value.
-func pythonImports(path string) map[string]string {
-	imports := map[string]string{}
+// as m bind m to a.b.
+func pythonImports(path string) map[string]pythonImport {
+	imports := map[string]pythonImport{}
 	// Never open a FIFO or device that took an indexed file's place.
 	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
 		return imports
@@ -414,16 +428,16 @@ func pythonImports(path string) map[string]string {
 				module = strings.Trim(from+"."+module, ".")
 			}
 			if len(fields) == 3 && fields[1] == "as" {
-				imports[fields[2]] = module
+				imports[fields[2]] = pythonImport{module, isFrom}
 				continue
 			}
 			if isFrom {
-				imports[fields[0]] = module
+				imports[fields[0]] = pythonImport{module, true}
 				continue
 			}
 			segments := strings.Split(module, ".")
 			for i, segment := range segments {
-				imports[segment] = strings.Join(segments[:i+1], ".")
+				imports[segment] = pythonImport{module: strings.Join(segments[:i+1], ".")}
 			}
 		}
 	}

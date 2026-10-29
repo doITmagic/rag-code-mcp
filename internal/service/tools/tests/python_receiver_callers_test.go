@@ -154,3 +154,29 @@ func TestPythonUnknownReceiverCallIsAmbiguous(t *testing.T) {
 		}
 	}
 }
+
+// import pkg.utils as u names pkg.utils, not every module named utils, and
+// from db import session binds a value, whose session.commit() is a method call.
+func TestPythonImportBindingNamesFullModule(t *testing.T) {
+	dir, store := indexFixture(t, "py", python.NewAnalyzer(), map[string]string{
+		"pkg/__init__.py":   "",
+		"pkg/utils.py":      "def helper():\n    return 1\n",
+		"other/__init__.py": "",
+		"other/utils.py":    "def helper():\n    return 2\n",
+		"pkg/main.py":       "import pkg.utils as u\n\n\ndef call_alias():\n    return u.helper()\n",
+		"db.py":             "class Session:\n    def commit(self):\n        return 1\n\n\nsession = Session()\n",
+		"app.py":            "from db import session\n\n\ndef save():\n    return session.commit()\n",
+	})
+	eng := setupTestEngine(store)
+	t.Cleanup(eng.Close)
+	tool := tools.NewCallHierarchyTool(eng)
+	if got := pythonCallers(t, tool, filepath.Join(dir, "pkg", "utils.py"), "helper"); !slices.Equal(got, []string{"call_alias"}) {
+		t.Errorf("callers of pkg.utils helper = %v, want [call_alias]", got)
+	}
+	if got := pythonCallers(t, tool, filepath.Join(dir, "other", "utils.py"), "helper"); len(got) != 0 {
+		t.Errorf("callers of other.utils helper = %v, want none", got)
+	}
+	if got := pythonCallers(t, tool, filepath.Join(dir, "db.py"), "Session.commit"); !slices.Equal(got, []string{"save"}) {
+		t.Errorf("callers of Session.commit = %v, want [save]", got)
+	}
+}

@@ -200,16 +200,19 @@ func TestGitGuardRejectsMissingHEADAtBinding(t *testing.T) {
 	}
 }
 
-func TestGitIndexLockStopsIndexingBeforeDeletion(t *testing.T) {
+func TestGitIndexLockDoesNotStopIndexing(t *testing.T) {
 	root, head, _ := branchFixture(t)
+	// git status/add take index.lock routinely; a crashed Git leaves it behind.
 	if err := os.WriteFile(filepath.Join(root, ".git", "index.lock"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	store := &mockStore{}
 	service := NewService(&mockEmbedder{}, store)
 	ctx := WithGitState(context.Background(), root, "baseline", head)
-	_, err := service.IndexFile(ctx, "baseline", filepath.Join(root, "z.go"), NewState())
-	if !errors.Is(err, ErrWorkspaceChanged) || len(store.deletedFilters) != 0 || len(store.upsertPoints) != 0 {
-		t.Fatalf("locked checkout reached mutations: error=%v deleted=%v upserts=%d", err, store.deletedFilters, len(store.upsertPoints))
+	if _, err := service.IndexFile(ctx, "baseline", filepath.Join(root, "z.go"), NewState()); err != nil {
+		t.Fatalf("index.lock blocked indexing: %v", err)
+	}
+	if len(store.upsertPoints) == 0 {
+		t.Fatal("index.lock prevented the file from being indexed")
 	}
 }

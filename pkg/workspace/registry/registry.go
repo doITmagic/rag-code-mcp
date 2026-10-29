@@ -295,6 +295,7 @@ func (r *Registry) LookupByRoot(root string) (*Entry, bool) {
 // no parent found.
 // This prevents nested git repos (submodules, vendored projects) from being
 // treated as independent workspaces when they live inside an already-indexed project.
+// Parents are not returned across a linked worktree boundary.
 func (r *Registry) FindParentWorkspace(path string) (string, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -314,7 +315,7 @@ func (r *Registry) FindParentWorkspace(path string) (string, bool) {
 		prefix := strings.TrimRight(entryRoot, string(filepath.Separator)) + string(filepath.Separator)
 		if strings.HasPrefix(cleanPath, prefix) {
 			// Pick the deepest (most specific) parent
-			if len(entryRoot) > bestLen {
+			if len(entryRoot) > bestLen && !insideLinkedWorktree(entry.Root, path) {
 				bestLen = len(entryRoot)
 				bestRoot = entry.Root // preserve original casing
 			}
@@ -325,6 +326,24 @@ func (r *Registry) FindParentWorkspace(path string) (string, bool) {
 		return "", false
 	}
 	return bestRoot, true
+}
+
+// insideLinkedWorktree reports whether a linked worktree lies between ancestor
+// (exclusive) and path (inclusive). Such a path belongs to the worktree's own
+// branch, which the ancestor's index excludes.
+func insideLinkedWorktree(ancestor, path string) bool {
+	ancestorKey := contract.WorkspacePathKey(ancestor)
+	for dir := filepath.Clean(path); contract.WorkspacePathKey(dir) != ancestorKey; {
+		if detector.IsLinkedWorktree(dir) {
+			return true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return false
 }
 
 // absorbedChild holds info about a child entry that was removed from the registry.
@@ -344,7 +363,7 @@ func (r *Registry) absorbChildren(parentRoot string) []absorbedChild {
 	var toDelete []string
 	for id, entry := range r.entries {
 		entryRoot := contract.WorkspacePathKey(entry.Root)
-		if entryRoot != cleanParent && strings.HasPrefix(entryRoot, prefix) && !detector.IsLinkedWorktree(entry.Root) {
+		if entryRoot != cleanParent && strings.HasPrefix(entryRoot, prefix) && !insideLinkedWorktree(parentRoot, entry.Root) {
 			toDelete = append(toDelete, id)
 		}
 	}

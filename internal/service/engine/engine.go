@@ -996,9 +996,17 @@ func (e *Engine) ExactSearchPolyglot(ctx context.Context, wsID string, filters m
 			if !exists {
 				return
 			}
-			atomic.AddInt32(&existingCollections, 1)
 
 			res, sErr := e.search.ExactSearch(ctx, coll, filters, limit)
+			if sErr != nil {
+				// A recreate drops the collection while the cache still says
+				// it exists: that is a collection being rebuilt, not a failure.
+				e.search.InvalidateCollectionCache(coll)
+				if exists, err := e.search.CollectionExists(ctx, coll); err == nil && !exists {
+					return
+				}
+			}
+			atomic.AddInt32(&existingCollections, 1)
 			if sErr != nil {
 				logger.Instance.Warn("[IDX] ExactSearchPolyglot: search failed for %s: %v", coll, sErr)
 				resultsChan <- trial{err: sErr}

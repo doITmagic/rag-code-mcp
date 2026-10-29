@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/doITmagic/rag-code-mcp/internal/service/tools"
@@ -55,6 +56,59 @@ func TestExactLookupsReportVectorStoreOutage(t *testing.T) {
 			if response.Status != "error" {
 				t.Errorf("%s, %s: status=%s %s, want an error", name, tool, response.Status, response.Message)
 			}
+		}
+	}
+}
+
+// rag_index_workspace recreate=true drops a collection while the search
+// service still caches it as existing; a lookup in that gap must read as a
+// missing collection (indexing), not as a broken tool.
+func TestExactLookupsDuringCollectionRecreate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "count.go")
+	if err := os.WriteFile(path, []byte("package count\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var dropped atomic.Bool
+	store := &mockVectorStore{
+		CollectionExistsFunc: func(_ context.Context, name string) (bool, error) {
+			return strings.HasSuffix(name, "-go") && !dropped.Load(), nil
+		},
+		ExactSearchFunc: func(context.Context, string, map[string]interface{}, int) ([]storage.SearchResult, error) {
+			if dropped.Load() {
+				return nil, errors.New("rpc error: code = NotFound desc = Not found: Collection doesn't exist!")
+			}
+			return nil, nil
+		},
+	}
+	eng := setupTestEngine(store)
+	t.Cleanup(eng.Close)
+	exact := true
+	search := tools.NewSmartSearchTool(eng)
+	// Warms the collection cache with the -go collection.
+	if _, err := search.Execute(context.Background(), tools.SmartSearchInput{Query: "newCountValue", FilePath: path, ExactSymbol: &exact}); err != nil {
+		t.Fatal(err)
+	}
+	dropped.Store(true)
+	calls := map[string]func() (string, error){
+		"rag_search": func() (string, error) {
+			return search.Execute(context.Background(), tools.SmartSearchInput{Query: "newCountValue", FilePath: path, ExactSymbol: &exact})
+		},
+		"find_usages": func() (string, error) {
+			return tools.NewFindUsagesTool(eng).Execute(context.Background(), map[string]interface{}{"symbol_name": "newCountValue", "file_path": path})
+		},
+	}
+	for tool, call := range calls {
+		text, err := call()
+		if err != nil {
+			t.Errorf("%s: %v", tool, err)
+			continue
+		}
+		var response tools.ToolResponse
+		if err := json.Unmarshal([]byte(text), &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.Status == "error" {
+			t.Errorf("%s: %s", tool, text)
 		}
 	}
 }

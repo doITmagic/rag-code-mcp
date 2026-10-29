@@ -36,12 +36,12 @@ func ShouldSkipFile(path string) bool {
 		isGeneratedLockfile(path) || isGeneratedIDERule(path) || isMinifiedOrVendored(path)
 }
 
-// isIgnoredEnvFile reports whether path is a .env file Git ignores. A
-// committed .env.example documents settings; an ignored .env holds the real
-// secrets and must not become searchable.
+// isIgnoredEnvFile reports whether path is an env file (.env, .env.*, *.env)
+// Git ignores. A committed .env.example documents settings; an ignored .env
+// or prod.env holds the real secrets and must not become searchable.
 func isIgnoredEnvFile(path string) bool {
 	base := strings.ToLower(filepath.Base(path))
-	if base != ".env" && !strings.HasPrefix(base, ".env.") {
+	if base != ".env" && !strings.HasPrefix(base, ".env.") && filepath.Ext(base) != ".env" {
 		return false
 	}
 	cmd := exec.Command("git", "check-ignore", "-q", "--", filepath.Base(path))

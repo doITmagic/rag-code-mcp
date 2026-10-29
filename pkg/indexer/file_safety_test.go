@@ -96,6 +96,13 @@ func TestIndexWorkspaceSkipsGitignoredEnvFiles(t *testing.T) {
 	writeTestFile(t, filepath.Join(root, ".env"), "DB_PASSWORD=ignoredSecretMarker\n")
 	writeTestFile(t, filepath.Join(root, ".env.production"), "API_KEY=ignoredSecretMarker\n")
 	writeTestFile(t, filepath.Join(root, ".env.example"), "DB_PASSWORD=changeme\n")
+	// prod.env and db.env are env files too (the analyzer takes any .env
+	// extension), so an ignored one leaked its secrets the same way.
+	if err := os.Mkdir(filepath.Join(root, "deploy"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(root, "deploy", ".gitignore"), "*.env\n")
+	writeTestFile(t, filepath.Join(root, "deploy", "prod.env"), "PROD_DB_PASS=ignoredSecretMarker\n")
 
 	store := &mockStore{}
 	svc := NewService(&mockEmbedder{}, store)

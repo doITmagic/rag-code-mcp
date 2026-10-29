@@ -54,20 +54,26 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 
 	var symbols []pkgParser.Symbol
 	for _, ch := range chunks {
+		// Class.method tells apart methods that share a name.
+		var qualified string
+		if class, _ := ch.Metadata["class"].(string); class != "" && ch.Type == "method" {
+			qualified = class + "." + ch.Name
+		}
 		symbols = append(symbols, pkgParser.Symbol{
-			Name:      ch.Name,
-			Type:      pkgParser.SymbolType(ch.Type),
-			Package:   ch.Package,
-			Content:   ch.Code,
-			Signature: ch.Signature,
-			Docstring: ch.Docstring,
-			StartLine: ch.StartLine,
-			EndLine:   ch.EndLine,
-			FilePath:  ch.FilePath,
-			Language:  ch.Language,
-			IsPublic:  len(ch.Name) > 0 && !strings.HasPrefix(ch.Name, "_"),
-			Relations: ch.Relations,
-			Metadata:  ch.Metadata,
+			QualifiedName: qualified,
+			Name:          ch.Name,
+			Type:          pkgParser.SymbolType(ch.Type),
+			Package:       ch.Package,
+			Content:       ch.Code,
+			Signature:     ch.Signature,
+			Docstring:     ch.Docstring,
+			StartLine:     ch.StartLine,
+			EndLine:       ch.EndLine,
+			FilePath:      ch.FilePath,
+			Language:      ch.Language,
+			IsPublic:      len(ch.Name) > 0 && !strings.HasPrefix(ch.Name, "_"),
+			Relations:     ch.Relations,
+			Metadata:      ch.Metadata,
 		})
 	}
 

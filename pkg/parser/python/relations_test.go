@@ -126,3 +126,37 @@ def is_text_serializer(serializer):
 	require.NotNil(t, isText)
 	assert.True(t, hasRelation(isText.Relations, "dumps", pkgParser.RelCalls), "got %v", isText.Relations)
 }
+
+// Methods that share a name in one file can only be told apart by their
+// class, so each carries Class.method as its qualified name.
+func TestPythonMethodsCarryQualifiedName(t *testing.T) {
+	code := `class SigningAlgorithm:
+    def get_signature(self, key, value):
+        return b""
+
+
+class Signer:
+    def get_signature(self, value):
+        return b""
+
+
+def helper():
+    pass
+`
+	f := filepath.Join(t.TempDir(), "signer.py")
+	require.NoError(t, os.WriteFile(f, []byte(code), 0644))
+
+	res, err := NewAnalyzer().Analyze(context.Background(), f)
+	require.NoError(t, err)
+
+	var qualified []string
+	for _, sym := range res.Symbols {
+		if sym.Name == "get_signature" {
+			qualified = append(qualified, sym.QualifiedName)
+		}
+		if sym.Name == "helper" || sym.Name == "Signer" {
+			assert.Empty(t, sym.QualifiedName, sym.Name)
+		}
+	}
+	assert.ElementsMatch(t, []string{"SigningAlgorithm.get_signature", "Signer.get_signature"}, qualified)
+}

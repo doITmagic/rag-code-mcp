@@ -434,3 +434,27 @@ func TestFallbackDirectSearchStopsAtItsBudget(t *testing.T) {
 		t.Fatalf("fallback with a %v budget took %v", fallbackTimeout, elapsed)
 	}
 }
+
+// An abandoned parse keeps running, so every rag_search before the first index
+// left another parse of a large Python or JavaScript file behind, about 1 GB
+// for 4 MB. A Go file stands in: it parses fast, so without the gate its
+// symbol is found well inside the budget.
+func TestFallbackDirectSearchSkipsFilesOverTheASTCap(t *testing.T) {
+	root, eng := setupFallbackWorkspace(t)
+	var src strings.Builder
+	src.WriteString("package pkg\n\nfunc LargeFileMarker() {}\n")
+	for i := 0; int64(src.Len()) <= parser.MaxASTFileSize; i++ {
+		fmt.Fprintf(&src, "\nfunc filler%d(a, b int) int { return a + b + %d }\n", i, i)
+	}
+	if err := os.WriteFile(filepath.Join(root, "large.go"), []byte(src.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range eng.FallbackDirectSearch(context.Background(), root, "LargeFileMarker", 10) {
+		if r.Point.Payload["name"] == "LargeFileMarker" {
+			t.Fatalf("fallback parsed a %d-byte file over the %d-byte AST cap", src.Len(), parser.MaxASTFileSize)
+		}
+	}
+	if results := eng.FallbackDirectSearch(context.Background(), root, "Calculator", 10); len(results) == 0 {
+		t.Fatal("small files must still be searched")
+	}
+}

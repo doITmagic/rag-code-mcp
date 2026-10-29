@@ -107,9 +107,9 @@ var _ = Describe("GetFileContextTool", func() {
 		// Every read of a 4 MB source file parsed it whole, about 15 s and
 		// 1.2 GB, and a few parallel reads got the daemon OOM-killed.
 		It("should read a source file over the AST size cap as plain lines", func() {
-			old := tools.MaxASTFileSize
-			tools.MaxASTFileSize = 1 << 10
-			DeferCleanup(func() { tools.MaxASTFileSize = old })
+			old := parser.MaxASTFileSize
+			parser.MaxASTFileSize = 1 << 10
+			DeferCleanup(func() { parser.MaxASTFileSize = old })
 			var src strings.Builder
 			for i := 0; i < 100; i++ {
 				fmt.Fprintf(&src, "def big_function_%d(a, b):\n    return a + b\n\n", i)

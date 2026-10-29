@@ -126,6 +126,11 @@ func (e *Engine) FallbackDirectSearch(ctx context.Context, workspaceRoot, query 
 		if indexer.ShouldSkipFile(path) {
 			return nil
 		}
+		// An abandoned parse keeps running, so each search on a large Python
+		// or JavaScript file left another of about 1 GB behind.
+		if info, err := d.Info(); err == nil && info.Size() > parser.MaxASTFileSize {
+			return nil
+		}
 
 		filesScanned++
 

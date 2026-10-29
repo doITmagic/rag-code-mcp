@@ -43,6 +43,12 @@ func GetByFile(filePath string) Analyzer {
 // data, and parsing one whole can exhaust the daemon's memory.
 var MaxFileSize int64 = 4 << 20
 
+// MaxASTFileSize caps the files parsed on demand, outside indexing:
+// rag_read_file_context's AST context and the fallback search. Such a parse
+// is not cached and costs about 300 MB per MB of Python or JavaScript, so a
+// few parallel requests on 4 MB files exhausted the daemon's memory.
+var MaxASTFileSize int64 = 512 << 10
+
 // SkipFile reports whether path exists but must not be read as source: it is
 // larger than MaxFileSize, or not a regular file. A symlink can point outside
 // the workspace, a FIFO blocks its reader forever and a device never ends.

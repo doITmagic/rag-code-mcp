@@ -28,16 +28,26 @@ func searchSymbolCandidates(ctx context.Context, eng *engine.Engine, wsID, name 
 	if err != nil || len(results) > 0 {
 		return results, err
 	}
-	parts := strings.Split(name, ".")
-	if len(parts) != 2 && len(parts) != 3 {
+	filters := goMethodFilters(name)
+	if filters == nil {
 		return nil, nil
 	}
+	return eng.ExactSearchPolyglot(ctx, wsID, filters, limit)
+}
+
+// goMethodFilters maps [pkg.]Receiver.Method, including (*T).Method, to the
+// metadata Go stores method ownership in, since it has no qualified_name.
+func goMethodFilters(name string) map[string]interface{} {
+	parts := strings.Split(name, ".")
+	if len(parts) != 2 && len(parts) != 3 {
+		return nil
+	}
+	parts[len(parts)-2] = strings.Trim(parts[len(parts)-2], "(*)")
 	for _, part := range parts {
 		if part == "" {
-			return nil, nil
+			return nil
 		}
 	}
-	// Go stores method ownership in metadata rather than qualified_name.
 	filters := map[string]interface{}{
 		"language": "go", "type": "method", "name": parts[len(parts)-1],
 		"metadata.receiver": parts[len(parts)-2],
@@ -45,7 +55,21 @@ func searchSymbolCandidates(ctx context.Context, eng *engine.Engine, wsID, name 
 	if len(parts) == 3 {
 		filters["package"] = parts[0]
 	}
-	return eng.ExactSearchPolyglot(ctx, wsID, filters, limit)
+	return filters
+}
+
+// qualifierRulesOut reports whether an unresolved name's qualifier was
+// checked: Go methods with its short name exist, none on that receiver.
+// Other qualifiers (packages, other languages) are not modelled here.
+func qualifierRulesOut(ctx context.Context, eng *engine.Engine, wsID, name string) bool {
+	filters := goMethodFilters(name)
+	if filters == nil {
+		return false
+	}
+	delete(filters, "metadata.receiver")
+	delete(filters, "package")
+	results, err := eng.ExactSearchPolyglot(ctx, wsID, filters, 1)
+	return err == nil && len(results) > 0
 }
 
 func uniqueSymbol(results []storage.SearchResult, file string) (*storage.SearchResult, string) {

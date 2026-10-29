@@ -36,12 +36,10 @@ func indexFixture(t *testing.T, ext string, analyzer parser.Analyzer, files map[
 		t.Fatal(err)
 	}
 	store.ExactSearchFunc = func(_ context.Context, collection string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error) {
-		if !strings.HasSuffix(collection, "-"+ext) {
-			return nil, nil
-		}
 		var found []storage.SearchResult
 		for _, point := range points {
-			if payloadMatches(point.Payload, filters) {
+			language, _ := point.Payload["language"].(string)
+			if strings.HasSuffix(collection, "-"+language) && payloadMatches(point.Payload, filters) {
 				found = append(found, storage.SearchResult{Point: point, Score: 1})
 			}
 		}

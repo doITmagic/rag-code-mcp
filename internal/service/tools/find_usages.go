@@ -113,7 +113,7 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 
 		return "", fmt.Errorf("usage search failed: %w", err)
 	}
-	if targetSymbol == nil && shortSymbolName(symbolName) != symbolName {
+	if targetSymbol == nil && qualifierRulesOut(ctx, t.engine, wctx.ID, symbolName) {
 		return (ToolResponse{
 			Status:  "no_results",
 			Message: fmt.Sprintf("No indexed symbol matches qualified name '%s'.", symbolName),

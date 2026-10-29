@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/doITmagic/rag-code-mcp/internal/generatedfile"
+	"github.com/doITmagic/rag-code-mcp/pkg/parser"
 )
 
 // maxAvgLineLen is the average-line-length threshold above which a file
@@ -28,7 +29,7 @@ var minifiedSuffixes = []string{
 }
 
 func shouldSkipFile(path string) bool {
-	return isLowValueConfigOrKeyMaterial(path) || isGeneratedLockfile(path) || isGeneratedIDERule(path) || isMinifiedOrVendored(path)
+	return parser.SkipFile(path) || isLowValueConfigOrKeyMaterial(path) || isGeneratedLockfile(path) || isGeneratedIDERule(path) || isMinifiedOrVendored(path)
 }
 
 func isGeneratedIDERule(path string) bool {

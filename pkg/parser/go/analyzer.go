@@ -80,7 +80,7 @@ func (ca *CodeAnalyzer) AnalyzePackage(dir string) (*PackageInfo, error) {
 	}
 	var src []string
 	for _, f := range files {
-		if !strings.HasSuffix(f, "_test.go") {
+		if !strings.HasSuffix(f, "_test.go") && !pkgParser.SkipFile(f) {
 			src = append(src, f)
 		}
 	}
@@ -96,6 +96,9 @@ func (ca *CodeAnalyzer) AnalyzeTestPackages(dir string) []*PackageInfo {
 	byPkg := make(map[string][]string)
 	var order []string
 	for _, f := range files {
+		if pkgParser.SkipFile(f) {
+			continue
+		}
 		parsed, err := parser.ParseFile(token.NewFileSet(), f, nil, parser.PackageClauseOnly)
 		if err != nil {
 			continue

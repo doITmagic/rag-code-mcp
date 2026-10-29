@@ -2,6 +2,7 @@ package parser
 
 import (
 	"context"
+	"os"
 	"sync"
 )
 
@@ -34,6 +35,14 @@ func GetByFile(filePath string) Analyzer {
 		}
 	}
 	return nil
+}
+
+// SkipFile reports whether path exists but must not be read as source because
+// it is not a regular file: a symlink can point outside the workspace, a FIFO
+// blocks its reader forever and a device never ends.
+func SkipFile(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && !info.Mode().IsRegular()
 }
 
 // SupportedLanguages returns a list of all registered language names.

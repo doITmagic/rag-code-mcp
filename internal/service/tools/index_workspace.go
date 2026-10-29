@@ -13,6 +13,7 @@ import (
 
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
+	"github.com/doITmagic/rag-code-mcp/internal/transport"
 	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
 	"github.com/doITmagic/rag-code-mcp/pkg/workspace/watch"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -233,6 +234,10 @@ func (t *IndexWorkspaceTool) Execute(ctx context.Context, params map[string]inte
 	if errResp, err := t.verifyConfirmationToken(wctx, token); errResp != "" || err != nil {
 		return errResp, err
 	}
+
+	// Only now is the root confirmed: the adapter makes it this client's
+	// workspace for later calls that name no path.
+	transport.SetResponseHeader(ctx, "X-Resolved-Workspace", wctx.Root)
 
 	recreate, _ := params["recreate"].(bool)
 	t.engine.StartIndexingAsync(wctx.Root, wctx.ID, nil, recreate)

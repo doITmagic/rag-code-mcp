@@ -427,7 +427,8 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 //
 // triggerAutoIndex controls whether background indexing is auto-triggered:
 //   - true  → normal connect behavior (sets connectTriggered, starts indexing)
-//   - false → pure validation (resolve only, no indexing side effects)
+//   - false → pure validation (resolve only, no indexing side effects, and the
+//     root is not confirmed to the client as its sticky workspace)
 func (e *Engine) DetectContextAsRoot(ctx context.Context, root string, triggerAutoIndex bool) (*WorkspaceContext, error) {
 	if strings.TrimSpace(root) == "" {
 		return e.DetectContext(ctx, "")
@@ -467,9 +468,8 @@ func (e *Engine) DetectContextAsRoot(ctx context.Context, root string, triggerAu
 	logger.Instance.Info("[DAEMON] [WS-DETECT] ◀ Resolved via root: root=%s, id=%s, branch=%s, source=%s",
 		wctx.Root, wctx.ID, wctx.Branch, wctx.DetectionSource)
 
-	transport.SetResponseHeader(ctx, "X-Resolved-Workspace", wctx.Root)
-
 	if triggerAutoIndex {
+		transport.SetResponseHeader(ctx, "X-Resolved-Workspace", wctx.Root)
 		e.autoTriggerIndex(wctx)
 	}
 

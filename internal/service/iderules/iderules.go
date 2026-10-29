@@ -190,14 +190,18 @@ func write(path, content string) {
 // naming tools that no longer exist.
 var Legacy = []string{".cursorrules", ".windsurfrules", ".clinerules", ".clauderules", ".roomodes"}
 
+// legacyHeader opens every legacy rule file RagCode wrote. Merely mentioning
+// "RagCode MCP" proves nothing: users name the server in their own rules.
+const legacyHeader = "# RagCode MCP - Semantic Search Rules\n# This file is automatically managed by RagCode MCP.\n"
+
 // RemoveLegacy deletes the legacy rule files, but only the ones RagCode wrote:
 // .clinerules and .roomodes are also valid hand-written config, so a file
-// without the RagCode marker is left alone.
+// without the RagCode header is left alone.
 func RemoveLegacy(root string) {
 	for _, name := range Legacy {
 		path := filepath.Join(root, name)
 		data, err := os.ReadFile(path)
-		if err != nil || !strings.Contains(string(data), "RagCode MCP") {
+		if err != nil || !strings.HasPrefix(strings.ReplaceAll(string(data), "\r\n", "\n"), legacyHeader) {
 			continue
 		}
 		if err := os.Remove(path); err != nil {

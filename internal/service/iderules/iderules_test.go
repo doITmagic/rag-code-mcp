@@ -96,20 +96,28 @@ func TestRemoveLegacyOnlyTouchesRagCodeFiles(t *testing.T) {
 	root := t.TempDir()
 	ours := filepath.Join(root, ".cursorrules")
 	theirs := filepath.Join(root, ".roomodes")
-	if err := os.WriteFile(ours, []byte("# RagCode MCP rules"), 0o644); err != nil {
+	if err := os.WriteFile(ours, []byte(legacyHeader+"\n## Available Tools\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(theirs, []byte("hand-written modes"), 0o644); err != nil {
+	// A hand-written file that merely names the server is still the user's.
+	if err := os.WriteFile(theirs, []byte(`{"customModes":[{"roleDefinition":"Uses RagCode MCP tools"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cline := filepath.Join(root, ".clinerules")
+	if err := os.WriteFile(cline, []byte("Always write tests.\nWe also use the RagCode MCP server.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	RemoveLegacy(root)
+	Write(root)
 
 	if _, err := os.Stat(ours); !os.IsNotExist(err) {
 		t.Error(".cursorrules written by RagCode should have been removed")
 	}
-	if _, err := os.Stat(theirs); err != nil {
-		t.Error("hand-written .roomodes must be left alone")
+	for _, keep := range []string{theirs, cline} {
+		if info, err := os.Stat(keep); err != nil || info.IsDir() {
+			t.Errorf("hand-written %s must be left alone: %v", filepath.Base(keep), err)
+		}
 	}
 }
 

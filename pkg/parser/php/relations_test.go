@@ -137,3 +137,63 @@ func TestPHPRelations_TypesAreCanonical(t *testing.T) {
 		}
 	}
 }
+
+// Calls nested in assignments, operators, closures, new, try and switch
+// must reach the call graph, not only bare statement calls.
+func TestPHPRelations_CallsInNestedConstructs(t *testing.T) {
+	code := `<?php
+namespace App;
+
+class Svc {
+    public function run($x) {
+        $a = self::inAssign();
+        $a .= self::inCompound();
+        if (!self::inNot() && self::inBinary() > 1) {}
+        $b = $x ? self::inTernary() : null;
+        $f = function () { return Str::inClosure(); };
+        $g = fn() => self::inArrow();
+        $o = new Entry(self::inNew());
+        try { $this->inTry(); } catch (\Exception $e) { $this->inCatch(); } finally { $this->inFinally(); }
+        switch ($x) { case 1: helperInSwitch(); break; }
+        if ($x) {} elseif (self::inElseIf()) {}
+        echo self::inEcho();
+        do { $x--; } while (self::inDo());
+        $s = "a" . self::inConcat();
+        $m = match ($x) { 1 => self::inMatch(), default => 0 };
+        $y = @file_get_contents($x);
+        $n = $x?->inNullsafe();
+        return $dotenv->load();
+    }
+}
+
+function top() {
+    $v = inFunctionAssign();
+}
+`
+	f := filepath.Join(t.TempDir(), "svc.php")
+	require.NoError(t, os.WriteFile(f, []byte(code), 0644))
+
+	res, err := NewAnalyzer().Analyze(context.Background(), f)
+	require.NoError(t, err)
+
+	run := findPHPSymbol(res.Symbols, "run")
+	require.NotNil(t, run)
+	for _, target := range []string{"inAssign", "inCompound", "inNot", "inBinary", "inTernary",
+		"inClosure", "inArrow", "inNew", "inTry", "inCatch", "inFinally", "helperInSwitch",
+		"inElseIf", "inEcho", "inDo", "inConcat", "inMatch", "file_get_contents", "inNullsafe", "load"} {
+		assert.True(t, hasPHPRelation(run.Relations, target, pkgParser.RelCalls), "run should call %s; got %v", target, run.Relations)
+	}
+	for _, rel := range run.Relations {
+		switch rel.TargetName {
+		case "inClosure":
+			assert.Equal(t, "Str", rel.Receiver)
+			assert.Equal(t, "App\\Str::inClosure", rel.TargetQualifiedName)
+		case "load":
+			assert.Equal(t, "dotenv", rel.Receiver)
+		}
+	}
+
+	top := findPHPSymbol(res.Symbols, "top")
+	require.NotNil(t, top)
+	assert.True(t, hasPHPRelation(top.Relations, "inFunctionAssign", pkgParser.RelCalls), "got %v", top.Relations)
+}

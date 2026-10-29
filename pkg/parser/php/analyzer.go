@@ -1354,120 +1354,57 @@ func extractCodeFromContent(content []byte, startLine, endLine int) string {
 }
 
 func (v *symbolCollector) extractCalls(node ast.Vertex) []MethodCall {
-	var calls []MethodCall
-	v.walkStmts(node, &calls)
-	return calls
+	c := &callCollector{v: v}
+	// The traverser descends through every statement and expression child
+	// (assignments, operators, closures, new, try, switch, ...), so a call
+	// is found wherever it is nested.
+	traverser.NewTraverser(c).Traverse(node)
+	return c.calls
 }
 
-func (v *symbolCollector) walkStmts(stmt ast.Vertex, calls *[]MethodCall) {
-	if stmt == nil {
-		return
-	}
+// callCollector records the calls in a function or method body.
+type callCollector struct {
+	visitor.Null
+	v     *symbolCollector
+	calls []MethodCall
+}
 
-	switch node := stmt.(type) {
-	case *ast.StmtStmtList:
-		for _, s := range node.Stmts {
-			v.walkStmts(s, calls)
+func (c *callCollector) addMethodCall(varNode, methodNode ast.Vertex) {
+	call := MethodCall{Object: "<dynamic>"}
+	if variable, ok := varNode.(*ast.ExprVariable); ok {
+		if nameNode, ok := variable.Name.(*ast.Identifier); ok {
+			call.Object = strings.TrimPrefix(string(nameNode.Value), "$")
 		}
-	case *ast.StmtReturn:
-		if node.Expr != nil {
-			v.walkExpr(node.Expr, calls)
-		}
-	case *ast.StmtExpression:
-		if node.Expr != nil {
-			v.walkExpr(node.Expr, calls)
-		}
-	case *ast.StmtIf:
-		v.walkExpr(node.Cond, calls)
-		v.walkStmts(node.Stmt, calls)
-		if node.Else != nil {
-			v.walkStmts(node.Else, calls)
-		}
-	case *ast.StmtForeach:
-		v.walkExpr(node.Expr, calls)
-		v.walkStmts(node.Stmt, calls)
-	case *ast.StmtWhile:
-		v.walkExpr(node.Cond, calls)
-		v.walkStmts(node.Stmt, calls)
-	case *ast.StmtFor:
-		for _, init := range node.Init {
-			v.walkExpr(init, calls)
-		}
-		for _, cond := range node.Cond {
-			v.walkExpr(cond, calls)
-		}
-		for _, loop := range node.Loop {
-			v.walkExpr(loop, calls)
-		}
-		v.walkStmts(node.Stmt, calls)
+	}
+	if ident, ok := methodNode.(*ast.Identifier); ok {
+		call.Method = string(ident.Value)
+	}
+	if call.Method != "" {
+		c.calls = append(c.calls, call)
 	}
 }
 
-func (v *symbolCollector) walkExpr(expr ast.Vertex, calls *[]MethodCall) {
-	if expr == nil {
-		return
-	}
+func (c *callCollector) ExprMethodCall(n *ast.ExprMethodCall) {
+	c.addMethodCall(n.Var, n.Method)
+}
 
-	switch node := expr.(type) {
-	case *ast.ExprMethodCall:
-		call := MethodCall{}
-		call.Object = "<dynamic>"
-		if varNode, ok := node.Var.(*ast.ExprVariable); ok {
-			if nameNode, ok := varNode.Name.(*ast.Identifier); ok {
-				call.Object = strings.TrimPrefix(string(nameNode.Value), "$")
-			}
-		}
-		if methodNode, ok := node.Method.(*ast.Identifier); ok {
-			call.Method = string(methodNode.Value)
-		}
-		for _, arg := range node.Args {
-			if argNode, ok := arg.(*ast.Argument); ok {
-				v.walkExpr(argNode.Expr, calls)
-			}
-		}
-		if call.Method != "" {
-			*calls = append(*calls, call)
-		}
-		v.walkExpr(node.Var, calls)
-	case *ast.ExprFunctionCall:
-		call := MethodCall{}
-		call.Method = v.extractName(node.Function)
-		for _, arg := range node.Args {
-			if argNode, ok := arg.(*ast.Argument); ok {
-				v.walkExpr(argNode.Expr, calls)
-			}
-		}
-		if call.Method != "" {
-			*calls = append(*calls, call)
-		}
-	case *ast.ExprStaticCall:
-		call := MethodCall{}
-		call.Static = true
-		call.Object = v.extractName(node.Class)
-		if methodNode, ok := node.Call.(*ast.Identifier); ok {
-			call.Method = string(methodNode.Value)
-		}
-		for _, arg := range node.Args {
-			if argNode, ok := arg.(*ast.Argument); ok {
-				v.walkExpr(argNode.Expr, calls)
-			}
-		}
-		if call.Method != "" {
-			*calls = append(*calls, call)
-		}
-	case *ast.ExprPropertyFetch:
-		v.walkExpr(node.Var, calls)
-	case *ast.ExprStaticPropertyFetch:
-		v.walkExpr(node.Class, calls)
-	case *ast.ExprArray:
-		for _, item := range node.Items {
-			if itemNode, ok := item.(*ast.ExprArrayItem); ok {
-				v.walkExpr(itemNode.Val, calls)
-				if itemNode.Key != nil {
-					v.walkExpr(itemNode.Key, calls)
-				}
-			}
-		}
+func (c *callCollector) ExprNullsafeMethodCall(n *ast.ExprNullsafeMethodCall) {
+	c.addMethodCall(n.Var, n.Method)
+}
+
+func (c *callCollector) ExprFunctionCall(n *ast.ExprFunctionCall) {
+	if name := c.v.extractName(n.Function); name != "" {
+		c.calls = append(c.calls, MethodCall{Method: name})
+	}
+}
+
+func (c *callCollector) ExprStaticCall(n *ast.ExprStaticCall) {
+	call := MethodCall{Static: true, Object: c.v.extractName(n.Class)}
+	if methodNode, ok := n.Call.(*ast.Identifier); ok {
+		call.Method = string(methodNode.Value)
+	}
+	if call.Method != "" {
+		c.calls = append(c.calls, call)
 	}
 }
 

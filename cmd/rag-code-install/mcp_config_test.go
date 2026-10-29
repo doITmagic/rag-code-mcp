@@ -200,3 +200,26 @@ func TestVSCodeMCPConfigCreatedWithServersKey(t *testing.T) {
 		t.Fatalf("ragcode not under \"servers\": %v", cfg)
 	}
 }
+
+// The Zed entry must start ragcode from config.yaml like the other IDEs: env
+// pinning the model and service URLs overrode the user's config.yaml in every
+// daemon Zed started.
+func TestZedStdioEntryUsesInstalledConfig(t *testing.T) {
+	home := isolate(t)
+	binDir := filepath.Join(home, ".ragcode", "bin")
+	configureIDEs([]string{"zed"}, binDir, "stdio", 39000)
+
+	path := resolveIDEPaths(home)["zed"].path
+	cfg, ok := readJSONConfig(path)
+	if !ok {
+		t.Fatalf("cannot read %s", path)
+	}
+	command := cfg["context_servers"].(map[string]interface{})["ragcode"].(map[string]interface{})["command"].(map[string]interface{})
+	if command["env"] != nil {
+		t.Fatalf("Zed entry overrides config.yaml through env: %v", command["env"])
+	}
+	args, _ := command["args"].([]interface{})
+	if len(args) != 2 || args[0] != "--config" || args[1] != filepath.Join(binDir, "config.yaml") {
+		t.Fatalf("Zed entry args = %v, want --config %s", args, filepath.Join(binDir, "config.yaml"))
+	}
+}

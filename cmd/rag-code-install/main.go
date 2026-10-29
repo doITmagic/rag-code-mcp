@@ -972,15 +972,11 @@ func updateZedConfig(displayName, path, binPath, transport string, ssePort int) 
 			"settings": map[string]interface{}{},
 		}
 	} else {
+		// Same arguments as the other IDEs; env here would override config.yaml.
 		ragcodeEntry = map[string]interface{}{
 			"command": map[string]interface{}{
 				"path": binPath,
-				"args": []string{},
-				"env": map[string]string{
-					"OLLAMA_BASE_URL": "http://localhost:11434",
-					"OLLAMA_EMBED":    config.StableEmbeddingModel,
-					"QDRANT_URL":      "http://localhost:6333",
-				},
+				"args": buildMCPServerEntry("zed", binPath)["args"],
 			},
 			"settings": map[string]interface{}{},
 		}

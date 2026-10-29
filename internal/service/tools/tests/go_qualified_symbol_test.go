@@ -28,6 +28,10 @@ func TestQualifiedGoMethodsPreserveReceiverAndPackage(t *testing.T) {
 		method("other-receiver", "cache", "OtherCache", "go"),
 		method("other-package", "other", "PromptCache", "go"),
 		method("other-language", "cache", "PromptCache", "javascript"),
+		{Point: storage.Point{ID: "missing", Payload: map[string]interface{}{
+			"symbol_id": "missing", "name": "MissingCache", "package": "cache", "type": "type", "language": "go",
+			"file_path": path, "metadata": map[string]interface{}{"kind": "struct"},
+		}}},
 		{Point: storage.Point{ID: "caller", Payload: map[string]interface{}{
 			"symbol_id": "caller", "name": "ReadPrompt", "file_path": path, "type": "function", "language": "go",
 			"relations": []interface{}{map[string]interface{}{"type": "calls", "target_name": "Get", "target_id": "prompt", "resolution": "resolved"}},

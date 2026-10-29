@@ -73,17 +73,28 @@ func goMethodFilters(name string) map[string]interface{} {
 }
 
 // qualifierRulesOut reports whether an unresolved name's qualifier was
-// checked: Go methods with its short name exist, none on that receiver.
-// Other qualifiers (packages, other languages) are not modelled here.
+// checked: it names an indexed Go type, which has no such method. Interfaces
+// (methods not indexed by receiver), external packages and other languages
+// are not modelled here.
 func qualifierRulesOut(ctx context.Context, eng *engine.Engine, wsID, name string) bool {
 	filters := goMethodFilters(name)
 	if filters == nil {
 		return false
 	}
-	delete(filters, "metadata.receiver")
-	delete(filters, "package")
-	results, err := eng.ExactSearchPolyglot(ctx, wsID, filters, 1)
-	return err == nil && len(results) > 0
+	typeFilters := map[string]interface{}{"language": "go", "type": "type", "name": filters["metadata.receiver"]}
+	if pkg, ok := filters["package"]; ok {
+		typeFilters["package"] = pkg
+	}
+	results, err := eng.ExactSearchPolyglot(ctx, wsID, typeFilters, 100)
+	if err != nil {
+		return false
+	}
+	for _, r := range results {
+		if metadata, _ := r.Point.Payload["metadata"].(map[string]interface{}); metadata["kind"] != "interface" {
+			return true
+		}
+	}
+	return false
 }
 
 func uniqueSymbol(results []storage.SearchResult, file string) (*storage.SearchResult, string) {

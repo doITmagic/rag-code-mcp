@@ -4,6 +4,7 @@ package indexer
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"syscall"
 	"testing"
@@ -50,5 +51,34 @@ func TestIndexWorkspaceSkipsFIFOs(t *testing.T) {
 	}
 	if len(store.upsertPoints) == 0 {
 		t.Fatal("regular workspace file was not indexed")
+	}
+}
+
+// An unreadable file (root-owned 0600, chmod 000) is a local condition no
+// retry fixes; it must not mark the whole run failed, as for Go files.
+func TestIndexWorkspaceSkipsUnreadableFiles(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads files regardless of permissions")
+	}
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "ok.py"), "def kept():\n    pass\n")
+	writeTestFile(t, filepath.Join(root, "ok.php"), "<?php\nfunction kept() {}\n")
+	for _, name := range []string{"locked.py", "locked.php"} {
+		path := filepath.Join(root, name)
+		writeTestFile(t, path, "def locked():\n    pass\n")
+		if err := os.Chmod(path, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	store := &mockStore{}
+	svc := NewService(&mockEmbedder{}, store)
+	for _, lang := range []string{"python", "php"} {
+		if err := svc.IndexWorkspace(context.Background(), root, lang, Options{Language: lang}); err != nil {
+			t.Fatalf("%s: %v", lang, err)
+		}
+	}
+	if len(store.upsertPoints) < 2 {
+		t.Fatalf("readable files were not indexed: %d points", len(store.upsertPoints))
 	}
 }

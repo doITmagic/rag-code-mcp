@@ -476,6 +476,13 @@ func (s *Service) IndexFile(ctx context.Context, collection, path string, state 
 		if _, missing := os.Stat(path); os.IsNotExist(missing) {
 			return 0, s.RemoveFile(ctx, collection, path, state)
 		}
+		// Unreadable (a root-owned file left by Docker, chmod 000): no retry
+		// fixes it, so skip it like the Go analyzer does instead of failing
+		// the run. It stays out of the state and is retried on the next run.
+		if errors.Is(err, os.ErrPermission) {
+			logger.Instance.Warn("[IDX] Skipping unreadable file %s: %v", path, err)
+			return 0, nil
+		}
 		logger.Instance.Error("Analyze failed for %s: %v", path, err)
 		return 0, fmt.Errorf("analyze failed: %w", err)
 	}

@@ -152,6 +152,9 @@ func (t *CallHierarchyTool) Execute(ctx context.Context, args map[string]interfa
 			}
 			return resp.JSON()
 		}
+		if sErr != nil {
+			return (ToolResponse{Status: "error", Error: fmt.Sprintf("symbol lookup failed: %v", sErr)}).JSON()
+		}
 	}
 
 	if direction == "incoming" {

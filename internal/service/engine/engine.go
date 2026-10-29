@@ -943,6 +943,7 @@ func (e *Engine) ExactSearchPolyglot(ctx context.Context, wsID string, filters m
 
 	type trial struct {
 		results []storage.SearchResult
+		err     error
 	}
 
 	resultsChan := make(chan trial, len(langs))
@@ -958,6 +959,7 @@ func (e *Engine) ExactSearchPolyglot(ctx context.Context, wsID string, filters m
 			exists, err := e.search.CollectionExists(ctx, coll)
 			if err != nil {
 				logger.Instance.Warn("[IDX] ExactSearchPolyglot: cannot check collection %s: %v", coll, err)
+				resultsChan <- trial{err: fmt.Errorf("failed to check collection: %w", err)}
 				return
 			}
 			if !exists {
@@ -968,6 +970,7 @@ func (e *Engine) ExactSearchPolyglot(ctx context.Context, wsID string, filters m
 			res, sErr := e.search.ExactSearch(ctx, coll, filters, limit)
 			if sErr != nil {
 				logger.Instance.Warn("[IDX] ExactSearchPolyglot: search failed for %s: %v", coll, sErr)
+				resultsChan <- trial{err: sErr}
 				return
 			}
 			resultsChan <- trial{results: res}
@@ -977,13 +980,21 @@ func (e *Engine) ExactSearchPolyglot(ctx context.Context, wsID string, filters m
 	wg.Wait()
 	close(resultsChan)
 
+	var all []storage.SearchResult
+	var firstErr error
+	for t := range resultsChan {
+		if firstErr == nil {
+			firstErr = t.err
+		}
+		all = append(all, t.results...)
+	}
+	// Other collections still contribute when one fails, but a failure that
+	// leaves nothing must not read as "no such symbol" or "not indexed".
+	if firstErr != nil && len(all) == 0 {
+		return nil, firstErr
+	}
 	if atomic.LoadInt32(&existingCollections) == 0 {
 		return nil, &ErrNoCollectionsFound{WorkspaceID: wsID}
-	}
-
-	var all []storage.SearchResult
-	for t := range resultsChan {
-		all = append(all, t.results...)
 	}
 	return all, nil
 }

@@ -526,7 +526,12 @@ func (r *Registry) load() error {
 	// Fallback to V1 (array of entries)
 	var entries []*Entry
 	if err := json.Unmarshal(data, &entries); err != nil {
-		return err
+		// Set a corrupt file aside and start empty; failing here left the
+		// daemon without a registry, and the file was never repaired.
+		backup := fmt.Sprintf("%s.corrupt-%d", r.path, time.Now().Unix())
+		logger.Instance.Warn("[REGISTRY] %s is corrupt (%v), moving it to %s", r.path, err, backup)
+		_ = os.Rename(r.path, backup)
+		return nil
 	}
 	for _, entry := range entries {
 		r.addEntry(entry)

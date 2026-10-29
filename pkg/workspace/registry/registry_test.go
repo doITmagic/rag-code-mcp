@@ -65,6 +65,36 @@ func TestRegistryPersistence(t *testing.T) {
 	}
 }
 
+// A corrupt registry.json must not leave the daemon without a registry for
+// good: it is set aside and a fresh registry is saved in its place.
+func TestRegistryRecoversFromCorruptFile(t *testing.T) {
+	for name, content := range map[string]string{"empty": "", "truncated": "{"} {
+		t.Run(name, func(t *testing.T) {
+			tmp := filepath.Join(t.TempDir(), "registry.json")
+			if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			r, err := New(tmp)
+			if err != nil {
+				t.Fatalf("new registry: %v", err)
+			}
+			if _, err := r.Upsert("/one", "one", "clientA"); err != nil {
+				t.Fatalf("upsert: %v", err)
+			}
+			r2, err := New(tmp)
+			if err != nil {
+				t.Fatalf("reload registry: %v", err)
+			}
+			if _, ok := r2.LookupByRoot("/one"); !ok {
+				t.Fatal("entry not persisted after recovery")
+			}
+			if backups, _ := filepath.Glob(tmp + ".corrupt-*"); len(backups) != 1 {
+				t.Fatalf("corrupt file backups = %v, want one", backups)
+			}
+		})
+	}
+}
+
 func TestRegistryCleanup(t *testing.T) {
 	tmp := filepath.Join(t.TempDir(), "registry.json")
 	r, err := New(tmp)

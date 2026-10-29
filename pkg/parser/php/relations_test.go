@@ -223,3 +223,31 @@ class Svc {
 	assert.False(t, hasPHPRelation(outer.Relations, "innerOnly", pkgParser.RelCalls), "got %v", outer.Relations)
 	assert.False(t, hasPHPRelation(outer.Relations, "nestedOnly", pkgParser.RelCalls), "got %v", outer.Relations)
 }
+
+// Interface and trait methods are qualified by their owner, like class
+// methods, so App\Greets::hello does not collide with a function App\hello.
+func TestPHPRelations_InterfaceAndTraitMembersQualified(t *testing.T) {
+	code := `<?php
+namespace App;
+
+interface ParserInterface {
+    public function parse(string $s);
+}
+
+trait Greets {
+    public function hello() {}
+}
+`
+	f := filepath.Join(t.TempDir(), "members.php")
+	require.NoError(t, os.WriteFile(f, []byte(code), 0644))
+
+	res, err := NewAnalyzer().Analyze(context.Background(), f)
+	require.NoError(t, err)
+
+	got := map[string]string{}
+	for _, sym := range res.Symbols {
+		got[sym.Name] = sym.QualifiedName
+	}
+	assert.Equal(t, "App\\ParserInterface::parse", got["parse"], "all: %v", got)
+	assert.Equal(t, "App\\Greets::hello", got["hello"], "all: %v", got)
+}

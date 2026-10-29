@@ -1238,6 +1238,7 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 					EndLine:   method.EndLine,
 					Docstring: method.Description,
 					Code:      method.Code,
+					Metadata:  map[string]any{"class": iface.Name, "qualified_name": iface.FullName + "::" + method.Name},
 				}
 				chunks = append(chunks, methodChunk)
 			}
@@ -1275,6 +1276,7 @@ func (ca *CodeAnalyzer) convertToChunks() []CodeChunk {
 					EndLine:   method.EndLine,
 					Docstring: method.Description,
 					Code:      method.Code,
+					Metadata:  map[string]any{"class": trait.Name, "qualified_name": trait.FullName + "::" + method.Name},
 				}
 				chunks = append(chunks, methodChunk)
 			}

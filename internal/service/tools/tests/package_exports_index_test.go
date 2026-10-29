@@ -10,6 +10,7 @@ import (
 
 	"github.com/doITmagic/rag-code-mcp/internal/service/tools"
 	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
+	"github.com/doITmagic/rag-code-mcp/pkg/parser/docs"
 	golang "github.com/doITmagic/rag-code-mcp/pkg/parser/go"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 )
@@ -203,5 +204,48 @@ func TestPackageExportsKeepSameNamedMethods(t *testing.T) {
 	}
 	if len(signatures) != 2 {
 		t.Fatalf("cache methods = %v, want Memory.Get and Disk.Get", signatures)
+	}
+}
+
+// A trailing slash still names the package; its empty last segment matched
+// the documentation chunks, which have no package.
+func TestPackageExportsTrailingSlash(t *testing.T) {
+	root := t.TempDir()
+	writeGoFiles(t, root, map[string]string{
+		"go.mod":    "module example.com/pflag\ngo 1.25\n",
+		"flag.go":   "package pflag\nfunc Parse() {}\n",
+		"README.md": "# Usage\n\nCall Parse before reading flags.\n",
+	})
+	store := indexGoTree(t, root)
+	parsed, err := docs.NewAnalyzer().Analyze(context.Background(), filepath.Join(root, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var docPoints []storage.Point
+	store.UpsertFunc = func(_ context.Context, _ string, batch []storage.Point) (*storage.UpdateResult, error) {
+		docPoints = append(docPoints, batch...)
+		return nil, nil
+	}
+	if err := indexer.NewService(&mockLLMProvider{}, store).IndexItems(context.Background(), "exports-docs", parsed.Symbols); err != nil {
+		t.Fatal(err)
+	}
+	goSearch := store.ExactSearchFunc
+	store.ExactSearchFunc = func(ctx context.Context, collection string, filters map[string]interface{}, limit int) ([]storage.SearchResult, error) {
+		if strings.HasSuffix(collection, "-go") {
+			return goSearch(ctx, collection, filters, limit)
+		}
+		var found []storage.SearchResult
+		for _, point := range docPoints {
+			if strings.HasSuffix(collection, "-docs") && point.Payload["package"] == filters["package"] {
+				found = append(found, storage.SearchResult{Point: point, Score: 1})
+			}
+		}
+		return found, nil
+	}
+	for _, request := range []string{"pflag/", "example.com/pflag/"} {
+		got := listExports(t, store, request, filepath.Join(root, "flag.go"))
+		if len(got) != 1 || len(got["function"]) != 1 || got["function"][0].Name != "Parse" {
+			t.Errorf("%s exports = %v, want [Parse]", request, got)
+		}
 	}
 }

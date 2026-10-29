@@ -80,6 +80,9 @@ type ExportedSymbol struct {
 
 func (t *ListPackageExportsTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
 	packageName, ok := args["package"].(string)
+	// "pflag/" names pflag; an empty last segment would match every chunk
+	// without a package (documentation).
+	packageName = strings.TrimRight(packageName, "/")
 	if !ok || packageName == "" {
 		resp := ToolResponse{Status: "error", Error: "package parameter is required"}
 		return resp.JSON()

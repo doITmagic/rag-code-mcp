@@ -1,0 +1,100 @@
+package engine
+
+import (
+	"context"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/doITmagic/rag-code-mcp/internal/config"
+	"github.com/doITmagic/rag-code-mcp/internal/service/search"
+	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
+)
+
+type hookLLM struct {
+	mockLLM
+	onEmbed func(text string)
+}
+
+func (p *hookLLM) Embed(ctx context.Context, text string) ([]float64, error) {
+	if p.onEmbed != nil {
+		p.onEmbed(text)
+	}
+	return p.mockLLM.Embed(ctx, text)
+}
+
+// When IndexFiles hands a batch over to a full run and that run is aborted by
+// a checkout, the files the full run already indexed must stay in the saved
+// state; IndexFiles must not overwrite it with its own older copy.
+func TestIndexFilesFallbackKeepsStateSavedByFullRun(t *testing.T) {
+	root := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false"}, args...)...)
+		cmd.Dir = root
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
+	}
+	write := func(name, content string) string {
+		t.Helper()
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	a := write("a.go", "package main\nfunc A() {}\n")
+	git("init", "-q", "-b", "main")
+	git("add", "a.go")
+	git("commit", "-qm", "initial")
+
+	provider := &hookLLM{}
+	store := &branchIndexStore{
+		indexOrderStore: indexOrderStore{testStore: testStore{existing: map[string]bool{}}},
+		names:           map[string][]string{},
+	}
+	eng := NewEngine(indexer.NewService(provider, store), search.NewService(provider, store), filepath.Join(t.TempDir(), "registry.json"), &config.Config{})
+	t.Cleanup(eng.Close)
+	ctx := context.Background()
+	if err := eng.IndexWorkspace(ctx, root, false); err != nil {
+		t.Fatal(err)
+	}
+
+	write("a.go", "package main\nfunc A2() {}\n")
+	n1 := write("sub/n1.go", "package sub\nfunc NOne() {}\n")
+	write("sub/n2.go", "package sub\nfunc NTwo() {}\n")
+	// Replacing HEAD mid-run is what a checkout does; the run must abort.
+	head := filepath.Join(root, ".git", "HEAD")
+	provider.onEmbed = func(text string) {
+		if strings.Contains(text, "NTwo") {
+			later := time.Now().Add(time.Minute)
+			if err := os.Chtimes(head, later, later); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+	err := eng.IndexFiles(ctx, root, []string{a, filepath.Join(root, "sub")})
+	if !errors.Is(err, indexer.ErrWorkspaceChanged) {
+		t.Fatalf("expected the checkout to abort the full run, got %v", err)
+	}
+
+	wctx, err := eng.DetectContextAsRoot(ctx, root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := indexer.LoadState(indexer.StatePath(wctx.Root, wctx.CollectionName("go")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := state.GetFileState(n1); !ok {
+		t.Fatalf("state lost %s, which the full run indexed before the abort: %v", n1, state.Files)
+	}
+}

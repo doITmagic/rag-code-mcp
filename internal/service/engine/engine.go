@@ -1190,6 +1190,9 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) (r
 				saveErrors = append(saveErrors, saveErr)
 			}
 		}
+		// Saved once: the full-run fallback then owns these files, and saving
+		// this older copy again would drop the entries it adds.
+		states = nil
 		return errors.Join(saveErrors...)
 	}
 	defer func() {

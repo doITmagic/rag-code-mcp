@@ -63,3 +63,41 @@ func TestMemberCallsReachResolvedMethod(t *testing.T) {
 		})
 	}
 }
+
+// A member call reaches no free function, and in PHP and JS/TS a bare call
+// reaches no method: JSON.parse() is not a caller of a project's parse().
+func TestMemberAndFreeCallsKeepTheirTargetKind(t *testing.T) {
+	for _, tc := range []struct {
+		lang     string
+		analyzer parser.Analyzer
+		files    map[string]string
+		file     string
+		symbol   string
+		want     string
+	}{
+		{"php", php.NewAnalyzer(), map[string]string{
+			"helpers.php": "<?php\nnamespace App;\nfunction format($x) { return $x; }\n",
+			"Boot.php":    "<?php\nnamespace App;\nclass Boot {\n  public function run($date) { return $date->format('Y'); }\n  public function free() { return format(1); }\n}\n",
+		}, "helpers.php", "format", "free"},
+		{"ts-free", javascript.NewCodeAnalyzer(), map[string]string{
+			"utils.ts": "export function parse(s: string) { return s; }\n",
+			"main.ts":  "import { parse } from './utils';\nexport function a(s: string) { return JSON.parse(s); }\nexport function b(s: string) { return parse(s); }\n",
+		}, "utils.ts", "parse", "b"},
+		{"ts-method", javascript.NewCodeAnalyzer(), map[string]string{
+			"ky.ts": "export class Ky {\n  static create() { return new Ky(); }\n}\n",
+			"a.ts":  "export function create() { return 1; }\n",
+			"b.ts":  "export function create() { return 2; }\n",
+			"c.ts":  "import { create } from './a';\nexport function useFree() { return create(); }\nexport function useKy(k: any) { return k.create(); }\n",
+		}, "ky.ts", "Ky.create", "useKy"},
+	} {
+		t.Run(tc.lang, func(t *testing.T) {
+			dir, store := indexFixture(t, tc.lang, tc.analyzer, tc.files)
+			eng := setupTestEngine(store)
+			t.Cleanup(eng.Close)
+			path := filepath.Join(dir, tc.file)
+			if got := pythonCallers(t, tools.NewCallHierarchyTool(eng), path, tc.symbol); !slices.Equal(got, []string{tc.want}) {
+				t.Errorf("callers of %s = %v, want [%s]", tc.symbol, got, tc.want)
+			}
+		})
+	}
+}

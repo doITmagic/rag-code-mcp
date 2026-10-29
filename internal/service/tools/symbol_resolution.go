@@ -263,6 +263,17 @@ func callMayTarget(source storage.SearchResult, rel map[string]interface{}, reso
 	if resolved != nil {
 		return symbolKey(*resolved) == symbolKey(target)
 	}
+	// A member call reaches only a method, and in PHP and JS/TS a bare call
+	// reaches no method, so JSON.parse() does not reach a project's parse().
+	language, _ := source.Point.Payload["language"].(string)
+	receiver, _ := rel["receiver"].(string)
+	isMethod := target.Point.Payload["type"] == "method"
+	if language != "go" && language != "python" && receiver != "" && !isMethod {
+		return false
+	}
+	if (language == "php" || language == "javascript" || language == "typescript") && receiver == "" && isMethod {
+		return false
+	}
 	// JS/TS name a method Class.method; the call names only the method.
 	name, _ := target.Point.Payload["name"].(string)
 	return status == "ambiguous" && rel["target_name"] == shortSymbolName(name) && symbolKey(source) != symbolKey(target)

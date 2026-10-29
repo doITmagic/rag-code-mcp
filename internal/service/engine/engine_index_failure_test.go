@@ -65,8 +65,8 @@ func TestFailedEmbeddingIsReportedAndRetried(t *testing.T) {
 	eng.connectTriggered.Store(wctx.ID, true)
 	eng.StartIndexingAsync(wctx.Root, wctx.ID, nil, false)
 	waitFor(t, "indexing did not finish", jobDone)
-	if s := indexer.LoadIndexStatus(root); s == nil || s.Error == "" {
-		t.Fatalf("index status hides the failed file: %+v", s)
+	if s := indexer.LoadIndexStatus(root); s == nil || !strings.Contains(s.Error, "Check if Ollama is running") {
+		t.Fatalf("index status hides the failed file or its cause: %+v", s)
 	}
 
 	// The watcher path must not hide the failure either.
@@ -139,6 +139,8 @@ func TestFailingFileDoesNotRerunOnEveryRequest(t *testing.T) {
 	waitFor(t, "indexing did not finish", jobDone)
 	if s := indexer.LoadIndexStatus(root); s == nil || s.Error == "" {
 		t.Fatalf("index status hides the failed file: %+v", s)
+	} else if strings.Contains(s.Error, "Ollama") {
+		t.Fatalf("a file that fails on its own blames the embedding service: %s", s.Error)
 	}
 
 	for i := 0; i < 3; i++ {

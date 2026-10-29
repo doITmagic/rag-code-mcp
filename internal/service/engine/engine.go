@@ -1541,7 +1541,12 @@ func (e *Engine) IndexWorkspace(ctx context.Context, path string, recreate bool)
 		if backendErr := e.indexer.CheckBackends(ctx, failedCollection); backendErr != nil && ctx.Err() == nil {
 			err = fmt.Errorf("%w; %w", err, backendErr)
 		}
-		return fmt.Errorf("%w. Check if Ollama is running and the embedding model is available", err)
+		// Only an embedder outage gets the hint: a file that fails to parse
+		// or read would send the user to check a healthy Ollama.
+		if errors.Is(err, indexer.ErrEmbedderUnavailable) {
+			err = fmt.Errorf("%w. Check if Ollama is running and the embedding model is available", err)
+		}
+		return err
 	}
 
 	return nil

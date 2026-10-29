@@ -41,6 +41,7 @@ type Manager struct {
 	cacheTTL  time.Duration
 	mu        sync.Mutex
 	stateMu   sync.Mutex
+	unsaved   map[string]*State // states that could not be written (read-only root)
 	logger    Logger
 }
 
@@ -88,6 +89,9 @@ func (m *Manager) CompareAndUpdate(ctx context.Context, workspaceRoot string) (*
 
 	statePath := filepath.Join(workspaceRoot, ".ragcode", "branch_state.json")
 	persisted, err := m.loadState(statePath)
+	if s, ok := m.unsaved[statePath]; ok {
+		persisted, err = s, nil
+	}
 	if err != nil {
 		return nil, false, "", &contract.ResolveWorkspaceError{
 			Code:    contract.ErrorInvalidPath,
@@ -120,12 +124,16 @@ func (m *Manager) CompareAndUpdate(ctx context.Context, workspaceRoot string) (*
 			LastWorktreeID: current.LastWorktreeID,
 			LastIndexedAt:  m.clock(),
 		}
+		// A read-only checkout cannot hold the file. Losing the cache must not
+		// make the workspace unresolvable, so keep the state in memory instead.
 		if err := m.saveState(statePath, state); err != nil {
-			return nil, false, "", &contract.ResolveWorkspaceError{
-				Code:    contract.ErrorInvalidPath,
-				Message: fmt.Sprintf("failed to save branch state: %v", err),
-				Reason:  contract.ReasonInvalidPath,
+			m.log(ctx, "branchstate.save_failed", map[string]any{"workspace_root": workspaceRoot, "error": err.Error()})
+			if m.unsaved == nil {
+				m.unsaved = make(map[string]*State)
 			}
+			m.unsaved[statePath] = state
+		} else {
+			delete(m.unsaved, statePath)
 		}
 		if persisted == nil {
 			reason = contract.ReasonFirstSeen

@@ -289,3 +289,33 @@ func TestCompareAndUpdate_CorruptStateIsRebuilt(t *testing.T) {
 		})
 	}
 }
+
+// A read-only checkout cannot hold .ragcode/branch_state.json. That only
+// loses the cache; it must not make the workspace unresolvable.
+func TestAnnotate_ReadOnlyRootStillResolves(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(root, 0o755) })
+	manager := &Manager{clock: time.Now, gitRunner: (&fakeGit{branch: "main", sha: "abc"}).run}
+	resp := &contract.ResolveWorkspaceResponse{}
+	if err := manager.Annotate(context.Background(), root, resp); err != nil {
+		t.Fatalf("unexpected err: %s", err.Message)
+	}
+	if resp.Branch != "main" || !resp.ReindexRequired {
+		t.Fatalf("branch=%q reindex=%v, want main and reindex", resp.Branch, resp.ReindexRequired)
+	}
+	// The unsaved state is remembered, so an unchanged HEAD does not ask for
+	// a reindex on every request.
+	resp = &contract.ResolveWorkspaceResponse{}
+	if err := manager.Annotate(context.Background(), root, resp); err != nil {
+		t.Fatalf("unexpected err: %s", err.Message)
+	}
+	if resp.ReindexRequired {
+		t.Fatal("unchanged HEAD still requires a reindex")
+	}
+}

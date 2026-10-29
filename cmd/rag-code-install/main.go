@@ -540,14 +540,26 @@ func copyFile(src, dst string) error {
 	}
 	defer sourceFile.Close()
 
-	destFile, err := os.Create(dst)
+	// Write next to dst and rename over it: writing into a binary that is
+	// still running (an IDE's stdio adapter) fails with "text file busy".
+	destFile, err := os.CreateTemp(filepath.Dir(dst), "."+filepath.Base(dst)+"-*")
 	if err != nil {
 		return err
 	}
-	defer destFile.Close()
+	defer os.Remove(destFile.Name())
 
-	_, err = io.Copy(destFile, sourceFile)
-	return err
+	if _, err := io.Copy(destFile, sourceFile); err != nil {
+		destFile.Close()
+		return err
+	}
+	if err := destFile.Chmod(0644); err != nil {
+		destFile.Close()
+		return err
+	}
+	if err := destFile.Close(); err != nil {
+		return err
+	}
+	return os.Rename(destFile.Name(), dst)
 }
 
 func addToPath(binDir string) {

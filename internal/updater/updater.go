@@ -332,6 +332,13 @@ func (info *UpdateInfo) DownloadAndVerify(ctx context.Context, destPath string) 
 // verifies its checksum, and hands off to ApplyUpdate (which spawns the installer
 // and exits). Both the daemon AutoUpdate worker and the MCP ApplyUpdateTool use this.
 func DownloadVerifyAndApply(ctx context.Context, info *UpdateInfo) error {
+	// The installer only ever updates ~/.ragcode/bin. For any other binary (a
+	// source build, an unpacked archive) the handoff would stop this daemon
+	// and repoint the IDEs without updating it, again on every start.
+	if installed, ok := runningInstalledBinary(); !ok {
+		return fmt.Errorf("running binary is not the installed %s; update it yourself", installed)
+	}
+
 	ext := ".tar.gz"
 	if strings.HasSuffix(info.AssetURL, ".zip") {
 		ext = ".zip"
@@ -357,6 +364,26 @@ func DownloadVerifyAndApply(ctx context.Context, info *UpdateInfo) error {
 	}
 
 	return nil
+}
+
+// runningInstalledBinary reports whether this process runs the binary the
+// installer writes, and returns that binary's path.
+func runningInstalledBinary() (string, bool) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "~/.ragcode/bin", false
+	}
+	installed := filepath.Join(home, ".ragcode", "bin", "rag-code-mcp")
+	if runtime.GOOS == "windows" {
+		installed += ".exe"
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return installed, false
+	}
+	a, errA := os.Stat(self)
+	b, errB := os.Stat(installed)
+	return installed, errA == nil && errB == nil && os.SameFile(a, b)
 }
 
 // ApplyUpdate extracts the binary from the archive, spawns the installer, and

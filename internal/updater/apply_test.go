@@ -3,9 +3,14 @@ package updater
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -66,5 +71,34 @@ func TestApplyUpdateReturnsBeforeExiting(t *testing.T) {
 			t.Fatal("installer did not run")
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// Auto-update must leave a binary outside ~/.ragcode/bin alone: the installer
+// only ever updates the installed one, so downloading and handing off would
+// just stop this daemon (and repoint the IDEs) on every start.
+func TestDownloadVerifyAndApplySkipsBinaryOutsideInstallDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	exit = func(int) { t.Error("process exited") }
+	t.Cleanup(func() { exit = os.Exit })
+
+	err := DownloadVerifyAndApply(context.Background(), &UpdateInfo{
+		LatestVersion: "9.9.9",
+		AssetURL:      srv.URL + "/rag-code-mcp_linux_amd64.tar.gz",
+		ChecksumURL:   srv.URL + "/checksums.txt",
+	})
+	if err == nil || !strings.Contains(err.Error(), "not the installed") {
+		t.Fatalf("err = %v, want the binary reported as not installed", err)
+	}
+	if n := hits.Load(); n != 0 {
+		t.Fatalf("downloaded the release %d time(s) for a binary the installer will not update", n)
 	}
 }

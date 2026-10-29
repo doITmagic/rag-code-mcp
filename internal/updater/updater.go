@@ -20,6 +20,7 @@ import (
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/codeclysm/extract/v3"
+	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/doITmagic/rag-code-mcp/internal/utils"
 	"gopkg.in/yaml.v3"
 )
@@ -443,15 +444,23 @@ func ApplyUpdate(archivePath string) error {
 		return fmt.Errorf("failed to start new installer: %w", err)
 	}
 
-	// Handoff successful — installer owns cleanup now
+	// Handoff successful — tempDir is removed once the installer exits
 	cleanup = false
 
-	// Exit shortly after returning, not right away: the caller still has to
-	// answer (rag_apply_update replies to its client) and run its deferred
-	// cleanup, such as removing the downloaded archive.
+	// The installer stops this daemon itself before it replaces the binary.
+	// If it did not (another port), exit once it has succeeded, not right
+	// away: the caller still has to answer (rag_apply_update replies to its
+	// client) and run its deferred cleanup, such as removing the downloaded
+	// archive. After a failure nothing was updated, so keep serving.
 	// ponytail: fixed grace period; exit after the reply is flushed if a slow client misses it.
-	fmt.Printf("Update handed off to new installer (PID %d). Shutting down...\n", cmd.Process.Pid)
+	fmt.Printf("Update handed off to new installer (PID %d).\n", cmd.Process.Pid)
 	go func() {
+		err := cmd.Wait()
+		_ = os.RemoveAll(tempDir)
+		if err != nil {
+			logger.Instance.Warn("Update installer failed (%v); keeping the current version running", err)
+			return
+		}
 		time.Sleep(time.Second)
 		exit(0)
 	}()

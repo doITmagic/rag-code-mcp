@@ -178,7 +178,8 @@ func (t *ApplyUpdateTool) Execute(ctx context.Context, args map[string]interface
 		return "", fmt.Errorf("failed to install update: %w", err)
 	}
 
-	response.Message = fmt.Sprintf("✅ Successfully updated to %s! Please restart your IDE or MCP command to use the new version.", info.LatestVersion)
+	// The installer is only started here; its outcome is not known yet.
+	response.Message = fmt.Sprintf("Update to %s started: the installer replaces the binary and stops this server. Restart your IDE or MCP command when it is done. If the server keeps running the old version, the install failed; the reason is in the RagCode log.", info.LatestVersion)
 	response.Data = info
 	return response.JSON()
 }

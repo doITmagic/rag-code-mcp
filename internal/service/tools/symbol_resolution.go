@@ -256,6 +256,11 @@ func resolveCall(ctx context.Context, eng *engine.Engine, wsID string, source st
 					methods = append(methods, r)
 				}
 			}
+			// Only super() narrows the type; one method of that name is no
+			// proof that d.get() or os.path.join() calls it.
+			if receiver != "super()" && len(methods) > 0 {
+				return nil, "ambiguous"
+			}
 			return uniqueSymbol(methods, "")
 		}
 		if language != "go" {

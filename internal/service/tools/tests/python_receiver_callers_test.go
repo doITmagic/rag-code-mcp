@@ -124,3 +124,33 @@ func TestPythonInstanceCallReachesMethod(t *testing.T) {
 		t.Errorf("usages of Signer.sign want [use]: %s", text)
 	}
 }
+
+// d.get() on a value of unknown type may call the project's only get, so
+// the call is an ambiguous candidate, not a resolved edge into Cache.get.
+func TestPythonUnknownReceiverCallIsAmbiguous(t *testing.T) {
+	dir, store := indexFixture(t, "py", python.NewAnalyzer(), map[string]string{
+		"cache.py": "class Cache:\n    def get(self, k):\n        return k\n",
+		"main.py":  "def lookup(d, k):\n    return d.get(k)\n",
+	})
+	eng := setupTestEngine(store)
+	t.Cleanup(eng.Close)
+	tool := tools.NewCallHierarchyTool(eng)
+	for _, c := range []struct{ file, name, direction string }{
+		{"cache.py", "Cache.get", "incoming"},
+		{"main.py", "lookup", "outgoing"},
+	} {
+		text, err := tool.Execute(context.Background(), map[string]interface{}{
+			"symbol_name": c.name, "direction": c.direction, "file_path": filepath.Join(dir, c.file), "depth": 1,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var hierarchy struct{ Data tools.CallNode }
+		if err := json.Unmarshal([]byte(text), &hierarchy); err != nil {
+			t.Fatal(err)
+		}
+		if len(hierarchy.Data.Children) != 1 || hierarchy.Data.Children[0].Resolution != "ambiguous" {
+			t.Errorf("%s %s: want one ambiguous child: %s", c.direction, c.name, text)
+		}
+	}
+}

@@ -152,7 +152,7 @@ func (t *ReadFileContextTool) Execute(ctx context.Context, args map[string]inter
 	}
 
 	// Fallback to naive streaming
-	result, err := t.streamLines(absPath, startLine, endLine, ctxLines)
+	result, err := t.streamLines(absPath, startLine, endLine, max(startLine-ctxLines, 1), endLine+ctxLines)
 	if err != nil {
 		resp := ToolResponse{Status: "error", Error: fmt.Sprintf("failed to read file lines: %v", err)}
 		return resp.JSON()
@@ -243,20 +243,11 @@ func (t *ReadFileContextTool) tryASTContext(ctx context.Context, path string, st
 			return result, false
 		}
 
-		// Prepend line numbers and mark exact targets
-		lines := strings.Split(best.Content, "\n")
-		var builder strings.Builder
-		currentLine := best.StartLine
-		for i, line := range lines {
-			if i == len(lines)-1 && line == "" {
-				break
-			}
-			marker := "   │ "
-			if currentLine >= start && currentLine <= end {
-				marker = "-> ┃ "
-			}
-			builder.WriteString(fmt.Sprintf("%4d %s%s\n", currentLine, marker, line))
-			currentLine++
+		// The file's own lines: a chunk's text can start after or end before
+		// the symbol's range (an arrow function's declarator in a const).
+		lines, err := t.streamLines(path, start, end, best.StartLine, best.EndLine)
+		if err != nil {
+			return result, false
 		}
 
 		result = CodeContextResult{
@@ -267,7 +258,7 @@ func (t *ReadFileContextTool) tryASTContext(ctx context.Context, path string, st
 			EndLine:     best.EndLine,
 			SymbolName:  best.Name,
 			SymbolType:  string(best.Type),
-			CodeSnippet: builder.String(),
+			CodeSnippet: lines.CodeSnippet,
 			Relations:   best.Relations,
 		}
 		return result, true
@@ -279,8 +270,8 @@ func (t *ReadFileContextTool) tryASTContext(ctx context.Context, path string, st
 // maxSnippetLine caps how much of one line streamLines returns.
 const maxSnippetLine = 16 << 10
 
-// streamLines reads only the necessary fallback lines efficiently
-func (t *ReadFileContextTool) streamLines(path string, start, end, ctxLines int) (CodeContextResult, error) {
+// streamLines reads lines minLine..maxLine efficiently, marking start..end.
+func (t *ReadFileContextTool) streamLines(path string, start, end, minLine, maxLine int) (CodeContextResult, error) {
 	logger.Instance.Debug("Executing streamLines fallback for file: %s", path)
 
 	var result CodeContextResult
@@ -302,12 +293,6 @@ func (t *ReadFileContextTool) streamLines(path string, start, end, ctxLines int)
 	if _, err := f.Seek(0, 0); err != nil {
 		return result, fmt.Errorf("failed to seek file: %w", err)
 	}
-
-	minLine := start - ctxLines
-	if minLine < 1 {
-		minLine = 1
-	}
-	maxLine := end + ctxLines
 
 	// Lines of any length are read (a one-line bundle has megabytes), but only
 	// their first maxSnippetLine bytes are kept, so memory and the response

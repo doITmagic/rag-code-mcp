@@ -130,6 +130,40 @@ var _ = Describe("GetFileContextTool", func() {
 			Expect(resp.Data.CodeSnippet).To(ContainSubstring("big_function_50"))
 		})
 
+		// The AST snippet printed the parser's chunk text numbered from the
+		// symbol's first line. For an arrow-function constant that text drops
+		// "export const" and the ";", and shifts every line after a first
+		// declarator, so the numbered lines did not match the file.
+		It("should number the AST snippet with the file's own lines", func() {
+			dir := GinkgoT().TempDir()
+			for name, src := range map[string]string{
+				"merge.ts": "import x from './x';\n\nexport const replaceOption = <T>(value: T): T => {\n\treturn value;\n};\n",
+				"multi.ts": "export const LIMIT = 10,\n\tclampValue = (value: number): number => {\n\t\tconst top = LIMIT;\n\t\treturn Math.min(value, top);\n\t};\n",
+			} {
+				path := filepath.Join(dir, name)
+				Expect(os.WriteFile(path, []byte(src), 0o600)).To(Succeed())
+				fileLines := strings.Split(src, "\n")
+
+				resJSON, err := tool.Execute(ctx, map[string]interface{}{"file_path": path, "line_number": float64(4)})
+				Expect(err).NotTo(HaveOccurred())
+				var resp struct {
+					Status string                  `json:"status"`
+					Error  string                  `json:"error"`
+					Data   tools.CodeContextResult `json:"data"`
+				}
+				Expect(json.Unmarshal([]byte(resJSON), &resp)).To(Succeed())
+				Expect(resp.Status).To(Equal("success"), resp.Error)
+				Expect(resp.Data.ContextType).To(Equal("ast"), name)
+				Expect(resp.Data.CodeSnippet).To(ContainSubstring("   4 -> ┃ "+fileLines[3]+"\n"), name)
+				for _, line := range strings.Split(strings.TrimSuffix(resp.Data.CodeSnippet, "\n"), "\n") {
+					var n int
+					_, err := fmt.Sscanf(line, "%d", &n)
+					Expect(err).NotTo(HaveOccurred(), line)
+					Expect(line[len("   1 -> ┃ "):]).To(Equal(fileLines[n-1]), name)
+				}
+			}
+		})
+
 		// A one-line file over the size cap (a 10 MB bundle) failed with
 		// "token too long", and a long line went whole into the response.
 		It("should read a single line longer than the file size cap", func() {

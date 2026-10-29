@@ -42,7 +42,16 @@ func TestStateSaveSurvivesKill(t *testing.T) {
 		cmd := exec.Command(os.Args[0], "-test.run=^TestStateSaveSurvivesKill$")
 		cmd.Env = append(os.Environ(), "RAGCODE_TEST_STATE_SAVE_LOOP="+path)
 		require.NoError(t, cmd.Start())
-		time.Sleep(time.Duration(150+attempt*7) * time.Millisecond)
+		// A kill lands inside the short write window only now and then, so
+		// also read the state while the child saves: a reader sees exactly
+		// what a kill at that moment would leave.
+		for deadline := time.Now().Add(time.Duration(150+attempt*7) * time.Millisecond); time.Now().Before(deadline); {
+			if _, err := LoadState(path); err != nil {
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+				t.Fatalf("state unreadable during save (attempt %d): %v", attempt, err)
+			}
+		}
 		require.NoError(t, cmd.Process.Kill())
 		_ = cmd.Wait()
 		_, err := LoadState(path)

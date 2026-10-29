@@ -216,3 +216,29 @@ func TestGitIndexLockDoesNotStopIndexing(t *testing.T) {
 		t.Fatal("index.lock prevented the file from being indexed")
 	}
 }
+
+// gitDuringEmbed runs one Git command in the workspace on the first embedding.
+type gitDuringEmbed struct {
+	mockEmbedder
+	git  func(...string)
+	args []string
+	once sync.Once
+}
+
+func (e *gitDuringEmbed) Embed(ctx context.Context, text string) ([]float64, error) {
+	e.once.Do(func() { e.git(e.args...) })
+	return e.mockEmbedder.Embed(ctx, text)
+}
+
+func TestCommitOnIndexedBranchDoesNotAbortIndexing(t *testing.T) {
+	root, head, git := branchFixture(t)
+	store := &mockStore{}
+	embedder := &gitDuringEmbed{git: git, args: []string{"commit", "-q", "--allow-empty", "-m", "wip"}}
+	ctx := WithGitState(context.Background(), root, "baseline", head)
+	if err := NewService(embedder, store).IndexWorkspace(ctx, root, "baseline", Options{Language: "go"}); err != nil {
+		t.Fatalf("a commit on the indexed branch aborted indexing: %v", err)
+	}
+	if len(store.upsertPoints) != 2 {
+		t.Fatalf("want both files indexed, got %d points", len(store.upsertPoints))
+	}
+}

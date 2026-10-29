@@ -72,7 +72,9 @@ func checkWorkspace(ctx context.Context) error {
 	if branch == "HEAD" {
 		branch = "detached"
 	}
-	if parts[0] != expected.head || branch != expected.branch {
+	// A commit, pull or reset on the same branch keeps the collection; the
+	// watcher picks up any files it changed, so only the branch is compared.
+	if branch != expected.branch {
 		return fmt.Errorf("%w: expected %s at %s, found %s at %s", ErrWorkspaceChanged, expected.branch, expected.head, branch, parts[0])
 	}
 	return nil

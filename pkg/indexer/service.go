@@ -796,7 +796,9 @@ func resolveLocalRelations(symbols []parser.Symbol) {
 			}
 			if len(matches) == 1 {
 				target := symbols[matches[0]]
-				if r.Receiver == "" && target.Type == parser.Method && (s.Language == "php" || s.Language == "javascript" || s.Language == "typescript") {
+				// Go calls keep only the method name, so a same-file method
+				// would be a guess about the receiver's type.
+				if r.Receiver == "" && target.Type == parser.Method && (s.Language == "php" || s.Language == "javascript" || s.Language == "typescript" || s.Language == "go") {
 					continue
 				}
 				r.TargetID, r.Resolution = target.ID, "resolved"

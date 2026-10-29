@@ -90,14 +90,29 @@ func resolveCall(ctx context.Context, eng *engine.Engine, wsID string, source st
 		return nil, "unresolved"
 	}
 	name, _ := rel["target_name"].(string)
+	language, _ := source.Point.Payload["language"].(string)
 	result, status := resolveSymbol(ctx, eng, wsID, name, file)
+	// A Go call keeps only the method name, so the caller's file says nothing
+	// about the receiver's type: only a workspace-unique method is an identity.
+	if language == "go" && result != nil && result.Point.Payload["type"] == "method" {
+		result, status = resolveSymbol(ctx, eng, wsID, name, "")
+	}
 	// New indexes distinguish free calls from member calls. Legacy indexes
 	// without resolution metadata can still expose unique name-only edges.
-	language, _ := source.Point.Payload["language"].(string)
 	if _, indexed := rel["resolution"]; indexed && result != nil && result.Point.Payload["type"] == "method" && (language == "php" || language == "javascript" || language == "typescript") {
 		return nil, "unresolved"
 	}
 	return result, status
+}
+
+// callMayTarget reports whether a call from source can reach target. A call
+// that resolves elsewhere cannot; an ambiguous call by the target's name stays
+// a candidate, except from the target itself: a name collision, not recursion.
+func callMayTarget(source storage.SearchResult, rel map[string]interface{}, resolved *storage.SearchResult, status string, target storage.SearchResult) bool {
+	if resolved != nil {
+		return symbolKey(*resolved) == symbolKey(target)
+	}
+	return status == "ambiguous" && rel["target_name"] == target.Point.Payload["name"] && symbolKey(source) != symbolKey(target)
 }
 
 func symbolKey(r storage.SearchResult) string {

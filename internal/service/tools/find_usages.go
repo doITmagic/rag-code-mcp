@@ -169,8 +169,8 @@ func (t *FindUsagesTool) Execute(ctx context.Context, args map[string]interface{
 						if target, _ := rMap["target_name"].(string); target == shortSymbolName(symbolName) {
 							relType, _ := rMap["type"].(string)
 							if relType == "calls" && targetSymbol != nil {
-								resolved, _ := resolveCall(ctx, t.engine, wctx.ID, result, rMap)
-								if resolved == nil || symbolKey(*resolved) != symbolKey(*targetSymbol) {
+								resolved, status := resolveCall(ctx, t.engine, wctx.ID, result, rMap)
+								if !callMayTarget(result, rMap, resolved, status, *targetSymbol) {
 									continue
 								}
 							}

@@ -227,21 +227,23 @@ func (t *CallHierarchyTool) resolveIncoming(ctx context.Context, wsID string, no
 
 	for _, r := range res {
 		// Verify in-memory (nested filter may not be fully precise in Qdrant Scroll)
-		hasCall := false
+		edge := ""
 		if rels, ok := r.Point.Payload["relations"].([]interface{}); ok {
 			for _, relRaw := range rels {
 				if rel, ok := relRaw.(map[string]interface{}); ok {
 					if rel["type"] == "calls" {
-						target, _ := resolveCall(ctx, t.engine, wsID, r, rel)
-						if target != nil && symbolKey(*target) == node.SymbolID {
-							hasCall = true
-							break
+						target, status := resolveCall(ctx, t.engine, wsID, r, rel)
+						if callMayTarget(r, rel, target, status, *node.symbol) {
+							edge = status
+							if status == "resolved" {
+								break
+							}
 						}
 					}
 				}
 			}
 		}
-		if !hasCall {
+		if edge == "" {
 			continue
 		}
 
@@ -251,7 +253,7 @@ func (t *CallHierarchyTool) resolveIncoming(ctx context.Context, wsID string, no
 		}
 
 		child := &CallNode{
-			SymbolID: symbolKey(r), symbol: &r, Resolution: "resolved",
+			SymbolID: symbolKey(r), symbol: &r, Resolution: edge,
 			Name:     name,
 			Type:     fmt.Sprintf("%v", r.Point.Payload["type"]),
 			FilePath: fmt.Sprintf("%v", r.Point.Payload["file_path"]),

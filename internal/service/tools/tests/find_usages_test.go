@@ -34,7 +34,7 @@ var _ = Describe("FindUsagesTool", func() {
 
 	Describe("Execute", func() {
 		It("should fail if symbol_name is missing", func() {
-			_, err := tool.Execute(ctx, map[string]interface{}{"file_path": "main.go"})
+			_, err := tool.Execute(ctx, map[string]interface{}{"file_path": "/mock/workspace/main.go"})
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("symbol_name parameter is required"))
 		})
@@ -43,7 +43,7 @@ var _ = Describe("FindUsagesTool", func() {
 			mockStore.CollectionExistsFunc = func(ctx context.Context, name string) (bool, error) {
 				return false, nil
 			}
-			resJSON, err := tool.Execute(ctx, map[string]interface{}{"symbol_name": "GhostFunc", "file_path": "main.go"})
+			resJSON, err := tool.Execute(ctx, map[string]interface{}{"symbol_name": "GhostFunc", "file_path": "/mock/workspace/main.go"})
 			Expect(err).NotTo(HaveOccurred())
 			var resp tools.ToolResponse
 			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
@@ -57,7 +57,7 @@ var _ = Describe("FindUsagesTool", func() {
 			mockStore.SearchFunc = func(ctx context.Context, col string, q storage.SearchQuery) ([]storage.SearchResult, error) {
 				return []storage.SearchResult{}, nil
 			}
-			resJSON, err := tool.Execute(ctx, map[string]interface{}{"symbol_name": "GhostFunc", "file_path": "main.go"})
+			resJSON, err := tool.Execute(ctx, map[string]interface{}{"symbol_name": "GhostFunc", "file_path": "/mock/workspace/main.go"})
 			Expect(err).NotTo(HaveOccurred())
 			var resp tools.ToolResponse
 			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
@@ -95,7 +95,7 @@ var _ = Describe("FindUsagesTool", func() {
 
 			resJSON, err := tool.Execute(ctx, map[string]interface{}{
 				"symbol_name": "MySymbol",
-				"file_path":   "main.go",
+				"file_path":   "/mock/workspace/main.go",
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -168,7 +168,7 @@ var _ = Describe("FindUsagesTool", func() {
 
 			resJSON, err := tool.Execute(ctx, map[string]interface{}{
 				"symbol_name": "MySymbol",
-				"file_path":   "main.go",
+				"file_path":   "/mock/workspace/main.go",
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -194,7 +194,7 @@ var _ = Describe("FindUsagesTool", func() {
 				return []storage.SearchResult{}, nil
 			}
 
-			_, _ = tool.Execute(ctx, map[string]interface{}{"symbol_name": "TargetSym", "file_path": "main.go"})
+			_, _ = tool.Execute(ctx, map[string]interface{}{"symbol_name": "TargetSym", "file_path": "/mock/workspace/main.go"})
 
 			Expect(capturedFilter).NotTo(BeNil(), "ExactSearch should have been called")
 			Expect(capturedFilter["relations[].target_name"]).To(Equal("TargetSym"))
@@ -221,7 +221,7 @@ var _ = Describe("FindUsagesTool", func() {
 				return []storage.SearchResult{}, nil
 			}
 
-			resJSON, err := tool.Execute(ctx, map[string]interface{}{"symbol_name": "SharedSym", "file_path": "main.go"})
+			resJSON, err := tool.Execute(ctx, map[string]interface{}{"symbol_name": "SharedSym", "file_path": "/mock/workspace/main.go"})
 			Expect(err).NotTo(HaveOccurred())
 
 			var resp tools.ToolResponse

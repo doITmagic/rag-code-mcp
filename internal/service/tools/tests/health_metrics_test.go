@@ -65,7 +65,7 @@ var _ = Describe("Health Metrics & Index Status", func() {
 
 			resJSON, err := tool.Execute(ctx, tools.SmartSearchInput{
 				Query:    "deleted func",
-				FilePath: "main.go",
+				FilePath: "/mock/workspace/main.go",
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -112,7 +112,7 @@ var _ = Describe("Health Metrics & Index Status", func() {
 
 			resJSON, err := tool.Execute(ctx, tools.SmartSearchInput{
 				Query:    "existing func",
-				FilePath: "main.go",
+				FilePath: "/mock/workspace/main.go",
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -137,7 +137,7 @@ var _ = Describe("Health Metrics & Index Status", func() {
 
 			resJSON, err := tool.Execute(ctx, tools.SmartSearchInput{
 				Query:    "func",
-				FilePath: "main.go",
+				FilePath: "/mock/workspace/main.go",
 				MinScore: 0.1, // Exercise stale filtering independently of the relevance floor.
 			})
 			Expect(err).NotTo(HaveOccurred())

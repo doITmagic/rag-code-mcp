@@ -341,7 +341,11 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 		}
 	} else {
 		// A relative path belongs to the client's workspace, not the daemon's cwd.
-		if hint := strings.TrimSpace(hintFromCtx); hint != "" && !filepath.IsAbs(path) {
+		if !filepath.IsAbs(path) {
+			hint := strings.TrimSpace(hintFromCtx)
+			if hint == "" {
+				return nil, fmt.Errorf("relative file_path %q cannot be resolved: no workspace is confirmed for this client yet; provide the absolute path of the file", path)
+			}
 			path = filepath.Join(hint, path)
 		}
 		abs, err := filepath.Abs(path)

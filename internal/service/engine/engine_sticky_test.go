@@ -51,7 +51,7 @@ func TestCheckAndReindexOnConnect_ReturnsRoot(t *testing.T) {
 		}
 	})
 
-	result := eng.CheckAndReindexOnConnect("some/file.go")
+	result := eng.CheckAndReindexOnConnect("/mock/ws/some/file.go")
 	if result != rootDir {
 		t.Errorf("expected root=%q, got %q", rootDir, result)
 	}
@@ -111,7 +111,7 @@ func TestCheckAndReindexOnConnect_TriggersReindex(t *testing.T) {
 
 	// First call: forces branchstate to mark as first-seen (no branch_state.json),
 	// which sets ReindexRequired=true.
-	result := eng.CheckAndReindexOnConnect("some/path.go")
+	result := eng.CheckAndReindexOnConnect("/mock/ws/some/path.go")
 	if result == "" {
 		t.Fatal("expected non-empty root")
 	}
@@ -120,7 +120,7 @@ func TestCheckAndReindexOnConnect_TriggersReindex(t *testing.T) {
 	}
 
 	// Detect context to get the workspace ID for assertion
-	wctx, err := eng.DetectContext(context.Background(), "some/path.go")
+	wctx, err := eng.DetectContext(context.Background(), "/mock/ws/some/path.go")
 	if err != nil || wctx == nil {
 		t.Fatalf("DetectContext failed: %v", err)
 	}

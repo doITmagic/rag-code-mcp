@@ -125,6 +125,11 @@ func TestDetectContextRelativePathUsesClientRoot(t *testing.T) {
 	if wctx.Root != clientRoot {
 		t.Fatalf("relative path resolved to %q, want client root %q", wctx.Root, clientRoot)
 	}
+
+	// A client with no confirmed root yet must not get the daemon cwd's project.
+	if wctx, err := eng.DetectContext(context.Background(), "main.go"); err == nil {
+		t.Fatalf("relative path without a client root resolved to %q, want an error", wctx.Root)
+	}
 }
 
 // A deleted or moved workspace that is still the newest registry entry must

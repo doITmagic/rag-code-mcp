@@ -86,7 +86,7 @@ func TestSearchCodeEmbedsOnce(t *testing.T) {
 	// We need to know what collection names will be generated.
 	// Since mockDetector returns root "/mock/ws", we first resolve to get the ID.
 	eng := newEngineCountingLLM(&testStore{existing: map[string]bool{}}, llmProvider)
-	wctx, err := eng.DetectContext(context.Background(), "test.go")
+	wctx, err := eng.DetectContext(context.Background(), "/mock/ws/test.go")
 	if err != nil {
 		t.Fatalf("DetectContext failed: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestSearchCodeEmbedsOnce(t *testing.T) {
 	res := resolver.New(resolver.Dependencies{Detector: &mockDetector{}})
 	eng2.SetResolver(res)
 
-	result, err := eng2.SearchCode(context.Background(), "test.go", "find something", 10, false)
+	result, err := eng2.SearchCode(context.Background(), "/mock/ws/test.go", "find something", 10, false)
 	if err != nil {
 		t.Fatalf("SearchCode failed: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestSearchCodePopulatesWorkspaceID(t *testing.T) {
 	llmProvider := &countingLLM{}
 
 	eng := newEngineCountingLLM(&testStore{existing: map[string]bool{}}, llmProvider)
-	wctx, err := eng.DetectContext(context.Background(), "test.go")
+	wctx, err := eng.DetectContext(context.Background(), "/mock/ws/test.go")
 	if err != nil {
 		t.Fatalf("DetectContext failed: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestSearchCodePopulatesWorkspaceID(t *testing.T) {
 	eng2 := newEngineCountingLLM(store, llmProvider)
 	eng2.SetResolver(resolver.New(resolver.Dependencies{Detector: &mockDetector{}}))
 
-	result, err := eng2.SearchCode(context.Background(), "test.go", "query", 5, false)
+	result, err := eng2.SearchCode(context.Background(), "/mock/ws/test.go", "query", 5, false)
 	if err != nil {
 		t.Fatalf("SearchCode failed: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestSearchCodeMergesMultiLangResults(t *testing.T) {
 	llmProvider := &countingLLM{}
 
 	eng := newEngineCountingLLM(&testStore{existing: map[string]bool{}}, llmProvider)
-	wctx, err := eng.DetectContext(context.Background(), "test.go")
+	wctx, err := eng.DetectContext(context.Background(), "/mock/ws/test.go")
 	if err != nil {
 		t.Fatalf("DetectContext: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestSearchCodeMergesMultiLangResults(t *testing.T) {
 	eng2 := newEngineCountingLLM(store, llmProvider)
 	eng2.SetResolver(resolver.New(resolver.Dependencies{Detector: &mockDetector{}}))
 
-	result, err := eng2.SearchCode(context.Background(), "test.go", "something", 10, false)
+	result, err := eng2.SearchCode(context.Background(), "/mock/ws/test.go", "something", 10, false)
 	if err != nil {
 		t.Fatalf("SearchCode: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestSearchCodeSurfacesErrorWhenAllFail(t *testing.T) {
 	llmProvider := &countingLLM{}
 
 	eng := newEngineCountingLLM(&testStore{existing: map[string]bool{}}, llmProvider)
-	wctx, err := eng.DetectContext(context.Background(), "test.go")
+	wctx, err := eng.DetectContext(context.Background(), "/mock/ws/test.go")
 	if err != nil {
 		t.Fatalf("DetectContext: %v", err)
 	}
@@ -249,7 +249,7 @@ func TestSearchCodeSurfacesErrorWhenAllFail(t *testing.T) {
 	eng3 := newEngineCountingLLM(errorStore, llmProvider)
 	eng3.SetResolver(resolver.New(resolver.Dependencies{Detector: &mockDetector{}}))
 
-	_, err = eng3.SearchCode(context.Background(), "test.go", "query", 5, false)
+	_, err = eng3.SearchCode(context.Background(), "/mock/ws/test.go", "query", 5, false)
 	if err == nil {
 		t.Error("expected error when all collections fail, got nil")
 	}
@@ -279,7 +279,7 @@ func TestSearchCodeResumeInterruptedIndexing(t *testing.T) {
 	eng.SetResolver(resolver.New(resolver.Dependencies{Detector: &mockDirDetector{root: rootDir}}))
 
 	// Get workspace ID early
-	wctx, _ := eng.DetectContext(context.Background(), "dummy.go")
+	wctx, _ := eng.DetectContext(context.Background(), "/mock/ws/dummy.go")
 	if wctx == nil {
 		t.Fatalf("Failed to detect context")
 	}
@@ -309,7 +309,7 @@ func TestSearchCodeResumeInterruptedIndexing(t *testing.T) {
 	eng.SetSearchService(search.NewService(llmProvider, store))
 
 	// Verify SearchCode succeeds (returns results) when collection exists.
-	_, err := eng.SearchCode(context.Background(), "dummy.go", "test", 10, false)
+	_, err := eng.SearchCode(context.Background(), "/mock/ws/dummy.go", "test", 10, false)
 	if err != nil {
 		t.Fatalf("Expected no error when collection exists, got: %v", err)
 	}
@@ -364,7 +364,7 @@ func TestStartIndexingAsyncRecreateStartsImmediatelyWhenNoJobRunning(t *testing.
 	eng.SetResolver(resolver.New(resolver.Dependencies{Detector: &mockDirDetector{root: rootDir}}))
 
 	// DetectContext triggers connectTriggered → StartIndexingAsync. Wait for it to finish.
-	wctx, _ := eng.DetectContext(context.Background(), "dummy.go")
+	wctx, _ := eng.DetectContext(context.Background(), "/mock/ws/dummy.go")
 	if wctx == nil {
 		t.Fatalf("Failed to detect context")
 	}

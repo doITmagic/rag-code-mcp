@@ -32,7 +32,7 @@ var _ = Describe("ListPackageExportsTool", func() {
 
 	Describe("Execute", func() {
 		It("should fail if package is missing", func() {
-			resJSON, err := tool.Execute(ctx, map[string]interface{}{"file_path": "main.go"})
+			resJSON, err := tool.Execute(ctx, map[string]interface{}{"file_path": "/mock/workspace/main.go"})
 			Expect(err).NotTo(HaveOccurred())
 			var resp tools.ToolResponse
 			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
@@ -66,7 +66,7 @@ var _ = Describe("ListPackageExportsTool", func() {
 
 			resJSON, err := tool.Execute(ctx, map[string]interface{}{
 				"package":   "mypkg",
-				"file_path": "main.go",
+				"file_path": "/mock/workspace/main.go",
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -95,7 +95,7 @@ var _ = Describe("ListPackageExportsTool", func() {
 				return []storage.SearchResult{}, nil
 			}
 
-			_, _ = tool.Execute(ctx, map[string]interface{}{"package": "mypkg", "file_path": "main.go"})
+			_, _ = tool.Execute(ctx, map[string]interface{}{"package": "mypkg", "file_path": "/mock/workspace/main.go"})
 
 			Expect(capturedFilter).NotTo(BeNil())
 			Expect(capturedFilter["package"]).To(Equal("mypkg"))
@@ -116,7 +116,7 @@ var _ = Describe("ListPackageExportsTool", func() {
 				}, nil
 			}
 
-			resJSON, err := tool.Execute(ctx, map[string]interface{}{"package": "mypkg", "file_path": "main.go"})
+			resJSON, err := tool.Execute(ctx, map[string]interface{}{"package": "mypkg", "file_path": "/mock/workspace/main.go"})
 			Expect(err).NotTo(HaveOccurred())
 			var resp tools.ToolResponse
 			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
@@ -139,7 +139,7 @@ var _ = Describe("ListPackageExportsTool", func() {
 				}, nil
 			}
 
-			resJSON, err := tool.Execute(ctx, map[string]interface{}{"package": "mypkg", "file_path": "main.go"})
+			resJSON, err := tool.Execute(ctx, map[string]interface{}{"package": "mypkg", "file_path": "/mock/workspace/main.go"})
 			Expect(err).NotTo(HaveOccurred())
 			var resp tools.ToolResponse
 			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
@@ -165,7 +165,7 @@ var _ = Describe("ListPackageExportsTool", func() {
 				}, nil
 			}
 
-			resJSON, err := tool.Execute(ctx, map[string]interface{}{"package": "mypkg", "file_path": "main.go"})
+			resJSON, err := tool.Execute(ctx, map[string]interface{}{"package": "mypkg", "file_path": "/mock/workspace/main.go"})
 			Expect(err).NotTo(HaveOccurred())
 			var resp tools.ToolResponse
 			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())

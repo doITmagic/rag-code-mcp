@@ -32,7 +32,7 @@ var _ = Describe("CallHierarchyTool", func() {
 
 	Describe("Execute", func() {
 		It("should fail if symbol_name is missing", func() {
-			resJSON, err := tool.Execute(ctx, map[string]interface{}{"file_path": "main.go"})
+			resJSON, err := tool.Execute(ctx, map[string]interface{}{"file_path": "/mock/workspace/main.go"})
 			Expect(err).NotTo(HaveOccurred())
 			var resp tools.ToolResponse
 			Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
@@ -67,7 +67,7 @@ var _ = Describe("CallHierarchyTool", func() {
 			resJSON, err := tool.Execute(ctx, map[string]interface{}{
 				"symbol_name": "MyFunction",
 				"direction":   "outgoing",
-				"file_path":   "main.go",
+				"file_path":   "/mock/workspace/main.go",
 			})
 			Expect(err).NotTo(HaveOccurred())
 

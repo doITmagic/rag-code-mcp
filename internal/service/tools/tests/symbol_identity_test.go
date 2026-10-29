@@ -36,7 +36,7 @@ func TestCallHierarchyUsesIdentityForSameNamedMethods(t *testing.T) {
 		{"App\\B::validate", "incoming", "success", 0},
 		{"App\\A::run", "outgoing", "success", 1},
 	} {
-		text, err := tool.Execute(context.Background(), map[string]interface{}{"symbol_name": tc.name, "direction": tc.direction, "file_path": "owners.php", "depth": 1})
+		text, err := tool.Execute(context.Background(), map[string]interface{}{"symbol_name": tc.name, "direction": tc.direction, "file_path": "/mock/workspace/owners.php", "depth": 1})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -59,7 +59,7 @@ func TestCallHierarchyUsesIdentityForSameNamedMethods(t *testing.T) {
 		}
 	}
 	usage := tools.NewFindUsagesTool(eng)
-	text, err := usage.Execute(context.Background(), map[string]interface{}{"symbol_name": "App\\B::validate", "file_path": "owners.php"})
+	text, err := usage.Execute(context.Background(), map[string]interface{}{"symbol_name": "App\\B::validate", "file_path": "/mock/workspace/owners.php"})
 	if err != nil || strings.Contains(text, "Found symbol usages") {
 		t.Fatalf("false usages: %s %v", text, err)
 	}

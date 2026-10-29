@@ -52,7 +52,7 @@ func TestHandleWatchChangeAccumulatesPendingWhileIndexing(t *testing.T) {
 	eng := newTestEnginePending()
 	ctx := context.Background()
 
-	wctx, err := eng.DetectContext(ctx, "test.go")
+	wctx, err := eng.DetectContext(ctx, "/mock/ws/test.go")
 	if err != nil {
 		t.Fatalf("DetectContext failed: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestPendingOverflowTriggersFullScanFallback(t *testing.T) {
 	eng := newTestEnginePending()
 	ctx := context.Background()
 
-	wctx, err := eng.DetectContext(ctx, "test.go")
+	wctx, err := eng.DetectContext(ctx, "/mock/ws/test.go")
 	if err != nil {
 		t.Fatalf("DetectContext failed: %v", err)
 	}

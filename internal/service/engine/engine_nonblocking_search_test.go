@@ -32,7 +32,7 @@ func TestSearchCodeReturnsResultsFromOtherLangsWhenPrimaryMissing(t *testing.T) 
 
 	// First, detect to learn the workspace ID
 	eng := newEngineCountingLLM(&testStore{existing: map[string]bool{}}, llmProvider)
-	wctx, err := eng.DetectContext(context.Background(), "test.go")
+	wctx, err := eng.DetectContext(context.Background(), "/mock/ws/test.go")
 	if err != nil {
 		t.Fatalf("DetectContext failed: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestSearchCodeReturnsResultsFromOtherLangsWhenPrimaryMissing(t *testing.T) 
 	eng2 := newEngineCountingLLM(store, llmProvider)
 	eng2.SetResolver(resolver.New(resolver.Dependencies{Detector: &mockDetector{}}))
 
-	result, err := eng2.SearchCode(context.Background(), "test.go", "find something", 10, false)
+	result, err := eng2.SearchCode(context.Background(), "/mock/ws/test.go", "find something", 10, false)
 	if err != nil {
 		t.Fatalf("SearchCode should NOT block when other collections exist, got error: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestSearchCodeBlocksWhenZeroCollectionsExist(t *testing.T) {
 	llmProvider := &countingLLM{}
 
 	eng := newEngineCountingLLM(&testStore{existing: map[string]bool{}}, llmProvider)
-	wctx, err := eng.DetectContext(context.Background(), "test.go")
+	wctx, err := eng.DetectContext(context.Background(), "/mock/ws/test.go")
 	if err != nil {
 		t.Fatalf("DetectContext failed: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestSearchCodeBlocksWhenZeroCollectionsExist(t *testing.T) {
 	eng2 := newEngineCountingLLM(store, llmProvider)
 	eng2.SetResolver(resolver.New(resolver.Dependencies{Detector: &mockDetector{}}))
 
-	_, err = eng2.SearchCode(context.Background(), "test.go", "find something", 10, false)
+	_, err = eng2.SearchCode(context.Background(), "/mock/ws/test.go", "find something", 10, false)
 	if err == nil {
 		t.Fatal("Expected ErrIndexingStarted when zero collections exist, got nil")
 	}
@@ -152,7 +152,7 @@ func TestSearchCodeIndexingInProgressStillSearches(t *testing.T) {
 	llmProvider := &countingLLM{}
 
 	eng := newEngineCountingLLM(&testStore{existing: map[string]bool{}}, llmProvider)
-	wctx, err := eng.DetectContext(context.Background(), "test.go")
+	wctx, err := eng.DetectContext(context.Background(), "/mock/ws/test.go")
 	if err != nil {
 		t.Fatalf("DetectContext failed: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestSearchCodeIndexingInProgressStillSearches(t *testing.T) {
 	// Simulate an active indexing job
 	eng2.indexingJobs.Store(wctx.ID, "running")
 
-	result, err := eng2.SearchCode(context.Background(), "test.go", "find something", 10, false)
+	result, err := eng2.SearchCode(context.Background(), "/mock/ws/test.go", "find something", 10, false)
 	if err != nil {
 		t.Fatalf("SearchCode should still search when collections have data during indexing, got: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestHybridSearchCodeReturnsNilWhenCollectionMissing(t *testing.T) {
 	rootDir := t.TempDir()
 	eng.SetResolver(resolver.New(resolver.Dependencies{Detector: &mockDirDetector{root: rootDir}}))
 
-	wctx, err := eng.DetectContext(context.Background(), "test.go")
+	wctx, err := eng.DetectContext(context.Background(), "/mock/ws/test.go")
 	if err != nil {
 		t.Fatalf("DetectContext failed: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestHybridSearchCodeReturnsNilWhenCollectionMissing(t *testing.T) {
 	eng2 := newEngineCountingLLM(store, llmProvider)
 	eng2.SetResolver(resolver.New(resolver.Dependencies{Detector: &mockDirDetector{root: rootDir}}))
 
-	result, err := eng2.HybridSearchCode(context.Background(), "test.go", "find something", 10, false)
+	result, err := eng2.HybridSearchCode(context.Background(), "/mock/ws/test.go", "find something", 10, false)
 
 	// Should NOT return an error — should return nil, nil
 	if err != nil {
@@ -261,7 +261,7 @@ func TestHybridSearchCodeStillWorksWhenCollectionExists(t *testing.T) {
 	llmProvider := &countingLLM{}
 
 	eng := newEngineCountingLLM(&testStore{existing: map[string]bool{}}, llmProvider)
-	wctx, err := eng.DetectContext(context.Background(), "test.go")
+	wctx, err := eng.DetectContext(context.Background(), "/mock/ws/test.go")
 	if err != nil {
 		t.Fatalf("DetectContext failed: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestHybridSearchCodeStillWorksWhenCollectionExists(t *testing.T) {
 	eng2 := newEngineCountingLLM(store, llmProvider)
 	eng2.SetResolver(resolver.New(resolver.Dependencies{Detector: &mockDetector{}}))
 
-	result, err := eng2.HybridSearchCode(context.Background(), "test.go", "find something", 10, false)
+	result, err := eng2.HybridSearchCode(context.Background(), "/mock/ws/test.go", "find something", 10, false)
 	if err != nil {
 		t.Fatalf("HybridSearchCode failed: %v", err)
 	}
@@ -318,7 +318,7 @@ type hybridSearchStore struct {
 func TestHybridSearchCodeIncludesDocsCollection(t *testing.T) {
 	llmProvider := &countingLLM{}
 	probe := newEngineCountingLLM(&testStore{existing: map[string]bool{}}, llmProvider)
-	wctx, err := probe.DetectContext(context.Background(), "test.go")
+	wctx, err := probe.DetectContext(context.Background(), "/mock/ws/test.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +332,7 @@ func TestHybridSearchCodeIncludesDocsCollection(t *testing.T) {
 		},
 	}
 	eng := newEngineCountingLLM(store, llmProvider)
-	result, err := eng.HybridSearchCode(context.Background(), "test.go", "refund policy", 10, true)
+	result, err := eng.HybridSearchCode(context.Background(), "/mock/ws/test.go", "refund policy", 10, true)
 	if err != nil {
 		t.Fatal(err)
 	}

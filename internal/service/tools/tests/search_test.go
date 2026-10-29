@@ -45,7 +45,7 @@ var _ = Describe("SmartSearchTool (rag_search)", func() {
 				}
 				// A token no file contains: _test.go files are indexed now, so "test"
 				// would be found by the on-disk fallback scan.
-				resJSON, err := tool.Execute(ctx, tools.SmartSearchInput{Query: "zzqxnomatch", FilePath: "main.go"})
+				resJSON, err := tool.Execute(ctx, tools.SmartSearchInput{Query: "zzqxnomatch", FilePath: "/mock/workspace/main.go"})
 				Expect(err).NotTo(HaveOccurred())
 				var resp tools.ToolResponse
 				Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
@@ -93,7 +93,7 @@ var _ = Describe("SmartSearchTool (rag_search)", func() {
 			})
 
 			It("should return success and properly mapped data", func() {
-				resJSON, err := tool.Execute(ctx, tools.SmartSearchInput{Query: "find func", FilePath: "main.go"})
+				resJSON, err := tool.Execute(ctx, tools.SmartSearchInput{Query: "find func", FilePath: "/mock/workspace/main.go"})
 				Expect(err).NotTo(HaveOccurred())
 				var resp tools.ToolResponse
 				Expect(json.Unmarshal([]byte(resJSON), &resp)).NotTo(HaveOccurred())
@@ -225,7 +225,7 @@ var _ = Describe("SmartSearchTool (rag_search)", func() {
 						},
 					}, nil
 				}
-				result, err := tool.Execute(ctx, tools.SmartSearchInput{Query: "how token authentication works", FilePath: "main.go"})
+				result, err := tool.Execute(ctx, tools.SmartSearchInput{Query: "how token authentication works", FilePath: "/mock/workspace/main.go"})
 				Expect(err).NotTo(HaveOccurred())
 				var resp tools.ToolResponse
 				Expect(json.Unmarshal([]byte(result), &resp)).To(Succeed())

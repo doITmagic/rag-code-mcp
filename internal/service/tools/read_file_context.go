@@ -103,8 +103,14 @@ func (t *ReadFileContextTool) Execute(ctx context.Context, args map[string]inter
 	}
 
 	// Make sure the file actually exists
-	if _, err := os.Stat(absPath); os.IsNotExist(err) {
+	info, err := os.Stat(absPath)
+	if os.IsNotExist(err) {
 		resp := ToolResponse{Status: "error", Error: fmt.Sprintf("file not found: %s", absPath)}
+		return resp.JSON()
+	}
+	// Opening a FIFO blocks forever and a device never ends.
+	if err == nil && !info.Mode().IsRegular() {
+		resp := ToolResponse{Status: "error", Error: fmt.Sprintf("not a regular file: %s", absPath)}
 		return resp.JSON()
 	}
 

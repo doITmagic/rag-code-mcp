@@ -179,3 +179,53 @@ func TestRunBridgeSkipsEmptyNotificationReply(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, `{"jsonrpc":"2.0","id":1,"result":{}}`+"\n", stdout.String())
 }
+
+// A request the daemon received before dying must not be sent again to the
+// restarted daemon: it may be what killed it, or not be safe to run twice.
+func TestRunBridgeDoesNotResendDeliveredRequest(t *testing.T) {
+	delivered := 0
+	handler := func(die func(w http.ResponseWriter)) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/health" {
+				_, _ = io.WriteString(w, `{"status":"ok"}`)
+				return
+			}
+			delivered++
+			die(w)
+		}
+	}
+	var dying *httptest.Server
+	dying = httptest.NewServer(handler(func(w http.ResponseWriter) {
+		conn, _, _ := w.(http.Hijacker).Hijack()
+		dying.Listener.Close()
+		conn.Close()
+	}))
+	defer dying.Close()
+	addr := dying.Listener.Addr().String()
+
+	restarts := 0
+	restart := func() error {
+		restarts++
+		ln, err := net.Listen("tcp", addr)
+		if err != nil {
+			return err
+		}
+		srv := &httptest.Server{Listener: ln, Config: &http.Server{Handler: handler(func(w http.ResponseWriter) {
+			_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":1,"result":{}}`)
+		})}}
+		srv.Start()
+		t.Cleanup(srv.Close)
+		return nil
+	}
+
+	stdin := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call"}` + "\n")
+	var stdout bytes.Buffer
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := adapter.RunBridge(ctx, dying.Listener.Addr().(*net.TCPAddr).Port, stdin, &stdout, "", restart)
+	require.NoError(t, err)
+	assert.Equal(t, 1, delivered)
+	assert.Equal(t, 0, restarts)
+	assert.Contains(t, stdout.String(), `"id":1`)
+	assert.Contains(t, stdout.String(), "daemon unreachable")
+}

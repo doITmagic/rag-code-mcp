@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -25,8 +27,8 @@ import (
 // workspace detection on the daemon side. The workspaceHint parameter from
 // the IDE is intentionally ignored — only the daemon-resolved root is trusted.
 //
-// When the daemon is unreachable and not healthy, restart (if non-nil) is
-// called to start it again and the request is retried once.
+// When the daemon cannot be dialed and is not healthy, restart (if non-nil)
+// is called to start it again and the request is retried once.
 //
 // Returns nil on stdin EOF (normal IDE shutdown).
 func RunBridge(ctx context.Context, port int, stdin io.Reader, stdout io.Writer, workspaceHint string, restart func() error) error {
@@ -77,8 +79,11 @@ func RunBridge(ctx context.Context, port int, stdin io.Reader, stdout io.Writer,
 		}
 
 		resp, err := post()
-		// The daemon died: start it again and retry this request once.
-		if err != nil && restart != nil && ctx.Err() == nil {
+		// The daemon is gone: start it again and retry this request once.
+		// Only a failed dial is retried; a request the daemon received may
+		// be what killed it, or not be safe to run twice.
+		var opErr *net.OpError
+		if err != nil && restart != nil && ctx.Err() == nil && errors.As(err, &opErr) && opErr.Op == "dial" {
 			if running, _ := IsDaemonRunning(port); !running {
 				if rerr := restart(); rerr != nil {
 					err = fmt.Errorf("%w; restart failed: %v", err, rerr)

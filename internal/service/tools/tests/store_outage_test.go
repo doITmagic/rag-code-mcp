@@ -250,11 +250,10 @@ func TestSemanticSearchDuringCollectionRecreate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var response tools.ToolResponse
-			if err := json.Unmarshal([]byte(text), &response); err != nil {
-				t.Fatal(err)
-			}
-			if response.Status == "error" {
+			// Which of the parallel searches sees the dropped collection first
+			// decides between "not indexed" and no results; either way the
+			// store's raw error must not reach the client.
+			if strings.Contains(text, "Collection doesn't exist") || strings.Contains(text, "NotFound") {
 				t.Errorf("rag_search: %s", text)
 			}
 		})

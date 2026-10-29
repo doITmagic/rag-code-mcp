@@ -121,6 +121,14 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 	if err != nil {
 		return "", err
 	}
+	// Strict modes drop results after retrieval, so retrieve a wider pool and
+	// apply the caller's limit only once the mode filter has run.
+	searchLimit := limit
+	if input.Mode == "strict_code" || input.Mode == "strict_docs" {
+		// ponytail: fixed pool, a match ranked below it is still lost; push the
+		// mode into the store filter if that shows up.
+		searchLimit = max(limit*5, 50)
+	}
 
 	exactSymbol := isSymbolQuery(query)
 	strictIdentifier := isStrictIdentifierQuery(query)
@@ -136,7 +144,7 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 		}
 		sr.meta = searchMetadata{workspaceRoot: wctx.Root, workspaceID: wctx.ID, collection: "exact", detectionSource: wctx.DetectionSource}
 		ctx = engine.WithResolvedWorkspace(ctx, input.FilePath, wctx)
-		exact, err := searchSymbolCandidates(ctx, t.engine, sr.meta.workspaceID, query, limit)
+		exact, err := searchSymbolCandidates(ctx, t.engine, sr.meta.workspaceID, query, searchLimit)
 		if err != nil {
 			var missing *engine.ErrNoCollectionsFound
 			if errors.As(err, &missing) && input.ExactSymbol != nil && *input.ExactSymbol {
@@ -149,7 +157,7 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 		for i := range exact {
 			exact[i].Score = 1
 		}
-		merged = t.mergeResults(&engine.SearchCodeResult{Results: exact}, nil, limit)
+		merged = t.mergeResults(&engine.SearchCodeResult{Results: exact}, nil, searchLimit)
 		for i := range merged {
 			merged[i].source = "exact"
 		}
@@ -159,7 +167,7 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 		exactMatches := merged
 		exactMeta := sr.meta
 		exactSymbol = false
-		sr = t.runParallelSearch(ctx, input.FilePath, query, limit, input.IncludeDocs)
+		sr = t.runParallelSearch(ctx, input.FilePath, query, searchLimit, input.IncludeDocs)
 		if sr.semantic == nil && sr.hybrid == nil {
 			if len(exactMatches) > 0 {
 				sr.meta = exactMeta
@@ -171,8 +179,8 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 				return t.handleSearchError(sr.err, sr.meta.workspaceRoot, sr.meta.workspaceID)
 			}
 		} else {
-			semMerged := t.mergeResults(sr.semantic, sr.hybrid, limit)
-			merged = blendExactAndSemantic(exactMatches, semMerged, limit)
+			semMerged := t.mergeResults(sr.semantic, sr.hybrid, searchLimit)
+			merged = blendExactAndSemantic(exactMatches, semMerged, searchLimit)
 		}
 	}
 	preFilter := append([]mergedResult(nil), merged...)
@@ -193,6 +201,9 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 		if len(merged) > softSemanticMaxResult {
 			merged = merged[:softSemanticMaxResult]
 		}
+	}
+	if len(merged) > limit {
+		merged = merged[:limit]
 	}
 
 	if len(merged) == 0 {

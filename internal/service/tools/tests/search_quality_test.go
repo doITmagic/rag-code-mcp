@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/doITmagic/rag-code-mcp/internal/service/tools"
@@ -45,5 +46,46 @@ func TestMissingIdentifierDoesNotBecomeSemanticSuccess(t *testing.T) {
 	m := telemetry.ReadAggregatedMetrics(root)
 	if m == nil || m.TotalSearches != 2 || m.SearchesWithResults != 0 {
 		t.Fatalf("metrics=%+v", m)
+	}
+}
+
+func TestStrictDocsAppliesLimitAfterModeFilter(t *testing.T) {
+	root := t.TempDir()
+	codePath, docsPath := filepath.Join(root, "cache.go"), filepath.Join(root, "README.md")
+	for _, path := range []string{codePath, docsPath} {
+		if err := os.WriteFile(path, []byte("cache lifetime"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result := func(id, path, kind string, score float32) []storage.SearchResult {
+		return []storage.SearchResult{{Score: score, Point: storage.Point{ID: id, Payload: map[string]interface{}{
+			"name": id, "type": kind, "file_path": path, "content": "cache lifetime", "start_line": 1, "end_line": 1,
+		}}}}
+	}
+	// A code chunk outranks the README; strict_docs must still return the README.
+	search := func(_ context.Context, collection string, _ storage.SearchQuery) ([]storage.SearchResult, error) {
+		switch {
+		case strings.HasSuffix(collection, "-go"):
+			return result("code", codePath, "function", 0.99), nil
+		case strings.HasSuffix(collection, "-docs"):
+			return result("docs", docsPath, "documentation", 0.95), nil
+		}
+		return nil, nil
+	}
+	eng := setupTestEngine(&mockVectorStore{SearchFunc: search, SearchCodeOnlyFunc: search})
+	t.Cleanup(eng.Close)
+	text, err := tools.NewSmartSearchTool(eng).Execute(context.Background(), tools.SmartSearchInput{Query: "cache lifetime", FilePath: codePath, Mode: "strict_docs", Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Status string
+		Data   []map[string]interface{}
+	}
+	if err := json.Unmarshal([]byte(text), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Data) != 1 || response.Data[0]["file_path"] != docsPath {
+		t.Fatalf("strict_docs limit=1: status=%s data=%v, want README.md", response.Status, response.Data)
 	}
 }

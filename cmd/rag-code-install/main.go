@@ -552,7 +552,14 @@ func copyFile(src, dst string) error {
 		destFile.Close()
 		return err
 	}
-	if err := destFile.Chmod(0644); err != nil {
+	// Keep the source's mode: the renamed-in binary must already be
+	// executable for an IDE that starts its adapter right away.
+	info, err := sourceFile.Stat()
+	if err != nil {
+		destFile.Close()
+		return err
+	}
+	if err := destFile.Chmod(info.Mode().Perm()); err != nil {
 		destFile.Close()
 		return err
 	}

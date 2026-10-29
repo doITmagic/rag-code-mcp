@@ -45,6 +45,25 @@ func TestCopyFileReplacesRunningBinary(t *testing.T) {
 	}
 }
 
+// The renamed-in binary must be executable at once: an IDE starting its
+// adapter before the installer's chmod would otherwise fail with EACCES.
+func TestCopyFileInstallsExecutableBinary(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no exec bit on Windows")
+	}
+	src, err := exec.LookPath("true")
+	if err != nil {
+		t.Skip("true not found")
+	}
+	dst := filepath.Join(t.TempDir(), "rag-code-mcp")
+	if err := copyFile(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command(dst).Run(); err != nil {
+		t.Fatalf("installed binary not runnable right after copy: %v", err)
+	}
+}
+
 func TestWaitForFileRelease(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "rag-code-mcp.exe")
 	if err := os.WriteFile(path, []byte("binary"), 0o600); err != nil {

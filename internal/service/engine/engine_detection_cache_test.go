@@ -101,6 +101,31 @@ func TestDetectContextRegistryFallbackIsNotConfirmed(t *testing.T) {
 	}
 }
 
+// A relative file_path belongs to the client's workspace, not to whatever
+// project the daemon process happened to be started in.
+func TestDetectContextRelativePathUsesClientRoot(t *testing.T) {
+	daemonCwd, clientRoot := t.TempDir(), t.TempDir()
+	for _, dir := range []string{daemonCwd, clientRoot} {
+		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.test/app\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Chdir(daemonCwd)
+	registryPath := filepath.Join(t.TempDir(), "registry.json")
+	eng := NewEngine(nil, nil, registryPath, &config.Config{})
+	ctx := transport.WithWorkspaceHint(context.Background(), clientRoot)
+	wctx, err := eng.DetectContext(ctx, "main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wctx.Root != clientRoot {
+		t.Fatalf("relative path resolved to %q, want client root %q", wctx.Root, clientRoot)
+	}
+}
+
 func TestDetectContextHintResolvesOnEveryRequest(t *testing.T) {
 	hint, changedRoot := t.TempDir(), t.TempDir()
 	detector := &mockDirDetector{root: hint}

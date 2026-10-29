@@ -335,6 +335,10 @@ func (e *Engine) DetectContext(ctx context.Context, path string) (*WorkspaceCont
 			logger.Instance.Info("[WS-DETECT] ✅ Tier 3 matched: using registry fallback=%s", active)
 		}
 	} else {
+		// A relative path belongs to the client's workspace, not the daemon's cwd.
+		if hint := strings.TrimSpace(hintFromCtx); hint != "" && !filepath.IsAbs(path) {
+			path = filepath.Join(hint, path)
+		}
 		abs, err := filepath.Abs(path)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve path: %w", err)

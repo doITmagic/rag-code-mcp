@@ -51,6 +51,7 @@ type Engine struct {
 	pendingFiles    map[string]map[string]struct{} // workspaceID -> set(filePath)
 	pendingOverflow map[string]bool                // workspaceID -> too many pending changes, fallback to full scan
 	pendingRecreate map[string]bool                // workspaceID -> explicit recreate requested while a job was running
+	pendingReplay   map[string]bool                // workspaceID -> next run replays one a checkout interrupted
 
 	registry *registry.Registry
 
@@ -192,6 +193,7 @@ func NewEngine(idx *indexer.Service, srv *search.Service, registryPath string, c
 		pendingFiles:    make(map[string]map[string]struct{}),
 		pendingOverflow: make(map[string]bool),
 		pendingRecreate: make(map[string]bool),
+		pendingReplay:   make(map[string]bool),
 
 		lifecycleCtx:    lifecycleCtx,
 		lifecycleCancel: lifecycleCancel,
@@ -1141,6 +1143,8 @@ func (e *Engine) startIndexing(root, id string, changedFiles []string, recreate,
 		e.pendingMu.Unlock()
 		return
 	}
+	replay := e.pendingReplay[id]
+	delete(e.pendingReplay, id)
 	e.pendingMu.Unlock()
 
 	// Rule files are refreshed here rather than on every resolve: this is the
@@ -1202,8 +1206,9 @@ func (e *Engine) startIndexing(root, id string, changedFiles []string, recreate,
 			// watcher, and a queued watcher batch would mark the partial index
 			// complete. A replayed run interrupted again waits for a request,
 			// so a Git state that never settles cannot loop.
-			if !queueFullRun {
+			if !replay {
 				e.pendingMu.Lock()
+				e.pendingReplay[id] = true
 				e.pendingOverflow[id] = true
 				delete(e.pendingFiles, id)
 				e.pendingMu.Unlock()

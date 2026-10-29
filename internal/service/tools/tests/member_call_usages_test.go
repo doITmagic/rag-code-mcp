@@ -82,6 +82,23 @@ func TestJSGlobalReceiverCallsNoProjectMethod(t *testing.T) {
 	}
 }
 
+// $this->m() may call a method the class inherits from a parent or a trait.
+func TestPHPThisCallReachesInheritedMethod(t *testing.T) {
+	dir, store := indexFixture(t, "php", php.NewAnalyzer(), map[string]string{
+		"AbstractStore.php": "<?php\nnamespace Shop;\nabstract class AbstractStore {\n  protected function canonicalOrderId($id) { return $id; }\n}\n",
+		"Auditable.php":     "<?php\nnamespace Shop;\ntrait Auditable {\n  protected function recordAuditEntry($e) { return $e; }\n}\n",
+		"OrderStore.php":    "<?php\nnamespace Shop;\nclass OrderStore extends AbstractStore {\n  use Auditable;\n  public function storeOrder($id) {\n    $this->recordAuditEntry($id);\n    return $this->canonicalOrderId($id);\n  }\n}\n",
+	})
+	eng := setupTestEngine(store)
+	t.Cleanup(eng.Close)
+	tool := tools.NewCallHierarchyTool(eng)
+	for file, symbol := range map[string]string{"AbstractStore.php": "canonicalOrderId", "Auditable.php": "recordAuditEntry"} {
+		if got := pythonCallers(t, tool, filepath.Join(dir, file), symbol); !slices.Equal(got, []string{"storeOrder"}) {
+			t.Errorf("callers of %s = %v, want [storeOrder]", symbol, got)
+		}
+	}
+}
+
 // A member call reaches no free function, and in PHP and JS/TS a bare call
 // reaches no method: JSON.parse() is not a caller of a project's parse().
 func TestMemberAndFreeCallsKeepTheirTargetKind(t *testing.T) {

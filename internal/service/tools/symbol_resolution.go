@@ -193,9 +193,11 @@ func resolveCall(ctx context.Context, eng *engine.Engine, wsID string, source st
 	receiver, _ := rel["receiver"].(string)
 	if qualified, _ := rel["target_qualified_name"].(string); qualified != "" {
 		results, err := eng.ExactSearchPolyglot(ctx, wsID, map[string]interface{}{"qualified_name": qualified}, 100)
-		// Python self.helper() may call a method the class inherits.
-		if err == nil && len(results) == 0 && language == "python" && (receiver == "self" || receiver == "cls") {
-			results, err = eng.ExactSearchPolyglot(ctx, wsID, map[string]interface{}{"language": "python", "type": "method", "name": name}, 100)
+		// Python self.helper() and PHP $this->helper() may call a method the
+		// class inherits from a base class, mixin or trait.
+		ownClass := (language == "python" && (receiver == "self" || receiver == "cls")) || (language == "php" && (receiver == "this" || receiver == "self"))
+		if err == nil && len(results) == 0 && ownClass {
+			results, err = eng.ExactSearchPolyglot(ctx, wsID, map[string]interface{}{"language": language, "type": "method", "name": name}, 100)
 		}
 		if err != nil {
 			return nil, "unresolved"

@@ -219,3 +219,27 @@ func TestSearchWithoutIncludeDocsSkipsDocumentation(t *testing.T) {
 		t.Fatalf("include_docs=false: %s, want only MarkHidden", text)
 	}
 }
+
+func TestExactSearchBeforeFirstCollectionReportsRunningIndex(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "bool.go")
+	if err := os.WriteFile(path, []byte("package flag\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// The first index run has started but has not created a collection yet.
+	indexer.SaveIndexStatus(root, &indexer.IndexStatus{StartedAt: "2026-01-01T00:00:00Z"})
+	eng := setupTestEngine(&mockVectorStore{CollectionExistsFunc: func(context.Context, string) (bool, error) { return false, nil }})
+	t.Cleanup(eng.Close)
+	exact := true
+	text, err := tools.NewSmartSearchTool(eng).Execute(context.Background(), tools.SmartSearchInput{Query: "BoolVarP", FilePath: path, ExactSymbol: &exact})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response tools.ToolResponse
+	if err := json.Unmarshal([]byte(text), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Status != "indexing_in_progress" {
+		t.Fatalf("%s, want indexing_in_progress while the first index runs", text)
+	}
+}

@@ -148,7 +148,12 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 		if err != nil {
 			var missing *engine.ErrNoCollectionsFound
 			if errors.As(err, &missing) && input.ExactSymbol != nil && *input.ExactSymbol {
-				return (ToolResponse{Status: "indexing_required", Message: "Index this workspace before exact symbol lookup.", Context: ContextFromWorkspaceWithStatus(wctx, t.engine)}).JSON()
+				response := ToolResponse{Status: "indexing_required", Message: "Index this workspace before exact symbol lookup.", Context: ContextFromWorkspaceWithStatus(wctx, t.engine)}
+				// A run that has not created its first collection yet.
+				if idx := response.Context.IndexingStatus; idx != nil && idx.EndedAt == "" {
+					response.Status, response.Message = "indexing_in_progress", "Indexing is in progress; retry the exact symbol lookup shortly."
+				}
+				return response.JSON()
 			}
 			if !errors.As(err, &missing) {
 				return "", err

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -365,18 +366,19 @@ func checkConfigUpgrade(configPath string) {
 		fmt.Printf("   \033[1;31mNote: Upgrading will require re-indexing all your workspaces.\033[0m\n")
 		fmt.Printf("   Do you want to upgrade to the new stable model? [Y/n]: ")
 
+		// Switching models invalidates every index, so an unattended run
+		// (-y is the default, and auto-update passes it) never does it.
 		var response string
 		if *assumeYes {
-			fmt.Println("y (auto-confirmed)")
-			response = "y"
+			fmt.Println("n (unattended; rerun with -y=false to upgrade)")
+			response = "n"
 		} else {
 			_, _ = fmt.Scanln(&response)
 			response = strings.ToLower(strings.TrimSpace(response))
 		}
 
 		if response == "" || response == "y" || response == "yes" {
-			cfg.LLM.OllamaEmbed = stableModel
-			if err := config.Save(configPath, cfg); err != nil {
+			if err := setEmbedModel(configPath, stableModel); err != nil {
 				warn("Failed to update config: " + err.Error())
 			} else {
 				success("Config updated to " + stableModel)
@@ -388,6 +390,22 @@ func checkConfigUpgrade(configPath string) {
 			log("Keeping current model: " + currentModel)
 		}
 	}
+}
+
+var embedModelLine = regexp.MustCompile(`(?m)^([ \t]*ollama_embed:[ \t]*)("[^"]*"|'[^']*'|[^\s#]+)`)
+
+// setEmbedModel edits only the ollama_embed value in place. Saving the loaded
+// config instead would drop the user's comments and write env-only settings,
+// such as QDRANT_API_KEY, into the file.
+func setEmbedModel(path, model string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if !embedModelLine.Match(data) {
+		return fmt.Errorf("no ollama_embed setting in %s", path)
+	}
+	return os.WriteFile(path, embedModelLine.ReplaceAll(data, []byte("${1}"+model)), 0644)
 }
 
 func askConfirm(defaultVal bool) bool {

@@ -45,20 +45,6 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
-// Save writes the configuration to a file
-func Save(path string, cfg *Config) error {
-	data, err := yaml.Marshal(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
-	}
-
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("failed to write config file: %w", err)
-	}
-
-	return nil
-}
-
 // DefaultConfig returns a default configuration structure
 func DefaultConfig() *Config {
 	// Parse the embedded default YAML to ensure struct defaults match file defaults

@@ -74,6 +74,26 @@ func TestGeneratedRulesLocallyIgnoredAndUserEditsPreserved(t *testing.T) {
 	}
 }
 
+func TestRemoveKeepsCommittedGeneratedRules(t *testing.T) {
+	root := t.TempDir()
+	if out, err := exec.Command("git", "-C", root, "init").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	Write(root)
+	if out, err := exec.Command("git", "-C", root, "add", "-f", "CLAUDE.md").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v %s", err, out)
+	}
+
+	Remove(root)
+
+	if !IsGenerated(filepath.Join(root, "CLAUDE.md")) {
+		t.Fatal("git-tracked CLAUDE.md was deleted")
+	}
+	if _, err := os.Stat(filepath.Join(root, ".roo", "rules", "ragcode.md")); !os.IsNotExist(err) {
+		t.Fatal("untracked generated rule remains")
+	}
+}
+
 func TestWriteNeverClobbersExistingClaudeMd(t *testing.T) {
 	root := t.TempDir()
 	claude := filepath.Join(root, "CLAUDE.md")

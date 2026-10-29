@@ -203,7 +203,7 @@ func Run(rcfg RunConfig) error {
 			logger.Instance.Info("AutoUpdate: New version %s found! Downloading and applying...", info.LatestVersion)
 
 			// Use the shared download+verify+apply helper.
-			// On success this calls os.Exit(0) internally (handoff to installer).
+			// On success the process exits shortly after (handoff to installer).
 			if err := updater.DownloadVerifyAndApply(ctx, info); err != nil {
 				logger.Instance.Error("AutoUpdate apply failed: %v", err)
 			}

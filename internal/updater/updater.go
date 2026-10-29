@@ -32,6 +32,7 @@ type UpdateCache struct {
 
 var (
 	cacheMutex sync.Mutex
+	exit       = os.Exit // replaced in tests
 )
 
 func getCachePath() (string, error) {
@@ -358,7 +359,8 @@ func DownloadVerifyAndApply(ctx context.Context, info *UpdateInfo) error {
 	return nil
 }
 
-// ApplyUpdate extracts the binary from the archive, spawns the installer, and exits.
+// ApplyUpdate extracts the binary from the archive, spawns the installer, and
+// exits the process shortly after returning nil.
 func ApplyUpdate(archivePath string) error {
 	self, err := os.Executable()
 	if err != nil {
@@ -375,7 +377,7 @@ func ApplyUpdate(archivePath string) error {
 	if err != nil {
 		return fmt.Errorf("could not create temp dir: %w", err)
 	}
-	// Clean up tempDir on all error paths; only skip on successful handoff (os.Exit).
+	// Clean up tempDir on all error paths; only skip on successful handoff.
 	cleanup := true
 	defer func() {
 		if cleanup {
@@ -417,9 +419,15 @@ func ApplyUpdate(archivePath string) error {
 	// Handoff successful — installer owns cleanup now
 	cleanup = false
 
-	// Exit gracefully and let the installer take over
+	// Exit shortly after returning, not right away: the caller still has to
+	// answer (rag_apply_update replies to its client) and run its deferred
+	// cleanup, such as removing the downloaded archive.
+	// ponytail: fixed grace period; exit after the reply is flushed if a slow client misses it.
 	fmt.Printf("Update handed off to new installer (PID %d). Shutting down...\n", cmd.Process.Pid)
-	os.Exit(0)
+	go func() {
+		time.Sleep(time.Second)
+		exit(0)
+	}()
 
 	return nil
 }

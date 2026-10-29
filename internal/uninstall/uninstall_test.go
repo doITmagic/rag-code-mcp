@@ -277,6 +277,22 @@ func TestRemoveRagcodeFromJSONPreservesOtherSettings(t *testing.T) {
 	}
 }
 
+func TestRemoveZedEntryPreservesNumbers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	original := `{"counter":9007199254740993,"context_servers":{"ragcode":{},"other":{}}}`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	removeZedRagcodeEntry("Zed", path)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte(`"counter": 9007199254740993`)) || bytes.Contains(data, []byte(`"ragcode"`)) {
+		t.Fatalf("wrong rewrite:\n%s", data)
+	}
+}
+
 func TestUninstallIntegrationPathsMatchInstaller(t *testing.T) {
 	t.Setenv("CODEX_HOME", "")
 	home := t.TempDir()

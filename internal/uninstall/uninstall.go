@@ -259,8 +259,11 @@ func removeZedRagcodeEntry(displayName, path string) {
 		return
 	}
 
+	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
 	var configMap map[string]interface{}
-	if err := json.Unmarshal(data, &configMap); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber() // float64 would round large integers on rewrite
+	if err := decoder.Decode(&configMap); err != nil {
 		return
 	}
 

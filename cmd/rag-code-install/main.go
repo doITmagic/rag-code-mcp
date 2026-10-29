@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -186,6 +187,23 @@ func installConfig(sourceDir, binPath string) {
 }
 
 func setupEnvironment() {
+	// The installed config.yaml decides which services ragcode uses, and the
+	// models it needs. A service it puts on another host is not started here.
+	home, _ := os.UserHomeDir()
+	cfg := config.DefaultConfig()
+	if loaded, err := config.Load(filepath.Join(home, installDirName, binDirName, "config.yaml")); err == nil {
+		cfg = loaded
+	}
+	ollamaURL := cfg.LLM.OllamaBaseURL
+	if !isLocalURL(ollamaURL) {
+		log("Using the Ollama configured in config.yaml: " + ollamaURL)
+		*ollamaMode = "remote"
+	}
+	if !isLocalURL(cfg.Storage.VectorDB.URL) {
+		log("Using the Qdrant configured in config.yaml: " + cfg.Storage.VectorDB.URL)
+		*qdrantMode = "remote"
+	}
+
 	// Check if docker is available if needed
 	if *qdrantMode == "docker" || *ollamaMode == "docker" {
 		if _, err := exec.LookPath("docker"); err != nil {
@@ -324,17 +342,6 @@ func setupEnvironment() {
 	// Pull Models from config
 	log("Ensuring required models are available...")
 
-	// Attempt to load config from the installed destination to see which models are required
-	home, _ := os.UserHomeDir()
-	binPath := filepath.Join(home, installDirName, binDirName)
-	cfgPath := filepath.Join(binPath, "config.yaml")
-
-	// Use default config as base
-	cfg := config.DefaultConfig()
-	if loaded, err := config.Load(cfgPath); err == nil {
-		cfg = loaded
-	}
-
 	requiredModels := []string{cfg.LLM.OllamaEmbed}
 	if cfg.LLM.OllamaModel != "" {
 		requiredModels = append(requiredModels, cfg.LLM.OllamaModel)
@@ -345,7 +352,7 @@ func setupEnvironment() {
 			continue
 		}
 		log(fmt.Sprintf("Pulling model: %s", modelName))
-		err := healthcheck.PullModel("http://localhost:11434", modelName)
+		err := healthcheck.PullModel(ollamaURL, modelName)
 		if err != nil {
 			warn(fmt.Sprintf("Could not pull model %s automatically: %v", modelName, err))
 			warn("Please run manually: ollama pull " + modelName)
@@ -426,6 +433,20 @@ func askConfirm(defaultVal bool) bool {
 		return defaultVal
 	}
 	return response == "y" || response == "yes"
+}
+
+// isLocalURL reports whether a service URL points at this machine.
+func isLocalURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" {
+		return true // unparsable: keep the local defaults
+	}
+	host := u.Hostname()
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func isPortOpen(port int) bool {

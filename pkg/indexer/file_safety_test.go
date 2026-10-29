@@ -147,6 +147,34 @@ func TestIndexWorkspaceKeepsLargeGodotScenes(t *testing.T) {
 	t.Fatalf("large Godot scene was not indexed (%d points)", len(store.upsertPoints))
 }
 
+// A '[' in the workspace path or a package directory (proj [v2], Next.js
+// routes/[id]) was read as a glob pattern, so its Go files gave 0 symbols.
+func TestIndexWorkspaceIndexesGoUnderBracketDirs(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "proj [v2]")
+	if err := os.MkdirAll(filepath.Join(root, "routes", "[id]"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(root, "main.go"), "package main\nfunc BracketMain() {}\n")
+	writeTestFile(t, filepath.Join(root, "main_test.go"), "package main\nfunc TestBracketMain() {}\n")
+	writeTestFile(t, filepath.Join(root, "routes", "[id]", "r.go"), "package id\nfunc RouteHandler() {}\n")
+
+	store := &mockStore{}
+	svc := NewService(&mockEmbedder{}, store)
+	if err := svc.IndexWorkspace(context.Background(), root, "go", Options{Language: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, point := range store.upsertPoints {
+		name, _ := point.Payload["name"].(string)
+		names[name] = true
+	}
+	for _, want := range []string{"BracketMain", "TestBracketMain", "RouteHandler"} {
+		if !names[want] {
+			t.Errorf("%s not indexed; got %v", want, names)
+		}
+	}
+}
+
 // A watched file that became skippable (grown past the size cap, now an
 // ignored .env, replaced by a symlink) kept its old points, so rag_search
 // returned a symbol or secret the file no longer holds until a full run.

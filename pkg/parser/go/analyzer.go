@@ -73,11 +73,22 @@ func (ca *CodeAnalyzer) Analyze(ctx context.Context, path string) (*pkgParser.Re
 	}, nil
 }
 
-func (ca *CodeAnalyzer) AnalyzePackage(dir string) (*PackageInfo, error) {
-	files, err := filepath.Glob(filepath.Join(dir, "*.go"))
-	if err != nil {
-		return nil, fmt.Errorf("globbing directory: %w", err)
+// filesWithSuffix lists the entries of dir whose names end in suffix.
+// filepath.Glob would read a '[' in dir (proj [v2], routes/[id]) as a
+// pattern and silently find nothing.
+func filesWithSuffix(dir, suffix string) []string {
+	entries, _ := os.ReadDir(dir)
+	var files []string
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), suffix) {
+			files = append(files, filepath.Join(dir, e.Name()))
+		}
 	}
+	return files
+}
+
+func (ca *CodeAnalyzer) AnalyzePackage(dir string) (*PackageInfo, error) {
+	files := filesWithSuffix(dir, ".go")
 	var src []string
 	for _, f := range files {
 		if !strings.HasSuffix(f, "_test.go") && !pkgParser.SkipFile(f) {
@@ -92,7 +103,7 @@ func (ca *CodeAnalyzer) AnalyzePackage(dir string) (*PackageInfo, error) {
 // different package to go/doc, and grouped by package name for that reason.
 // A directory without tests yields nil.
 func (ca *CodeAnalyzer) AnalyzeTestPackages(dir string) []*PackageInfo {
-	files, _ := filepath.Glob(filepath.Join(dir, "*_test.go"))
+	files := filesWithSuffix(dir, "_test.go")
 	byPkg := make(map[string][]string)
 	var order []string
 	for _, f := range files {
@@ -156,7 +167,7 @@ func (ca *CodeAnalyzer) analyzeFiles(dir string, files []string) (*PackageInfo, 
 		// go/doc drops funcs and methods tied to a type it has no declaration
 		// for (setUp() *T with T in a non-test file), so give it the package's
 		// own files and keep only the test files' symbols below.
-		siblings, _ := filepath.Glob(filepath.Join(dir, "*.go"))
+		siblings := filesWithSuffix(dir, ".go")
 		for _, path := range siblings {
 			if strings.HasSuffix(path, "_test.go") {
 				continue

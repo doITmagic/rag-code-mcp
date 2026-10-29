@@ -60,8 +60,10 @@ type parallelSearchResult struct {
 }
 
 // runParallelSearch executes semantic and hybrid searches concurrently,
-// collects results, and extracts workspace metadata.
-func (t *SmartSearchTool) runParallelSearch(ctx context.Context, filePath, query string, limit int, includeDocs bool) parallelSearchResult {
+// collects results, and extracts workspace metadata. The hybrid search takes
+// the caller's limit rather than a widened pool: it normalizes the lexical
+// score over a pool sized from its limit, so a wider pool lowers every score.
+func (t *SmartSearchTool) runParallelSearch(ctx context.Context, filePath, query string, limit, hybridLimit int, includeDocs bool) parallelSearchResult {
 	workspace, err := t.engine.DetectContext(ctx, filePath)
 	if err != nil {
 		return parallelSearchResult{err: err}
@@ -89,7 +91,7 @@ func (t *SmartSearchTool) runParallelSearch(ctx context.Context, filePath, query
 	go func() {
 		defer wg.Done()
 		t0 := time.Now()
-		res, err := t.engine.HybridSearchCode(ctx, filePath, query, limit, includeDocs)
+		res, err := t.engine.HybridSearchCode(ctx, filePath, query, hybridLimit, includeDocs)
 		results <- searchResult{label: "hybrid", result: res, err: err, elapsed: time.Since(t0)}
 	}()
 

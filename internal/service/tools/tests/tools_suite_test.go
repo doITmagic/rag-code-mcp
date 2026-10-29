@@ -3,6 +3,7 @@ package tests
 import (
 	"testing"
 
+	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/docs"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/go"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/javascript"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/php"

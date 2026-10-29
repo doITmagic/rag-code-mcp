@@ -167,7 +167,7 @@ func (t *SmartSearchTool) Execute(ctx context.Context, input SmartSearchInput) (
 		exactMatches := merged
 		exactMeta := sr.meta
 		exactSymbol = false
-		sr = t.runParallelSearch(ctx, input.FilePath, query, searchLimit, input.IncludeDocs)
+		sr = t.runParallelSearch(ctx, input.FilePath, query, searchLimit, limit, input.IncludeDocs)
 		if sr.semantic == nil && sr.hybrid == nil {
 			if len(exactMatches) > 0 {
 				sr.meta = exactMeta

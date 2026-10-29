@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,5 +88,48 @@ func TestStrictDocsAppliesLimitAfterModeFilter(t *testing.T) {
 	}
 	if len(response.Data) != 1 || response.Data[0]["file_path"] != docsPath {
 		t.Fatalf("strict_docs limit=1: status=%s data=%v, want README.md", response.Status, response.Data)
+	}
+}
+
+func TestStrictCodeKeepsHybridScoreOfDefaultMode(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "flag.go")
+	if err := os.WriteFile(path, []byte("package flag\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	hit := func(id string, score float32, content string) storage.SearchResult {
+		return storage.SearchResult{Score: score, Point: storage.Point{ID: id, Payload: map[string]interface{}{
+			"name": id, "type": "function", "file_path": path, "content": content, "start_line": 1, "end_line": 1,
+		}}}
+	}
+	// wrap ranks 4th semantically but matches every query word. A long chunk
+	// with many more word hits sits far down the semantic ranking.
+	pool := []storage.SearchResult{hit("a", .66, "x"), hit("b", .66, "y"), hit("c", .66, "z"), hit("wrap", .62, "wrap usage text column")}
+	for i := len(pool); i < 30; i++ {
+		pool = append(pool, hit(fmt.Sprintf("filler%d", i), .5, "x"))
+	}
+	pool = append(pool, hit("long", .5, strings.Repeat("wrap usage text column ", 50)))
+	search := func(_ context.Context, collection string, q storage.SearchQuery) ([]storage.SearchResult, error) {
+		if !strings.HasSuffix(collection, "-go") {
+			return nil, nil
+		}
+		return append([]storage.SearchResult(nil), pool[:min(q.Limit, len(pool))]...), nil
+	}
+	eng := setupTestEngine(&mockVectorStore{SearchFunc: search, SearchCodeOnlyFunc: search})
+	t.Cleanup(eng.Close)
+	for _, mode := range []string{"", "strict_code"} {
+		text, err := tools.NewSmartSearchTool(eng).Execute(context.Background(), tools.SmartSearchInput{Query: "wrap usage text column", FilePath: path, Mode: mode, Limit: 5})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var response struct {
+			Data []map[string]interface{}
+		}
+		if err := json.Unmarshal([]byte(text), &response); err != nil {
+			t.Fatal(err)
+		}
+		if len(response.Data) == 0 || response.Data[0]["name"] != "wrap" {
+			t.Fatalf("mode=%q: %s, want wrap first", mode, text)
+		}
 	}
 }

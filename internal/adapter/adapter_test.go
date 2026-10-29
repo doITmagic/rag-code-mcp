@@ -160,6 +160,22 @@ func TestRunBridgeRejectsOversizedLineAndContinues(t *testing.T) {
 	assert.Equal(t, `{"jsonrpc":"2.0","id":2,"result":{}}`, lines[1])
 }
 
+// The MCP TypeScript SDK sends {...request, jsonrpc, id}: the id comes after
+// the large params, so it is not in the start of an oversized line.
+func TestRunBridgeOversizedLineIDAfterParams(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer server.Close()
+
+	huge := `{"method":"tools/call","params":{"arguments":{"q":"` + strings.Repeat("a", 10*1024*1024) + `","id":99}},"jsonrpc":"2.0","id":7}`
+	var stdout bytes.Buffer
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := adapter.RunBridge(ctx, server.Listener.Addr().(*net.TCPAddr).Port, strings.NewReader(huge+"\n"), &stdout, "", nil)
+	require.NoError(t, err)
+	assert.Contains(t, stdout.String(), `"code":-32000`)
+	assert.Contains(t, stdout.String(), `"id":7,`)
+}
+
 // A notification gets 202 with an empty body from the daemon; the adapter must
 // not turn it into a blank stdout line, which line-based MCP clients reject.
 func TestRunBridgeSkipsEmptyNotificationReply(t *testing.T) {

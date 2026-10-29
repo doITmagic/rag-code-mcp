@@ -54,7 +54,7 @@ func RunBridge(ctx context.Context, port int, stdin io.Reader, stdout io.Writer,
 			return err
 		}
 		if tooLong {
-			// raw holds only the line's start, which usually carries the id.
+			// raw holds only the line's start and end, where the id is.
 			writeJSONRPCError(stdout, string(raw), fmt.Errorf("request exceeds %dMB limit", maxLineSize/(1024*1024)))
 			continue
 		}
@@ -136,21 +136,25 @@ func RunBridge(ctx context.Context, port int, stdin io.Reader, stdout io.Writer,
 
 // readLine reads one line without its line ending. A line longer than limit is
 // read to its end and discarded, and tooLong is reported with only its first
-// 4KB as line.
+// and last 4KB, joined, as line.
 func readLine(r *bufio.Reader, limit int) (line []byte, tooLong bool, err error) {
+	var tail []byte
 	for {
 		chunk, isPrefix, err := r.ReadLine()
 		if err != nil {
 			return nil, false, err
 		}
-		if !tooLong {
+		if tooLong {
+			tail = append(tail, chunk[max(0, len(chunk)-4096):]...)
+			tail = tail[max(0, len(tail)-4096):]
+		} else {
 			line = append(line, chunk...)
 			if len(line) > limit {
-				line, tooLong = bytes.Clone(line[:min(len(line), 4096)]), true
+				line, tail, tooLong = bytes.Clone(line[:min(len(line), 4096)]), bytes.Clone(line[max(0, len(line)-4096):]), true
 			}
 		}
 		if !isPrefix {
-			return line, tooLong, nil
+			return append(line, tail...), tooLong, nil
 		}
 	}
 }
@@ -171,7 +175,8 @@ func writeJSONRPCError(w io.Writer, originalMsg string, proxyErr error) {
 }
 
 // requestID returns the top-level "id" of a JSON-RPC message, or nil. It reads
-// only up to the id, so it also works on the start of a truncated message.
+// only up to the id, so it also works on the start and end of a truncated
+// message.
 func requestID(msg string) json.RawMessage {
 	dec := json.NewDecoder(strings.NewReader(msg))
 	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
@@ -180,15 +185,20 @@ func requestID(msg string) json.RawMessage {
 	for dec.More() {
 		key, err := dec.Token()
 		if err != nil {
-			return nil
+			break
 		}
 		var val json.RawMessage
 		if err := dec.Decode(&val); err != nil {
-			return nil
+			break
 		}
 		if key == "id" {
 			return val
 		}
+	}
+	// The MCP TypeScript SDK sends {...request, jsonrpc, id}, so an oversized
+	// message has its id at the end: take it if "id" is the last top-level key.
+	if i := strings.LastIndex(msg, `"id"`); i > 0 && json.Valid([]byte("{"+msg[i:])) {
+		return requestID("{" + msg[i:])
 	}
 	return nil
 }

@@ -1081,8 +1081,8 @@ func (ca *CodeAnalyzer) findBlockEnd(lines []string, startIdx int) int {
 		wasInTriple := inTriple != ""
 		wasInParens := parenDepth > 0
 
+		// A blank line belongs to the block only if code follows it.
 		if !wasInTriple && strings.TrimSpace(line) == "" {
-			endLine = i + 1
 			continue
 		}
 		if !wasInTriple && !wasInParens {

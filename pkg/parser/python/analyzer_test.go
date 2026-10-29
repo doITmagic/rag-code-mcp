@@ -315,3 +315,22 @@ func TestPythonAnalyzer_PropertyIndexed(t *testing.T) {
 	assert.ElementsMatch(t, []int{3, 7}, lines)
 }
 
+// A symbol ends on its last code line, not on the blank lines after it.
+func TestPythonAnalyzer_EndLineExcludesTrailingBlanks(t *testing.T) {
+	code := "def first():\n    return 1\n\n\ndef second():\n    return 2\n\n\n" +
+		"class Echo:\n    def m_one(self):\n        return 1\n\n    def m_two(self):\n        return 2\n"
+	f := filepath.Join(t.TempDir(), "multi.py")
+	require.NoError(t, os.WriteFile(f, []byte(code), 0644))
+
+	res, err := NewAnalyzer().Analyze(context.Background(), f)
+	require.NoError(t, err)
+
+	ranges := map[string][2]int{}
+	for _, sym := range res.Symbols {
+		ranges[sym.Name] = [2]int{sym.StartLine, sym.EndLine}
+	}
+	assert.Equal(t, map[string][2]int{
+		"first": {1, 2}, "second": {5, 6}, "Echo": {9, 14}, "m_one": {10, 11}, "m_two": {13, 14},
+	}, ranges)
+}
+

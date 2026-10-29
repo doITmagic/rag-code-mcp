@@ -64,6 +64,24 @@ func TestMemberCallsReachResolvedMethod(t *testing.T) {
 	}
 }
 
+// Object.create() and console.log() call a global, not an instance of a
+// project class, so they are no callers of Ky.create or Ky.log.
+func TestJSGlobalReceiverCallsNoProjectMethod(t *testing.T) {
+	dir, store := indexFixture(t, "ts", javascript.NewCodeAnalyzer(), map[string]string{
+		"ky.ts":   "export class Ky {\n  static create(opts: any) { return new Ky(); }\n  log(v: any) { return v; }\n}\n",
+		"main.ts": "import { Ky } from './ky';\nexport function makeClient() { return Ky.create({}); }\nexport function emptyRecord() { return Object.create(null); }\nexport function report(v: any) { console.log(v); }\nexport function useInstance(client: Ky) { return client.log(1); }\n",
+	})
+	eng := setupTestEngine(store)
+	t.Cleanup(eng.Close)
+	tool := tools.NewCallHierarchyTool(eng)
+	path := filepath.Join(dir, "ky.ts")
+	for symbol, want := range map[string]string{"Ky.create": "makeClient", "Ky.log": "useInstance"} {
+		if got := pythonCallers(t, tool, path, symbol); !slices.Equal(got, []string{want}) {
+			t.Errorf("callers of %s = %v, want [%s]", symbol, got, want)
+		}
+	}
+}
+
 // A member call reaches no free function, and in PHP and JS/TS a bare call
 // reaches no method: JSON.parse() is not a caller of a project's parse().
 func TestMemberAndFreeCallsKeepTheirTargetKind(t *testing.T) {

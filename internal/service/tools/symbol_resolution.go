@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/doITmagic/rag-code-mcp/internal/service/engine"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
@@ -249,6 +250,18 @@ func resolveCall(ctx context.Context, eng *engine.Engine, wsID string, source st
 				if len(results) > 0 {
 					return uniqueSymbol(results, "")
 				}
+				// console.log() and Object.create() call a global or a class
+				// the project does not index, not an instance of its classes.
+				head, _, _ := strings.Cut(receiver, ".")
+				if jsGlobals[head] {
+					return nil, "unresolved"
+				}
+				if head != "" && unicode.IsUpper(rune(head[0])) {
+					classes, err := eng.ExactSearchPolyglot(ctx, wsID, map[string]interface{}{"type": "class", "name": head}, 1)
+					if err != nil || len(classes) == 0 {
+						return nil, "unresolved"
+					}
+				}
 			}
 			return nil, "ambiguous"
 		}
@@ -303,6 +316,13 @@ func callMayTarget(source storage.SearchResult, rel map[string]interface{}, reso
 	// JS/TS name a method Class.method; the call names only the method.
 	name, _ := target.Point.Payload["name"].(string)
 	return status == "ambiguous" && rel["target_name"] == shortSymbolName(name) && symbolKey(source) != symbolKey(target)
+}
+
+// jsGlobals are lowercase JS/TS globals; a capitalized one such as Object or
+// JSON names no indexed class.
+var jsGlobals = map[string]bool{
+	"console": true, "window": true, "document": true, "globalThis": true, "process": true,
+	"navigator": true, "location": true, "localStorage": true, "sessionStorage": true, "performance": true,
 }
 
 // inPythonModule reports whether a Python package is the module named, which

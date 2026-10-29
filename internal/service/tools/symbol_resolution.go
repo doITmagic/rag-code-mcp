@@ -62,7 +62,8 @@ func searchGoQualified(ctx context.Context, eng *engine.Engine, wsID, name strin
 		return nil, nil
 	}
 	symbols, err := eng.ExactSearchPolyglot(ctx, wsID, filters, limit)
-	if err != nil || filters["package"] != nil {
+	// (*T).Method names only a method.
+	if err != nil || filters["package"] != nil || strings.ContainsAny(name, "(*") {
 		return symbols, err
 	}
 	// A two-part name may also be a Go package.Function or package.Type,

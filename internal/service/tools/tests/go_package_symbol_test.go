@@ -146,3 +146,25 @@ func TestPackageNamedTypeKeepsBothReadings(t *testing.T) {
 		t.Errorf("server.Start hierarchy want ambiguous: %s", text)
 	}
 }
+
+// (*server).Start names only the method, even when the package has a
+// function Start.
+func TestPointerReceiverNameIsOnlyTheMethod(t *testing.T) {
+	dir, store := indexFixture(t, "go", golang.NewCodeAnalyzer(), map[string]string{
+		"server.go": "package server\n\ntype server struct{}\n\nfunc (s *server) Start() {}\n\nfunc Start() {}\n",
+	})
+	eng := setupTestEngine(store)
+	t.Cleanup(eng.Close)
+	exact := true
+	text, err := tools.NewSmartSearchTool(eng).Execute(context.Background(), tools.SmartSearchInput{Query: "(*server).Start", FilePath: filepath.Join(dir, "server.go"), ExactSymbol: &exact})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct{ Data []map[string]interface{} }
+	if err := json.Unmarshal([]byte(text), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Data) != 1 || response.Data[0]["type"] != "method" {
+		t.Errorf("(*server).Start want only the method: %s", text)
+	}
+}

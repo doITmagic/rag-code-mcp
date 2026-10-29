@@ -104,6 +104,7 @@ func Run(rcfg RunConfig) error {
 		logger.Instance.SetLevel(cfg.Logging.Level)
 		logger.Instance.Debug("Logger level set dynamically from config to: %s", cfg.Logging.Level)
 	}
+	logger.Instance.SetMaxSizeMB(cfg.Logging.MaxSizeMB)
 
 	// ── Health Checks ──
 	if cfg.HealthCheck.EnableOnStartup {

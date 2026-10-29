@@ -16,20 +16,48 @@ import (
 // SyncWriter wraps an *os.File and forwards writes directly to it.
 // It relies on OS buffering and file close/rotation for flushing to disk,
 // rather than calling Sync on every write (which is expensive under high volume).
+// Once the file would grow past maxSize it is renamed to <path>.1 and a new
+// one is started, so the log takes at most about twice maxSize on disk.
 type SyncWriter struct {
-	File *os.File
+	mu      sync.Mutex
+	File    *os.File
+	path    string
+	size    int64
+	maxSize int64
 }
 
-func (sw SyncWriter) Write(p []byte) (n int, err error) {
-	return sw.File.Write(p)
+func (sw *SyncWriter) Write(p []byte) (n int, err error) {
+	sw.mu.Lock()
+	defer sw.mu.Unlock()
+	if sw.maxSize > 0 && sw.size > 0 && sw.size+int64(len(p)) > sw.maxSize {
+		sw.rotate()
+	}
+	n, err = sw.File.Write(p)
+	sw.size += int64(n)
+	return n, err
+}
+
+func (sw *SyncWriter) rotate() {
+	// On failure keep writing to the current file and retry after another maxSize.
+	sw.size = 0
+	if err := os.Rename(sw.path, sw.path+".1"); err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to rotate log file %s: %v\n", sw.path, err)
+		return
+	}
+	f, err := os.OpenFile(sw.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to reopen log file %s: %v\n", sw.path, err)
+		return
+	}
+	_ = sw.File.Close()
+	sw.File = f
 }
 
 // SimpleLogger provides basic logging with file rotation and levels.
 // It wraps the robust log/slog standard library package.
 type SimpleLogger struct {
 	mu      sync.Mutex
-	logFile *os.File
-	writer  io.Writer
+	writer  *SyncWriter
 	slogger *slog.Logger
 	level   *slog.LevelVar
 }
@@ -57,10 +85,22 @@ func init() {
 func (l *SimpleLogger) Close() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.logFile != nil {
-		_ = l.logFile.Close()
-		l.logFile = nil
+	if l.writer != nil {
+		l.writer.mu.Lock()
+		_ = l.writer.File.Close()
+		l.writer.mu.Unlock()
 		l.writer = nil
+	}
+}
+
+// SetMaxSizeMB sets the size at which the log file is rotated; 0 disables it.
+func (l *SimpleLogger) SetMaxSizeMB(mb int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.writer != nil {
+		l.writer.mu.Lock()
+		l.writer.maxSize = int64(mb) * 1024 * 1024
+		l.writer.mu.Unlock()
 	}
 }
 
@@ -180,7 +220,7 @@ func InitLoggerFromEnv() {
 		Instance.level.Set(slog.LevelInfo)
 	}
 
-	if Instance.logFile != nil {
+	if Instance.writer != nil {
 		Instance.Close()
 	}
 
@@ -210,9 +250,13 @@ func InitLoggerFromEnv() {
 		return
 	}
 
+	var size int64
+	if info, err := f.Stat(); err == nil {
+		size = info.Size()
+	}
+
 	Instance.mu.Lock()
-	Instance.logFile = f
-	Instance.writer = SyncWriter{File: f}
+	Instance.writer = &SyncWriter{File: f, path: path, size: size}
 	w := io.MultiWriter(os.Stderr, Instance.writer)
 	Instance.mu.Unlock()
 
@@ -236,123 +280,4 @@ func InitLoggerFromEnv() {
 	// STARTING SESSION mark
 	Instance.slogger.Info(fmt.Sprintf("--- STARTING SESSION %s ---", time.Now().Format(time.RFC3339)))
 	Instance.slogger.Info(fmt.Sprintf("Logger initialized successfully writing to %s", path))
-}
-
-// RotateLogFile checks file size and rotates if needed.
-func RotateLogFile(path string, maxSizeMB int) {
-	if maxSizeMB <= 0 {
-		return
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return // File doesn't exist or error
-	}
-
-	maxSizeBytes := int64(maxSizeMB) * 1024 * 1024
-	if info.Size() < maxSizeBytes {
-		return
-	}
-
-	// Log rotation needed
-	fmt.Fprintf(os.Stderr, "[INFO] Log file %s exceeds %dMB (%d bytes). Rotating...\n", path, maxSizeMB, info.Size())
-
-	// Stream-based rotation: copy tail to temp file, then replace original.
-	// Avoids reading entire log into memory.
-	fileSize := info.Size()
-	cutOffset := fileSize / 10
-	if cutOffset == 0 {
-		return
-	}
-
-	f, err := os.Open(path)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[WARN] Failed to open log file for rotation: %v\n", err)
-		return
-	}
-	defer f.Close()
-
-	// Seek past cutoff and find next newline
-	if _, err := f.Seek(cutOffset, io.SeekStart); err != nil {
-		fmt.Fprintf(os.Stderr, "[WARN] Failed to seek in log file for rotation: %v\n", err)
-		return
-	}
-
-	const scanBuf = 4096
-	buf := make([]byte, scanBuf)
-	offset := cutOffset
-	cutoff := int64(-1)
-
-	for {
-		n, readErr := f.Read(buf)
-		if n > 0 {
-			for i := 0; i < n; i++ {
-				if buf[i] == '\n' {
-					cutoff = offset + int64(i) + 1
-					break
-				}
-			}
-			if cutoff != -1 {
-				break
-			}
-			offset += int64(n)
-		}
-		if readErr == io.EOF {
-			break
-		}
-		if readErr != nil {
-			fmt.Fprintf(os.Stderr, "[WARN] Failed to read log file for rotation: %v\n", readErr)
-			return
-		}
-	}
-
-	if cutoff == -1 {
-		cutoff = cutOffset
-	}
-
-	if cutoff >= fileSize {
-		if err := os.Truncate(path, 0); err != nil {
-			fmt.Fprintf(os.Stderr, "[WARN] Failed to truncate log file: %v\n", err)
-		}
-		return
-	}
-
-	// Copy tail to temp file
-	tmp, err := os.CreateTemp(filepath.Dir(path), "ragcode-logrotate-*")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[WARN] Failed to create temp file for log rotation: %v\n", err)
-		return
-	}
-	tmpName := tmp.Name()
-	defer func() {
-		tmp.Close()
-		_ = os.Remove(tmpName) // best-effort cleanup; harmless if rename succeeded
-	}()
-
-	if _, err := f.Seek(cutoff, io.SeekStart); err != nil {
-		fmt.Fprintf(os.Stderr, "[WARN] Failed to seek in log file for rotation: %v\n", err)
-		return
-	}
-
-	if _, err := io.Copy(tmp, f); err != nil {
-		fmt.Fprintf(os.Stderr, "[WARN] Failed to copy log tail for rotation: %v\n", err)
-		return
-	}
-
-	if err := tmp.Chmod(info.Mode()); err != nil {
-		fmt.Fprintf(os.Stderr, "[WARN] Failed to set permissions on rotated log file: %v\n", err)
-		return
-	}
-
-	if err := tmp.Close(); err != nil {
-		fmt.Fprintf(os.Stderr, "[WARN] Failed to close temp log file: %v\n", err)
-		return
-	}
-
-	// Atomic replace
-	if err := os.Rename(tmpName, path); err != nil {
-		fmt.Fprintf(os.Stderr, "[WARN] Failed to replace log file during rotation: %v\n", err)
-		return
-	}
-
-	fmt.Fprintf(os.Stderr, "[INFO] Log file rotated. Removed %d bytes.\n", cutoff)
 }

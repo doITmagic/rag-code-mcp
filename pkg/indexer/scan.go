@@ -61,7 +61,7 @@ func (s *Service) ScanWorkspace(ctx context.Context, root string, excludePattern
 			return nil
 		}
 		lang := a.Name()
-		if matchesExcludePatterns(relSlash, d.Name(), scan.excludePatterns) || shouldSkipFile(path) {
+		if matchesExcludePatterns(relSlash, d.Name(), scan.excludePatterns) || ShouldSkipFile(path) {
 			return nil
 		}
 		scan.files[lang] = append(scan.files[lang], path)

@@ -187,7 +187,7 @@ func TestMinified_DoesNotSkipSmallCompactJSON(t *testing.T) {
 	if err := os.WriteFile(jsonPath, []byte(payload), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if shouldSkipFile(jsonPath) {
+	if ShouldSkipFile(jsonPath) {
 		t.Fatalf("expected compact JSON file under 4KiB (%d bytes) not to be skipped as minified", len(payload))
 	}
 }
@@ -206,7 +206,7 @@ func TestMinified_DoesNotSkipGodotSceneWithEmbeddedData(t *testing.T) {
 	if !exceedsLineDensity(scenePath) {
 		t.Fatal("test setup error: scene should exceed the line density threshold")
 	}
-	if shouldSkipFile(scenePath) {
+	if ShouldSkipFile(scenePath) {
 		t.Fatal("expected Godot scene with embedded data not to be skipped as minified")
 	}
 }

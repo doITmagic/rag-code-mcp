@@ -29,7 +29,9 @@ var minifiedSuffixes = []string{
 	"-min.js", "-min.css",
 }
 
-func shouldSkipFile(path string) bool {
+// ShouldSkipFile reports whether indexing leaves out path although an analyzer
+// handles it: a special, oversized, secret, generated or minified file.
+func ShouldSkipFile(path string) bool {
 	return parser.SkipFile(path) || isLowValueConfigOrKeyMaterial(path) || isIgnoredEnvFile(path) ||
 		isGeneratedLockfile(path) || isGeneratedIDERule(path) || isMinifiedOrVendored(path)
 }

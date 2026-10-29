@@ -148,7 +148,7 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 	var unscanned []string
 	state.mu.RLock()
 	for path := range state.Files {
-		if !scanned[path] && (ExcludedPath(root, path, false, opts.ExcludePatterns) || shouldSkipFile(path)) {
+		if !scanned[path] && (ExcludedPath(root, path, false, opts.ExcludePatterns) || ShouldSkipFile(path)) {
 			unscanned = append(unscanned, path)
 		}
 	}
@@ -455,7 +455,7 @@ func (s *Service) IndexFile(ctx context.Context, collection, path string, state 
 	}
 
 	// Skip generated, low-value, and minified files before parsing/embedding.
-	if shouldSkipFile(path) {
+	if ShouldSkipFile(path) {
 		logger.Instance.Debug("[IDX] Skipping excluded file: %s", filepath.Base(path))
 		return 0, nil
 	}

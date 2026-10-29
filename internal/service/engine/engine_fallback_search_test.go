@@ -2,9 +2,11 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/doITmagic/rag-code-mcp/pkg/workspace/resolver"
 
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/go"
+	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/javascript"
 	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/python"
 )
 
@@ -376,5 +379,21 @@ func TestFallbackDirectSearchSkipsNestedLinkedWorktree(t *testing.T) {
 	}
 	if results := eng.FallbackDirectSearch(context.Background(), linked, "FeatureBranchOnly", 10); len(results) == 0 {
 		t.Fatal("the worktree's own fallback search must still find its symbols")
+	}
+}
+
+// The fallback must skip what indexing skips: a minified bundle took minutes
+// to parse, far past the 5s fallback budget, and was searched anyway.
+func TestFallbackDirectSearchSkipsFilesIndexingSkips(t *testing.T) {
+	root, eng := setupFallbackWorkspace(t)
+	var bundle strings.Builder
+	for i := 0; i < 200; i++ {
+		fmt.Fprintf(&bundle, "function minifiedBundleMarker%d(a,b){return a+b}", i)
+	}
+	if err := os.WriteFile(filepath.Join(root, "app.js"), []byte(bundle.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range eng.FallbackDirectSearch(context.Background(), root, "minifiedBundleMarker7", 10) {
+		t.Fatalf("fallback searched a minified bundle: %v in %v", r.Point.Payload["name"], r.Point.Payload["file_path"])
 	}
 }

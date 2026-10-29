@@ -13,6 +13,7 @@ import (
 
 	"github.com/doITmagic/rag-code-mcp/internal/logger"
 	"github.com/doITmagic/rag-code-mcp/internal/service/iderules"
+	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
 	"github.com/doITmagic/rag-code-mcp/pkg/scoring"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
@@ -118,6 +119,11 @@ func (e *Engine) FallbackDirectSearch(ctx context.Context, workspaceRoot, query 
 		// Only parse files with a registered parser
 		analyzer := parser.GetByFile(path)
 		if analyzer == nil {
+			return nil
+		}
+		// Parsing ignores ctx, so a file indexing skips (a minified bundle, a
+		// FIFO) would run past the timeout or never return.
+		if indexer.ShouldSkipFile(path) {
 			return nil
 		}
 

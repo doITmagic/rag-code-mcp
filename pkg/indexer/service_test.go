@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -957,6 +958,36 @@ func TestIndexItems_SlowBatchFallsBackToSingleEmbeds(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	Expect(svc.IndexItems(ctx, "slow-batch", symbols)).To(Succeed())
+	Expect(mockS.upsertPoints).To(HaveLen(2))
+}
+
+// oneBadSymbolEmbedder fails every batch and, alone, only the symbol named Bad.
+type oneBadSymbolEmbedder struct {
+	mockEmbedder
+}
+
+func (m *oneBadSymbolEmbedder) EmbedBatch(_ context.Context, texts []string) ([][]float64, error) {
+	if len(texts) > 1 || strings.Contains(texts[0], "\nBad\n") {
+		return nil, errors.New("embed failed")
+	}
+	return [][]float64{make([]float64, 1024)}, nil
+}
+
+// TestIndexItems_SingleEmbedFailureKeepsRestOfBatch: one symbol that cannot be
+// embedded on its own must not keep the rest of its batch out of the index.
+func TestIndexItems_SingleEmbedFailureKeepsRestOfBatch(t *testing.T) {
+	RegisterTestingT(t)
+
+	mockS := &mockStore{}
+	svc := NewService(&oneBadSymbolEmbedder{}, mockS)
+	svc.SetEmbedBatchSize(3)
+	symbols := []parser.Symbol{
+		{Name: "Good1", Content: "content", FilePath: "a.ts", StartLine: 1},
+		{Name: "Bad", Content: "content", FilePath: "a.ts", StartLine: 2},
+		{Name: "Good2", Content: "content", FilePath: "a.ts", StartLine: 3},
+	}
+
+	Expect(svc.IndexItems(context.Background(), "one-bad", symbols)).To(MatchError(ContainSubstring("Bad")))
 	Expect(mockS.upsertPoints).To(HaveLen(2))
 }
 

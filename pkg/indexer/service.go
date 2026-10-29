@@ -677,6 +677,15 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 		go func() {
 			defer wg.Done()
 			consecutiveFailures := 0
+			emit := func(sym parser.Symbol, text string, vector64 []float64) {
+				vector := make([]float32, len(vector64))
+				for j, value := range vector64 {
+					vector[j] = float32(value)
+				}
+				payload := s.symbolToMap(sym)
+				payload["text"] = text
+				results <- result{point: storage.Point{ID: sym.ID, Vector: vector, Payload: payload}}
+			}
 
 			for batch := range jobs {
 				// Circuit breaker: if we've had consecutive failures, check Ollama before retrying
@@ -726,18 +735,27 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 
 				// A batch of large symbols can need several times the budget on
 				// a CPU-only embedder; one at a time, each gets the full budget.
+				// A symbol that still fails costs only itself, not its batch.
 				if err != nil && len(batch) > 1 && ctx.Err() == nil {
-					vectors64 = vectors64[:0]
-					for _, text := range embedTexts {
-						var one [][]float64
+					for i, text := range embedTexts {
 						embedCtx, embedCancel := context.WithTimeout(ctx, 30*time.Second)
-						one, err = s.embedBatch(embedCtx, []string{text})
+						one, oneErr := s.embedBatch(embedCtx, []string{text})
 						embedCancel()
-						if err != nil {
-							break
+						if oneErr != nil {
+							consecutiveFailures++
+							logger.Instance.Warn("Embed failed for %s (consecutive failures: %d): %v", batch[i].Name, consecutiveFailures, oneErr)
+							results <- result{err: fmt.Errorf("failed to embed %s: %w", batch[i].Name, oneErr)}
+							// Failing in a row: leave the rest to the circuit breaker
+							// instead of spending a full budget on each of them.
+							if consecutiveFailures >= circuitBreakerThreshold || ctx.Err() != nil {
+								break
+							}
+							continue
 						}
-						vectors64 = append(vectors64, one[0])
+						consecutiveFailures = 0
+						emit(batch[i], text, one[0])
 					}
+					continue
 				}
 
 				if err != nil {
@@ -763,13 +781,7 @@ func (s *Service) IndexItems(ctx context.Context, collection string, symbols []p
 				s.lastActivity.Store(time.Now().Unix())
 
 				for i, sym := range batch {
-					vector := make([]float32, len(vectors64[i]))
-					for j, value := range vectors64[i] {
-						vector[j] = float32(value)
-					}
-					payload := s.symbolToMap(sym)
-					payload["text"] = embedTexts[i]
-					results <- result{point: storage.Point{ID: sym.ID, Vector: vector, Payload: payload}}
+					emit(sym, embedTexts[i], vectors64[i])
 				}
 			}
 		}()

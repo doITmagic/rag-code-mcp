@@ -66,7 +66,8 @@ func TestIndexItems_CircuitBreakerPingsConfiguredOllama(t *testing.T) {
 	if heartbeats.Load() == 0 {
 		t.Fatalf("circuit breaker never probed the configured Ollama at %s", srv.URL)
 	}
-	if got := len(store.upsertPoints); got != svc.embedBatchSize {
-		t.Fatalf("stored %d points after the configured Ollama recovered, want %d", got, svc.embedBatchSize)
+	// The first batch fails before the breaker trips; every later one is stored.
+	if got, want := len(store.upsertPoints), len(symbols)-svc.embedBatchSize; got != want {
+		t.Fatalf("stored %d points after the configured Ollama recovered, want %d", got, want)
 	}
 }

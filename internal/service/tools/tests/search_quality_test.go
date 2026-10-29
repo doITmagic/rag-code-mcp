@@ -178,3 +178,44 @@ func TestSearchWithoutCodeFileUsesWorkspaceLanguage(t *testing.T) {
 		t.Fatalf("search of an indexed workspace started indexing: %v", jobs)
 	}
 }
+
+func TestSearchWithoutIncludeDocsSkipsDocumentation(t *testing.T) {
+	root := t.TempDir()
+	codePath, docsPath := filepath.Join(root, "flag.go"), filepath.Join(root, "README.md")
+	for _, path := range []string{codePath, docsPath} {
+		if err := os.WriteFile(path, []byte("hidden flag"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hit := func(id, path, kind string, score float32) []storage.SearchResult {
+		return []storage.SearchResult{{Score: score, Point: storage.Point{ID: id, Payload: map[string]interface{}{
+			"name": id, "type": kind, "file_path": path, "content": "hidden flag", "start_line": 1, "end_line": 1,
+			"metadata": map[string]interface{}{"chunk_type": "markdown"},
+		}}}}
+	}
+	// The README section outranks the code that implements it.
+	search := func(_ context.Context, collection string, _ storage.SearchQuery) ([]storage.SearchResult, error) {
+		switch {
+		case strings.HasSuffix(collection, "-go"):
+			return hit("MarkHidden", codePath, "function", 0.80), nil
+		case strings.HasSuffix(collection, "-docs"):
+			return hit("Hidden flags", docsPath, "documentation", 0.95), nil
+		}
+		return nil, nil
+	}
+	eng := setupTestEngine(&mockVectorStore{SearchFunc: search, SearchCodeOnlyFunc: search})
+	t.Cleanup(eng.Close)
+	text, err := tools.NewSmartSearchTool(eng).Execute(context.Background(), tools.SmartSearchInput{Query: "hide a flag from help output", FilePath: codePath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Data []map[string]interface{}
+	}
+	if err := json.Unmarshal([]byte(text), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Data) != 1 || response.Data[0]["name"] != "MarkHidden" {
+		t.Fatalf("include_docs=false: %s, want only MarkHidden", text)
+	}
+}

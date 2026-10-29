@@ -735,6 +735,12 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 			if chkErr != nil || !ok {
 				return
 			}
+			// The docs collection holds only documentation, which a code-only
+			// search excludes unless the caller is in a docs file.
+			if l == "docs" && !includeDocs && primaryLang != "docs" {
+				resultsChan <- langResult{lang: l, coll: c}
+				return
+			}
 			var res []storage.SearchResult
 			var sErr error
 			if includeDocs {

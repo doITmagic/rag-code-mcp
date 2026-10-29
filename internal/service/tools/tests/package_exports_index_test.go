@@ -144,6 +144,21 @@ func TestPackageExportsFullImportPathInNestedModule(t *testing.T) {
 	}
 }
 
+// A deprecated module keeps its path; the trailing comment is not part of it.
+func TestPackageExportsDeprecatedModuleComment(t *testing.T) {
+	root := t.TempDir()
+	writeGoFiles(t, root, map[string]string{
+		"go.mod":                 "module example.com/project // Deprecated: use example.com/project/v2\ngo 1.25\n",
+		"storage/cache/cache.go": "package cache\nfunc StorageOnly() {}\n",
+		"api/cache/cache.go":     "package cache\nfunc APIOnly() {}\n",
+	})
+	store := indexGoTree(t, root)
+	got := listExports(t, store, "example.com/project/storage/cache", filepath.Join(root, "go.mod"))["function"]
+	if len(got) != 1 || got[0].Name != "StorageOnly" {
+		t.Fatalf("example.com/project/storage/cache exports = %v, want [StorageOnly]", got)
+	}
+}
+
 // JS and Python modules are files: their package is the file stem.
 func TestPackageExportsPathOfFileModule(t *testing.T) {
 	root := t.TempDir()

@@ -340,6 +340,8 @@ func filterByImportPath(results []storage.SearchResult, importPath, root string)
 // modulePath returns the module path declared in a go.mod file.
 func modulePath(gomod []byte) string {
 	for _, line := range strings.Split(string(gomod), "\n") {
+		// Drop a trailing comment such as "// Deprecated: use example.com/m/v2".
+		line, _, _ = strings.Cut(line, "//")
 		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "module"); ok && (rest == "" || rest[0] == ' ' || rest[0] == '\t') {
 			return strings.Trim(strings.TrimSpace(rest), "\"`")
 		}

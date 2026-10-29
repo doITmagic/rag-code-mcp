@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	pkgParser "github.com/doITmagic/rag-code-mcp/pkg/parser"
@@ -81,5 +83,27 @@ func TestPathBaseUsesDeclaredClassIdentity(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Scenes have no size cap, so a huge one (embedded meshes, or a sparse file)
+// must be streamed rather than read whole into memory.
+func TestHugeSceneIsStreamed(t *testing.T) {
+	path := writeFile(t, "level.tscn", "[gd_scene format=3]\n\n[node name=\"Level\" type=\"Node3D\"]\ndata = PackedByteArray(")
+	if err := os.Truncate(path, 256<<20); err != nil {
+		t.Fatal(err)
+	}
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	res, err := NewAnalyzer().Analyze(context.Background(), path)
+	runtime.ReadMemStats(&after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alloc := after.TotalAlloc - before.TotalAlloc; alloc > 32<<20 {
+		t.Fatalf("analyzing a 256 MiB scene allocated %d MiB", alloc>>20)
+	}
+	if len(res.Symbols) != 1 || !strings.Contains(res.Symbols[0].Content, "Level") {
+		t.Fatalf("symbols = %+v", res.Symbols)
 	}
 }

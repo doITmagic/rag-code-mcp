@@ -9,7 +9,8 @@ import (
 	"testing"
 
 	"github.com/doITmagic/rag-code-mcp/pkg/parser"
-	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/generic" // register text analyzer
+	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/gdscript" // register Godot analyzer
+	_ "github.com/doITmagic/rag-code-mcp/pkg/parser/generic"  // register text analyzer
 )
 
 func writeTestFile(t *testing.T, path, content string) {
@@ -112,4 +113,29 @@ func TestIndexWorkspaceSkipsGitignoredEnvFiles(t *testing.T) {
 	if !example {
 		t.Fatal("tracked .env.example was not indexed")
 	}
+}
+
+// Godot scenes embed meshes and tile data as megabyte-long lines, so a main
+// level scene often exceeds the size cap; the scene analyzer streams it and
+// keeps only headers, so it must still be indexed.
+func TestIndexWorkspaceKeepsLargeGodotScenes(t *testing.T) {
+	old := parser.MaxFileSize
+	parser.MaxFileSize = 1 << 10
+	t.Cleanup(func() { parser.MaxFileSize = old })
+	root := t.TempDir()
+	scene := "[gd_scene format=3]\n\n[sub_resource type=\"ArrayMesh\" id=\"1\"]\ndata = PackedByteArray(" +
+		strings.Repeat("0, ", 4<<10) + ")\n\n[node name=\"LevelMarker\" type=\"Node3D\"]\n"
+	writeTestFile(t, filepath.Join(root, "level.tscn"), scene)
+
+	store := &mockStore{}
+	svc := NewService(&mockEmbedder{}, store)
+	if err := svc.IndexWorkspace(context.Background(), root, "gdscript", Options{Language: "gdscript"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, point := range store.upsertPoints {
+		if content, _ := point.Payload["content"].(string); strings.Contains(content, "LevelMarker") {
+			return
+		}
+	}
+	t.Fatalf("large Godot scene was not indexed (%d points)", len(store.upsertPoints))
 }

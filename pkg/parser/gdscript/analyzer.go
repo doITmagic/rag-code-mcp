@@ -100,12 +100,12 @@ func (a *Analyzer) Analyze(ctx context.Context, path string) (*pkgParser.Result,
 }
 
 func (a *Analyzer) analyzeFile(path string) ([]pkgParser.Symbol, error) {
+	if strings.EqualFold(filepath.Ext(path), ".tscn") {
+		return a.parseScene(path)
+	}
 	source, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
-	}
-	if strings.EqualFold(filepath.Ext(path), ".tscn") {
-		return a.parseScene(source, path)
 	}
 	return a.parseScript(source, path)
 }

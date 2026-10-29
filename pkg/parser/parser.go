@@ -3,6 +3,8 @@ package parser
 import (
 	"context"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -44,9 +46,12 @@ var MaxFileSize int64 = 4 << 20
 // SkipFile reports whether path exists but must not be read as source: it is
 // larger than MaxFileSize, or not a regular file. A symlink can point outside
 // the workspace, a FIFO blocks its reader forever and a device never ends.
+// Godot scenes (.tscn) have no size cap: embedded meshes make level scenes
+// large, and the scene analyzer streams them keeping only section headers.
 func SkipFile(path string) bool {
 	info, err := os.Lstat(path)
-	return err == nil && (!info.Mode().IsRegular() || info.Size() > MaxFileSize)
+	return err == nil && (!info.Mode().IsRegular() ||
+		info.Size() > MaxFileSize && !strings.EqualFold(filepath.Ext(path), ".tscn"))
 }
 
 // SupportedLanguages returns a list of all registered language names.

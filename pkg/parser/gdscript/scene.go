@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -44,10 +45,18 @@ const maxOutlineLine = 16 << 10
 // a readable outline rather than the source. Relations point at the classes
 // of attached scripts, at instanced scenes and at the handler methods of
 // signal connections, linking scenes to their scripts.
-func (a *Analyzer) parseScene(source []byte, path string) ([]pkgParser.Symbol, error) {
+func (a *Analyzer) parseScene(path string) ([]pkgParser.Symbol, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	outline, err := outlineSource(f)
+	if err != nil {
+		return nil, err
+	}
 	var symbols []pkgParser.Symbol
-	outline := outlineSource(source)
-	err := a.parse(outline, path, func(root *gotreesitter.Node, lang *gotreesitter.Language) {
+	err = a.parse(outline, path, func(root *gotreesitter.Node, lang *gotreesitter.Language) {
 		symbols = sceneSymbols(root, lang, outline, path)
 	})
 	return symbols, err
@@ -57,21 +66,30 @@ func (a *Analyzer) parseScene(source []byte, path string) ([]pkgParser.Symbol, e
 // `script = ...` lines, and blanks every other line so line numbers stay put.
 // Embedded resources (decimal PackedByteArray meshes, tile data) are
 // serialized as megabyte-long lines: parsing them cost seconds and gigabytes
-// per scene and overflowed the stack on a 16 MB one.
-func outlineSource(src []byte) []byte {
+// per scene and overflowed the stack on a 16 MB one. The scene is streamed,
+// so such lines are never held in memory and scenes have no size cap.
+func outlineSource(r io.Reader) ([]byte, error) {
+	br := bufio.NewReaderSize(r, maxOutlineLine)
 	out := make([]byte, 0, 4096)
-	for len(src) > 0 {
-		line, rest, found := bytes.Cut(src, []byte{'\n'})
+	for {
+		line, err := br.ReadSlice('\n')
+		long := false
+		for err == bufio.ErrBufferFull {
+			long = true
+			line, err = br.ReadSlice('\n')
+		}
+		if err != nil && err != io.EOF {
+			return nil, err
+		}
 		t := bytes.TrimSpace(line)
-		if len(t) <= maxOutlineLine && (isSectionHeader(t) || isScriptProperty(t)) {
+		if !long && (isSectionHeader(t) || isScriptProperty(t)) {
 			out = append(out, t...)
 		}
-		if found {
-			out = append(out, '\n')
+		if err == io.EOF {
+			return out, nil
 		}
-		src = rest
+		out = append(out, '\n')
 	}
-	return out
 }
 
 func isSectionHeader(line []byte) bool {

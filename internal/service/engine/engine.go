@@ -1218,6 +1218,16 @@ func (e *Engine) startIndexing(root, id string, changedFiles []string, recreate,
 			logger.Instance.Info("[IDX] ♻️ ws=%s Starting incremental indexing for %d files", filepath.Base(root), len(changedFiles))
 			err = e.IndexFiles(ctx, root, changedFiles)
 		} else {
+			// A recreate belongs to the branch it was requested on. When a
+			// checkout since (the replay of an interrupted run, or a queued
+			// recreate) moved the root to another branch, rebuilding that
+			// branch's collections was never asked for: run incrementally.
+			if recreate {
+				if wctx, dErr := e.DetectContextAsRoot(ctx, root, false); dErr == nil && wctx.ID != id {
+					logger.Instance.Warn("[IDX] ws=%s branch changed to %q since the recreate was requested — indexing it without recreate", filepath.Base(root), wctx.Branch)
+					recreate = false
+				}
+			}
 			logger.Instance.Info("[IDX] 🚀 ws=%s Starting background indexing (recreate=%v)", filepath.Base(root), recreate)
 			err = e.IndexWorkspace(ctx, root, recreate)
 		}

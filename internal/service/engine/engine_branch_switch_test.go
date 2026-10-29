@@ -20,7 +20,8 @@ import (
 
 type branchIndexStore struct {
 	indexOrderStore
-	names map[string][]string
+	names   map[string][]string
+	dropped []string
 }
 
 func (s *branchIndexStore) Upsert(ctx context.Context, collection string, points []storage.Point) (*storage.UpdateResult, error) {
@@ -153,7 +154,73 @@ func (s *branchIndexStore) DeleteCollection(_ context.Context, collection string
 	defer s.mu.Unlock()
 	delete(s.existing, collection)
 	delete(s.names, collection)
+	s.dropped = append(s.dropped, collection)
 	return nil
+}
+
+// A recreate interrupted by a checkout to another, already indexed branch
+// must not be replayed as a recreate of that branch: it was never asked for,
+// and searches there lose every result until the rebuild ends.
+func TestInterruptedRecreateDoesNotRebuildOtherBranch(t *testing.T) {
+	root := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false"}, args...)...)
+		cmd.Dir = root
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Errorf("git %v: %v: %s", args, err, output)
+		}
+	}
+	write := func(name, symbol string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, name), []byte("package main\nfunc "+symbol+"() {}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("init", "-q", "-b", "baseline")
+	write("a.go", "StableFirst")
+	write("m.go", "MiddleSecond")
+	write("z.go", "BaselineThird")
+	git("add", ".")
+	git("commit", "-qm", "baseline")
+	git("switch", "-qc", "variant")
+	write("z.go", "VariantThird")
+	git("commit", "-qam", "variant")
+
+	store := &branchIndexStore{
+		indexOrderStore: indexOrderStore{testStore: testStore{existing: map[string]bool{}}},
+		names:           map[string][]string{},
+	}
+	provider := &roundTripLLM{}
+	eng := NewEngine(indexer.NewService(provider, store), search.NewService(provider, store), filepath.Join(t.TempDir(), "registry.json"), &config.Config{})
+	t.Cleanup(eng.Close)
+	ctx := context.Background()
+	if err := eng.IndexWorkspace(ctx, root, false); err != nil {
+		t.Fatal(err)
+	}
+	variant := CollectionNameFor(contract.DeriveWorkspaceID(root, "variant", root), "go")
+	git("switch", "-q", "baseline")
+	wctx, err := eng.DetectContextAsRoot(ctx, root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.IndexWorkspace(ctx, root, false); err != nil {
+		t.Fatal(err)
+	}
+
+	provider.symbol = "MiddleSecond"
+	provider.onEmbed = func() { git("switch", "-q", "variant") }
+	eng.StartIndexingAsync(wctx.Root, wctx.ID, nil, true)
+	waitFor(t, "interrupted recreate did not settle", func() bool {
+		eng.pendingMu.Lock()
+		defer eng.pendingMu.Unlock()
+		return len(eng.ActiveIndexingJobs()) == 0 && len(eng.pendingReplay) == 0 && len(eng.pendingOverflow) == 0
+	})
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if slices.Contains(store.dropped, variant) {
+		t.Fatalf("recreate of baseline dropped the variant branch's collection: %v", store.dropped)
+	}
 }
 
 // A checkout that interrupts a run leaves the collection partial: it must be

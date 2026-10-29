@@ -1352,8 +1352,10 @@ func (ca *CodeAnalyzer) extractMethodCalls(lines []string, startIdx, endIdx int)
 	selfCallRe := regexp.MustCompile(`self\.(\w+)\s*\(`)
 	clsCallRe := regexp.MustCompile(`cls\.(\w+)\s*\(`)
 	superCallRe := regexp.MustCompile(`super\(\)\.(\w+)\s*\(`)
-	classCallRe := regexp.MustCompile(`([A-Z]\w+)\.(\w+)\s*\(`)
-	funcCallRe := regexp.MustCompile(`(?:^|[^.\w])(\w+)\s*\(`)
+	// Any obj.method( call; self and cls are matched above.
+	objCallRe := regexp.MustCompile(`\b(\w+)\.(\w+)\s*\(`)
+	// The name alone, so f(g( yields both; a name after "." is a method call.
+	funcCallRe := regexp.MustCompile(`\b\w+\s*\(`)
 	seen := make(map[string]bool)
 	for i := startIdx; i <= endIdx && i < len(lines); i++ {
 		line := lines[i]
@@ -1379,15 +1381,25 @@ func (ca *CodeAnalyzer) extractMethodCalls(lines []string, startIdx, endIdx int)
 				seen[key] = true
 			}
 		}
-		for _, match := range classCallRe.FindAllStringSubmatch(line, -1) {
+		for _, match := range objCallRe.FindAllStringSubmatch(line, -1) {
+			if match[1] == "self" || match[1] == "cls" {
+				continue
+			}
 			key := match[1] + "." + match[2]
 			if !seen[key] {
-				calls = append(calls, MethodCall{Name: match[2], Receiver: match[1], ClassName: match[1], Line: lineNum})
+				call := MethodCall{Name: match[2], Receiver: match[1], Line: lineNum}
+				if unicode.IsUpper(rune(match[1][0])) {
+					call.ClassName = match[1]
+				}
+				calls = append(calls, call)
 				seen[key] = true
 			}
 		}
-		for _, match := range funcCallRe.FindAllStringSubmatch(line, -1) {
-			funcName := match[1]
+		for _, loc := range funcCallRe.FindAllStringIndex(line, -1) {
+			if loc[0] > 0 && line[loc[0]-1] == '.' {
+				continue
+			}
+			funcName := strings.TrimRight(line[loc[0]:loc[1]-1], " \t")
 			if isKeywordOrBuiltin(funcName) {
 				continue
 			}

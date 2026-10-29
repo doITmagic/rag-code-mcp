@@ -97,3 +97,32 @@ func TestPythonRelations_TypesAreCanonical(t *testing.T) {
 		}
 	}
 }
+
+// A call nested in another call's arguments, and a method called on any
+// object (not only self, cls or a capitalised class), are calls too.
+func TestPythonRelations_NestedAndObjectCalls(t *testing.T) {
+	code := `
+class TimestampSigner:
+    def sign(self, value):
+        timestamp = base64_encode(int_to_bytes(self.get_timestamp()))
+        return signer.unsign(value)
+
+
+def is_text_serializer(serializer):
+    return isinstance(serializer.dumps({}), str)
+`
+	f := filepath.Join(t.TempDir(), "timed.py")
+	require.NoError(t, os.WriteFile(f, []byte(code), 0644))
+
+	res, err := NewAnalyzer().Analyze(context.Background(), f)
+	require.NoError(t, err)
+
+	sign := findSymbol(res.Symbols, "sign")
+	require.NotNil(t, sign)
+	for _, target := range []string{"base64_encode", "int_to_bytes", "get_timestamp", "unsign"} {
+		assert.True(t, hasRelation(sign.Relations, target, pkgParser.RelCalls), "sign should call %s; got %v", target, sign.Relations)
+	}
+	isText := findSymbol(res.Symbols, "is_text_serializer")
+	require.NotNil(t, isText)
+	assert.True(t, hasRelation(isText.Relations, "dumps", pkgParser.RelCalls), "got %v", isText.Relations)
+}

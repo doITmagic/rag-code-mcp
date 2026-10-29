@@ -98,3 +98,46 @@ func TestIndexFilesFallbackKeepsStateSavedByFullRun(t *testing.T) {
 		t.Fatalf("state lost %s, which the full run indexed before the abort: %v", n1, state.Files)
 	}
 }
+
+// A truncated state file (kill or disk full during a save) must not make
+// every watcher batch fail; the batch falls back to a full run that rebuilds it.
+func TestIndexFilesRebuildsCorruptState(t *testing.T) {
+	root := t.TempDir()
+	a := filepath.Join(root, "a.go")
+	if err := os.WriteFile(a, []byte("package main\nfunc A() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	provider := &hookLLM{}
+	store := &branchIndexStore{
+		indexOrderStore: indexOrderStore{testStore: testStore{existing: map[string]bool{}}},
+		names:           map[string][]string{},
+	}
+	eng := NewEngine(indexer.NewService(provider, store), search.NewService(provider, store), filepath.Join(t.TempDir(), "registry.json"), &config.Config{})
+	t.Cleanup(eng.Close)
+	ctx := context.Background()
+	if err := eng.IndexWorkspace(ctx, root, false); err != nil {
+		t.Fatal(err)
+	}
+	wctx, err := eng.DetectContextAsRoot(ctx, root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statePath := indexer.StatePath(wctx.Root, wctx.CollectionName("go"))
+	if err := os.WriteFile(statePath, []byte(`{"files": {`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(a, []byte("package main\nfunc AEdited() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.IndexFiles(ctx, root, []string{a}); err != nil {
+		t.Fatalf("watcher batch failed on a corrupt state file: %v", err)
+	}
+	state, err := indexer.LoadState(statePath)
+	if err != nil {
+		t.Fatalf("state file still corrupt: %v", err)
+	}
+	if _, ok := state.GetFileState(a); !ok {
+		t.Fatal("rebuilt state does not track the edited file")
+	}
+}

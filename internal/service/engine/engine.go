@@ -1339,8 +1339,11 @@ func (e *Engine) IndexFiles(ctx context.Context, root string, files []string) (r
 			}
 			state, err = indexer.LoadState(statePath)
 			if err != nil {
+				// A corrupt state file would fail every batch; the full run
+				// starts from an empty state and rewrites it.
+				logger.Instance.Warn("[IDX] Failed to load index state %s, falling back to a full run: %v", statePath, err)
 				saveLoadedStates()
-				return err
+				return e.IndexWorkspace(ctx, root, false)
 			}
 			states[collection] = state
 		}

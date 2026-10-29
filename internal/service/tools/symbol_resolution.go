@@ -44,7 +44,7 @@ func searchSymbolCandidates(ctx context.Context, eng *engine.Engine, wsID, root,
 		return symbols, err
 	}
 	for _, reading := range splitGoImportPath(name) {
-		found, err := searchGoQualified(ctx, eng, wsID, reading.name, limit)
+		found, err := searchGoQualified(ctx, eng, wsID, reading.name, reading.importPath != "", limit)
 		if err != nil {
 			return nil, err
 		}
@@ -56,15 +56,21 @@ func searchSymbolCandidates(ctx context.Context, eng *engine.Engine, wsID, root,
 	return symbols, nil
 }
 
-func searchGoQualified(ctx context.Context, eng *engine.Engine, wsID, name string, limit int) ([]storage.SearchResult, error) {
+// A name under an import path starts with its package, so its two parts are
+// a package.Function or package.Type, never a Type.Method.
+func searchGoQualified(ctx context.Context, eng *engine.Engine, wsID, name string, underImportPath bool, limit int) ([]storage.SearchResult, error) {
 	filters := goMethodFilters(name)
 	if filters == nil {
 		return nil, nil
 	}
-	symbols, err := eng.ExactSearchPolyglot(ctx, wsID, filters, limit)
-	// (*T).Method names only a method.
-	if err != nil || filters["package"] != nil || strings.ContainsAny(name, "(*") {
-		return symbols, err
+	var symbols []storage.SearchResult
+	if !underImportPath || filters["package"] != nil {
+		var err error
+		symbols, err = eng.ExactSearchPolyglot(ctx, wsID, filters, limit)
+		// (*T).Method names only a method.
+		if err != nil || filters["package"] != nil || strings.ContainsAny(name, "(*") {
+			return symbols, err
+		}
 	}
 	// A two-part name may also be a Go package.Function or package.Type,
 	// also when a type shares the package's name: keep both readings.

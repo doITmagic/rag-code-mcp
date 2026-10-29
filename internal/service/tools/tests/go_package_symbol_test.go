@@ -147,6 +147,32 @@ func TestPackageNamedTypeKeepsBothReadings(t *testing.T) {
 	}
 }
 
+// Under its import path, server.Start names the package function: a name
+// there starts with its package, so it can select the function the bare
+// server.Start shares with the method of type server.
+func TestImportPathNameSelectsPackageFunction(t *testing.T) {
+	dir, store := indexFixture(t, "go", golang.NewCodeAnalyzer(), map[string]string{
+		"go.mod":           "module example.com/edge\n\ngo 1.22\n",
+		"server/server.go": "package server\n\ntype server struct{}\n\nfunc (s *server) Start() {}\n\nfunc Start() {}\n",
+	})
+	eng := setupTestEngine(store)
+	t.Cleanup(eng.Close)
+	exact := true
+	for query, want := range map[string]string{"example.com/edge/server.Start": "function", "example.com/edge/server.server.Start": "method"} {
+		text, err := tools.NewSmartSearchTool(eng).Execute(context.Background(), tools.SmartSearchInput{Query: query, FilePath: filepath.Join(dir, "go.mod"), ExactSymbol: &exact})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var response struct{ Data []map[string]interface{} }
+		if err := json.Unmarshal([]byte(text), &response); err != nil {
+			t.Fatal(err)
+		}
+		if len(response.Data) != 1 || response.Data[0]["type"] != want {
+			t.Errorf("%s want only the %s: %s", query, want, text)
+		}
+	}
+}
+
 // (*server).Start names only the method, even when the package has a
 // function Start.
 func TestPointerReceiverNameIsOnlyTheMethod(t *testing.T) {

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -311,7 +312,7 @@ func (t *ReadFileContextTool) streamLines(path string, start, end, ctxLines int)
 		skipped := 0
 		for err == bufio.ErrBufferFull {
 			chunk, err = reader.ReadSlice('\n')
-			skipped += len(chunk)
+			skipped += len(bytes.TrimRight(chunk, "\r\n")) // the terminator is not cut content
 		}
 		if err != nil && err != io.EOF {
 			return result, err

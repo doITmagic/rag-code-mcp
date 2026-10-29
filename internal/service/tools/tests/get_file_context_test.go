@@ -126,5 +126,28 @@ var _ = Describe("GetFileContextTool", func() {
 			Expect(resp.Data.CodeSnippet).To(ContainSubstring("line truncated"))
 			Expect(len(resp.Data.CodeSnippet)).To(BeNumerically("<", 32<<10))
 		})
+
+		// The truncation note counted the line terminator as cut content, so a
+		// line of exactly 16 KiB was marked "1 more bytes" with nothing cut.
+		It("should count only the cut content in the truncation note", func() {
+			const keep = 16 << 10
+			path := filepath.Join(GinkgoT().TempDir(), "long.txt")
+			content := strings.Repeat("x", keep) + "\n" + strings.Repeat("y", keep+3) + "\n" + strings.Repeat("z", keep+2) + "\r\n"
+			Expect(os.WriteFile(path, []byte(content), 0o600)).To(Succeed())
+
+			resJSON, err := tool.Execute(ctx, map[string]interface{}{"file_path": path, "line_number": float64(1)})
+			Expect(err).NotTo(HaveOccurred())
+			var resp struct {
+				Status string                  `json:"status"`
+				Error  string                  `json:"error"`
+				Data   tools.CodeContextResult `json:"data"`
+			}
+			Expect(json.Unmarshal([]byte(resJSON), &resp)).To(Succeed())
+			Expect(resp.Status).To(Equal("success"), resp.Error)
+			lines := strings.Split(resp.Data.CodeSnippet, "\n")
+			Expect(lines[0]).NotTo(ContainSubstring("line truncated"))
+			Expect(lines[1]).To(HaveSuffix("[line truncated, 3 more bytes]"))
+			Expect(lines[2]).To(HaveSuffix("[line truncated, 2 more bytes]"))
+		})
 	})
 })

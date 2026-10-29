@@ -231,14 +231,21 @@ func (e *gitDuringEmbed) Embed(ctx context.Context, text string) ([]float64, err
 }
 
 func TestCommitOnIndexedBranchDoesNotAbortIndexing(t *testing.T) {
-	root, head, git := branchFixture(t)
-	store := &mockStore{}
-	embedder := &gitDuringEmbed{git: git, args: []string{"commit", "-q", "--allow-empty", "-m", "wip"}}
-	ctx := WithGitState(context.Background(), root, "baseline", head)
-	if err := NewService(embedder, store).IndexWorkspace(ctx, root, "baseline", Options{Language: "go"}); err != nil {
-		t.Fatalf("a commit on the indexed branch aborted indexing: %v", err)
-	}
-	if len(store.upsertPoints) != 2 {
-		t.Fatalf("want both files indexed, got %d points", len(store.upsertPoints))
+	for _, args := range [][]string{
+		{"commit", "-q", "--allow-empty", "-m", "wip"},
+		// Git rewrites HEAD even when checking out the branch already checked out.
+		{"checkout", "-q", "baseline"},
+		{"switch", "-q", "baseline"},
+	} {
+		root, head, git := branchFixture(t)
+		store := &mockStore{}
+		embedder := &gitDuringEmbed{git: git, args: args}
+		ctx := WithGitState(context.Background(), root, "baseline", head)
+		if err := NewService(embedder, store).IndexWorkspace(ctx, root, "baseline", Options{Language: "go"}); err != nil {
+			t.Fatalf("git %s on the indexed branch aborted indexing: %v", args[0], err)
+		}
+		if len(store.upsertPoints) != 2 {
+			t.Fatalf("git %s: want both files indexed, got %d points", args[0], len(store.upsertPoints))
+		}
 	}
 }

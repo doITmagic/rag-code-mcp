@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +18,8 @@ type gitState struct {
 	root, branch, head string
 	headPath           string
 	headInfo           os.FileInfo
+	reflogPath         string
+	reflogSize         int64
 	snapshotErr        error
 }
 
@@ -36,6 +39,10 @@ func WithGitState(ctx context.Context, root, branch, head string) context.Contex
 			expected.headPath = filepath.Join(root, expected.headPath)
 		}
 		expected.headInfo, expected.snapshotErr = os.Stat(expected.headPath)
+		expected.reflogPath = filepath.Join(filepath.Dir(expected.headPath), "logs", "HEAD")
+		if reflog, err := os.Stat(expected.reflogPath); err == nil {
+			expected.reflogSize = reflog.Size()
+		}
 	}
 	return context.WithValue(ctx, gitStateKey{}, expected)
 }
@@ -65,7 +72,8 @@ func checkWorkspace(ctx context.Context) error {
 	// Git leaves it behind, which would abort or block indexing indefinitely.
 	// HEAD is replaced on checkout, even when two checkouts return to the same branch and commit.
 	info, err := os.Stat(expected.headPath)
-	if err != nil || !os.SameFile(expected.headInfo, info) || !expected.headInfo.ModTime().Equal(info.ModTime()) {
+	replaced := err == nil && (!os.SameFile(expected.headInfo, info) || !expected.headInfo.ModTime().Equal(info.ModTime()))
+	if err != nil || replaced && !onlySameBranchCheckouts(expected) {
 		return fmt.Errorf("%w: Git HEAD was replaced or is unavailable", ErrWorkspaceChanged)
 	}
 	branch := parts[1]
@@ -78,4 +86,37 @@ func checkWorkspace(ctx context.Context) error {
 		return fmt.Errorf("%w: expected %s at %s, found %s at %s", ErrWorkspaceChanged, expected.branch, expected.head, branch, parts[0])
 	}
 	return nil
+}
+
+// onlySameBranchCheckouts reports whether the HEAD reflog entries written
+// since the snapshot explain a replaced HEAD without leaving the branch, as
+// "checkout <current branch>" does. Any other checkout or a rebase may have
+// passed through another branch and come back, so it does not count.
+func onlySameBranchCheckouts(expected gitState) bool {
+	f, err := os.Open(expected.reflogPath)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	if _, err := f.Seek(expected.reflogSize, io.SeekStart); err != nil {
+		return false
+	}
+	data, err := io.ReadAll(f)
+	if err != nil || len(data) == 0 {
+		return false
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		_, message, _ := strings.Cut(line, "\t")
+		action, detail, _ := strings.Cut(message, ": ")
+		if strings.HasPrefix(action, "rebase") {
+			return false
+		}
+		if action == "checkout" {
+			from, to, ok := strings.Cut(strings.TrimPrefix(detail, "moving from "), " to ")
+			if !ok || from != to {
+				return false
+			}
+		}
+	}
+	return true
 }

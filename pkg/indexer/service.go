@@ -141,12 +141,14 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 			changedFiles = append(changedFiles, path)
 		}
 	}
-	// Tracked files the scan no longer yields were excluded after they were
-	// indexed: by a pattern, a skip rule, or a whole pruned directory.
+	// Tracked files the scan no longer yields and the current rules exclude
+	// were excluded after they were indexed: by a pattern, a skip rule, or a
+	// whole pruned directory (a linked worktree among them). The scan also
+	// silently skips directories it cannot read; their files still exist.
 	var unscanned []string
 	state.mu.RLock()
 	for path := range state.Files {
-		if !scanned[path] {
+		if !scanned[path] && (ExcludedPath(root, path, false, opts.ExcludePatterns) || shouldSkipFile(path)) {
 			unscanned = append(unscanned, path)
 		}
 	}

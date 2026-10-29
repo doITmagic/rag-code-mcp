@@ -858,3 +858,44 @@ func TestIndexWorkspaceDropsNewlyExcludedDirectory(t *testing.T) {
 		t.Fatal("state still tracks the excluded file")
 	}
 }
+
+// A directory the scanner cannot list (EACCES, EIO on a network mount) is
+// skipped silently; its files still exist and must keep their vectors.
+func TestIndexWorkspaceKeepsFilesOfUnreadableDirectory(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	root := t.TempDir()
+	dir := filepath.Join(root, "pkg")
+	path := filepath.Join(dir, "a.go")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("package pkg\nfunc A() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := &mockStore{}
+	svc := NewService(&mockEmbedder{}, store)
+	if err := svc.IndexWorkspace(context.Background(), root, "go", Options{Language: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	store.deletedFilters = nil
+	// Searchable but not listable: the file stats fine, the walk cannot read the directory.
+	if err := os.Chmod(dir, 0o311); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	if err := svc.IndexWorkspace(context.Background(), root, "go", Options{Language: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.deletedFilters) != 0 {
+		t.Fatalf("deleted vectors of files that still exist: %v", store.deletedFilters)
+	}
+	state, err := LoadState(StatePath(root, "go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, tracked := state.GetFileState(path); !tracked {
+		t.Fatal("state dropped a file that still exists")
+	}
+}

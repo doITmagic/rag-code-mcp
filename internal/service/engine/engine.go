@@ -638,6 +638,25 @@ func (e *ErrIndexingStarted) Error() string {
 	return fmt.Sprintf("started background indexing for %s", e.WorkspaceRoot)
 }
 
+// primaryLanguage is the language of filePath or, when it names no code file
+// (no path, a directory), the workspace's code language with the most files.
+// A fixed "go" default made such searches on other workspaces target a
+// missing collection and start an indexing run on every call.
+func primaryLanguage(root, filePath string) string {
+	if a := parser.GetByFile(filePath); a != nil {
+		return a.Name()
+	}
+	lang, most := "go", 0
+	if s := indexer.LoadIndexStatus(root); s != nil {
+		for name, ls := range s.Languages {
+			if name != "docs" && name != "generic" && (ls.OnDisk > most || ls.OnDisk == most && most > 0 && name < lang) {
+				lang, most = name, ls.OnDisk
+			}
+		}
+	}
+	return lang
+}
+
 // SearchCode detects the workspace from filePath, resolves the correct collection,
 // embeds the query ONCE, then fans out in parallel to all language collections.
 // includeDocs=false searches code only. Triggers background indexing if needed.
@@ -650,11 +669,7 @@ func (e *Engine) SearchCode(ctx context.Context, filePath, queryText string, lim
 	}
 	logger.Instance.Debug("[TIMER] SearchCode detect_context=%v", time.Since(t0))
 
-	// Primary language from file extension
-	primaryLang := "go"
-	if a := parser.GetByFile(filePath); a != nil {
-		primaryLang = a.Name()
-	}
+	primaryLang := primaryLanguage(wctx.Root, filePath)
 
 	primaryColl := wctx.CollectionName(primaryLang)
 	t1 := time.Now()
@@ -843,11 +858,7 @@ func (e *Engine) HybridSearchCode(ctx context.Context, filePath, queryText strin
 		return nil, err
 	}
 
-	// Detect language
-	lang := "go"
-	if a := parser.GetByFile(filePath); a != nil {
-		lang = a.Name()
-	}
+	lang := primaryLanguage(wctx.Root, filePath)
 
 	collection := wctx.CollectionName(lang)
 	type target struct {

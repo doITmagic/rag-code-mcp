@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/doITmagic/rag-code-mcp/internal/service/tools"
+	"github.com/doITmagic/rag-code-mcp/pkg/indexer"
 	"github.com/doITmagic/rag-code-mcp/pkg/storage"
 	"github.com/doITmagic/rag-code-mcp/pkg/telemetry"
 )
@@ -131,5 +132,49 @@ func TestStrictCodeKeepsHybridScoreOfDefaultMode(t *testing.T) {
 		if len(response.Data) == 0 || response.Data[0]["name"] != "wrap" {
 			t.Fatalf("mode=%q: %s, want wrap first", mode, text)
 		}
+	}
+}
+
+func TestSearchWithoutCodeFileUsesWorkspaceLanguage(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "src")
+	path := filepath.Join(dir, "signer.py")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("def derive_key(): pass\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A fully indexed Python workspace: no Go collection exists.
+	indexer.SaveIndexStatus(root, &indexer.IndexStatus{StartedAt: "2026-01-01T00:00:00Z", EndedAt: "2026-01-01T00:00:01Z",
+		Languages: map[string]indexer.LangStatus{"python": {OnDisk: 1, Processed: 1}, "docs": {OnDisk: 3, Processed: 3}}})
+	search := func(_ context.Context, collection string, _ storage.SearchQuery) ([]storage.SearchResult, error) {
+		if !strings.HasSuffix(collection, "-python") {
+			return nil, nil
+		}
+		// Only the lexical half of the search lifts this hit over the score floor.
+		return []storage.SearchResult{{Score: .45, Point: storage.Point{ID: "derive_key", Payload: map[string]interface{}{
+			"name": "derive_key", "type": "function", "file_path": path, "content": "def derive_key signing", "start_line": 1, "end_line": 1,
+		}}}}, nil
+	}
+	exists := func(_ context.Context, name string) (bool, error) {
+		return strings.HasSuffix(name, "-python") || strings.HasSuffix(name, "-docs"), nil
+	}
+	eng := setupTestEngine(&mockVectorStore{SearchFunc: search, SearchCodeOnlyFunc: search, CollectionExistsFunc: exists})
+	t.Cleanup(eng.Close)
+	// file_path is a directory, so it names no language.
+	text, err := tools.NewSmartSearchTool(eng).Execute(context.Background(), tools.SmartSearchInput{Query: "derive signing key", FilePath: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response tools.ToolResponse
+	if err := json.Unmarshal([]byte(text), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Status != "success" || response.Context.Language != "python" {
+		t.Fatalf("status=%s language=%s: %s, want derive_key from the python collection", response.Status, response.Context.Language, text)
+	}
+	if jobs := eng.ActiveIndexingJobs(); len(jobs) != 0 {
+		t.Fatalf("search of an indexed workspace started indexing: %v", jobs)
 	}
 }

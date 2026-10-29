@@ -697,3 +697,45 @@ func TestIndexWorkspaceReportsAndRetriesFailedFiles(t *testing.T) {
 		t.Fatalf("upserted %d points after recovery, want 1 (failed file not retried)", len(store.upsertPoints))
 	}
 }
+
+type editingEmbedder struct {
+	mockEmbedder
+	edit func()
+}
+
+func (m *editingEmbedder) Embed(ctx context.Context, text string) ([]float64, error) {
+	if edit := m.edit; edit != nil {
+		m.edit = nil
+		edit()
+	}
+	return m.mockEmbedder.Embed(ctx, text)
+}
+
+// An edit saved while the old content is being embedded must be picked up by
+// the next run, not hidden behind state recording the post-edit metadata.
+func TestIndexWorkspacePicksUpEditMadeDuringEmbedding(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "main.go")
+	if err := os.WriteFile(path, []byte("package main\nfunc Old() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	embedder := &editingEmbedder{edit: func() {
+		if err := os.WriteFile(path, []byte("package main\nfunc NewAndLonger() {}\n"), 0o644); err != nil {
+			t.Error(err)
+		}
+	}}
+	store := &mockStore{}
+	svc := NewService(embedder, store)
+
+	for i := 0; i < 2; i++ {
+		if err := svc.IndexWorkspace(context.Background(), root, "go", Options{Language: "go"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, p := range store.upsertPoints {
+		if p.Payload["name"] == "NewAndLonger" {
+			return
+		}
+	}
+	t.Fatalf("edited content never indexed; upserted %d point(s)", len(store.upsertPoints))
+}

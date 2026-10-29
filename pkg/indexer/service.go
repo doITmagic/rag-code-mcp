@@ -441,6 +441,9 @@ func (s *Service) IndexFile(ctx context.Context, collection, path string, state 
 		return 0, nil
 	}
 
+	// Stat before parsing: state must describe the content actually indexed,
+	// so an edit saved while it is embedded is still seen as a change.
+	info, statErr := os.Stat(path)
 	res, err := a.Analyze(ctx, path)
 	if err != nil {
 		logger.Instance.Error("Analyze failed for %s: %v", path, err)
@@ -469,7 +472,7 @@ func (s *Service) IndexFile(ctx context.Context, collection, path string, state 
 		return 0, err
 	}
 	// Update state
-	if info, err := os.Stat(path); err == nil {
+	if statErr == nil {
 		state.UpdateFile(path, info)
 	}
 

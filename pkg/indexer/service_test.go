@@ -959,3 +959,38 @@ func TestIndexItems_SlowBatchFallsBackToSingleEmbeds(t *testing.T) {
 	Expect(svc.IndexItems(ctx, "slow-batch", symbols)).To(Succeed())
 	Expect(mockS.upsertPoints).To(HaveLen(2))
 }
+
+// A process killed after a recreate dropped the collection, and before the
+// first state save, must not leave the old state on disk claiming files whose
+// vectors are gone: the next run would see no changes and never re-embed them.
+func TestRecreateCrashBeforeStateSaveReindexesOnNextRun(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"a", "b"} {
+		if err := os.WriteFile(filepath.Join(root, name+".go"), []byte("package main\nfunc Work"+name+"() {}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store := &dropTrackingStore{}
+	svc := NewService(&mockEmbedder{}, store)
+	if err := svc.IndexWorkspace(context.Background(), root, "go", Options{Language: "go"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Crash (no deferred save, like kill -9) right after the first file.
+	func() {
+		defer func() { _ = recover() }()
+		_ = svc.IndexWorkspace(context.Background(), root, "go", Options{Language: "go", Recreate: true,
+			Progress: func(int, int) { panic("killed") }})
+	}()
+	if !store.dropped {
+		t.Fatal("recreate did not drop the collection")
+	}
+
+	store.upsertPoints = nil
+	if err := svc.IndexWorkspace(context.Background(), root, "go", Options{Language: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.upsertPoints) != 2 {
+		t.Fatalf("re-indexed %d file(s) after the crash, want 2", len(store.upsertPoints))
+	}
+}

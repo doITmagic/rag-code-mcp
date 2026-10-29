@@ -110,6 +110,11 @@ func (s *Service) IndexWorkspace(ctx context.Context, root string, collection st
 	if opts.Recreate || !collectionExists {
 		logger.Instance.Info("Rebuilding state for collection %s (recreate=%t, exists=%t)", collection, opts.Recreate, collectionExists)
 		state = NewState()
+		// Drop the old snapshot before the collection: a crash before the
+		// first save would otherwise leave it claiming files with no vectors.
+		if err := os.Remove(statePath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("reset index state: %w", err)
+		}
 	}
 
 	// 1. Proactive stale vector cleanup for deleted files and directories

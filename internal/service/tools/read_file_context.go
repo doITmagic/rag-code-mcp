@@ -185,6 +185,12 @@ func parseLineArg(val interface{}) (int, bool) {
 	return 0, false
 }
 
+// MaxASTFileSize caps the files rag_read_file_context parses for AST context.
+// A parse is not cached and costs about 300 MB per MB of Python or JavaScript,
+// so a few parallel reads of 4 MB files exhausted the daemon's memory; larger
+// files are read as plain lines.
+var MaxASTFileSize int64 = 512 << 10
+
 // tryASTContext attempts to resolve the smallest logical block enclosing the lines
 func (t *ReadFileContextTool) tryASTContext(ctx context.Context, path string, start, end int) (CodeContextResult, bool) {
 	var result CodeContextResult
@@ -197,6 +203,10 @@ func (t *ReadFileContextTool) tryASTContext(ctx context.Context, path string, st
 	// gigabytes; its plain lines answer the request.
 	if indexer.ShouldSkipFile(path) {
 		logger.Instance.Debug("Skipping AST context: %s is excluded from indexing", path)
+		return result, false
+	}
+	if info, err := os.Stat(path); err == nil && info.Size() > MaxASTFileSize {
+		logger.Instance.Debug("Skipping AST context: %s is larger than %d bytes", path, MaxASTFileSize)
 		return result, false
 	}
 

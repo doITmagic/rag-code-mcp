@@ -104,6 +104,32 @@ var _ = Describe("GetFileContextTool", func() {
 			Expect(resp.Data.CodeSnippet).To(ContainSubstring("bundled199"))
 		})
 
+		// Every read of a 4 MB source file parsed it whole, about 15 s and
+		// 1.2 GB, and a few parallel reads got the daemon OOM-killed.
+		It("should read a source file over the AST size cap as plain lines", func() {
+			old := tools.MaxASTFileSize
+			tools.MaxASTFileSize = 1 << 10
+			DeferCleanup(func() { tools.MaxASTFileSize = old })
+			var src strings.Builder
+			for i := 0; i < 100; i++ {
+				fmt.Fprintf(&src, "def big_function_%d(a, b):\n    return a + b\n\n", i)
+			}
+			path := filepath.Join(GinkgoT().TempDir(), "big.py")
+			Expect(os.WriteFile(path, []byte(src.String()), 0o600)).To(Succeed())
+
+			resJSON, err := tool.Execute(ctx, map[string]interface{}{"file_path": path, "line_number": float64(151)})
+			Expect(err).NotTo(HaveOccurred())
+			var resp struct {
+				Status string                  `json:"status"`
+				Error  string                  `json:"error"`
+				Data   tools.CodeContextResult `json:"data"`
+			}
+			Expect(json.Unmarshal([]byte(resJSON), &resp)).To(Succeed())
+			Expect(resp.Status).To(Equal("success"), resp.Error)
+			Expect(resp.Data.ContextType).To(Equal("naive"))
+			Expect(resp.Data.CodeSnippet).To(ContainSubstring("big_function_50"))
+		})
+
 		// A one-line file over the size cap (a 10 MB bundle) failed with
 		// "token too long", and a long line went whole into the response.
 		It("should read a single line longer than the file size cap", func() {

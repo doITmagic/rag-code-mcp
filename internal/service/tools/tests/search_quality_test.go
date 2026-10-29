@@ -179,6 +179,46 @@ func TestSearchWithoutCodeFileUsesWorkspaceLanguage(t *testing.T) {
 	}
 }
 
+func TestSearchWithoutCodeFileSkipsMarkupLanguages(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "cmd")
+	path := filepath.Join(dir, "signer.go")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("package cmd\n\nfunc DeriveKey() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A Go service with more HTML templates and stylesheets than Go files.
+	indexer.SaveIndexStatus(root, &indexer.IndexStatus{StartedAt: "2026-01-01T00:00:00Z", EndedAt: "2026-01-01T00:00:01Z",
+		Languages: map[string]indexer.LangStatus{"go": {OnDisk: 5, Processed: 5}, "html": {OnDisk: 20, Processed: 20}, "css": {OnDisk: 30, Processed: 30}}})
+	search := func(_ context.Context, collection string, _ storage.SearchQuery) ([]storage.SearchResult, error) {
+		if !strings.HasSuffix(collection, "-go") {
+			return nil, nil
+		}
+		// Only the lexical half of the search lifts this hit over the score floor.
+		return []storage.SearchResult{{Score: .45, Point: storage.Point{ID: "DeriveKey", Payload: map[string]interface{}{
+			"name": "DeriveKey", "type": "function", "file_path": path, "content": "func DeriveKey signing", "start_line": 3, "end_line": 3,
+		}}}}, nil
+	}
+	exists := func(_ context.Context, name string) (bool, error) {
+		return strings.HasSuffix(name, "-go") || strings.HasSuffix(name, "-html") || strings.HasSuffix(name, "-css"), nil
+	}
+	eng := setupTestEngine(&mockVectorStore{SearchFunc: search, SearchCodeOnlyFunc: search, CollectionExistsFunc: exists})
+	t.Cleanup(eng.Close)
+	text, err := tools.NewSmartSearchTool(eng).Execute(context.Background(), tools.SmartSearchInput{Query: "derive signing key", FilePath: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response tools.ToolResponse
+	if err := json.Unmarshal([]byte(text), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Status != "success" || response.Context.Language != "go" {
+		t.Fatalf("status=%s language=%s: %s, want DeriveKey from the go collection", response.Status, response.Context.Language, text)
+	}
+}
+
 func TestSearchWithoutIncludeDocsSkipsDocumentation(t *testing.T) {
 	root := t.TempDir()
 	codePath, docsPath := filepath.Join(root, "flag.go"), filepath.Join(root, "README.md")

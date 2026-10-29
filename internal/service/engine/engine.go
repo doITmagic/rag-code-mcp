@@ -653,16 +653,25 @@ func (e *ErrIndexingStarted) Error() string {
 // primaryLanguage is the language of filePath or, when it names no code file
 // (no path, a directory), the workspace's code language with the most files.
 // A fixed "go" default made such searches on other workspaces target a
-// missing collection and start an indexing run on every call.
+// missing collection and start an indexing run on every call. HTML and CSS
+// win only when no other code language is indexed: templates and stylesheets
+// often outnumber the source files of a Go, Python or JS project.
 func primaryLanguage(root, filePath string) string {
 	if a := parser.GetByFile(filePath); a != nil {
 		return a.Name()
 	}
-	lang, most := "go", 0
+	lang, most, markup := "go", 0, true
 	if s := indexer.LoadIndexStatus(root); s != nil {
 		for name, ls := range s.Languages {
-			if name != "docs" && name != "generic" && (ls.OnDisk > most || ls.OnDisk == most && most > 0 && name < lang) {
-				lang, most = name, ls.OnDisk
+			if name == "docs" || name == "generic" || ls.OnDisk == 0 {
+				continue
+			}
+			m := name == "html" || name == "css"
+			if m && !markup {
+				continue
+			}
+			if markup && !m || ls.OnDisk > most || ls.OnDisk == most && name < lang {
+				lang, most, markup = name, ls.OnDisk, m
 			}
 		}
 	}

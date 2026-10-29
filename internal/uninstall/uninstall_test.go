@@ -293,6 +293,24 @@ func TestRemoveZedEntryPreservesNumbers(t *testing.T) {
 	}
 }
 
+func TestRemoveFromShellConfigKeepsUserComment(t *testing.T) {
+	home := t.TempDir()
+	binDir := filepath.Join(home, ".ragcode", "bin")
+	user := "# RagCode MCP\nexport QDRANT_API_KEY=mine\n"
+	rc := filepath.Join(home, ".bashrc")
+	if err := os.WriteFile(rc, []byte(user+"\n# RagCode MCP\nexport PATH=\""+binDir+":$PATH\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	removeFromShellConfig(home, binDir)
+	data, err := os.ReadFile(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != user+"\n" {
+		t.Fatalf(".bashrc = %q, want %q", data, user+"\n")
+	}
+}
+
 func TestUninstallIntegrationPathsMatchInstaller(t *testing.T) {
 	t.Setenv("CODEX_HOME", "")
 	home := t.TempDir()

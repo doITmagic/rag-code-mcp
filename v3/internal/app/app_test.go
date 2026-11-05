@@ -1,7 +1,9 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -55,4 +57,29 @@ func TestNewDefaultsDoNotDial(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	a.Close(ctx)
+}
+
+// A stop by signal cancels Run's context; the SDK logs that as an ERROR,
+// which made every normal shutdown look like a failure in ragcode.log.
+func TestShutdownLogsNoError(t *testing.T) {
+	t.Setenv("RAGCODE_HOME", t.TempDir())
+	cfg := config.Default()
+	cfg.WatchEnabled = false
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	a, err := New(Options{Config: cfg, Version: "v3", Log: log, Store: store.NewMemory(), Embedder: &embed.Fake{}})
+	require.NoError(t, err)
+	t.Cleanup(func() { a.Close(context.Background()) })
+
+	ct, st := mcp.NewInMemoryTransports()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- a.Server.Run(ctx, st) }()
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "c", Version: "0"}, nil).Connect(context.Background(), ct, nil)
+	require.NoError(t, err)
+	defer cs.Close()
+	cancel()
+	<-done
+	assert.Contains(t, buf.String(), "server run cancelled")
+	assert.NotContains(t, buf.String(), "level=ERROR")
 }

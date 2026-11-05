@@ -62,10 +62,27 @@ func New(o Options) (*App, error) {
 		slog.SetDefault(o.Log) // the one process-wide logger; tools log through it
 	}
 	eng := engine.New(o.Config, o.Store, o.Embedder, o.Log)
-	srv := mcp.NewServer(&mcp.Implementation{Name: "ragcode", Version: o.Version}, &mcp.ServerOptions{Logger: o.Log})
+	srv := mcp.NewServer(&mcp.Implementation{Name: "ragcode", Version: o.Version}, &mcp.ServerOptions{Logger: slog.New(sdkLog{o.Log.Handler()})})
 	tools.Register(srv, eng, o.Config, o.Version, time.Now())
 	return &App{Server: srv, Engine: eng, store: o.Store, log: o.Log}, nil
 }
+
+// sdkLog passes the go-sdk's records through, except that its
+// "server run cancelled" ERROR, logged on every stop by signal, becomes INFO.
+type sdkLog struct{ slog.Handler }
+
+func (h sdkLog) Handle(ctx context.Context, r slog.Record) error {
+	if r.Level == slog.LevelError && r.Message == "server run cancelled" {
+		r.Level = slog.LevelInfo
+		if !h.Enabled(ctx, r.Level) { // the logger checked Enabled for ERROR
+			return nil
+		}
+	}
+	return h.Handler.Handle(ctx, r)
+}
+
+func (h sdkLog) WithAttrs(as []slog.Attr) slog.Handler { return sdkLog{h.Handler.WithAttrs(as)} }
+func (h sdkLog) WithGroup(n string) slog.Handler       { return sdkLog{h.Handler.WithGroup(n)} }
 
 // Close stops the engine, giving it until ctx is done, then closes the store.
 func (a *App) Close(ctx context.Context) {

@@ -86,7 +86,7 @@ func TestRun(t *testing.T) {
 		"rm -f ragcode-ollama",
 		"run -d --name ragcode-ollama --restart always -p 127.0.0.1:11434:11434 -v ragcode-ollama:/root/.ollama ollama/ollama",
 	}, lines)
-	assert.Equal(t, []string{"qwen3-embedding:0.6b"}, *pulled)
+	assert.Equal(t, []string{"embeddinggemma-2:270m"}, *pulled)
 	assert.Contains(t, out.String(), "pulling 50%")
 
 	rc, _ := os.ReadFile(filepath.Join(home, ".bashrc"))
@@ -180,6 +180,14 @@ func TestPullModelErrors(t *testing.T) {
 	}
 }
 
+// An Ollama older than the model answers 412 with no message; say what to do.
+func TestPullModelOllamaTooOld(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusPreconditionFailed) }))
+	defer srv.Close()
+	err := pullModel(context.Background(), &bytes.Buffer{}, srv.URL, "m")
+	assert.ErrorContains(t, err, "newer Ollama")
+}
+
 // A failed Qdrant container (port held by another project's Qdrant) must fail
 // Run instead of reporting success against a database that is not ours.
 func TestQdrantContainerFailFailsRun(t *testing.T) {
@@ -203,5 +211,5 @@ func TestOllamaContainerFailStillPulls(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(dockerLog), "docker"), []byte(fail), 0o755))
 	var out bytes.Buffer
 	require.NoError(t, Run(context.Background(), Options{Ollama: "docker", Qdrant: "skip", Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}), out.String())
-	assert.Equal(t, []string{"qwen3-embedding:0.6b"}, *pulled)
+	assert.Equal(t, []string{"embeddinggemma-2:270m"}, *pulled)
 }

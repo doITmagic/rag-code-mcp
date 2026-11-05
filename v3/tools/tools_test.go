@@ -418,7 +418,7 @@ func TestServerInfo(t *testing.T) {
 	defer gh.Close()
 	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/tags", r.URL.Path)
-		_, _ = w.Write([]byte(`{"models":[{"name":"qwen3-embedding:0.6b"}]}`))
+		_, _ = w.Write([]byte(`{"models":[{"name":"embeddinggemma-2:270m"}]}`))
 	}))
 	defer ollama.Close()
 	v := newEnv(t, true, func(c *config.Config) { c.OllamaBaseURL = ollama.URL; c.QdrantURL = "http://127.0.0.1:1" })

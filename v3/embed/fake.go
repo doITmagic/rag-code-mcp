@@ -13,6 +13,7 @@ import (
 type Fake struct {
 	Dim  int          // vector size; 0 means 8
 	Fail atomic.Int32 // Embed fails this many more calls with ErrUnavailable
+	Name string       // Model() result; empty means "fake"
 }
 
 func (f *Fake) dim() int {
@@ -59,8 +60,13 @@ func (f *Fake) Vector(text string) []float32 {
 // Dimension returns Dim.
 func (f *Fake) Dimension(context.Context) (int, error) { return f.dim(), nil }
 
-// Model returns "fake".
-func (f *Fake) Model() string { return "fake" }
+// Model returns Name, or "fake".
+func (f *Fake) Model() string {
+	if f.Name == "" {
+		return "fake"
+	}
+	return f.Name
+}
 
 var (
 	_ Embedder = (*Fake)(nil)

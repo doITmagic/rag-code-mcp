@@ -2,7 +2,7 @@
 # and falls back to the value shown here.
 
 ollama_base_url: http://localhost:11434
-ollama_embed: qwen3-embedding:0.6b
+ollama_embed: embeddinggemma-2:270m   # needs Ollama 0.40 or later
 
 qdrant_url: http://localhost:6333
 qdrant_api_key: ""

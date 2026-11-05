@@ -39,7 +39,7 @@ type Config struct {
 func Default() Config {
 	return Config{
 		OllamaBaseURL:      "http://localhost:11434",
-		OllamaEmbed:        "qwen3-embedding:0.6b",
+		OllamaEmbed:        "embeddinggemma-2:270m",
 		QdrantURL:          "http://localhost:6333",
 		LogLevel:           "info",
 		LogMaxSizeMB:       10,

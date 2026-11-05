@@ -295,6 +295,9 @@ func pullModel(ctx context.Context, out io.Writer, baseURL, model string) error 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusPreconditionFailed { // old Ollama refusing a newer model
+			return fmt.Errorf("pull %s: status 412: this model needs a newer Ollama, 0.40 or later: upgrade Ollama", model)
+		}
 		return fmt.Errorf("pull %s: status %d", model, resp.StatusCode)
 	}
 	sc := bufio.NewScanner(resp.Body)

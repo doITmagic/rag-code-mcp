@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/doITmagic/rag-code-mcp/v3/embed"
 	"github.com/doITmagic/rag-code-mcp/v3/index"
 	"github.com/doITmagic/rag-code-mcp/v3/store"
 )
@@ -75,7 +76,7 @@ func (w *Workspace) IndexFiles(changed, deleted []string) {
 
 // Search embeds query once and returns the nearest symbols.
 func (w *Workspace) Search(ctx context.Context, query string, f store.Filter, limit int) ([]store.Hit, error) {
-	vecs, err := w.e.embed.Embed(ctx, []string{query})
+	vecs, err := w.e.embed.Embed(ctx, []string{embed.QueryText(w.e.embed.Model(), query)})
 	if err != nil {
 		return nil, err
 	}

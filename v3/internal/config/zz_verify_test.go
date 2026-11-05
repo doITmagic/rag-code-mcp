@@ -82,7 +82,7 @@ func TestVerifyEnvAppliesOnMissingFileAndIsValidated(t *testing.T) {
 	assert.Equal(t, "env-model", cfg.OllamaEmbed)
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
-	assert.Contains(t, string(data), "qwen3-embedding:0.6b", "written default must not carry env values")
+	assert.Contains(t, string(data), "embeddinggemma-2:270m", "written default must not carry env values")
 
 	t.Setenv("MCP_LOG_LEVEL", "loud")
 	_, err = Load(path)
@@ -138,7 +138,7 @@ func TestVerifyYAMLTagsSnakeCase(t *testing.T) {
 func TestVerifyDefaultsExact(t *testing.T) {
 	d := Default()
 	assert.Equal(t, "http://localhost:11434", d.OllamaBaseURL)
-	assert.Equal(t, "qwen3-embedding:0.6b", d.OllamaEmbed)
+	assert.Equal(t, "embeddinggemma-2:270m", d.OllamaEmbed)
 	assert.Equal(t, "http://localhost:6333", d.QdrantURL)
 	assert.Equal(t, "", d.QdrantAPIKey)
 	assert.Equal(t, "info", d.LogLevel)

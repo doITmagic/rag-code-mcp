@@ -124,7 +124,11 @@ func (o *Ollama) do(req *http.Request, out any) error {
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
 		msg, _ := io.ReadAll(io.LimitReader(res.Body, 512))
-		return fmt.Errorf("%w: ollama %s: %s", ErrUnavailable, res.Status, strings.TrimSpace(string(msg)))
+		hint := ""
+		if res.StatusCode == http.StatusPreconditionFailed { // old Ollama refusing a newer model, with an empty message
+			hint = " (this model needs a newer Ollama, 0.40 or later: upgrade Ollama)"
+		}
+		return fmt.Errorf("%w: ollama %s: %s%s", ErrUnavailable, res.Status, strings.TrimSpace(string(msg)), hint)
 	}
 	if err := json.NewDecoder(res.Body).Decode(out); err != nil {
 		return fmt.Errorf("%w: bad response: %w", ErrUnavailable, err)

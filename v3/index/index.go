@@ -741,7 +741,11 @@ func (r *run) record(p parsed) {
 
 // embed calls the embedder; transport retries are the embedder's job.
 func (r *run) embed(ctx context.Context, texts []string) ([][]float32, error) {
-	vecs, err := r.Embedder.Embed(ctx, texts)
+	in := make([]string, len(texts))
+	for i, t := range texts {
+		in[i] = embed.DocText(r.Embedder.Model(), t)
+	}
+	vecs, err := r.Embedder.Embed(ctx, in)
 	if err != nil {
 		return nil, err
 	}

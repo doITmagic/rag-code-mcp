@@ -336,6 +336,10 @@ func (r *run) scan(ctx context.Context) (changed, gone []string, err error) {
 		}
 	}
 	ex := set(r.Exclude)
+	var ign map[string]bool // Walk already dropped git-ignored files
+	if r.Files != nil {
+		ign = gitIgnored(r.root, files)
+	}
 	goneSet := map[string]bool{}
 	seen := make(map[string]bool, len(files))
 	for _, f := range files {
@@ -343,7 +347,7 @@ func (r *run) scan(ctx context.Context) (changed, gone []string, err error) {
 			return nil, nil, err
 		}
 		info, err := os.Lstat(f) // a symlink fails Skip, as in Walk
-		if err != nil || (r.Files != nil && skipExplicit(r.root, ex, f, info)) {
+		if err != nil || ign[f] || (r.Files != nil && skipExplicit(r.root, ex, f, info)) {
 			if _, ok := r.state.Files[f]; ok {
 				goneSet[f] = true
 			}

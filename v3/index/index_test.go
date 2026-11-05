@@ -603,6 +603,35 @@ func TestWalkPrunesLinkedWorktree(t *testing.T) {
 	assert.Equal(t, []string{a}, files)
 }
 
+// Files git ignores are left out, by any .gitignore in the tree, also when
+// the watcher names one explicitly; a tracked file stays even if a pattern
+// matches it.
+func TestWalkSkipsGitIgnored(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	e := newEnv(t)
+	a := e.write(t, "a.go", "package a\nfunc A() {}\n")
+	e.write(t, ".gitignore", "lucrari/\n*.gen.go\n")
+	e.write(t, "sub/.gitignore", "c.go\n")
+	b := e.write(t, "lucrari/b.go", "package b\nfunc B() {}\n")
+	e.write(t, "sub/c.go", "package c\nfunc C() {}\n")
+	g := e.write(t, "kept.gen.go", "package a\nfunc G() {}\n")
+	git := func(args ...string) {
+		out, err := exec.Command("git", append([]string{"-C", e.root}, args...)...).CombinedOutput()
+		require.NoError(t, err, string(out))
+	}
+	git("init", "-q")
+	git("add", "-f", "kept.gen.go")
+	files, err := Walk(e.root, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{a, g}, files)
+
+	_, err = e.run(t, func(o *Options) { o.Files = []string{b} })
+	require.NoError(t, err)
+	assert.Zero(t, e.count(t, store.Filter{FilePath: b}))
+}
+
 func TestRunRecreate(t *testing.T) {
 	e := newEnv(t)
 	e.write(t, "a.go", "func A\n")

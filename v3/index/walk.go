@@ -5,7 +5,9 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/doITmagic/rag-code-mcp/v3/parser"
@@ -66,7 +68,37 @@ func Walk(root string, exclude []string) ([]string, error) {
 		}
 		return nil
 	})
+	if ign := gitIgnored(root, out); len(ign) > 0 {
+		out = slices.DeleteFunc(out, func(f string) bool { return ign[f] })
+	}
 	return out, err
+}
+
+// gitIgnored returns the files among files that git ignores, by every
+// .gitignore and the user's excludes; tracked files are never ignored. Nil
+// when root is not in a git work tree or git is not installed.
+func gitIgnored(root string, files []string) map[string]bool {
+	if len(files) == 0 {
+		return nil
+	}
+	var in bytes.Buffer
+	for _, f := range files {
+		in.WriteString(f)
+		in.WriteByte(0)
+	}
+	cmd := exec.Command("git", "-C", root, "check-ignore", "--stdin", "-z")
+	cmd.Stdin = &in
+	out, _ := cmd.Output() // exit 1: nothing ignored; 128: not a repo or no git
+	var ign map[string]bool
+	for _, p := range bytes.Split(out, []byte{0}) {
+		if len(p) > 0 {
+			if ign == nil {
+				ign = map[string]bool{}
+			}
+			ign[string(p)] = true
+		}
+	}
+	return ign
 }
 
 // IsLinkedWorktree reports whether dir is a linked git worktree: its .git is

@@ -1,0 +1,92 @@
+package php
+
+import (
+	"testing"
+
+	"github.com/doITmagic/rag-code-mcp/v3/parser"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+const viewSrc = `@extends('layouts.app')
+
+@section('title', 'Users')
+
+@section('content')
+    <h1>{{ $user->name }}</h1>
+    @include('partials.nav', ['active' => 'users'])
+    @includeIf('partials.flash')
+    @each('users.row', $users, 'user')
+    @livewire('counter')
+@endsection
+
+@component('alert')
+    <p>Careful</p>
+@endcomponent
+
+@section('scripts')
+<script></script>
+@stop
+`
+
+func TestBlade(t *testing.T) {
+	path := "/root/resources/views/users/show.blade.php"
+	syms, err := parser.Analyze(parser.File{Path: path, Root: "/root", Source: []byte(viewSrc)})
+	require.NoError(t, err)
+
+	byQN := map[string]parser.Symbol{}
+	for _, s := range syms {
+		assert.Equal(t, parser.KindTemplate, s.Kind)
+		assert.Equal(t, "php", s.Language)
+		assert.True(t, s.Exported)
+		byQN[s.QualifiedName] = s
+	}
+
+	file := byQN["users.show"]
+	assert.Equal(t, "show", file.Name)
+	assert.Equal(t, "users", file.Module)
+	assert.Equal(t, "", file.Owner)
+	assert.Equal(t, 1, file.StartLine)
+	assert.Equal(t, 20, file.EndLine)
+	assert.Equal(t, viewSrc, file.Content)
+	assert.Equal(t, []parser.Relation{
+		{Kind: parser.RelImports, TargetName: "layouts.app", TargetQualifiedName: "layouts.app", Line: 1},
+		{Kind: parser.RelImports, TargetName: "partials.nav", TargetQualifiedName: "partials.nav", Line: 7},
+		{Kind: parser.RelImports, TargetName: "partials.flash", TargetQualifiedName: "partials.flash", Line: 8},
+		{Kind: parser.RelImports, TargetName: "users.row", TargetQualifiedName: "users.row", Line: 9},
+	}, file.Relations)
+
+	tests := []struct {
+		qn         string
+		start, end int
+		signature  string
+	}{
+		{"users.show.title", 3, 3, "@section('title',"},
+		{"users.show.content", 5, 11, "@section('content')"},
+		{"users.show.counter", 10, 10, "@livewire('counter')"},
+		{"users.show.alert", 13, 15, "@component('alert')"},
+		{"users.show.scripts", 17, 19, "@section('scripts')"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.qn, func(t *testing.T) {
+			s, ok := byQN[tt.qn]
+			require.True(t, ok, "missing %s", tt.qn)
+			assert.Equal(t, "show", s.Owner)
+			assert.Equal(t, "users", s.Module)
+			assert.Equal(t, tt.start, s.StartLine)
+			assert.Equal(t, tt.end, s.EndLine)
+			assert.Equal(t, tt.signature, s.Signature)
+		})
+	}
+	assert.Contains(t, byQN["users.show.content"].Content, "@endsection")
+	assert.Len(t, syms, 6)
+}
+
+func TestBladeOutsideViews(t *testing.T) {
+	syms, err := parser.Analyze(parser.File{Path: "/root/mail.blade.php", Source: []byte("<p>@section('x')</p>")})
+	require.NoError(t, err)
+	require.Len(t, syms, 2)
+	assert.Equal(t, "mail", syms[0].QualifiedName)
+	assert.Equal(t, "mail.x", syms[1].QualifiedName)
+	assert.Equal(t, 1, syms[1].EndLine, "unterminated block ends where it starts")
+}

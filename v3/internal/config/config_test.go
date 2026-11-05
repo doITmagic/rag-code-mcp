@@ -1,0 +1,194 @@
+package config
+
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
+)
+
+func TestDefaultMatchesEmbeddedYAML(t *testing.T) {
+	var fromFile Config
+	require.NoError(t, yaml.Unmarshal(defaultYAML, &fromFile))
+	assert.Equal(t, Default(), fromFile)
+	assert.NoError(t, Default().Validate())
+}
+
+func TestLoadFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+ollama_embed: other-model
+log_level: debug
+watch_debounce: 250ms
+exclude_patterns: [foo]
+`), 0o644))
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, "other-model", cfg.OllamaEmbed)
+	assert.Equal(t, "http://localhost:11434", cfg.OllamaBaseURL, "untouched keys keep defaults")
+	assert.Equal(t, "debug", cfg.LogLevel)
+	assert.Equal(t, 250*time.Millisecond, cfg.WatchDebounce)
+	assert.Equal(t, []string{"foo"}, cfg.ExcludePatterns)
+}
+
+func TestLoadMissingFileWritesDefault(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "dir", "config.yaml")
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, Default(), cfg)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, defaultYAML, data)
+}
+
+func TestLoadInvalidYAML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("log_level: [\n"), 0o644))
+	_, err := Load(path)
+	assert.ErrorContains(t, err, "parse")
+}
+
+func TestEnvOverrides(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("qdrant_url: http://file:1\nallowed_workspace_paths: [/from/file]\n"), 0o644))
+	t.Setenv("OLLAMA_BASE_URL", "http://env:11434")
+	t.Setenv("OLLAMA_EMBED", "env-embed")
+	t.Setenv("QDRANT_URL", "http://env:6333")
+	t.Setenv("QDRANT_API_KEY", "secret")
+	t.Setenv("MCP_LOG_LEVEL", "warn")
+	t.Setenv("RAGCODE_ALLOWED_PATHS", strings.Join([]string{"/a", " /b ", ""}, string(os.PathListSeparator)))
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, "http://env:11434", cfg.OllamaBaseURL)
+	assert.Equal(t, "env-embed", cfg.OllamaEmbed)
+	assert.Equal(t, "http://env:6333", cfg.QdrantURL, "env wins over file")
+	assert.Equal(t, "secret", cfg.QdrantAPIKey)
+	assert.Equal(t, "warn", cfg.LogLevel)
+	assert.Equal(t, []string{"/a", "/b"}, cfg.AllowedWorkspacePaths)
+}
+
+func TestValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*Config)
+		wantErr string
+	}{
+		{"bad ollama url", func(c *Config) { c.OllamaBaseURL = "localhost:11434" }, "ollama_base_url"},
+		{"bad qdrant url", func(c *Config) { c.QdrantURL = "ftp://x" }, "qdrant_url"},
+		{"empty embed", func(c *Config) { c.OllamaEmbed = "" }, "ollama_embed"},
+		{"bad level", func(c *Config) { c.LogLevel = "verbose" }, "log_level"},
+		{"zero log size", func(c *Config) { c.LogMaxSizeMB = 0 }, "log_max_size_mb"},
+		{"negative debounce", func(c *Config) { c.WatchDebounce = -1 }, "watch_debounce"},
+		{"relative allowed path", func(c *Config) { c.AllowedWorkspacePaths = []string{"rel"} }, "allowed_workspace_paths"},
+		{"zero debounce ok", func(c *Config) { c.WatchDebounce = 0 }, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := Default()
+			tt.mutate(&cfg)
+			err := cfg.Validate()
+			if tt.wantErr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			assert.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+func TestLoadValidationError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("log_level: loud\n"), 0o644))
+	_, err := Load(path)
+	assert.ErrorContains(t, err, "log_level")
+}
+
+func TestHomeDirAndDefaultPath(t *testing.T) {
+	t.Setenv("RAGCODE_HOME", "/custom")
+	assert.Equal(t, "/custom", HomeDir())
+	assert.Equal(t, filepath.Join("/custom", "config.yaml"), DefaultPath())
+	t.Setenv("RAGCODE_HOME", "")
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(home, ".ragcode"), HomeDir())
+}
+
+func TestNewLogger(t *testing.T) {
+	var buf bytes.Buffer
+	log := NewLogger("warn", &buf)
+	log.Info("hidden")
+	log.Warn("shown", "k", "v")
+	assert.NotContains(t, buf.String(), "hidden")
+	assert.Contains(t, buf.String(), "level=WARN msg=shown k=v")
+
+	buf.Reset()
+	NewLogger("bogus", &buf).Info("info-at-fallback")
+	assert.Contains(t, buf.String(), "info-at-fallback")
+}
+
+func TestOpenLogFileRotatesOnOpen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ragcode.log")
+	old := bytes.Repeat([]byte("x"), 1<<20+1)
+	require.NoError(t, os.WriteFile(path, old, 0o644))
+
+	w, err := OpenLogFile(path, 1)
+	require.NoError(t, err)
+	_, err = w.Write([]byte("fresh\n"))
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "fresh\n", string(data))
+	rotated, err := os.ReadFile(path + ".1")
+	require.NoError(t, err)
+	assert.Equal(t, old, rotated)
+}
+
+func TestOpenLogFileRotatesEvery1000Writes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ragcode.log")
+	w, err := OpenLogFile(path, 1)
+	require.NoError(t, err)
+	defer w.Close()
+
+	line := bytes.Repeat([]byte("y"), 1100) // 1000 lines > 1 MiB
+	for i := 0; i < 999; i++ {
+		_, err := w.Write(line)
+		require.NoError(t, err)
+	}
+	st, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, int64(999*1100), st.Size(), "no rotation before the 1000th write")
+
+	_, err = w.Write(line) // 1000th write: over the cap, rotate first
+	require.NoError(t, err)
+	st, err = os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1100), st.Size())
+	st, err = os.Stat(path + ".1")
+	require.NoError(t, err)
+	assert.Equal(t, int64(999*1100), st.Size())
+}
+
+func TestOpenLogFileKeepsWritingWhenRotationFails(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ragcode.log")
+	w, err := OpenLogFile(path, 0)
+	require.NoError(t, err)
+	defer w.Close()
+	// A non-empty directory at path+".1" makes the rename fail.
+	require.NoError(t, os.MkdirAll(filepath.Join(path+".1", "x"), 0o755))
+
+	for i := 0; i < 1001; i++ {
+		_, err := w.Write([]byte("z"))
+		require.NoError(t, err, "write %d", i+1)
+	}
+	st, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1001), st.Size(), "no line lost when rotation fails")
+}

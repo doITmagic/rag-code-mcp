@@ -1,0 +1,410 @@
+package javascript
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/doITmagic/rag-code-mcp/v3/parser"
+)
+
+const root = "/ws"
+
+func analyze(t *testing.T, rel, src string) []parser.Symbol {
+	t.Helper()
+	syms, err := analyzer{}.Analyze(parser.File{Path: filepath.Join(root, rel), Root: root, Source: []byte(src), Language: "javascript"})
+	require.NoError(t, err)
+	return syms
+}
+
+func find(t *testing.T, syms []parser.Symbol, qn string) parser.Symbol {
+	t.Helper()
+	for _, s := range syms {
+		if s.QualifiedName == qn {
+			return s
+		}
+	}
+	names := make([]string, 0, len(syms))
+	for _, s := range syms {
+		names = append(names, s.QualifiedName)
+	}
+	require.Failf(t, "symbol not found", "%s not in %v", qn, names)
+	return parser.Symbol{}
+}
+
+func rel(t *testing.T, s parser.Symbol, kind parser.RelationKind, name string) parser.Relation {
+	t.Helper()
+	for _, r := range s.Relations {
+		if r.Kind == kind && r.TargetName == name {
+			return r
+		}
+	}
+	require.Failf(t, "relation not found", "%s %s not in %+v", kind, name, s.Relations)
+	return parser.Relation{}
+}
+
+const esm = `import React, { useState as us, Foo } from 'react';
+import * as ns from './util';
+import helper from '../lib/helper';
+const fs = require('fs');
+const { a, b: c } = require('./cjs');
+
+/** Formats x. */
+export function f(x) {
+  return ns.g(x) + us(1) + helper() + local() + a() + c() + fs.readFile(x);
+}
+
+/** Arrow doc */
+export const arrow = async (y) => {
+  [1].map(() => obj.m(y));
+  new Foo();
+};
+
+function local() {}
+
+export const K = 1;
+let v = 2;
+export default class A extends Foo {
+  /** ctor */
+  constructor() { super(); this.m(); }
+  static m() { return f(); }
+  async #priv() {}
+}
+module.exports = { local };
+exports.z = function () { return v; };
+`
+
+func TestESMAndCJS(t *testing.T) {
+	syms := analyze(t, "src/app/main.js", esm)
+
+	f := find(t, syms, "src/app/main.f")
+	assert.Equal(t, parser.KindFunction, f.Kind)
+	assert.Equal(t, "src/app/main", f.Module)
+	assert.Empty(t, f.Owner)
+	assert.True(t, f.Exported)
+	assert.Equal(t, "Formats x.", f.Doc)
+	assert.Equal(t, "export function f(x)", f.Signature)
+	assert.Equal(t, 8, f.StartLine)
+	assert.Equal(t, 10, f.EndLine)
+	for _, tc := range []struct{ name, qn string }{
+		{"g", "src/app/util.g"},              // namespace import
+		{"us", "react.useState"},             // named import with alias
+		{"helper", "src/lib/helper.default"}, // default import, relative from nested dir
+		{"local", "src/app/main.local"},      // top-level in this file
+		{"a", "src/app/cjs.a"},               // destructured require
+		{"c", "src/app/cjs.b"},               // destructured require with rename
+		{"readFile", "fs.readFile"},          // require namespace
+	} {
+		r := rel(t, f, parser.RelCall, tc.name)
+		assert.Equal(t, tc.qn, r.TargetQualifiedName, tc.name)
+		assert.Equal(t, 9, r.Line, tc.name)
+	}
+
+	arrow := find(t, syms, "src/app/main.arrow")
+	assert.Equal(t, parser.KindFunction, arrow.Kind)
+	assert.True(t, arrow.Exported)
+	assert.Equal(t, "Arrow doc", arrow.Doc)
+	assert.Equal(t, "export const arrow = async (y) =>", arrow.Signature)
+	assert.Equal(t, 13, arrow.StartLine)
+	assert.Equal(t, 16, arrow.EndLine)
+	assert.Equal(t, "", rel(t, arrow, parser.RelCall, "m").TargetQualifiedName, "unknown receiver")
+	assert.Equal(t, 14, rel(t, arrow, parser.RelCall, "m").Line, "callback counts toward arrow")
+	assert.Equal(t, "react.Foo", rel(t, arrow, parser.RelUsesType, "Foo").TargetQualifiedName)
+
+	local := find(t, syms, "src/app/main.local")
+	assert.True(t, local.Exported, "module.exports = { local }")
+	assert.Equal(t, parser.KindConstant, find(t, syms, "src/app/main.K").Kind)
+	v := find(t, syms, "src/app/main.v")
+	assert.Equal(t, parser.KindVariable, v.Kind)
+	assert.False(t, v.Exported)
+
+	z := find(t, syms, "src/app/main.z")
+	assert.Equal(t, parser.KindFunction, z.Kind)
+	assert.True(t, z.Exported)
+	assert.Equal(t, 29, z.StartLine)
+
+	// imports must not become symbols
+	for _, s := range syms {
+		assert.NotEqual(t, "fs", s.Name)
+		assert.NotEqual(t, "a", s.Name)
+	}
+}
+
+func TestClassWithMethods(t *testing.T) {
+	syms := analyze(t, "src/app/main.js", esm)
+
+	cls := find(t, syms, "src/app/main.default")
+	assert.Equal(t, parser.KindClass, cls.Kind)
+	assert.True(t, cls.Exported)
+	assert.Equal(t, 22, cls.StartLine)
+	assert.Equal(t, 27, cls.EndLine)
+	assert.Equal(t, "export default class A extends Foo", cls.Signature)
+	assert.Equal(t, "react.Foo", rel(t, cls, parser.RelExtends, "Foo").TargetQualifiedName)
+
+	ctor := find(t, syms, "src/app/main.default.constructor")
+	assert.Equal(t, parser.KindMethod, ctor.Kind)
+	assert.Equal(t, "A", ctor.Owner)
+	assert.Equal(t, "ctor", ctor.Doc)
+	assert.Equal(t, 24, ctor.StartLine)
+	assert.Equal(t, "src/app/main.default.m", rel(t, ctor, parser.RelCall, "m").TargetQualifiedName)
+
+	m := find(t, syms, "src/app/main.default.m")
+	assert.Equal(t, "static m()", m.Signature)
+	assert.True(t, m.Exported)
+	assert.Equal(t, "src/app/main.f", rel(t, m, parser.RelCall, "f").TargetQualifiedName)
+
+	priv := find(t, syms, "src/app/main.default.#priv")
+	assert.False(t, priv.Exported)
+	assert.Equal(t, "async #priv()", priv.Signature)
+}
+
+func TestTypeScript(t *testing.T) {
+	src := `import type { Base } from './base';
+import { type Shape, Point } from '../geo/shapes';
+
+/** An interface. */
+export interface I extends Base, Shape {
+  a: number;
+}
+export type Pair<T> = [T, T];
+export enum Color { Red, Green }
+export abstract class C extends Base implements I {
+  private secret(): void { this.run(); }
+  public run = (): Point => new Point();
+  abstract build(): void;
+}
+export declare function dec(): void;
+const hidden = 1;
+export { hidden as shown };
+`
+	syms := analyze(t, "src/model/c.ts", src)
+
+	i := find(t, syms, "src/model/c.I")
+	assert.Equal(t, parser.KindInterface, i.Kind)
+	assert.True(t, i.Exported)
+	assert.Equal(t, "An interface.", i.Doc)
+	assert.Equal(t, 5, i.StartLine)
+	assert.Equal(t, 7, i.EndLine)
+	assert.Equal(t, "src/model/base.Base", rel(t, i, parser.RelExtends, "Base").TargetQualifiedName)
+	assert.Equal(t, "src/geo/shapes.Shape", rel(t, i, parser.RelExtends, "Shape").TargetQualifiedName)
+
+	assert.Equal(t, parser.KindType, find(t, syms, "src/model/c.Pair").Kind)
+	assert.Equal(t, "export type Pair<T> = [T, T]", find(t, syms, "src/model/c.Pair").Signature)
+	assert.Equal(t, parser.KindClass, find(t, syms, "src/model/c.Color").Kind)
+
+	c := find(t, syms, "src/model/c.C")
+	assert.Equal(t, parser.KindClass, c.Kind)
+	assert.Equal(t, "src/model/base.Base", rel(t, c, parser.RelExtends, "Base").TargetQualifiedName)
+	assert.Equal(t, "src/model/c.I", rel(t, c, parser.RelImplements, "I").TargetQualifiedName)
+
+	secret := find(t, syms, "src/model/c.C.secret")
+	assert.Equal(t, parser.KindMethod, secret.Kind)
+	assert.False(t, secret.Exported)
+	assert.Equal(t, "src/model/c.C.run", rel(t, secret, parser.RelCall, "run").TargetQualifiedName)
+
+	run := find(t, syms, "src/model/c.C.run")
+	assert.Equal(t, parser.KindMethod, run.Kind)
+	assert.Equal(t, "C", run.Owner)
+	assert.True(t, run.Exported)
+	assert.Equal(t, "src/geo/shapes.Point", rel(t, run, parser.RelUsesType, "Point").TargetQualifiedName)
+
+	assert.Equal(t, parser.KindMethod, find(t, syms, "src/model/c.C.build").Kind)
+	assert.Equal(t, parser.KindFunction, find(t, syms, "src/model/c.dec").Kind)
+
+	hidden := find(t, syms, "src/model/c.hidden")
+	assert.Equal(t, parser.KindConstant, hidden.Kind)
+	assert.True(t, hidden.Exported, "export { hidden as shown }")
+}
+
+func TestTSX(t *testing.T) {
+	src := `import Button from './Button';
+import * as UI from '../ui';
+import { useState } from 'react';
+
+export const App = () => {
+  const [n, setN] = useState(0);
+  return <div onClick={() => setN(n + 1)}><Button /><UI.Card /><Unknown /></div>;
+};
+`
+	syms := analyze(t, "src/pages/App.tsx", src)
+	app := find(t, syms, "src/pages/App.App")
+	assert.Equal(t, parser.KindFunction, app.Kind)
+	assert.True(t, app.Exported)
+	assert.Equal(t, "react.useState", rel(t, app, parser.RelCall, "useState").TargetQualifiedName)
+	assert.Equal(t, "src/pages/Button.default", rel(t, app, parser.RelUsesType, "Button").TargetQualifiedName)
+	assert.Equal(t, "src/ui.Card", rel(t, app, parser.RelUsesType, "Card").TargetQualifiedName)
+	assert.Equal(t, "", rel(t, app, parser.RelUsesType, "Unknown").TargetQualifiedName)
+	assert.Equal(t, 7, rel(t, app, parser.RelUsesType, "Button").Line)
+	assert.Equal(t, "src/pages/App.setN", "src/pages/App."+rel(t, app, parser.RelCall, "setN").TargetName)
+	assert.Equal(t, "", rel(t, app, parser.RelCall, "setN").TargetQualifiedName, "local const, not top-level")
+}
+
+func TestVueOptionsAPI(t *testing.T) {
+	src := `<template>
+  <div @click="go">{{ label }}</div>
+</template>
+
+<script>
+import api from '../services/api';
+
+export default {
+  name: 'TodoItem',
+  data() { return { label: '' }; },
+  computed: {
+    label() { return this.raw; },
+  },
+  methods: {
+    /** Go somewhere. */
+    go() { this.stop(); api.fetch(); },
+    stop: function () {},
+  },
+};
+</script>
+`
+	syms := analyze(t, "src/components/todo-item.vue", src)
+
+	tpl := find(t, syms, "src/components/todo-item.TodoItem")
+	assert.Equal(t, parser.KindTemplate, tpl.Kind)
+	assert.Equal(t, 1, tpl.StartLine)
+	assert.Equal(t, 3, tpl.EndLine)
+	assert.Contains(t, tpl.Content, "@click")
+
+	for _, s := range syms {
+		assert.NotEqual(t, parser.KindClass, s.Kind, "the options object itself is not a symbol")
+	}
+	go_ := find(t, syms, "src/components/todo-item.TodoItem.go")
+	assert.Equal(t, parser.KindMethod, go_.Kind)
+	assert.Equal(t, "TodoItem", go_.Owner)
+	assert.Equal(t, "Go somewhere.", go_.Doc)
+	assert.Equal(t, 16, go_.StartLine)
+	assert.Equal(t, "src/components/todo-item.TodoItem.stop", rel(t, go_, parser.RelCall, "stop").TargetQualifiedName)
+	assert.Equal(t, "src/services/api.default.fetch", rel(t, go_, parser.RelCall, "fetch").TargetQualifiedName)
+	assert.Equal(t, 16, rel(t, go_, parser.RelCall, "stop").Line)
+
+	assert.Equal(t, parser.KindMethod, find(t, syms, "src/components/todo-item.TodoItem.stop").Kind)
+	assert.Equal(t, parser.KindMethod, find(t, syms, "src/components/todo-item.TodoItem.label").Kind)
+	assert.Equal(t, parser.KindMethod, find(t, syms, "src/components/todo-item.TodoItem.data").Kind)
+}
+
+func TestVueScriptSetupTS(t *testing.T) {
+	src := `<script setup lang="ts">
+import { ref } from 'vue';
+import { load } from './store';
+
+interface Props { id: number }
+const count = ref(0);
+function reload() { load(count.value); }
+</script>
+
+<template><button @click="reload">{{ count }}</button></template>
+`
+	syms := analyze(t, "src/Counter.vue", src)
+	props := find(t, syms, "src/Counter.Props")
+	assert.Equal(t, parser.KindInterface, props.Kind)
+	assert.Equal(t, 5, props.StartLine)
+
+	count := find(t, syms, "src/Counter.count")
+	assert.Equal(t, parser.KindConstant, count.Kind)
+	assert.Equal(t, 6, count.StartLine)
+
+	reload := find(t, syms, "src/Counter.reload")
+	assert.Equal(t, parser.KindFunction, reload.Kind)
+	assert.Equal(t, 7, reload.StartLine)
+	assert.Equal(t, "src/store.load", rel(t, reload, parser.RelCall, "load").TargetQualifiedName)
+	assert.Equal(t, 7, rel(t, reload, parser.RelCall, "load").Line)
+
+	tpl := find(t, syms, "src/Counter.Counter")
+	assert.Equal(t, parser.KindTemplate, tpl.Kind)
+	assert.Equal(t, 10, tpl.StartLine)
+}
+
+func TestMalformed(t *testing.T) {
+	cases := map[string]string{
+		"broken.js":    "export function ok() {}\nfunction broken( {\nclass {{{\n",
+		"empty.ts":     "",
+		"garbage.js":   "}}}}}} ((( import from",
+		"noscript.vue": "<template><p/></template>",
+		"junk.vue":     "<script lang=\"ts\">export const x: = ;</script>",
+	}
+	for name, src := range cases {
+		t.Run(name, func(t *testing.T) {
+			syms, err := analyzer{}.Analyze(parser.File{Path: filepath.Join(root, name), Root: root, Source: []byte(src)})
+			require.NoError(t, err)
+			for _, s := range syms {
+				assert.NotEmpty(t, s.QualifiedName)
+				assert.GreaterOrEqual(t, s.EndLine, s.StartLine)
+			}
+			if name == "broken.js" {
+				assert.Equal(t, parser.KindFunction, find(t, syms, "broken.ok").Kind)
+			}
+		})
+	}
+}
+
+func TestUnbalanced(t *testing.T) {
+	// Brackets inside strings and comments do not count; unclosed ones do.
+	strs := "export function f() { return '" + strings.Repeat("(", 300) + "'; } // " + strings.Repeat("[", 300) + "\n/* " + strings.Repeat("{", 300) + " */\n"
+	assert.False(t, unbalanced([]byte(strs)))
+	assert.Len(t, analyze(t, "strs.js", strs), 1)
+	deep := strings.Repeat("export function f"+strings.Repeat("(", 2000)+"\n", 50)
+	assert.True(t, unbalanced([]byte(deep)))
+	assert.Empty(t, analyze(t, "deep.js", deep))
+}
+
+func TestOutsideRoot(t *testing.T) {
+	syms, err := analyzer{}.Analyze(parser.File{Path: "/elsewhere/x.js", Root: root, Source: []byte("import { y } from './y';\nexport function f() { y(); }")})
+	require.NoError(t, err)
+	f := find(t, syms, "x.f")
+	assert.Equal(t, "y.y", rel(t, f, parser.RelCall, "y").TargetQualifiedName)
+}
+
+func TestConcurrent(t *testing.T) {
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 5; j++ {
+				syms := analyze(t, "src/app/main.js", esm)
+				find(t, syms, "src/app/main.default.m")
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func TestRegistered(t *testing.T) {
+	for _, p := range []string{"a.js", "b.mjs", "c.cjs", "d.jsx", "e.ts", "f.tsx", "g.vue", "H.VUE"} {
+		a := parser.ForFile(p)
+		require.NotNil(t, a, p)
+		assert.Equal(t, "javascript", a.Language())
+	}
+}
+
+// A default export is qualified as "default", the name importers bind it to,
+// and a directory import resolves to its index module.
+func TestDefaultExportAndIndexImport(t *testing.T) {
+	ws := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(ws, "src", "lib"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(ws, "src", "both"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(ws, "src", "both.ts"), nil, 0o644))
+	src := `import { util } from './lib';
+import { x } from './both';
+export default function Button() { util(); x(); Button(); }
+`
+	syms, err := analyzer{}.Analyze(parser.File{Path: filepath.Join(ws, "src", "Button.jsx"), Root: ws, Source: []byte(src)})
+	require.NoError(t, err)
+	b := find(t, syms, "src/Button.default")
+	assert.Equal(t, "Button", b.Name)
+	assert.Equal(t, "src/lib/index.util", rel(t, b, parser.RelCall, "util").TargetQualifiedName)
+	assert.Equal(t, "src/both.x", rel(t, b, parser.RelCall, "x").TargetQualifiedName, "file wins over directory")
+	assert.Equal(t, "src/Button.default", rel(t, b, parser.RelCall, "Button").TargetQualifiedName)
+
+	syms = analyze(t, "src/c.js", "function C() {}\nexport { C as default };\n")
+	assert.Equal(t, "C", find(t, syms, "src/c.default").Name)
+}

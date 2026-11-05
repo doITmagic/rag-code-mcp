@@ -1,0 +1,356 @@
+package golang
+
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"sync"
+	"testing"
+
+	"github.com/doITmagic/rag-code-mcp/v3/parser"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+const fixture = `// Package svc is the fixture.
+package svc
+
+import (
+	"fmt"
+	str "strings"
+	. "math"
+	_ "embed"
+	"github.com/acme/app/pkg/db"
+)
+
+// Server doc.
+// Second line.
+type Server[K comparable] struct {
+	Base
+	*db.Conn
+	Name string
+}
+
+/* Handler doc */
+type Handler interface {
+	fmt.Stringer
+	Handle(ctx int) error
+	Close()
+}
+
+type (
+	// ID doc
+	ID = int
+	Names []string
+)
+
+var x, y = 1, helper()
+
+//go:embed data
+var blob string
+
+const (
+	// First is one.
+	First = iota
+	second
+)
+
+// Run doc
+func Run[V any](a int, b ...string) (int, error) {
+	helper()
+	str.ToUpper("a")
+	a.Do()
+	Server.Start(nil)
+	(*Server).Stop(nil)
+	Server{}.Start()
+	s.Inner.Do()
+	_ = fmt.Sprintf("%d", 1)
+	_ = []byte("x")
+	_ = str.Builder{}
+	_ = db.Conn{}
+	_ = Names{}
+	f := func() { later() }
+	f()
+	return len(b), nil
+}
+
+func (s *Server[K]) Start() {
+	s.Stop()
+	h := s.Start
+	h()
+	s.Conn.Query()
+}
+
+func (_ Server[K]) Stop() {}
+
+func (Server[K]) noRecv() {}
+`
+
+func analyze(t *testing.T, root, path, src string) map[string]parser.Symbol {
+	t.Helper()
+	syms, err := Analyzer{}.Analyze(parser.File{Path: path, Root: root, Source: []byte(src), Language: "go"})
+	require.NoError(t, err)
+	out := map[string]parser.Symbol{}
+	for _, s := range syms {
+		assert.NotEmpty(t, s.ID)
+		assert.Equal(t, path, s.FilePath)
+		assert.Equal(t, "go", s.Language)
+		out[s.QualifiedName] = s
+	}
+	return out
+}
+
+func rel(kind parser.RelationKind, name, tqn string, line int) parser.Relation {
+	return parser.Relation{Kind: kind, TargetName: name, TargetQualifiedName: tqn, Line: line}
+}
+
+func TestFixtureSymbols(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module github.com/acme/app\n\ngo 1.25\n"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "internal", "svc"), 0o755))
+	path := filepath.Join(root, "internal", "svc", "svc.go")
+	syms := analyze(t, root, path, fixture)
+	const mod = "github.com/acme/app/internal/svc"
+
+	tests := []struct {
+		qn       string
+		kind     parser.Kind
+		owner    string
+		exported bool
+		start    int
+		end      int
+		sig      string
+		doc      string
+	}{
+		{mod + ".Server", parser.KindClass, "", true, 14, 18, "type Server[K comparable] struct", "Server doc.\nSecond line."},
+		{mod + ".Handler", parser.KindInterface, "", true, 21, 25, "type Handler interface", "Handler doc"},
+		{mod + ".ID", parser.KindType, "", true, 29, 29, "ID = int", "ID doc"},
+		{mod + ".Names", parser.KindType, "", true, 30, 30, "Names []string", ""},
+		{mod + ".x", parser.KindVariable, "", false, 33, 33, "var x, y = 1, helper()", ""},
+		{mod + ".y", parser.KindVariable, "", false, 33, 33, "var x, y = 1, helper()", ""},
+		{mod + ".blob", parser.KindVariable, "", false, 36, 36, "var blob string", ""},
+		{mod + ".First", parser.KindConstant, "", true, 40, 40, "First = iota", "First is one."},
+		{mod + ".second", parser.KindConstant, "", false, 41, 41, "second", ""},
+		{mod + ".Run", parser.KindFunction, "", true, 45, 61, "func Run[V any](a int, b ...string) (int, error)", "Run doc"},
+		{mod + ".Server.Start", parser.KindMethod, "Server", true, 63, 68, "func (s *Server[K]) Start()", ""},
+		{mod + ".Server.Stop", parser.KindMethod, "Server", true, 70, 70, "func (_ Server[K]) Stop()", ""},
+		{mod + ".Server.noRecv", parser.KindMethod, "Server", false, 72, 72, "func (Server[K]) noRecv()", ""},
+	}
+	assert.Len(t, syms, len(tests))
+	for _, tc := range tests {
+		t.Run(tc.qn, func(t *testing.T) {
+			s, ok := syms[tc.qn]
+			require.True(t, ok, "missing symbol %s", tc.qn)
+			assert.Equal(t, tc.kind, s.Kind)
+			assert.Equal(t, mod, s.Module)
+			assert.Equal(t, tc.owner, s.Owner)
+			assert.Equal(t, tc.exported, s.Exported)
+			assert.Equal(t, tc.start, s.StartLine)
+			assert.Equal(t, tc.end, s.EndLine)
+			assert.Equal(t, tc.sig, s.Signature)
+			assert.Equal(t, tc.doc, s.Doc)
+			assert.Equal(t, parser.SymbolID(path, tc.qn, tc.start), s.ID)
+		})
+	}
+	assert.Equal(t, "type Server[K comparable] struct {\n\tBase\n\t*db.Conn\n\tName string\n}", syms[mod+".Server"].Content)
+	assert.Equal(t, "var x, y = 1, helper()", syms[mod+".x"].Content)
+	assert.Equal(t, "second", syms[mod+".second"].Content)
+	assert.Equal(t, "Handle,Close", syms[mod+".Handler"].Metadata["methods"])
+	assert.Nil(t, syms[mod+".Server"].Metadata)
+}
+
+func TestFixtureRelations(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module github.com/acme/app\n"), 0o644))
+	path := filepath.Join(root, "svc.go")
+	syms := analyze(t, root, path, fixture)
+	const mod = "github.com/acme/app"
+
+	tests := []struct {
+		qn   string
+		want []parser.Relation
+	}{
+		{mod + ".Server", []parser.Relation{
+			rel(parser.RelExtends, "Base", "", 15),
+			rel(parser.RelExtends, "Conn", "github.com/acme/app/pkg/db.Conn", 16),
+		}},
+		{mod + ".Handler", []parser.Relation{
+			rel(parser.RelExtends, "Stringer", "fmt.Stringer", 22),
+		}},
+		{mod + ".x", []parser.Relation{rel(parser.RelCall, "helper", mod+".helper", 33)}},
+		{mod + ".y", []parser.Relation{rel(parser.RelCall, "helper", mod+".helper", 33)}},
+		{mod + ".Run", []parser.Relation{
+			rel(parser.RelCall, "helper", mod+".helper", 46),
+			rel(parser.RelCall, "ToUpper", "strings.ToUpper", 47),
+			rel(parser.RelCall, "Do", "", 48),
+			rel(parser.RelCall, "Start", mod+".Server.Start", 49),
+			rel(parser.RelCall, "Stop", mod+".Server.Stop", 50),
+			rel(parser.RelCall, "Start", mod+".Server.Start", 51),
+			rel(parser.RelUsesType, "Server", mod+".Server", 51),
+			rel(parser.RelCall, "Do", "", 52),
+			rel(parser.RelCall, "Sprintf", "fmt.Sprintf", 53),
+			rel(parser.RelUsesType, "Builder", "strings.Builder", 55),
+			rel(parser.RelUsesType, "Conn", "github.com/acme/app/pkg/db.Conn", 56),
+			rel(parser.RelUsesType, "Names", mod+".Names", 57),
+			rel(parser.RelCall, "later", mod+".later", 58),
+			rel(parser.RelCall, "f", mod+".f", 59),
+		}},
+		{mod + ".Server.Start", []parser.Relation{
+			rel(parser.RelCall, "Stop", mod+".Server.Stop", 64),
+			rel(parser.RelCall, "h", mod+".h", 66),
+			rel(parser.RelCall, "Query", "", 67),
+		}},
+		{mod + ".Server.Stop", nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.qn, func(t *testing.T) {
+			s, ok := syms[tc.qn]
+			require.True(t, ok, "missing symbol %s", tc.qn)
+			assert.Equal(t, tc.want, s.Relations)
+		})
+	}
+}
+
+func TestNoGoMod(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "a", "b", "f.go")
+	syms := analyze(t, root, path, "package b\n\nfunc F() {}\n")
+	require.Contains(t, syms, "a/b.F")
+	assert.Equal(t, "a/b", syms["a/b.F"].Module)
+
+	// File directly in the root: module is the empty string.
+	syms = analyze(t, root, filepath.Join(root, "f.go"), "package r\n\nfunc G() {}\n")
+	require.Contains(t, syms, "G")
+	assert.Equal(t, "", syms["G"].Module)
+}
+
+func TestNestedGoModStopsAtRoot(t *testing.T) {
+	outer := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outer, "go.mod"), []byte("module outer\n"), 0o644))
+	root := filepath.Join(outer, "ws")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "sub"), 0o755))
+	syms := analyze(t, root, filepath.Join(root, "sub", "f.go"), "package sub\n\nfunc F() {}\n")
+	assert.Contains(t, syms, "sub.F", "go.mod above the root must be ignored")
+
+	// A go.mod at the root wins over the outer one (fresh dir: the lookup is cached per directory).
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "sub2"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module \"example.com/ws\"\n"), 0o644))
+	syms = analyze(t, root, filepath.Join(root, "sub2", "g.go"), "package sub\n\nfunc G() {}\n")
+	assert.Contains(t, syms, "example.com/ws/sub2.G")
+}
+
+func TestMalformed(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+	}{
+		{"empty", ""},
+		{"garbage", "}}}} func ( {{{"},
+		{"unterminated", "package p\n\nfunc Broken(a int {\n\tfoo(\n\nfunc OK() {}\n"},
+		{"no name", "package p\n\nfunc () {}\ntype struct{}\nvar = 1\n"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			syms, err := Analyzer{}.Analyze(parser.File{Path: "/x/p.go", Root: "/x", Source: []byte(tc.src), Language: "go"})
+			require.NoError(t, err)
+			for _, s := range syms {
+				assert.NotEmpty(t, s.Name)
+				assert.GreaterOrEqual(t, s.EndLine, s.StartLine)
+			}
+		})
+	}
+	syms, err := Analyzer{}.Analyze(parser.File{Path: "/x/p.go", Root: "/x", Source: []byte("package p\n\nfunc Broken(a int {\n\tfoo(\n}\n\nfunc OK() {}\n"), Language: "go"})
+	require.NoError(t, err)
+	names := map[string]bool{}
+	for _, s := range syms {
+		names[s.Name] = true
+	}
+	assert.True(t, names["OK"], "declarations after a broken one are still found: %v", names)
+}
+
+func TestSelfParserFile(t *testing.T) {
+	_, this, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	root := filepath.Clean(filepath.Join(filepath.Dir(this), "..", ".."))
+	path := filepath.Join(root, "parser", "parser.go")
+	src, err := os.ReadFile(path)
+	require.NoError(t, err)
+	syms := analyze(t, root, path, string(src))
+
+	const mod = "github.com/doITmagic/rag-code-mcp/v3/parser"
+	q, ok := syms[mod+".Qualify"]
+	require.True(t, ok)
+	assert.Equal(t, mod, q.Module)
+	assert.Equal(t, parser.KindFunction, q.Kind)
+	assert.True(t, q.Exported)
+
+	id, ok := syms[mod+".SymbolID"]
+	require.True(t, ok)
+	var found bool
+	for _, r := range id.Relations {
+		if r.Kind == parser.RelCall && r.TargetName == "Sum256" {
+			assert.Equal(t, "crypto/sha256.Sum256", r.TargetQualifiedName)
+			found = true
+		}
+	}
+	assert.True(t, found, "SymbolID must call sha256.Sum256: %+v", id.Relations)
+
+	fin := syms[mod+".Finalize"]
+	assert.Contains(t, fin.Relations, rel(parser.RelCall, "SymbolID", mod+".SymbolID", fin.EndLine-3))
+	assert.Equal(t, parser.KindInterface, syms[mod+".Analyzer"].Kind)
+	assert.Equal(t, "Language,Extensions,Analyze", syms[mod+".Analyzer"].Metadata["methods"])
+	assert.Equal(t, parser.KindConstant, syms[mod+".KindFunction"].Kind)
+}
+
+func TestRegistered(t *testing.T) {
+	a := parser.ForFile("/x/y.GO")
+	require.NotNil(t, a)
+	assert.Equal(t, "go", a.Language())
+	assert.Equal(t, []string{".go"}, a.Extensions())
+}
+
+func TestConcurrent(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module m\n"), 0o644))
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 5; j++ {
+				syms, err := Analyzer{}.Analyze(parser.File{Path: filepath.Join(root, "f.go"), Root: root, Source: []byte(fixture), Language: "go"})
+				assert.NoError(t, err)
+				assert.Len(t, syms, 13)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func TestGenerics(t *testing.T) {
+	root := t.TempDir()
+	src := `package g
+
+import "github.com/acme/app/pkg/db"
+
+type Box[T any] struct{}
+
+func F[T any](x T) {
+	F[int](1)
+	db.Open[int](x)
+	_ = Box[int](x)
+	_ = db.T[int]{}
+	_ = (*db.T[int])(x)
+	_ = int64(x)
+}
+`
+	syms := analyze(t, root, filepath.Join(root, "g.go"), src)
+	require.Contains(t, syms, "F")
+	assert.Equal(t, []parser.Relation{
+		rel(parser.RelCall, "F", "F", 8),
+		rel(parser.RelCall, "Open", "github.com/acme/app/pkg/db.Open", 9),
+		rel(parser.RelUsesType, "Box", "Box", 10),
+		rel(parser.RelUsesType, "T", "github.com/acme/app/pkg/db.T", 11),
+		rel(parser.RelUsesType, "T", "github.com/acme/app/pkg/db.T", 12),
+	}, syms["F"].Relations)
+}

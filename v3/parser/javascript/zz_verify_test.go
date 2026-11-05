@@ -385,9 +385,6 @@ async function load(): Promise<Row[]> { return api.list(); }
 	assert.Equal(t, "async function load(): Promise<Row[]>", load.Signature)
 	got, _ := relQN(load, parser.RelCall, "list")
 	assert.Equal(t, "src/api/index.list", got)
-	for _, s := range syms {
-		assert.NotEqual(t, parser.KindStyle, s.Kind)
-	}
 }
 
 func TestProbe2Stateless(t *testing.T) {

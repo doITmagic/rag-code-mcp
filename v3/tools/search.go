@@ -38,7 +38,7 @@ type SearchInput struct {
 	FilePath      string   `json:"file_path,omitempty" jsonschema:"File being edited; results near it rank higher."`
 	Language      string   `json:"language,omitempty" jsonschema:"Only this language, e.g. go, python, php."`
 	PathPrefix    string   `json:"path_prefix,omitempty" jsonschema:"Only files under this directory (absolute or relative to the root)."`
-	Kinds         []string `json:"kinds,omitempty" jsonschema:"Only these symbol kinds: function, method, class, interface, type, variable, constant, route, hook, template, scene, chunk, style."`
+	Kinds         []string `json:"kinds,omitempty" jsonschema:"Only these symbol kinds: function, method, class, interface, type, variable, constant, route, hook, template, scene, chunk."`
 	Full          bool     `json:"full,omitempty" jsonschema:"Always include the symbol content."`
 }
 
@@ -153,7 +153,7 @@ func (t *tools) fallback(ctx context.Context, root string, in SearchInput, f sto
 			return nil
 		}
 		// The index rules: no symlink, fifo, secret, lockfile, minified or
-		// >4 MiB file; the binary check runs on the bytes read below.
+		// file over the index size cap; the binary check runs on the bytes read below.
 		if info, err := d.Info(); err != nil || index.Skip(path, info, nil) != "" {
 			return nil
 		}

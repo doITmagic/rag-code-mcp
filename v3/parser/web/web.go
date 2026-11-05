@@ -1,7 +1,8 @@
-// Package web analyzes HTML (with Go template actions) and CSS/SCSS/Sass/Less
-// files with tree-sitter. Module is the file path relative to the workspace
-// root without extension; relations to other files resolve only through
-// relative hrefs and @import/@use paths, never by guessing.
+// Package web analyzes HTML (with Go template actions) with tree-sitter.
+// Module is the file path relative to the workspace root without extension;
+// relations to other files resolve only through relative hrefs and srcs,
+// never by guessing. Stylesheets are not indexed: a large one cost hundreds
+// of MB to parse and its selectors are of no use to code search.
 package web
 
 import (
@@ -15,12 +16,10 @@ import (
 const (
 	maxSymbols      = 2000 // per file
 	maxContentLines = 400  // HTML document and element content
-	maxSelector     = 120  // CSS rule name
 )
 
 func init() {
 	parser.Register(htmlAnalyzer{})
-	parser.Register(cssAnalyzer{})
 }
 
 // stem is the file name without extension.

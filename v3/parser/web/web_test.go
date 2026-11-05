@@ -45,44 +45,6 @@ const goTemplateSample = `{{define "base"}}
 {{template "footer" .}}
 `
 
-const cssSample = `@import url("reset.css");
-@import "vendor/grid.css" screen;
-:root {
-  --brand: #123;
-  --gap: 4px;
-}
-/* The button */
-.btn,
-.btn:hover   > span { color: var(--brand); }
-@media (max-width: 600px) {
-  /* compact */
-  .btn { padding: 0 }
-  @supports (display: grid) { .grid { display: grid } }
-}
-@font-face { font-family: X; }
-@keyframes spin { from { x: 1 } to { x: 2 } }
-`
-
-const scssSample = `@use "sass:math";
-@use "base" as b;
-@forward "mixins";
-@import "vars";
-$primary: #333;
-$_private: 1px;
-// Theme mixin
-@mixin theme($t: dark) { color: $t; }
-@function double($n) { @return $n * 2; }
-.card {
-  @include theme(light);
-  width: double(2px);
-  $inner: 1;
-  &:hover { color: red; }
-}
-@include theme;
-`
-
-const sassSample = "@import base\n$c: red\n=round($r)\n  border-radius: $r\n.a\n  color: $c\n\n  .b\n    x: y\n.c\n  z: 1\n"
-
 func analyze(t *testing.T, path, src string) []parser.Symbol {
 	t.Helper()
 	syms, err := parser.Analyze(parser.File{Path: path, Root: "/ws", Source: []byte(src)})
@@ -209,113 +171,6 @@ func TestLongDocumentSplit(t *testing.T) {
 	assert.Equal(t, 200, strings.Count(p3.Content, "\n")+1)
 }
 
-func TestCSS(t *testing.T) {
-	syms := analyze(t, "/ws/assets/site.css", cssSample)
-	m := byQN(syms)
-	require.Len(t, syms, 9)
-	cases := []struct {
-		qn       string
-		kind     parser.Kind
-		owner    string
-		start    int
-		end      int
-		sig, doc string
-	}{
-		{"assets/site.site", parser.KindStyle, "", 1, 2, "stylesheet", ""},
-		{"assets/site.:root", parser.KindStyle, "", 3, 6, ":root", ""},
-		{"assets/site.--brand", parser.KindVariable, "", 4, 4, "--brand: #123", ""},
-		{"assets/site.--gap", parser.KindVariable, "", 5, 5, "--gap: 4px", ""},
-		{"assets/site..btn, .btn:hover > span", parser.KindStyle, "", 8, 9, ".btn, .btn:hover > span", "The button"},
-		{"assets/site.@media (max-width: 600px)..btn", parser.KindStyle, "@media (max-width: 600px)", 12, 12, ".btn", "compact"},
-		{"assets/site.@supports (display: grid)..grid", parser.KindStyle, "@supports (display: grid)", 13, 13, ".grid", ""},
-		{"assets/site.@font-face", parser.KindStyle, "", 15, 15, "@font-face", ""},
-		{"assets/site.@keyframes spin", parser.KindStyle, "", 16, 16, "@keyframes spin", ""},
-	}
-	for _, tc := range cases {
-		s, ok := m[tc.qn]
-		require.True(t, ok, tc.qn)
-		assert.Equal(t, tc.kind, s.Kind, tc.qn)
-		assert.Equal(t, "css", s.Language)
-		assert.True(t, s.Exported, tc.qn)
-		assert.Equal(t, tc.owner, s.Owner, tc.qn)
-		assert.Equal(t, tc.start, s.StartLine, tc.qn)
-		assert.Equal(t, tc.end, s.EndLine, tc.qn)
-		assert.Equal(t, tc.sig, s.Signature, tc.qn)
-		assert.Equal(t, tc.doc, s.Doc, tc.qn)
-	}
-	assert.Equal(t, ".btn,\n.btn:hover   > span { color: var(--brand); }", m["assets/site..btn, .btn:hover > span"].Content)
-	file := m["assets/site.site"]
-	assert.Equal(t, "@import url(\"reset.css\");\n@import \"vendor/grid.css\" screen;", file.Content)
-	assert.Equal(t, []rel{{"reset.css", "assets/reset", 1}, {"vendor/grid.css", "assets/vendor/grid", 2}}, rels(file, parser.RelImports))
-
-	long := "." + strings.Repeat("a", 200) + " { x: y }"
-	m = byQN(analyze(t, "/ws/l.css", long))
-	require.Len(t, m, 1)
-	for _, s := range m {
-		assert.Len(t, s.Name, 120)
-		assert.Equal(t, long, s.Content)
-	}
-}
-
-func TestSCSS(t *testing.T) {
-	syms := analyze(t, "/ws/styles/main.scss", scssSample)
-	m := byQN(syms)
-	require.Len(t, syms, 7)
-	file := m["styles/main.main"]
-	assert.Equal(t, []rel{
-		{"sass:math", "", 1}, {"base", "styles/base", 2}, {"mixins", "styles/mixins", 3}, {"vars", "styles/vars", 4},
-	}, rels(file, parser.RelImports))
-	assert.Equal(t, []rel{{"theme", "styles/main.theme", 16}}, rels(file, parser.RelCall))
-	assert.Equal(t, 1, file.StartLine)
-	assert.Equal(t, 16, file.EndLine)
-
-	assert.Equal(t, parser.KindVariable, m["styles/main.$primary"].Kind)
-	assert.True(t, m["styles/main.$primary"].Exported)
-	assert.False(t, m["styles/main.$_private"].Exported)
-	_, inner := m["styles/main..card.$inner"]
-	assert.False(t, inner, "nested variables are not symbols")
-
-	theme := m["styles/main.theme"]
-	assert.Equal(t, parser.KindFunction, theme.Kind)
-	assert.Equal(t, "@mixin theme($t: dark)", theme.Signature)
-	assert.Equal(t, "Theme mixin", theme.Doc)
-	assert.Equal(t, "@mixin theme($t: dark) { color: $t; }", theme.Content)
-	assert.Equal(t, 8, theme.StartLine)
-	assert.Equal(t, "@function double($n)", m["styles/main.double"].Signature)
-	assert.Equal(t, parser.KindFunction, m["styles/main.double"].Kind)
-
-	card := m["styles/main..card"]
-	assert.Equal(t, parser.KindStyle, card.Kind)
-	assert.Equal(t, 10, card.StartLine)
-	assert.Equal(t, 15, card.EndLine)
-	assert.Equal(t, []rel{{"theme", "styles/main.theme", 11}}, rels(card, parser.RelCall))
-	hover := m["styles/main..card.&:hover"]
-	assert.Equal(t, ".card", hover.Owner)
-	assert.Equal(t, 14, hover.StartLine)
-
-	m = byQN(analyze(t, "/ws/u.scss", ".x { @include unknown; }"))
-	assert.Equal(t, []rel{{"unknown", "", 1}}, rels(m["u..x"], parser.RelCall))
-}
-
-func TestSass(t *testing.T) {
-	syms := analyze(t, "/ws/s/x.sass", sassSample)
-	m := byQN(syms)
-	require.Len(t, syms, 5)
-	assert.Equal(t, []rel{{"base", "s/base", 1}}, rels(m["s/x.x"], parser.RelImports))
-	assert.Equal(t, parser.KindVariable, m["s/x.$c"].Kind)
-	round := m["s/x.round"]
-	assert.Equal(t, parser.KindFunction, round.Kind)
-	assert.Equal(t, 3, round.StartLine)
-	assert.Equal(t, 4, round.EndLine)
-	a := m["s/x..a"]
-	assert.Equal(t, parser.KindStyle, a.Kind)
-	assert.Equal(t, 5, a.StartLine)
-	assert.Equal(t, 9, a.EndLine)
-	assert.Equal(t, ".a\n  color: $c\n\n  .b\n    x: y", a.Content)
-	assert.Equal(t, 10, m["s/x..c"].StartLine)
-	assert.Equal(t, 11, m["s/x..c"].EndLine)
-}
-
 func TestModuleAndRefs(t *testing.T) {
 	cases := []struct {
 		path, root, module string
@@ -348,41 +203,30 @@ func TestMalformed(t *testing.T) {
 	m := byQN(analyze(t, "/ws/bad.html", `<header id="top">ok</header><div id="a"><p>unclosed <section id="s"`))
 	require.Contains(t, m, "bad.bad")
 	require.Contains(t, m, "bad.header#top")
-	m = byQN(analyze(t, "/ws/bad.css", ".a { color: ; } } .b { x"))
-	require.Contains(t, m, "bad..a")
-	m = byQN(analyze(t, "/ws/bad.scss", "@mixin ( { .x { @include ; } "))
-	assert.NotNil(t, m)
-	assert.Empty(t, analyze(t, "/ws/empty.css", ""))
 	require.Len(t, analyze(t, "/ws/empty.html", ""), 1)
-	assert.Len(t, analyze(t, "/ws/e.sass", "\n\n"), 0)
 }
 
 func TestSymbolCap(t *testing.T) {
-	src := strings.Repeat(".r { a: b }\n", maxSymbols+50)
-	assert.Len(t, analyze(t, "/ws/many.css", src), maxSymbols)
-	src = strings.Repeat("<div id=\"d\"></div>\n", maxSymbols+50)
+	src := strings.Repeat("<div id=\"d\"></div>\n", maxSymbols+50)
 	assert.Len(t, analyze(t, "/ws/many.html", src), maxSymbols)
 }
 
 func TestRegistered(t *testing.T) {
 	for _, tc := range []struct{ path, lang string }{
 		{"/ws/a.html", "html"}, {"/ws/a.HTM", "html"}, {"/ws/a.gohtml", "html"}, {"/ws/a.tmpl", "html"}, {"/ws/a.tpl", "html"},
-		{"/ws/a.css", "css"}, {"/ws/a.SCSS", "css"}, {"/ws/a.sass", "css"}, {"/ws/a.less", "css"},
 	} {
 		a := parser.ForFile(tc.path)
 		require.NotNil(t, a, tc.path)
 		assert.Equal(t, tc.lang, a.Language(), tc.path)
 	}
-	syms := analyze(t, "/ws/a.less", "@c: red;\n.m() { x: y }\n.a { .m(); color: @c; .b { z: 1 } }\n")
-	require.NotEmpty(t, syms)
-	assert.Equal(t, "css", syms[0].Language)
+	for _, p := range []string{"/ws/a.css", "/ws/a.scss", "/ws/a.sass", "/ws/a.less"} {
+		assert.Nil(t, parser.ForFile(p), p) // stylesheets are not indexed
+	}
 }
 
 func TestConcurrent(t *testing.T) {
 	wantHTML := analyze(t, "/ws/templates/page.html", htmlSample)
 	wantTpl := analyze(t, "/ws/views/layout.gohtml", goTemplateSample)
-	wantCSS := analyze(t, "/ws/assets/site.css", cssSample)
-	wantSCSS := analyze(t, "/ws/styles/main.scss", scssSample)
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
@@ -391,8 +235,6 @@ func TestConcurrent(t *testing.T) {
 			for j := 0; j < 5; j++ {
 				assert.Equal(t, wantHTML, analyze(t, "/ws/templates/page.html", htmlSample))
 				assert.Equal(t, wantTpl, analyze(t, "/ws/views/layout.gohtml", goTemplateSample))
-				assert.Equal(t, wantCSS, analyze(t, "/ws/assets/site.css", cssSample))
-				assert.Equal(t, wantSCSS, analyze(t, "/ws/styles/main.scss", scssSample))
 			}
 		}()
 	}

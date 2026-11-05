@@ -59,31 +59,6 @@ func TestZZVerifyHTML(t *testing.T) {
 	assert.False(t, hasStyle)
 }
 
-func TestZZVerifySCSS(t *testing.T) {
-	m := byQN(analyze(t, "/ws/s/t.scss", `@use "../lib/colors" as c;
-@mixin _hidden { display: none; }
-:root { --x: 1; }
-.a {
-  @media (min-width: 1px) {
-    @include _hidden;
-    .b { color: c.$red; }
-  }
-  @include ext;
-}
-@media print { @include _hidden; }
-@function f() { @return 1; }
-`))
-	file := m["s/t.t"]
-	assert.Equal(t, []rel{{"../lib/colors", "lib/colors", 1}}, rels(file, parser.RelImports))
-	assert.Equal(t, []rel{{"_hidden", "s/t._hidden", 11}}, rels(file, parser.RelCall))
-	assert.Equal(t, []rel{{"_hidden", "s/t._hidden", 6}, {"ext", "", 9}}, rels(m["s/t..a"], parser.RelCall))
-	assert.Equal(t, "@media (min-width: 1px)", m["s/t.@media (min-width: 1px)..b"].Owner)
-	assert.Equal(t, parser.KindFunction, m["s/t._hidden"].Kind)
-	assert.False(t, m["s/t._hidden"].Exported)
-	assert.Equal(t, parser.KindFunction, m["s/t.f"].Kind)
-	assert.Equal(t, parser.KindVariable, m["s/t.--x"].Kind)
-}
-
 func TestZZRobust(t *testing.T) {
 	bin := make([]byte, 4096)
 	for i := range bin {
@@ -93,7 +68,7 @@ func TestZZRobust(t *testing.T) {
 		"<div id=\"a\"", "<!--", "<!-- x", "<script src=", "<link rel=stylesheet href=>", ".a{", "@media{", "@media (x){.a{",
 		"$x", "=", "@", "@mixin", "@include", "@import", "@import ;", "@use", "}}}", "<template",
 		"<html><body><p>" + strings.Repeat("<div id='x'>", 500)}
-	for _, ext := range []string{".html", ".tmpl", ".css", ".scss", ".sass", ".less"} {
+	for _, ext := range []string{".html", ".tmpl"} {
 		for i, in := range inputs {
 			t.Run(fmt.Sprintf("%s/%d", ext, i), func(t *testing.T) {
 				done := make(chan struct{})

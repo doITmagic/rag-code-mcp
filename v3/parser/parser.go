@@ -30,7 +30,6 @@ const (
 	KindTemplate  Kind = "template" // Blade, Vue <template>, Go template, HTML section
 	KindScene     Kind = "scene"    // Godot scene node
 	KindChunk     Kind = "chunk"    // documentation chunk (Markdown section, JSON/YAML/TOML key)
-	KindStyle     Kind = "style"    // CSS rule / selector block
 )
 
 // RelationKind is the kind of an outgoing relation from a symbol.

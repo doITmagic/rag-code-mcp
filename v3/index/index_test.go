@@ -623,9 +623,16 @@ func TestWalkSkipsGitIgnored(t *testing.T) {
 	}
 	git("init", "-q")
 	git("add", "-f", "kept.gen.go")
+	// A nested repository the parent ignores is a separate project: its
+	// own rules apply (barou keeps its legacy PHP app like this).
+	e.write(t, ".gitignore", "lucrari/\n*.gen.go\nlegacy/\n")
+	x := e.write(t, "legacy/x.go", "package x\nfunc X() {}\n")
+	e.write(t, "legacy/.gitignore", "y.go\n")
+	e.write(t, "legacy/y.go", "package x\nfunc Y() {}\n")
+	git("-C", "legacy", "init", "-q")
 	files, err := Walk(e.root, nil)
 	require.NoError(t, err)
-	assert.Equal(t, []string{a, g}, files)
+	assert.Equal(t, []string{a, g, x}, files)
 
 	_, err = e.run(t, func(o *Options) { o.Files = []string{b} })
 	require.NoError(t, err)

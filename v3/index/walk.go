@@ -75,27 +75,50 @@ func Walk(root string, exclude []string) ([]string, error) {
 }
 
 // gitIgnored returns the files among files that git ignores, by every
-// .gitignore and the user's excludes; tracked files are never ignored. Nil
-// when root is not in a git work tree or git is not installed.
+// .gitignore and the user's excludes; tracked files are never ignored. A
+// directory with its own .git is a separate repository and follows its own
+// rules, not its parent's (barou keeps its legacy PHP app as a nested repo
+// its parent ignores). Files outside any git work tree are never ignored.
 func gitIgnored(root string, files []string) map[string]bool {
-	if len(files) == 0 {
-		return nil
-	}
-	var in bytes.Buffer
-	for _, f := range files {
-		in.WriteString(f)
-		in.WriteByte(0)
-	}
-	cmd := exec.Command("git", "-C", root, "check-ignore", "--stdin", "-z")
-	cmd.Stdin = &in
-	out, _ := cmd.Output() // exit 1: nothing ignored; 128: not a repo or no git
-	var ign map[string]bool
-	for _, p := range bytes.Split(out, []byte{0}) {
-		if len(p) > 0 {
-			if ign == nil {
-				ign = map[string]bool{}
+	repoOf := map[string]string{}
+	var repo func(dir string) string
+	repo = func(dir string) string {
+		if r, ok := repoOf[dir]; ok {
+			return r
+		}
+		r := root
+		if len(dir) > len(root) {
+			if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+				r = dir
+			} else {
+				r = repo(filepath.Dir(dir))
 			}
-			ign[string(p)] = true
+		}
+		repoOf[dir] = r
+		return r
+	}
+	groups := map[string][]string{}
+	for _, f := range files {
+		r := repo(filepath.Dir(f))
+		groups[r] = append(groups[r], f)
+	}
+	var ign map[string]bool
+	for r, fs := range groups {
+		var in bytes.Buffer
+		for _, f := range fs {
+			in.WriteString(f)
+			in.WriteByte(0)
+		}
+		cmd := exec.Command("git", "-C", r, "check-ignore", "--stdin", "-z")
+		cmd.Stdin = &in
+		out, _ := cmd.Output() // exit 1: nothing ignored; 128: not a repo or no git
+		for _, p := range bytes.Split(out, []byte{0}) {
+			if len(p) > 0 {
+				if ign == nil {
+					ign = map[string]bool{}
+				}
+				ign[string(p)] = true
+			}
 		}
 	}
 	return ign

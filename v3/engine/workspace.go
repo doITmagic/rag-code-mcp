@@ -19,7 +19,8 @@ type Workspace struct {
 	Collection string
 
 	// Job state, guarded by e.mu.
-	running bool
+	running bool // a runner goroutine exists (it may be waiting for the slot)
+	active  bool // the runner holds the slot: a run is in progress
 	queued  queueKind
 	files   map[string]bool
 	deleted map[string]bool
@@ -43,7 +44,7 @@ type Status struct {
 // from <root>/.ragcode/index_status.json.
 func (w *Workspace) Status() Status {
 	w.e.mu.Lock()
-	s := Status{Status: w.status, Queued: w.queued != kindNone, Running: w.running}
+	s := Status{Status: w.status, Queued: w.queued != kindNone || (w.running && !w.active), Running: w.active}
 	if w.lastErr != nil {
 		s.LastError = w.lastErr.Error()
 	}

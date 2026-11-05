@@ -327,10 +327,14 @@ func (e *Engine) runJobs(w *Workspace) {
 			e.mu.Unlock()
 			return
 		}
+		e.mu.Lock()
+		w.active = true
+		e.mu.Unlock()
 		st, err := e.runOne(w, kind, files, deleted)
 		<-e.slot
 
 		e.mu.Lock()
+		w.active = false
 		w.lastErr = err
 		if errors.Is(err, index.ErrLocked) {
 			w.lastErr = ErrLocked // nothing ran: the status stays

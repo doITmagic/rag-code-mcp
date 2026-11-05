@@ -508,3 +508,30 @@ func TestWriteIDERulesSymlinkedParentDirs(t *testing.T) {
 	agents, _ := os.ReadFile(filepath.Join(root, "AGENTS.md"))
 	assert.Contains(t, string(agents), IDEPointer, "files inside the root still get the pointer")
 }
+
+// A workspace whose runner waits for another workspace's run to free the
+// global slot is queued, not indexing: its status must not report the last
+// run's numbers as a run in progress.
+func TestWaitingForSlotIsQueued(t *testing.T) {
+	cfg := testConfig(t)
+	rec := &runRecorder{hold: make(chan struct{})}
+	e := New(cfg, store.NewMemory(), &embed.Fake{}, nil)
+	defer e.Close()
+	e.run = rec.run
+	a, err := e.Workspace(t.TempDir())
+	require.NoError(t, err)
+	b, err := e.Workspace(t.TempDir())
+	require.NoError(t, err)
+
+	a.Index(false) // holds the slot, blocked in the fake
+	require.Eventually(t, func() bool { return len(rec.snapshot()) == 1 }, time.Second, 5*time.Millisecond)
+	b.Index(false)
+	time.Sleep(20 * time.Millisecond) // let b's runner reach the slot
+	s := b.Status()
+	assert.False(t, s.Running, "b waits for the slot")
+	assert.True(t, s.Queued, "b waits for the slot")
+	assert.True(t, a.Status().Running)
+
+	close(rec.hold)
+	require.Eventually(t, func() bool { s := b.Status(); return !s.Running && !s.Queued && len(rec.snapshot()) == 2 }, 2*time.Second, 5*time.Millisecond)
+}

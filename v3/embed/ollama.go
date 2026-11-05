@@ -15,6 +15,7 @@ import (
 
 const (
 	batchSize   = 16
+	batchBytes  = 8 << 10 // CPU Ollama embeds inputs one by one: a big request only delays a queued query
 	callTimeout = 60 * time.Second
 	retryDelay  = time.Second
 	probeText   = "dimension probe"
@@ -39,11 +40,15 @@ func NewOllama(baseURL, model string, client *http.Client) *Ollama {
 // Model returns the embedding model name.
 func (o *Ollama) Model() string { return o.model }
 
-// Embed embeds texts in batches of 16, one request per batch.
+// Embed embeds texts in batches of at most 16 texts and 8 KiB (a longer
+// text goes alone), one request per batch.
 func (o *Ollama) Embed(ctx context.Context, texts []string) ([][]float32, error) {
 	out := make([][]float32, 0, len(texts))
-	for start := 0; start < len(texts); start += batchSize {
-		end := min(start+batchSize, len(texts))
+	for start, end := 0, 0; start < len(texts); start = end {
+		end = start + 1
+		for size := len(texts[start]); end < len(texts) && end-start < batchSize && size+len(texts[end]) <= batchBytes; end++ {
+			size += len(texts[end])
+		}
 		vecs, err := o.embedBatch(ctx, texts[start:end])
 		if err != nil {
 			return nil, err

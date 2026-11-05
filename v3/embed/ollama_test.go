@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -61,6 +62,19 @@ func TestOllamaBatches(t *testing.T) {
 	assert.Len(t, vecs, 40)
 	assert.Equal(t, int32(3), calls.Load())
 	assert.Equal(t, []int{16, 16, 8}, *sizes)
+}
+
+// Long texts are also cut by size: on CPU a full request of 16 long texts
+// takes ~19 s and a query embed queued behind it waits that long.
+func TestOllamaBatchesCutBySize(t *testing.T) {
+	srv, _, sizes := embedServer(t)
+	o := NewOllama(srv.URL, "m", nil)
+	long := strings.Repeat("x", 2000)
+	in := []string{long, long, long, long, long, "a", "b", strings.Repeat("y", 9000), "c"}
+	vecs, err := o.Embed(context.Background(), in)
+	require.NoError(t, err)
+	assert.Len(t, vecs, len(in))
+	assert.Equal(t, []int{4, 3, 1, 1}, *sizes)
 }
 
 func TestOllamaDimensionCached(t *testing.T) {

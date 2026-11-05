@@ -12,9 +12,19 @@ import (
 )
 
 const (
-	maxFileSize = 4 << 20 // files over 4 MiB are never indexed
-	headSize    = 8 << 10 // bytes inspected for the binary (NUL) check
+	// Files over 256 KiB are never indexed: tree-sitter needs up to ~500x a
+	// file's size while it parses (1 GB for a 3.6 MB JS bundle), and files
+	// that big are bundles or generated code.
+	maxFileSize = 256 << 10
+	parseBudget = maxFileSize // source bytes parsed at once, whatever the CPU count
+	// Two workers: slower on many cores, but a parser keeps the buffers of
+	// the largest file it parsed, and a laptop needs its CPU for Ollama.
+	parseWorkers = 2
+	headSize     = 8 << 10 // bytes inspected for the binary (NUL) check
 )
+
+// batchBytes is the source size parsed, embedded and upserted per batch.
+var batchBytes int64 = 4 << 20
 
 var lockfiles = map[string]bool{
 	"package-lock.json": true, "yarn.lock": true, "pnpm-lock.yaml": true,
@@ -99,7 +109,7 @@ func Skip(path string, info fs.FileInfo, head []byte) string {
 		return "not a regular file"
 	}
 	if info.Size() > maxFileSize {
-		return "over 4 MiB"
+		return "over 256 KiB"
 	}
 	base := strings.ToLower(filepath.Base(path))
 	switch {

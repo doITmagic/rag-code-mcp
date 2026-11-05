@@ -371,7 +371,7 @@ func TestVerifyIndexTwice(t *testing.T) {
 // returned lines are capped, so the answer stays small and fast.
 func TestReadFileMinifiedAndLongLines(t *testing.T) {
 	v := newEnv(t, false, func(c *config.Config) { c.AutoIndex = false })
-	require.NoError(t, os.WriteFile(filepath.Join(v.root, "x.min.js"), []byte(strings.Repeat("var a=1;", 50_000)), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(v.root, "x.min.js"), []byte(strings.Repeat("var a=1;", 20_000)), 0o644)) // under the 256 KiB cap
 	require.NoError(t, os.WriteFile(filepath.Join(v.root, "long.fk"), []byte("func Foo\n"+strings.Repeat("y", 10_000)+"\n"), 0o644))
 	var out struct {
 		Lines   string `json:"lines"`

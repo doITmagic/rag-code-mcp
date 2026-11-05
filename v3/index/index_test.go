@@ -410,7 +410,7 @@ func TestSkip(t *testing.T) {
 		{"source", mk("ok.go", []byte("func A")), ""},
 		{"markdown", mk("README.md", []byte("# x")), ""},
 		{"no analyzer", mk("notes.txt", []byte("x")), "no analyzer"},
-		{"over 4 MiB", big, "over 4 MiB"},
+		{"over 256 KiB", big, "over 256 KiB"},
 		{"binary", mk("bin.go", []byte("abc\x00def")), "binary"},
 		{"min.js", mk("app.min.js", []byte("x")), "minified"},
 		{"min.css", mk("app.min.css", []byte("x")), "minified"},
@@ -508,16 +508,18 @@ func TestRunDeletedPurgesUnrecordedFile(t *testing.T) {
 // An upsert batch is also cut by Content bytes: four 3 MiB single-symbol
 // files never travel in one 12 MiB message.
 func TestRunUpsertBatchByteBudget(t *testing.T) {
+	defer func(old int64) { batchBytes = old }(batchBytes)
+	batchBytes = 1 << 40 // one batch: only the upsert byte budget cuts
 	e := newEnv(t)
-	for _, n := range []string{"a", "b", "c", "d"} {
-		e.write(t, n+".md", strings.Repeat("x", 3<<20))
+	for i := range 50 {
+		e.write(t, fmt.Sprintf("f%02d.md", i), strings.Repeat("x", 200<<10))
 	}
 	ts := &traceStore{Memory: e.store}
 	st, err := e.run(t, func(o *Options) { o.Store = ts })
 	require.NoError(t, err)
-	assert.Equal(t, 4, st.Done)
-	assert.Equal(t, 3, ts.maxUpsert, "9 MiB crosses the 8 MiB budget at the third point")
-	assert.Equal(t, 4, e.count(t, store.Filter{}))
+	assert.Equal(t, 50, st.Done)
+	assert.Equal(t, 41, ts.maxUpsert, "41 x 200 KiB crosses the 8 MiB budget before the 64-point batch")
+	assert.Equal(t, 50, e.count(t, store.Filter{}))
 }
 
 func keys[V any](m map[string]V) []string {

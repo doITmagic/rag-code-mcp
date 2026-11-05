@@ -463,7 +463,7 @@ func (c *fileCtx) canonical(qn string, depth int) string {
 // reexports is the import table of the workspace package pkg's __init__.py,
 // nil when there is none. The package is looked up under the workspace root,
 // then under each directory down to this file's (src/ layouts, monorepo
-// subprojects). Only a regular file within the index's 4 MiB cap is read, so
+// subprojects). Only a regular file within the index size cap is read, so
 // a symlink to a device is treated as absent. The lookup is cached per
 // analyzed file, the parsed table process-wide (initTable).
 func (c *fileCtx) reexports(pkg string) map[string]string {

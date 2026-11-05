@@ -81,7 +81,7 @@ func (t *tools) readFile(ctx context.Context, req *mcp.CallToolRequest, in ReadI
 		data["lines"] = numbered(lines, start, end)
 		return reply("ok", "", data, w)
 	}
-	// A file the index skips (minified, over 4 MiB, binary) is not parsed
+	// A file the index skips (minified, over the size cap, binary) is not parsed
 	// either: parsing a 5 MB bundle took 42 s and 1.3 GB.
 	if why := index.Skip(path, info, src[:min(len(src), 8<<10)]); why != "" && why != "no analyzer" {
 		if in.Symbol != "" {

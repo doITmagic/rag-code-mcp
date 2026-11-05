@@ -8,12 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"golang.org/x/sync/semaphore"
 	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -218,18 +218,38 @@ func Run(ctx context.Context, o Options) (Status, error) {
 	r.status.Phase = "parsing"
 	r.tick(true)
 
-	files := r.parse(ctx, changed)
+	// Pass 1 keeps only the names of every symbol, all that staleReferrers
+	// and the resolve index need; pass 2 parses again batch by batch, so the
+	// memory of a run does not grow with the size of the workspace.
+	files := names(r.parse(ctx, changed))
 	if extra := r.staleReferrers(ctx, files, goneIDs, changed, gone); len(extra) > 0 {
 		r.status.Total += len(extra)
-		files = append(files, r.parse(ctx, extra)...)
+		files = append(files, names(r.parse(ctx, extra))...)
 	}
 	if ctx.Err() != nil {
 		return r.finish(ctx, ctx.Err())
 	}
 	r.status.Phase = "embedding"
-	r.resolve(ctx, files)
-	if err := r.embedUpsert(ctx, files); err != nil {
-		return r.finish(ctx, err)
+	idx := newNameIndex(files)
+	for len(files) > 0 {
+		n, size := 0, int64(0)
+		for n < len(files) && (n == 0 || size < batchBytes) {
+			size += files[n].info.Size()
+			n++
+		}
+		paths := make([]string, n)
+		for i := range paths {
+			paths[i] = files[i].path
+		}
+		files = files[n:]
+		batch := r.parse(ctx, paths)
+		if ctx.Err() != nil {
+			return r.finish(ctx, ctx.Err())
+		}
+		r.resolve(ctx, idx, batch)
+		if err := r.embedUpsert(ctx, batch); err != nil {
+			return r.finish(ctx, err)
+		}
 	}
 	if _, now := gitHead(ctx, root); now != head {
 		return r.finish(ctx, ErrHeadChanged)
@@ -382,18 +402,20 @@ func (r *run) abs(f string) string {
 	return filepath.Clean(f)
 }
 
-// parse analyzes files on max(2, NumCPU/2) workers and returns the results
-// in the input order, minus the files that failed (counted in Failed).
+// parse analyzes files on parseWorkers workers, with at most parseBudget
+// source bytes being parsed at once, and returns the results in the input
+// order, minus the files that failed (counted in Failed).
 func (r *run) parse(ctx context.Context, files []string) []parsed {
+	budget := semaphore.NewWeighted(parseBudget)
 	jobs := make(chan string)
 	results := make(chan parsed)
 	var wg sync.WaitGroup
-	for i := 0; i < max(2, runtime.NumCPU()/2); i++ {
+	for range parseWorkers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for f := range jobs {
-				results <- parseOne(r.root, f)
+				results <- parseOne(r.root, f, budget)
 			}
 		}()
 	}
@@ -428,7 +450,7 @@ func (r *run) parse(ctx context.Context, files []string) []parsed {
 	return out
 }
 
-func parseOne(root, path string) (p parsed) {
+func parseOne(root, path string, budget *semaphore.Weighted) (p parsed) {
 	p.path = path
 	defer func() {
 		if v := recover(); v != nil {
@@ -440,11 +462,18 @@ func parseOne(root, path string) (p parsed) {
 	if p.info, p.err = os.Stat(path); p.err != nil {
 		return p
 	}
+	if p.info.Size() > maxFileSize {
+		return p // grew past the cap since the walk: indexed as empty
+	}
 	src, err := os.ReadFile(path)
 	if err != nil {
 		p.err = err
 		return p
 	}
+	// Never blocks for good: every holder releases after one file.
+	w := min(max(int64(len(src)), 1), parseBudget)
+	_ = budget.Acquire(context.Background(), w)
+	defer budget.Release(w)
 	p.syms, p.err = parser.Analyze(parser.File{Path: path, Root: root, Source: src})
 	return p
 }
@@ -541,27 +570,48 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 	return out
 }
 
+// names drops everything but the names of each symbol: what staleReferrers
+// and newNameIndex read.
+func names(files []parsed) []parsed {
+	for i := range files {
+		for j, s := range files[i].syms {
+			files[i].syms[j] = parser.Symbol{ID: s.ID, QualifiedName: s.QualifiedName, Name: s.Name, Language: s.Language}
+		}
+	}
+	return files
+}
+
+// nameIndex maps the names of every symbol of the run to their ids.
+type nameIndex struct {
+	byQN     map[string][]string
+	bySuffix map[string][]string    // every dot-boundary suffix of a qualified name
+	byName   map[[2]string][]string // language, name: a call never crosses languages
+	changed  map[string]bool        // files of the run: their stored points are stale
+}
+
+func newNameIndex(files []parsed) nameIndex {
+	idx := nameIndex{map[string][]string{}, map[string][]string{}, map[[2]string][]string{}, make(map[string]bool, len(files))}
+	for i := range files {
+		idx.changed[files[i].path] = true
+		for _, s := range files[i].syms {
+			qn := parser.Normalize(s.QualifiedName)
+			idx.byQN[qn] = append(idx.byQN[qn], s.ID)
+			for j := 0; j < len(qn); j++ {
+				if j == 0 || qn[j-1] == '.' {
+					idx.bySuffix[qn[j:]] = append(idx.bySuffix[qn[j:]], s.ID)
+				}
+			}
+			idx.byName[[2]string{s.Language, s.Name}] = append(idx.byName[[2]string{s.Language, s.Name}], s.ID)
+		}
+	}
+	return idx
+}
+
 // resolve fills Relation.TargetID and Resolution over the run's symbols plus,
 // when the store already holds the rest of the workspace, store lookups for
 // the targets the run does not define.
-func (r *run) resolve(ctx context.Context, files []parsed) {
-	byQN := map[string][]string{}
-	bySuffix := map[string][]string{}  // every dot-boundary suffix of a qualified name
-	byName := map[[2]string][]string{} // language, name: a call never crosses languages
-	changed := make(map[string]bool, len(files))
-	for i := range files {
-		changed[files[i].path] = true
-		for _, s := range files[i].syms {
-			qn := parser.Normalize(s.QualifiedName)
-			byQN[qn] = append(byQN[qn], s.ID)
-			for j := 0; j < len(qn); j++ {
-				if j == 0 || qn[j-1] == '.' {
-					bySuffix[qn[j:]] = append(bySuffix[qn[j:]], s.ID)
-				}
-			}
-			byName[[2]string{s.Language, s.Name}] = append(byName[[2]string{s.Language, s.Name}], s.ID)
-		}
-	}
+func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
+	byQN, bySuffix, byName, changed := idx.byQN, idx.bySuffix, idx.byName, idx.changed
 	// No lookup cap: a target left unresolved here stays so until its caller
 	// file changes. One store error stops the lookups for the run.
 	failed := false
@@ -713,7 +763,7 @@ func (r *run) embedUpsert(ctx context.Context, files []parsed) error {
 		for j, s := range batch {
 			items = append(items, store.Item{Vector: vecs[j], Symbol: *s})
 			itemOwner = append(itemOwner, owner[i+j])
-			// Content is uncapped and a file up to 4 MiB can be one symbol:
+			// Content is uncapped and a whole file can be one symbol:
 			// a count-only cut could exceed Qdrant's 32 MB message limit.
 			if bytes += len(s.Content); len(items) >= upsertBatch || bytes >= upsertBytes {
 				if err := flush(); err != nil {

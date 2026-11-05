@@ -103,6 +103,11 @@ func (t *tools) search(ctx context.Context, req *mcp.CallToolRequest, in SearchI
 		}
 	}
 	hits = rank(hits, w.Root, in.FilePath, in.Limit, in.Full)
+	// A recreate (or a model change) refills the collection from empty: no
+	// hit yet means "not indexed so far", not "does not exist".
+	if s := w.Status(); len(hits) == 0 && (s.Running || s.Queued) {
+		return t.searchErr(ctx, w, in, f, engine.ErrNotIndexed)
+	}
 	return reply("ok", "", map[string]any{"query": in.Query, "results": hits, "count": len(hits)}, w)
 }
 

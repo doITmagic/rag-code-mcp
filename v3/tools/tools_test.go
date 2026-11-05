@@ -70,6 +70,11 @@ type env struct {
 // the first run.
 func newEnv(t *testing.T, index bool, tweak func(*config.Config)) *env {
 	t.Helper()
+	return newEnvWith(t, &embed.Fake{}, index, tweak)
+}
+
+func newEnvWith(t *testing.T, em embed.Embedder, index bool, tweak func(*config.Config)) *env {
+	t.Helper()
 	t.Setenv("RAGCODE_HOME", t.TempDir())
 	cfg := config.Default()
 	cfg.WatchEnabled = false
@@ -87,7 +92,7 @@ func newEnv(t *testing.T, index bool, tweak func(*config.Config)) *env {
 		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, p)), 0o755))
 		require.NoError(t, os.WriteFile(filepath.Join(root, p), []byte(c), 0o644))
 	}
-	e := engine.New(cfg, store.NewMemory(), &embed.Fake{}, nil)
+	e := engine.New(cfg, store.NewMemory(), em, nil)
 	t.Cleanup(e.Close)
 	if index {
 		w, err := e.Workspace(root)
@@ -232,6 +237,44 @@ func TestSearchNotIndexedFallback(t *testing.T) {
 	w, err := v2.e.Workspace(v2.root)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool { return w.Status().Phase == "done" }, 10*time.Second, 20*time.Millisecond)
+}
+
+// gateEmbedder blocks multi-text (indexing) batches until open is closed;
+// single-text query embeds pass through.
+type gateEmbedder struct {
+	*embed.Fake
+	open chan struct{}
+}
+
+func (g gateEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	if len(texts) > 1 {
+		<-g.open
+	}
+	return g.Fake.Embed(ctx, texts)
+}
+
+// While a recreate is still filling the collection, a search that finds
+// nothing there falls back to the on-the-fly parse and says the index is in
+// progress instead of answering "ok" with no results.
+func TestSearchDuringRecreateFallsBack(t *testing.T) {
+	g := gateEmbedder{Fake: &embed.Fake{}, open: make(chan struct{})}
+	v := newEnvWith(t, g, false, func(c *config.Config) { c.AutoIndex = false })
+	w, err := v.e.Workspace(v.root)
+	require.NoError(t, err)
+	w.Index(true)
+	t.Cleanup(func() {
+		close(g.open)
+		require.Eventually(t, func() bool { s := w.Status(); return !s.Running && !s.Queued }, 10*time.Second, 20*time.Millisecond)
+	})
+	require.Eventually(t, func() bool { s := w.Status(); return s.Running }, 10*time.Second, 20*time.Millisecond)
+
+	r, _ := v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "Bar"})
+	assert.Equal(t, "indexing", r.Status, r.Message)
+	var out struct{ Results []SearchHit }
+	data(t, r, &out)
+	require.NotEmpty(t, out.Results)
+	assert.Equal(t, "m/pkg.Bar", out.Results[0].QualifiedName)
+	assert.Equal(t, "fallback", out.Results[0].Match)
 }
 
 func TestFindUsages(t *testing.T) {

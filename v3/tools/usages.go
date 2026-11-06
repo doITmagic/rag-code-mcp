@@ -144,7 +144,7 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 		files = append(files, *g)
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].FilePath < files[j].FilePath })
-	ambiguous := ambiguousByName(ctx, w, sym.Name)
+	ambiguous := ambiguousByName(ctx, w, sym)
 	data := map[string]any{"symbol": toCandidate(*sym), "files": files, "total": total, "ambiguous_by_name": ambiguous}
 	msg := fmt.Sprintf("%d usages in %d files", total, len(files))
 	if ambiguous > 0 {
@@ -177,15 +177,16 @@ func referrers(ctx context.Context, w *engine.Workspace, sym *parser.Symbol, lim
 
 // ambiguousByName counts the relations that name the symbol but were left
 // unresolved because several symbols share the name; 0 on a store error.
-func ambiguousByName(ctx context.Context, w *engine.Workspace, name string) int {
-	hits, err := w.Scroll(ctx, store.Filter{TargetNames: []string{name}}, store.MaxScroll)
+// Those naming its qualified name are already listed as usages.
+func ambiguousByName(ctx context.Context, w *engine.Workspace, sym *parser.Symbol) int {
+	hits, err := w.Scroll(ctx, store.Filter{TargetNames: []string{sym.Name}}, store.MaxScroll)
 	if err != nil {
 		return 0
 	}
 	n := 0
 	for _, h := range hits {
 		for _, r := range h.Symbol.Relations {
-			if r.TargetName == name && r.Resolution == parser.ResolutionAmbiguous {
+			if r.TargetName == sym.Name && r.Resolution == parser.ResolutionAmbiguous && r.TargetQualifiedName != sym.QualifiedName {
 				n++
 			}
 		}
@@ -296,11 +297,17 @@ func (wk *walker) expand(ctx context.Context, n *Node, sym parser.Symbol, incomi
 	} else {
 		seen := map[string]bool{}
 		for _, r := range sym.Relations {
-			if r.Kind != parser.RelCall || r.TargetID == "" || seen[r.TargetID] {
+			// An ambiguous call naming a qualified name (build-tagged
+			// variants of one function) lists every variant, as incoming does.
+			f, key, n := store.Filter{IDs: []string{r.TargetID}}, r.TargetID, 1
+			if r.TargetID == "" && r.Resolution == parser.ResolutionAmbiguous && r.TargetQualifiedName != "" {
+				f, key, n = store.Filter{QualifiedName: r.TargetQualifiedName}, "qn:"+r.TargetQualifiedName, candidateLimit
+			}
+			if r.Kind != parser.RelCall || key == "" || seen[key] {
 				continue
 			}
-			seen[r.TargetID] = true
-			hits, err := wk.w.Scroll(ctx, store.Filter{IDs: []string{r.TargetID}}, 1)
+			seen[key] = true
+			hits, err := wk.w.Scroll(ctx, f, n)
 			if err != nil {
 				wk.err = err
 				return

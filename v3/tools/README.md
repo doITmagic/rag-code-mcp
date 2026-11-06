@@ -225,6 +225,8 @@ Output `data`: `{symbol, files: [{file_path, usages: [{caller, kind, line,
 text, caller_id, caller_start_line}]}], total, ambiguous_by_name}`.
 `ambiguous_by_name` counts relations that name the symbol but were left
 unresolved because several symbols share the name; the message mentions them.
+Calls to symbols sharing one qualified name (build-tagged variants such as
+`lock_unix.go` / `lock_windows.go`) are listed as usages, not counted here.
 
 ```json
 {"name": "rag_find_usages", "arguments": {
@@ -246,7 +248,8 @@ Callers (incoming) and callees (outgoing) of a function as a tree.
 | `file_path` | string | the defining file, to pick the symbol when several share the name |
 
 - Incoming uses the same reference lookup as `rag_find_usages` (up to 50 per
-  node). Outgoing follows only `call` relations that have a resolved target id.
+  node). Outgoing follows `call` relations that have a resolved target id; an
+  ambiguous call naming a qualified name lists every symbol with that name.
 - The tree is capped at 100 nodes per direction; `data.<direction>_truncated`
   is then `true`. A symbol already expanded elsewhere is listed again but not
   re-walked, so cycles end.

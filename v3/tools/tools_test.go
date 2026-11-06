@@ -628,3 +628,35 @@ func TestServerInfoHasNoQdrant(t *testing.T) {
 	assert.NotContains(t, out, "qdrant")
 	assert.Contains(t, out, "ollama")
 }
+
+// Build-tagged variants (lock_unix.go, lock_windows.go) share one qualified
+// name, so calls to them stay ambiguous by id but match by qualified name:
+// find_usages lists them once, not again as unresolved, and call_hierarchy
+// shows them as callees too.
+func TestSameQualifiedNameVariants(t *testing.T) {
+	v := newEnv(t, false, func(c *config.Config) { c.AutoIndex = false })
+	for p, c := range map[string]string{"pkg/lk_unix.fk": "func Lk\n", "pkg/lk_windows.fk": "func Lk\n", "pkg/use.fk": "func UseLk\n  call m/pkg.Lk\n"} {
+		require.NoError(t, os.WriteFile(filepath.Join(v.root, p), []byte(c), 0o644))
+	}
+	w, err := v.e.Workspace(v.root)
+	require.NoError(t, err)
+	w.Index(false)
+	require.Eventually(t, func() bool { s := w.Status(); return s.Phase == "done" && !s.Running && !s.Queued }, 10*time.Second, 20*time.Millisecond)
+
+	var out struct {
+		Total           int `json:"total"`
+		AmbiguousByName int `json:"ambiguous_by_name"`
+	}
+	r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "Lk", "file_path": "pkg/lk_unix.fk"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	data(t, r, &out)
+	assert.Equal(t, 1, out.Total)
+	assert.Zero(t, out.AmbiguousByName, r.Message)
+
+	var h struct{ Outgoing *Node }
+	r, _ = v.call(t, "rag_call_hierarchy", map[string]any{"workspace_root": v.root, "symbol": "UseLk", "direction": "outgoing"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	data(t, r, &h)
+	require.Len(t, h.Outgoing.Children, 2, "both variants")
+	assert.Equal(t, "m/pkg.Lk", h.Outgoing.Children[0].QualifiedName)
+}

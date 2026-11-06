@@ -1,0 +1,218 @@
+[RagCode v3](../../README.md) › [parser](../README.md) › php
+
+# PHP and Blade Analyzer
+
+The `php` package turns PHP files into `parser.Symbol` values (classes,
+interfaces, traits, enums, functions, methods, constants, properties) and
+derives two framework symbol kinds from call shapes: Laravel routes and
+WordPress hooks. Blade views (`.blade.php`) are handled by a separate line
+scanner in the same package.
+
+PHP files use the tree-sitter `php` grammar. Every name is resolved through
+the file's own namespace and `use` import table at parse time; the analyzer
+keeps no state between files.
+
+## Where it sits
+
+- **Registered** from `init()`; the binary pulls it in through a blank import
+  in [`internal/app`](../../internal/app/README.md).
+- **Called** by [`index`](../../index/README.md) and
+  [`tools`](../../tools/README.md) through `parser.Analyze`. The registry's
+  longest-extension match sends `x.blade.php` to this analyzer as a Blade
+  file.
+- **Calls** the tree-sitter helpers and `Finalize` from
+  [parser](../README.md). No file system access.
+
+| Property | Value |
+|----------|-------|
+| Language | `php` (also for Blade views) |
+| Extensions | `.php`, `.blade.php` |
+
+```mermaid
+graph TD
+    A[parser.File] --> B{.blade.php?}
+    B -->|yes| BL[blade: line scanner<br/>template + sections + imports]
+    B -->|no| P[ParseTree php]
+    P --> W[walkTop: namespaces, use,<br/>declarations, top-level calls]
+    W --> D[symbols + call relations]
+    W --> RC[rawCalls: plain and static calls]
+    RC --> FW[frameworkSymbols:<br/>Laravel routes, WordPress hooks]
+    D --> F[parser.Finalize]
+    FW --> F
+    BL --> F
+```
+
+## Qualified names
+
+`Module` is the namespace with its backslashes (`App\Http\Controllers`); the
+owner and name are joined with `.`. So `App\Http\Controllers\UserController::show`
+is stored as `App\Http\Controllers.UserController.show`.
+`parser.Normalize` makes both spellings compare equal. Files in the global
+namespace have module `""`.
+
+Both namespace forms are supported: `namespace X;` (applies until the next
+namespace statement) and braced `namespace X { ... }` (scoped to its block).
+Each namespace starts a fresh import table.
+
+### Import table
+
+| Statement | Effect |
+|-----------|--------|
+| `use App\Models\User;` | class alias `User` -> `App\Models\User` |
+| `use Illuminate\Http\Request as Req;` | class alias `Req` |
+| `use App\Services\{Mailer, Logger as Log};` | group use, one alias per clause |
+| `use function App\Helpers\format_name;` | function alias |
+| `use const App\Helpers\MAX_ITEMS;` | ignored (constants are never relation targets) |
+
+Name resolution follows PHP: a leading `\` is fully qualified,
+`namespace\X` is relative to the current namespace, a qualified name
+(`Sub\X`) resolves its first segment through the class table, an unqualified
+name goes through the class or function table and otherwise falls into the
+current namespace. `self` / `static` resolve to the enclosing class;
+`parent` resolves to nothing.
+
+## Symbols extracted
+
+| Construct | Kind | Owner | Exported |
+|-----------|------|-------|----------|
+| `class`, `trait`, `enum` | `class` | | yes |
+| `interface` | `interface` | | yes |
+| Method | `method` | class name | no `private`/`protected` modifier |
+| Constructor-promoted parameter (`private Mailer $mailer`) | `variable` | class name | by its modifier |
+| Property (`$name`, stored without `$`) | `variable` | class name | by its modifier |
+| Class constant | `constant` | class name | by its modifier |
+| Enum `case` | `constant` | enum name | yes |
+| Top-level `function` | `function` | | yes |
+| Top-level `const X = ...` | `constant` | | yes |
+| Top-level `define('NAME', ...)` | `constant` | | yes |
+| `Route::get('/users', ...)` | `route` | enclosing symbol name | yes |
+| `add_action('init', ...)` / `add_filter(...)` | `hook` | enclosing symbol name | yes |
+
+- **Signature** is the declaration header after any attributes, up to the
+  body, without a trailing `;`, collapsed to one line. The content keeps the
+  attributes.
+- **Doc** is the run of comments directly above the declaration, with
+  `/**`, `/*`, `//`, `#` and `*` markers removed.
+- Anonymous classes are skipped; their calls do not count toward the
+  enclosing method.
+
+### Example
+
+```php
+<?php
+namespace App\Http\Controllers;
+
+use App\Models\User;
+
+final class UserController extends Controller
+{
+    public static function show(int $id)
+    {
+        $user = User::find($id);
+        $this->validate($id);
+    }
+}
+
+Route::get('/users', [UserController::class, 'index']);
+add_action('init', 'my_init');
+```
+
+| Qualified name | Kind | Owner |
+|----------------|------|-------|
+| `App\Http\Controllers.UserController` | `class` | |
+| `App\Http\Controllers.UserController.show` | `method` | `UserController` |
+| `App\Http\Controllers./users` | `route` | |
+| `App\Http\Controllers.init` | `hook` | |
+
+Relations: `UserController` extends `Controller` ->
+`App\Http\Controllers.Controller`; `show` calls `find` ->
+`App\Models.User.find` and `validate` ->
+`App\Http\Controllers.UserController.validate`.
+
+## Relations extracted
+
+| Source construct | Relation | Target qualified name |
+|------------------|----------|-----------------------|
+| `extends Base` | `extends` | Resolved through the class table. |
+| `implements I, \J` | `implements` | Same. |
+| `use TraitA, TraitB;` inside a class | `uses_type` | Same. |
+| `new Foo()` | `uses_type` | Same; `new $cls` and `new class {}` are skipped. |
+| `Foo::bar()`, `self::bar()`, `static::bar()` | `call` | `<class FQN>.bar`; `parent::bar()` has an empty target. |
+| `$this->m()` / `$this?->m()` | `call` | `<namespace>.<Owner>.m` |
+| `$obj->m()` | `call` | `""` (receiver type unknown) |
+| `fn()` | `call` | Through the function table. Inside a namespace, an unqualified function that is not imported gets an empty target: PHP falls back to the global function at runtime, so the namespace would only be a guess and the indexer resolves it by name instead. |
+
+Calls inside closures and arrow functions count toward the enclosing function
+or method. Dynamic calls (`$fn()`) are skipped.
+
+## Framework handling
+
+Framework symbols are derived from the calls collected while walking; the
+call shape is the only evidence, there is no project detection. A call
+produces a symbol only when it has a string-literal argument; the first such
+argument becomes the symbol name.
+
+| Framework | Call shape | Kind | Metadata |
+|-----------|-----------|------|----------|
+| Laravel | `Route::get/post/put/patch/delete/any/match/resource/group(...)`, where the receiver is written `Route` or resolves to `Illuminate\Support\Facades\Route` | `route` | `framework=laravel`, `method=<name>` |
+| WordPress | `add_action(...)` / `add_filter(...)` as plain function calls | `hook` | `framework=wordpress`, `kind=action` or `filter` |
+
+The symbol's content is the call expression and its signature is the call's
+first line. Its owner is the `Name` of the function or method the call sits
+in (`""` at top level), so `add_action('init', ...)` inside `function
+free_fn()` becomes `<namespace>.free_fn.init`.
+
+## Blade views
+
+`.blade.php` files are not parsed with tree-sitter. `blade.go` scans them line
+by line with one regular expression.
+
+| Output | Details |
+|--------|---------|
+| One `template` symbol for the file | Name = file name without `.blade.php`; module = the dotted directory below the last `views` folder in the path (`resources/views/users/show.blade.php` -> module `users`, qualified name `users.show`). Content is the whole file. |
+| One `template` symbol per `@section('x')`, `@component('x')`, `@livewire('x')` | Owner = the view name. `@section` without a second argument and `@component` extend to the next closing directive (`@endsection`, `@endcomponent`, `@stop`, `@show`, `@append`, `@overwrite`); the others are one line. |
+| `imports` relation on the file symbol | For `@extends`, `@include`, `@includeIf`, `@each`; the target qualified name is the view name as written (`layouts.app`), which matches the qualified name of `resources/views/layouts/app.blade.php`. |
+
+A view outside any `views` folder has module `""`.
+
+## Known limitations visible in the code
+
+- Receiver types are not inferred, so `$obj->method()` stays unresolved.
+- Route and hook symbols inside a method take the method's name as owner,
+  not the class.
+- `do_action` / `apply_filters` and chained route calls (`->name(...)`,
+  `->middleware(...)`) are not turned into symbols.
+- `Route::group([...], fn)` has no string argument and produces no symbol.
+- The Blade scanner does not skip `{{-- --}}` comments, and an opening block
+  is closed by whichever closing directive comes next.
+
+## Files
+
+| File | Contents |
+|------|----------|
+| `php.go` | The analyzer and registration, the collector (namespace, import tables, symbols, raw calls), `use` handling, PHP name resolution, declarations (classes, interfaces, traits, enums, functions, methods, properties, constants, promoted parameters, `define()`), signature and doc extraction, call relations. |
+| `framework.go` | `frameworkSymbols`: Laravel route and WordPress hook symbols from the collected calls. |
+| `blade.go` | The Blade line scanner (`blade`) and the view module rule (`viewModule`). |
+
+### Tests
+
+| File | Covers |
+|------|--------|
+| `php_test.go` | Registration of both extensions; a controller fixture with group/function/const `use`, attributes, traits, enums, promoted properties, closures, anonymous classes, routes and hooks (kinds, owners, lines, docs, signatures, metadata, relation targets); a plugin with braced namespaces and parse-error recovery; malformed input; global-namespace function calls; concurrency. |
+| `blade_test.go` | A Blade view with sections, components and includes; a view outside a `views` folder. |
+| `zz_verify_test.go` | Verification tests: name resolution, global-namespace WordPress code, robustness, a routes file, multiple namespaces in one file, Blade layouts, no shared state between calls. |
+
+## Testing
+
+```bash
+cd v3
+go test ./parser/php/
+```
+
+No build tags or external services.
+
+## See also
+
+- [parser](../README.md): symbol model, `Normalize`, registry
+- [index](../../index/README.md): resolves targets workspace-wide (falls back to the method name for inherited `$this->m()` calls)
+- Other analyzers: [javascript](../javascript/README.md), [web](../web/README.md)

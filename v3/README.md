@@ -52,3 +52,50 @@ workspace path. Set `RAGCODE_HOME` to move `~/.ragcode`.
 `rag_search`, `rag_find_usages`, `rag_call_hierarchy`,
 `rag_list_package_exports`, `rag_read_file_context`, `rag_index_workspace`,
 `rag_server_info`. Each takes `workspace_root`; the client passes it.
+
+## Code map
+
+Every package directory has its own README; start here and follow the links.
+
+| Directory | What it does |
+|---|---|
+| [cmd](cmd/README.md) | the two binaries |
+| [cmd/rag-code-mcp](cmd/rag-code-mcp/README.md) | the server binary: MCP over stdio by default, Streamable HTTP with `--http`; logs go to `$RAGCODE_HOME/logs/ragcode.log` |
+| [cmd/rag-code-install](cmd/rag-code-install/README.md) | the installer binary; `-uninstall` removes RagCode |
+| [internal](internal/README.md) | packages private to this module: wiring, config, install and uninstall |
+| [internal/app](internal/app/README.md) | wires config, embedder, store, engine and the MCP tools into one server |
+| [internal/config](internal/config/README.md) | loads `~/.ragcode/config.yaml` and provides the process logger |
+| [internal/idepaths](internal/idepaths/README.md) | where each supported IDE keeps its MCP config; writes or removes the `ragcode` entry |
+| [internal/install](internal/install/README.md) | sets RagCode up: binary, `config.yaml`, Ollama container, model, IDE configs, PATH |
+| [internal/uninstall](internal/uninstall/README.md) | removes processes, IDE entries, per-root `.ragcode` directories, `~/.ragcode` and the PATH line |
+| [engine](engine/README.md) | orchestrates workspaces: root validation, known roots, one index queue per root through a single global slot, a file watcher per root |
+| [index](index/README.md) | the indexing pipeline for one root: walk, skip rules, parse, workspace-wide relation resolution, embed, upsert |
+| [embed](embed/README.md) | turns text into vectors through Ollama's `/api/embed`; a deterministic fake for tests |
+| [parser](parser/README.md) | the symbol and relation contract every language analyzer produces |
+| [parser/docs](parser/docs/README.md) | Markdown sections, JSON/YAML/TOML keys and plain text as searchable chunks |
+| [parser/gdscript](parser/gdscript/README.md) | Godot scripts (`.gd`) and text scenes (`.tscn`) |
+| [parser/golang](parser/golang/README.md) | Go, one symbol per top-level declaration |
+| [parser/javascript](parser/javascript/README.md) | JavaScript, TypeScript and Vue single-file components |
+| [parser/php](parser/php/README.md) | PHP and Blade |
+| [parser/python](parser/python/README.md) | Python |
+| [parser/web](parser/web/README.md) | HTML with Go template actions |
+| [store](store/README.md) | the symbol store: `Store` interface, SQLite implementation on `vecdb`, in-memory implementation for tests |
+| [vecdb](vecdb/README.md) | the embedded vector database: one SQLite file per collection, exact cosine search, no CGO |
+| [tools](tools/README.md) | the seven `rag_*` MCP tools and their JSON answers |
+
+How a request flows:
+
+```mermaid
+graph LR
+    C[MCP client] -->|rag_* call| T[tools]
+    T --> E[engine]
+    E -->|query text| EM[embed]
+    EM -->|HTTP| O[(Ollama)]
+    E -->|Search / Scroll| S[store]
+    E -->|queued runs| I[index]
+    I -->|parse| P[parser]
+    I -->|embed| EM
+    I -->|Upsert / Delete| S
+    S --> V[vecdb]
+    V --> D[("index.db, one per workspace")]
+```

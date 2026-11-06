@@ -20,8 +20,8 @@ import (
 const maxDebounces = 10
 
 // watcher turns fsnotify events of one root into IndexFiles batches. A change
-// to .git/HEAD or .git/refs, an event overflow or a removed directory queue a
-// full run instead.
+// to .git/HEAD, .git/refs or a .gitignore, an event overflow or a removed
+// directory queue a full run instead.
 type watcher struct {
 	ws   *Workspace
 	fsw  *fsnotify.Watcher
@@ -155,6 +155,10 @@ func (wt *watcher) handle(ev fsnotify.Event) bool {
 		return false
 	}
 	if slices.ContainsFunc(parts[:len(parts)-1], wt.skipDir) {
+		return false
+	}
+	if parts[len(parts)-1] == ".gitignore" { // only a walk applies ignore rules to indexed files
+		wt.full(".gitignore changed")
 		return false
 	}
 	switch {

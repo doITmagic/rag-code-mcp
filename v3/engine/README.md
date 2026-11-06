@@ -70,8 +70,8 @@ graph TD
 
 | File | Covers |
 |------|--------|
-| `engine_test.go` | Root validation, auto-index on first contact, request coalescing, `ErrHeadChanged` re-queue, retry of failed runs, a failed recreate that resumes without dropping again, no watcher without `auto_index`, recreate, embedding model change, a lock held by another engine, `Resume`, no goroutines left after `Close`, `WriteIDERules` (tracked files, symlinks, symlinked parent directories, continuing after a refused file), backoff, a run waiting for the slot counts as queued. `TestMain` points `RAGCODE_HOME` at a temp dir. |
-| `watch_test.go` | The watcher end to end, root removed, root that comes back, unreadable subdirectory, watcher restart retried. |
+| `engine_test.go` | Root validation, auto-index on first contact, request coalescing, `ErrHeadChanged` re-queue, retry of failed runs, a failed recreate that resumes without dropping again, no watcher without `auto_index`, recreate, embedding model change, concurrent root registration from several engines, a search refused on an index of another model with the same vector size, a lock held by another engine, `Resume`, no goroutines left after `Close`, `WriteIDERules` (tracked files, symlinks, symlinked parent directories, continuing after a refused file), backoff, a run waiting for the slot counts as queued. `TestMain` points `RAGCODE_HOME` at a temp dir. |
+| `watch_test.go` | The watcher end to end, a `.gitignore` edit queues a full run, root removed, root that comes back, unreadable subdirectory, watcher restart retried. |
 | `prefix_test.go` | `Search` adds the model's query prefix. |
 | `zz_verify_test.go` | Verification tests: concurrent `Workspace` calls, cancelled contexts, enqueue during a lock retry, recreate while locked, a directory moved out and the forced debounce flush, status read from disk before any run, home symlink guard, `Close` cancelling a blocked run, junk `roots.json`, a files run with only deletions, junk paths, `Ready` remediation text, a failed query embed does not enqueue, recreate absorbing queued files, catch-up with and without `auto_index`, double `Close`, `.git/refs` plus hidden and excluded directories, kernel file systems refused. |
 
@@ -120,7 +120,7 @@ a runner waiting for the slot), `Running` (a run holds the slot) and
 | Error | When |
 |-------|------|
 | `*RootError` | `Workspace` refused the path; the message says why and asks for the absolute project path as `workspace_root`. |
-| `ErrNotIndexed` | `Search`/`Scroll` found no collection, or one with another vector size. |
+| `ErrNotIndexed` | `Search`/`Scroll` found no collection, or one with another vector size; `Search` also when the index was made with another model. |
 | `ErrLocked` | Wraps `index.ErrLocked`; shown in `Status.LastError` while another process indexes the root. |
 | `ErrClosed` | `Workspace` after `Close`. |
 
@@ -153,7 +153,9 @@ and queues a full run to catch up.
 ### roots.json
 
 `~/.ragcode/roots.json` is a sorted JSON array of every root ever opened. It
-is rewritten with `index.WriteAtomic` under a mutex. `Resume` reads it at
+is rewritten with `index.WriteAtomic` under a mutex and, across server
+processes, the file lock `roots.json.lock` (`index.LockFile`, retried for up
+to 2 s), so two first contacts at once both keep their root. `Resume` reads it at
 start-up; an unreadable or invalid file counts as empty.
 
 ---
@@ -238,6 +240,7 @@ that cannot be watched is logged and skipped.
 | `.git/HEAD` or anything under `.git/refs/` | full run ("git HEAD changed") |
 | anything else under `.git` | ignored |
 | a path inside a hidden or excluded directory | ignored |
+| a `.gitignore` at any depth | full run (".gitignore changed"): only the walk applies ignore rules to files already indexed or newly eligible |
 | remove/rename of a watched directory | its watches are dropped, full run ("directory removed"); the walk reconciles its files |
 | remove/rename of a file | queued as deleted |
 | create of a directory | watched with its subtree, and every file already in it is queued as changed (a directory moved in emits no events for its contents) |
@@ -270,6 +273,13 @@ embedder's (the embedding model changed), the error becomes `ErrNotIndexed`
 and, with `auto_index`, a full run is queued; `index.Run` then creates or
 recreates the collection. A cancelled context returns its own error. A
 failed query embed returns the embed error and queues nothing.
+
+Before embedding, `Search` compares the model recorded in the root's
+`state.json` (`index.StateModel`) with the embedder's: an index made with
+another model, even of the same vector size, returns `ErrNotIndexed` (and
+queues a run with `auto_index`), so `rag_search` falls back to name matching
+instead of ranking incomparable vectors. A match is remembered for the
+process. `Scroll` needs no vector and is not affected.
 
 `Ready` checks, in order, that the embedder answers (`Dimension`), that the
 store answers and that the collection exists; when not, the text says what

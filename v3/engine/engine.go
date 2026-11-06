@@ -65,7 +65,7 @@ type Engine struct {
 	mu      sync.Mutex // guards ws, closed and every job field of a Workspace
 	ws      map[string]*Workspace
 	closed  bool
-	rootsMu sync.Mutex // ponytail: held across the tiny roots.json rewrite; one file, a few bytes
+	rootsMu sync.Mutex // with roots.json.lock across processes: held across the roots.json rewrite
 }
 
 // New returns an engine. log may be nil.
@@ -190,6 +190,23 @@ func readRoots() []string {
 func (e *Engine) registerRoot(root string) error {
 	e.rootsMu.Lock()
 	defer e.rootsMu.Unlock()
+	// Other server processes rewrite the file too: without the file lock, two
+	// first contacts at once keep only the last writer's root.
+	if err := os.MkdirAll(filepath.Dir(rootsPath()), 0o755); err != nil {
+		return err
+	}
+	var unlock func()
+	var err error
+	for i := 0; ; i++ {
+		if unlock, err = index.LockFile(rootsPath() + ".lock"); !errors.Is(err, index.ErrLocked) || i == 100 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	roots := readRoots()
 	if slices.Contains(roots, root) {
 		return nil

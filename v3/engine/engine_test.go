@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -209,6 +210,31 @@ func TestFirstContactAutoIndex(t *testing.T) {
 	ok, msg = w2.Ready(context.Background())
 	assert.False(t, ok)
 	assert.Contains(t, msg, "rag_index_workspace")
+}
+
+// An index made with another model of the same vector size must not answer
+// semantic searches: the vectors are not comparable.
+func TestSearchRefusesIndexOfAnotherModel(t *testing.T) {
+	cfg := testConfig(t)
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a.go"), "func A\n")
+	st := store.NewMemory()
+	e := New(cfg, st, &embed.Fake{Name: "model-a"}, nil)
+	w, err := e.Workspace(root)
+	require.NoError(t, err)
+	w.Index(false)
+	require.Eventually(t, func() bool { s := w.Status(); return s.Phase == "done" && !s.Running && !s.Queued }, 2*time.Second, 10*time.Millisecond)
+	e.Close()
+
+	cfg.AutoIndex = false
+	e2 := New(cfg, st, &embed.Fake{Name: "model-b"}, nil)
+	defer e2.Close()
+	w2, err := e2.Workspace(root)
+	require.NoError(t, err)
+	_, err = w2.Search(context.Background(), "A", store.Filter{}, 5)
+	require.ErrorIs(t, err, ErrNotIndexed)
+	_, err = w2.Scroll(context.Background(), store.Filter{}, 5)
+	require.NoError(t, err, "name lookups do not depend on the model")
 }
 
 func TestCoalescing(t *testing.T) {
@@ -602,4 +628,22 @@ func TestWaitingForSlotIsQueued(t *testing.T) {
 
 	close(rec.hold)
 	require.Eventually(t, func() bool { s := b.Status(); return !s.Running && !s.Queued && len(rec.snapshot()) == 2 }, 2*time.Second, 5*time.Millisecond)
+}
+
+// Several server processes register their roots at once: none is lost. Each
+// Engine has its own mutex, as separate processes do.
+func TestRegisterRootAcrossEngines(t *testing.T) {
+	cfg := testConfig(t)
+	var roots []string
+	var wg sync.WaitGroup
+	for i := range 16 {
+		root := filepath.Join(t.TempDir(), fmt.Sprint("r", i))
+		roots = append(roots, root)
+		e := New(cfg, store.NewMemory(), &embed.Fake{}, nil)
+		t.Cleanup(e.Close)
+		wg.Add(1)
+		go func() { defer wg.Done(); assert.NoError(t, e.registerRoot(root)) }()
+	}
+	wg.Wait()
+	assert.ElementsMatch(t, roots, readRoots())
 }

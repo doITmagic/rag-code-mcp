@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/v3/embed"
@@ -30,6 +31,8 @@ type Workspace struct {
 	status  index.Status
 	watch   *watcher
 	gone    bool // the root was removed or renamed; the next Workspace call re-watches it
+
+	modelOK atomic.Bool // the index was made with the embedder's model (fixed for the process)
 }
 
 // Status is the index progress plus the queue state of the workspace.
@@ -77,6 +80,20 @@ func (w *Workspace) IndexFiles(changed, deleted []string) {
 
 // Search embeds query once and returns the nearest symbols.
 func (w *Workspace) Search(ctx context.Context, query string, f store.Filter, limit int) ([]store.Hit, error) {
+	if !w.modelOK.Load() {
+		// Vectors of another model, even of the same size, are not comparable;
+		// index.Run re-embeds everything on the next run.
+		switch m := index.StateModel(w.Root); m {
+		case w.e.embed.Model():
+			w.modelOK.Store(true)
+		case "":
+		default:
+			if w.e.cfg.AutoIndex {
+				w.Index(false)
+			}
+			return nil, ErrNotIndexed
+		}
+	}
 	vecs, err := w.e.embed.Embed(ctx, []string{embed.QueryText(w.e.embed.Model(), query)})
 	if err != nil {
 		return nil, err

@@ -176,3 +176,27 @@ func TestWatcherRestartRetried(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, watching(), "restart retried")
 }
+
+// Only a full walk applies ignore rules to files already indexed (or newly
+// eligible): a .gitignore edit, at any depth, queues one.
+func TestWatcherGitignoreQueuesFullRun(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.WatchEnabled = true
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "sub"), 0o755))
+	rec := &runRecorder{}
+	e := New(cfg, store.NewMemory(), &embed.Fake{}, nil)
+	defer e.Close()
+	e.run = rec.run
+	w, err := e.Workspace(root)
+	require.NoError(t, err)
+	require.NotNil(t, w.watch)
+	for _, p := range []string{".gitignore", filepath.Join("sub", ".gitignore")} {
+		n := len(rec.snapshot())
+		writeFile(t, filepath.Join(root, p), "local.json\n")
+		require.Eventually(t, func() bool {
+			s := rec.snapshot()
+			return len(s) > n && s[len(s)-1].Files == nil
+		}, 2*time.Second, 10*time.Millisecond, p)
+	}
+}

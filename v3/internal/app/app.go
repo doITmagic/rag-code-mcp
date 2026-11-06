@@ -6,6 +6,7 @@ import (
 	"context"
 	"log/slog"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/v3/embed"
@@ -59,8 +60,30 @@ func New(o Options) (*App, error) {
 	}
 	eng := engine.New(o.Config, o.Store, o.Embedder, o.Log)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "ragcode", Version: o.Version}, &mcp.ServerOptions{Logger: slog.New(sdkLog{o.Log.Handler()})})
+	srv.AddReceivingMiddleware(logClient(o.Log))
 	tools.Register(srv, eng, o.Config, o.Version, time.Now())
 	return &App{Server: srv, Engine: eng, store: o.Store, log: o.Log}, nil
+}
+
+// logClient names the client of each session once: several clients share one
+// log file. ClientInfo comes from initialize, or per request on 2026-07-28.
+func logClient(log *slog.Logger) mcp.Middleware {
+	var named sync.Map // shortcut: keys of closed HTTP sessions stay, one pointer each; prune if HTTP serves many clients
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if r, ok := req.(interface {
+				ClientInfo() *mcp.Implementation
+				ProtocolVersion() string
+			}); ok {
+				if ci := r.ClientInfo(); ci != nil {
+					if _, seen := named.LoadOrStore(req.GetSession(), true); !seen {
+						log.Info("client connected", "client", ci.Name, "client_version", ci.Version, "protocol", r.ProtocolVersion())
+					}
+				}
+			}
+			return next(ctx, method, req)
+		}
+	}
 }
 
 // sdkLog passes the go-sdk's records through, except that its

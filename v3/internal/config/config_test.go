@@ -196,3 +196,27 @@ func TestLoadIgnoresOldQdrantKeys(t *testing.T) {
 	_, err := Load(path)
 	require.NoError(t, err)
 }
+
+// Two servers share the log. When one rotates it twice, the other's next
+// line must not land in the overwritten (unlinked) file.
+func TestOpenLogFileFollowsRotationByAnotherProcess(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ragcode.log")
+	busy, err := OpenLogFile(path, 1)
+	require.NoError(t, err)
+	defer busy.Close()
+	quiet, err := OpenLogFile(path, 1)
+	require.NoError(t, err)
+	defer quiet.Close()
+
+	line := bytes.Repeat([]byte("y"), 1100)
+	for i := 0; i < 2000; i++ { // rotates at writes 1000 and 2000
+		_, err := busy.Write(line)
+		require.NoError(t, err)
+	}
+	_, err = quiet.Write([]byte("quiet-line\n"))
+	require.NoError(t, err)
+
+	cur, _ := os.ReadFile(path)
+	rot, _ := os.ReadFile(path + ".1")
+	assert.True(t, bytes.Contains(cur, []byte("quiet-line")) || bytes.Contains(rot, []byte("quiet-line")), "line lost in a rotated-away file")
+}

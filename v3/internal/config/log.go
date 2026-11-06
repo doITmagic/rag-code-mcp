@@ -38,6 +38,7 @@ type logFile struct {
 	path string
 	max  int64
 	f    *os.File
+	fi   os.FileInfo // identity of f, to notice a rotation by another process
 	n    int
 }
 
@@ -47,6 +48,7 @@ func (w *logFile) open() error {
 		return fmt.Errorf("config: open log: %w", err)
 	}
 	w.f = f
+	w.fi, _ = f.Stat()
 	return nil
 }
 
@@ -65,6 +67,14 @@ func (w *logFile) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.n++
+	// Another server rotated the shared log: follow it, or a second rotation
+	// would leave this process appending to an unlinked file.
+	if st, err := os.Stat(w.path); err == nil && w.fi != nil && !os.SameFile(st, w.fi) {
+		w.f.Close()
+		if err := w.open(); err != nil {
+			return 0, err
+		}
+	}
 	if w.n%1000 == 0 {
 		st, err := w.f.Stat()
 		if err == nil && st.Size() > w.max {

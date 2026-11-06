@@ -86,7 +86,7 @@ func run(ctx context.Context, cfgPath, httpAddr, logLevel string) error {
 			fmt.Fprintln(os.Stderr, "logging to stderr:", err)
 		}
 	}
-	log := config.NewLogger(cfg.LogLevel, out)
+	log := config.NewLogger(cfg.LogLevel, out).With("pid", os.Getpid()) // every server process writes the same file
 
 	a, err := app.New(app.Options{Config: cfg, Version: Version, Log: log})
 	if err != nil {
@@ -97,7 +97,7 @@ func run(ctx context.Context, cfgPath, httpAddr, logLevel string) error {
 		defer cancel()
 		a.Close(cctx)
 	}()
-	log.Info("rag-code-mcp starting", "version", Version, "pid", os.Getpid(), "http", httpAddr)
+	log.Info("rag-code-mcp starting", "version", Version, "http", httpAddr)
 
 	if httpAddr == "" {
 		go a.Engine.Resume(ctx)

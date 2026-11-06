@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -106,3 +108,43 @@ func TestAppDefaultStoreIsSQLite(t *testing.T) {
 	require.Eventually(t, func() bool { s := w.Status(); return s.Phase == "done" && !s.Running }, 10*time.Second, 20*time.Millisecond)
 	assert.FileExists(t, filepath.Join(home, "index", store.CollectionName(root), "index.db"))
 }
+
+// Several clients share one log file, so each connection names its client,
+// on the initialize handshake and on the 2026-07-28 per-request metadata.
+func TestLogsConnectedClient(t *testing.T) {
+	for _, proto := range []string{"2025-11-25", ""} {
+		t.Run("protocol="+proto, func(t *testing.T) {
+			t.Setenv("RAGCODE_HOME", t.TempDir())
+			cfg := config.Default()
+			cfg.WatchEnabled = false
+			var buf syncBuf
+			log := slog.New(slog.NewTextHandler(&buf, nil))
+			a, err := New(Options{Config: cfg, Version: "v3", Log: log, Store: store.NewMemory(), Embedder: &embed.Fake{}})
+			require.NoError(t, err)
+			t.Cleanup(func() { a.Close(context.Background()) })
+
+			ct, st := mcp.NewInMemoryTransports()
+			_, err = a.Server.Connect(context.Background(), st, nil)
+			require.NoError(t, err)
+			cs, err := mcp.NewClient(&mcp.Implementation{Name: "claude-code", Version: "2.1"}, nil).Connect(context.Background(), ct, &mcp.ClientSessionOptions{ProtocolVersion: proto})
+			require.NoError(t, err)
+			defer cs.Close()
+			_, err = cs.ListTools(context.Background(), nil)
+			require.NoError(t, err)
+			_, err = cs.ListTools(context.Background(), nil)
+			require.NoError(t, err)
+			assert.Eventually(t, func() bool {
+				return strings.Contains(buf.String(), `msg="client connected" client=claude-code client_version=2.1`)
+			}, 2*time.Second, 10*time.Millisecond, buf.String())
+			assert.Equal(t, 1, strings.Count(buf.String(), `msg="client connected"`), "once per session")
+		})
+	}
+}
+
+type syncBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) { s.mu.Lock(); defer s.mu.Unlock(); return s.b.Write(p) }
+func (s *syncBuf) String() string              { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }

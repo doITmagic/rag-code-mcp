@@ -248,7 +248,7 @@ func (c *fileCtx) function(n, decl *gotreesitter.Node, owner string, decorators 
 		kind = parser.KindMethod
 	}
 	s := c.base(n, decl, owner, parser.Text(parser.Field(n, c.lang, "name"), c.src), kind, decorators)
-	s.Relations = c.calls(parser.Field(n, c.lang, "body"), owner)
+	s.Relations = c.calls(n, owner)
 	return s
 }
 
@@ -380,9 +380,11 @@ func dedent(s string) string {
 
 // calls collects every call in body, including those inside nested
 // functions, lambdas and comprehensions, attributed to the enclosing symbol.
-func (c *fileCtx) calls(body *gotreesitter.Node, owner string) []parser.Relation {
+// A callee whose first segment is a parameter or local of fn is unresolved.
+func (c *fileCtx) calls(def *gotreesitter.Node, owner string) []parser.Relation {
 	var rels []parser.Relation
-	parser.Walk(body, func(n *gotreesitter.Node) bool {
+	locals := c.locals(def)
+	parser.Walk(parser.Field(def, c.lang, "body"), func(n *gotreesitter.Node) bool {
 		if n.Type(c.lang) != "call" {
 			return true
 		}
@@ -397,15 +399,70 @@ func (c *fileCtx) calls(body *gotreesitter.Node, owner string) []parser.Relation
 			if name == "super" { // super().m() is reported as the m call
 				return true
 			}
-			rels = append(rels, parser.Relation{Kind: parser.RelCall, TargetName: name, TargetQualifiedName: c.resolveDotted(name), Line: line})
+			qn := c.resolveDotted(name)
+			if locals[name] {
+				qn = ""
+			}
+			rels = append(rels, parser.Relation{Kind: parser.RelCall, TargetName: name, TargetQualifiedName: qn, Line: line})
 		case "attribute":
 			obj := parser.Field(fn, c.lang, "object")
 			name := parser.Text(parser.Field(fn, c.lang, "attribute"), c.src)
-			rels = append(rels, parser.Relation{Kind: parser.RelCall, TargetName: name, TargetQualifiedName: c.resolveMethod(obj, name, owner), Line: line})
+			qn := c.resolveMethod(obj, name, owner)
+			if first, _, _ := strings.Cut(parser.Text(obj, c.src), "."); locals[first] {
+				qn = ""
+			}
+			rels = append(rels, parser.Relation{Kind: parser.RelCall, TargetName: name, TargetQualifiedName: qn, Line: line})
 		}
 		return true
 	})
 	return rels
+}
+
+// locals returns the parameter and assignment / for / with / except target
+// names bound anywhere in def, nested functions and lambdas included. self
+// and cls stay out: resolveMethod handles them.
+// shortcut: one set for the whole function, so a local shadows an import everywhere in it, not only after its declaration.
+func (c *fileCtx) locals(def *gotreesitter.Node) map[string]bool {
+	set := map[string]bool{}
+	parser.Walk(def, func(n *gotreesitter.Node) bool {
+		switch n.Type(c.lang) {
+		case "function_definition", "lambda":
+			c.bind(parser.Field(n, c.lang, "parameters"), set)
+		case "assignment", "for_statement", "for_in_clause":
+			c.bind(parser.Field(n, c.lang, "left"), set)
+		case "as_pattern":
+			c.bind(parser.Field(n, c.lang, "alias"), set)
+		case "named_expression":
+			c.bind(parser.Field(n, c.lang, "name"), set)
+		}
+		return true
+	})
+	delete(set, "self")
+	delete(set, "cls")
+	return set
+}
+
+// bind adds the names declared by a parameter list or assignment target,
+// skipping defaults, annotations and attribute / subscript targets.
+func (c *fileCtx) bind(n *gotreesitter.Node, set map[string]bool) {
+	if n == nil {
+		return
+	}
+	switch n.Type(c.lang) {
+	case "identifier":
+		set[parser.Text(n, c.src)] = true
+	case "default_parameter", "typed_default_parameter":
+		c.bind(parser.Field(n, c.lang, "name"), set)
+	case "typed_parameter":
+		if n.NamedChildCount() > 0 {
+			c.bind(n.NamedChild(0), set)
+		}
+	case "attribute", "subscript":
+	default:
+		for _, ch := range parser.NamedChildren(n) {
+			c.bind(ch, set)
+		}
+	}
 }
 
 // resolveDotted resolves "a.b.c" through the import table or the module's
@@ -445,7 +502,7 @@ func (c *fileCtx) resolveMethod(obj *gotreesitter.Node, name, owner string) stri
 // canonical follows package __init__.py re-exports: with app/models/__init__.py
 // doing "from .user import User", "app.models.User.find" becomes
 // "app.models.user.User.find", the name the method is indexed under.
-// ponytail: explicit imports only, a "from .user import *" re-export stays unresolved.
+// shortcut: explicit imports only, a "from .user import *" re-export stays unresolved.
 func (c *fileCtx) canonical(qn string, depth int) string {
 	if c.root == "" || depth > 8 {
 		return qn

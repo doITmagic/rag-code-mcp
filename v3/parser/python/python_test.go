@@ -368,3 +368,39 @@ func TestPackageReexportCached(t *testing.T) {
 	require.NoError(t, os.WriteFile(init, []byte("from .person import User\n"), 0o644))
 	assert.Equal(t, "app.person.User.find", find(), "size changed: re-parsed")
 }
+
+func TestLocalsShadowImports(t *testing.T) {
+	m := byQN(analyze(t, "/ws/mod.py", "/ws", `from disk import remove
+import os
+
+def invoke(remove): remove()
+def f(os): os.remove()
+def typed(os: Foo = None, *remove): os.x(); remove()
+def assigned():
+    os = make()
+    os.remove()
+    for remove in items: remove()
+    with open() as os: os.y()
+def real():
+    remove()
+    os.stat()
+def lam(): return lambda remove: remove()
+class K:
+    def m(self, os):
+        self.n()
+        os.z()
+    def n(self): pass
+`))
+	call := func(fn string) map[string]string { return targets(m["mod."+fn], parser.RelCall) }
+	assert.Equal(t, "", call("invoke")["remove"])
+	assert.Equal(t, "", call("f")["remove"])
+	assert.Equal(t, "", call("typed")["x"])
+	assert.Equal(t, "", call("typed")["remove"])
+	assert.Equal(t, "", call("assigned")["remove"])
+	assert.Equal(t, "", call("assigned")["y"])
+	assert.Equal(t, "disk.remove", call("real")["remove"])
+	assert.Equal(t, "os.stat", call("real")["stat"])
+	assert.Equal(t, "", call("lam")["remove"])
+	assert.Equal(t, "", call("K.m")["z"])
+	assert.Equal(t, "mod.K.n", call("K.m")["n"])
+}

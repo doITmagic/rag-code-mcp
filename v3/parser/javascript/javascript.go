@@ -109,7 +109,7 @@ const maxUnclosed = 256
 
 // unbalanced reports whether src opens more than maxUnclosed brackets than it
 // closes, in one linear pass that skips strings and comments.
-// ponytail: regex literals are not skipped; a "(" inside one counts as open.
+// shortcut: regex literals are not skipped; a "(" inside one counts as open.
 func unbalanced(src []byte) bool {
 	depth := 0
 	for i := 0; i < len(src); i++ {
@@ -183,7 +183,7 @@ type vueBlock struct {
 }
 
 // vueBlocks finds every top-level <script> body and the outermost <template>
-// in a .vue file. ponytail: plain string scanning; a nested <template> inside
+// in a .vue file. shortcut: plain string scanning; a nested <template> inside
 // the template body is swallowed by the outer one, which is what we want.
 func vueBlocks(src []byte) []vueBlock {
 	var out []vueBlock
@@ -454,7 +454,7 @@ func (c *fileCtx) topLevel(n *gotreesitter.Node, out *[]parser.Symbol) {
 	switch n.Type(c.lang) {
 	case "function_declaration", "generator_function_declaration", "function_signature", "function_expression", "arrow_function":
 		s := c.symbol(n, decl, "", or(name, "default"), parser.KindFunction, exported)
-		s.Relations = c.calls(parser.Field(n, c.lang, "body"), "")
+		s.Relations = c.calls(n, "")
 		*out = append(*out, s)
 	case "class_declaration", "abstract_class_declaration", "class":
 		c.class(n, decl, or(name, "default"), exported, out)
@@ -545,7 +545,7 @@ func (c *fileCtx) method(m, fn *gotreesitter.Node, owner string, ownerExported b
 	private := strings.HasPrefix(name, "#") || child(m, c.lang, "accessibility_modifier") != nil && parser.Text(child(m, c.lang, "accessibility_modifier"), c.src) == "private"
 	s := c.symbol(fn, m, owner, name, parser.KindMethod, ownerExported && !private)
 	s.Exported = ownerExported && !private
-	s.Relations = c.calls(parser.Field(fn, c.lang, "body"), owner)
+	s.Relations = c.calls(fn, owner)
 	*out = append(*out, s)
 }
 
@@ -592,7 +592,7 @@ func (c *fileCtx) variables(n, decl *gotreesitter.Node, exported bool, out *[]pa
 		}
 		s := c.symbol(v, decl, "", parser.Text(name, c.src), kind, exported)
 		if kind == parser.KindFunction {
-			s.Relations = c.calls(parser.Field(v, c.lang, "body"), "")
+			s.Relations = c.calls(v, "")
 		}
 		*out = append(*out, s)
 	}
@@ -617,7 +617,7 @@ func (c *fileCtx) exportsAssign(n, decl *gotreesitter.Node, out *[]parser.Symbol
 	}
 	s := c.symbol(v, decl, "", name, kind, true)
 	if kind == parser.KindFunction {
-		s.Relations = c.calls(parser.Field(v, c.lang, "body"), "")
+		s.Relations = c.calls(v, "")
 	}
 	*out = append(*out, s)
 }
@@ -691,25 +691,35 @@ func blockLines(text string) []string {
 
 // ---- relations ----
 
-// calls collects calls, constructions and JSX component uses inside body,
+// calls collects calls, constructions and JSX component uses inside fn's body,
 // including those in nested callbacks, attributed to the enclosing symbol.
-func (c *fileCtx) calls(body *gotreesitter.Node, owner string) []parser.Relation {
+// A callee whose first segment is a parameter or local of fn is unresolved.
+func (c *fileCtx) calls(fn *gotreesitter.Node, owner string) []parser.Relation {
 	var rels []parser.Relation
-	parser.Walk(body, func(n *gotreesitter.Node) bool {
+	locals := c.locals(fn)
+	parser.Walk(parser.Field(fn, c.lang, "body"), func(n *gotreesitter.Node) bool {
 		line, _ := parser.Lines(n)
 		switch n.Type(c.lang) {
 		case "call_expression":
-			fn := parser.Field(n, c.lang, "function")
-			if fn == nil {
+			callee := parser.Field(n, c.lang, "function")
+			if callee == nil {
 				return true
 			}
-			switch fn.Type(c.lang) {
+			switch callee.Type(c.lang) {
 			case "identifier":
-				name := parser.Text(fn, c.src)
-				rels = append(rels, parser.Relation{Kind: parser.RelCall, TargetName: name, TargetQualifiedName: c.resolveDotted(name), Line: line})
+				name := parser.Text(callee, c.src)
+				qn := c.resolveDotted(name)
+				if locals[name] {
+					qn = ""
+				}
+				rels = append(rels, parser.Relation{Kind: parser.RelCall, TargetName: name, TargetQualifiedName: qn, Line: line})
 			case "member_expression":
-				obj, name := parser.Field(fn, c.lang, "object"), parser.Text(parser.Field(fn, c.lang, "property"), c.src)
-				rels = append(rels, parser.Relation{Kind: parser.RelCall, TargetName: name, TargetQualifiedName: c.resolveMember(obj, name, owner), Line: line})
+				obj, name := parser.Field(callee, c.lang, "object"), parser.Text(parser.Field(callee, c.lang, "property"), c.src)
+				qn := c.resolveMember(obj, name, owner)
+				if first, _, _ := strings.Cut(parser.Text(obj, c.src), "."); obj.Type(c.lang) != "this" && locals[first] {
+					qn = ""
+				}
+				rels = append(rels, parser.Relation{Kind: parser.RelCall, TargetName: name, TargetQualifiedName: qn, Line: line})
 			}
 		case "new_expression":
 			if ctor := parser.Field(n, c.lang, "constructor"); ctor != nil {
@@ -727,6 +737,46 @@ func (c *fileCtx) calls(body *gotreesitter.Node, owner string) []parser.Relation
 		return true
 	})
 	return rels
+}
+
+// locals returns the parameter and let/const/var names bound anywhere in fn,
+// nested functions included.
+// shortcut: one set for the whole function, so a local shadows an import everywhere in it, not only after its declaration.
+func (c *fileCtx) locals(fn *gotreesitter.Node) map[string]bool {
+	set := map[string]bool{}
+	parser.Walk(fn, func(n *gotreesitter.Node) bool {
+		switch n.Type(c.lang) {
+		case "variable_declarator":
+			c.bind(parser.Field(n, c.lang, "name"), set)
+		case "function_declaration", "generator_function_declaration", "function_signature", "function_expression", "generator_function", "arrow_function", "method_definition", "method_signature":
+			c.bind(parser.Field(n, c.lang, "parameters"), set)
+			c.bind(parser.Field(n, c.lang, "parameter"), set) // arrow function without parentheses
+		}
+		return true
+	})
+	return set
+}
+
+// bind adds the names declared by a parameter list or binding pattern,
+// skipping default values.
+func (c *fileCtx) bind(n *gotreesitter.Node, set map[string]bool) {
+	if n == nil {
+		return
+	}
+	switch n.Type(c.lang) {
+	case "identifier", "shorthand_property_identifier_pattern":
+		set[parser.Text(n, c.src)] = true
+	case "required_parameter", "optional_parameter":
+		c.bind(parser.Field(n, c.lang, "pattern"), set)
+	case "assignment_pattern", "object_assignment_pattern":
+		c.bind(parser.Field(n, c.lang, "left"), set)
+	case "pair_pattern":
+		c.bind(parser.Field(n, c.lang, "value"), set)
+	default:
+		for _, ch := range parser.NamedChildren(n) {
+			c.bind(ch, set)
+		}
+	}
 }
 
 // typeRel builds a relation to a type written as "A" or "ns.A", dropping

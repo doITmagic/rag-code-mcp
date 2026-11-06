@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/doITmagic/rag-code-mcp/v3/parser"
 	"github.com/stretchr/testify/assert"
@@ -237,6 +238,20 @@ func TestNestedGoModStopsAtRoot(t *testing.T) {
 	assert.Contains(t, syms, "example.com/ws/sub2.G")
 }
 
+// A renamed module shows up without a restart: the cached lookup is checked
+// against go.mod's mtime.
+func TestGoModRenameSeen(t *testing.T) {
+	root := t.TempDir()
+	gomod := filepath.Join(root, "go.mod")
+	require.NoError(t, os.WriteFile(gomod, []byte("module old.example/app\n"), 0o644))
+	path := filepath.Join(root, "pkg", "f.go")
+	assert.Contains(t, analyze(t, root, path, "package pkg\n\nfunc F() {}\n"), "old.example/app/pkg.F")
+
+	require.NoError(t, os.WriteFile(gomod, []byte("module new.example/app\n"), 0o644))
+	require.NoError(t, os.Chtimes(gomod, time.Now(), time.Now().Add(time.Second)))
+	assert.Contains(t, analyze(t, root, path, "package pkg\n\nfunc F() {}\n"), "new.example/app/pkg.F")
+}
+
 func TestMalformed(t *testing.T) {
 	tests := []struct {
 		name string
@@ -351,6 +366,27 @@ func F[T any](x T) {
 		rel(parser.RelUsesType, "T", "github.com/acme/app/pkg/db.T", 11),
 		rel(parser.RelUsesType, "T", "github.com/acme/app/pkg/db.T", 12),
 	}, syms["F"].Relations)
+}
+
+// A parameter or local named like an import shadows it: its method call has
+// an unknown target, not the package function of that name.
+func TestLocalShadowsImport(t *testing.T) {
+	root := t.TempDir()
+	src := `package g
+
+import "github.com/acme/app/pkg/db"
+
+func F(db *Conn) {
+	db.Close()
+}
+
+func G() {
+	db.Close()
+}
+`
+	syms := analyze(t, root, filepath.Join(root, "g.go"), src)
+	assert.Contains(t, syms["F"].Relations, rel(parser.RelCall, "Close", "", 6))
+	assert.Equal(t, []parser.Relation{rel(parser.RelCall, "Close", "github.com/acme/app/pkg/db.Close", 10)}, syms["G"].Relations)
 }
 
 // Only the package API counts as exported: not test files, not the methods

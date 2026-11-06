@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -267,7 +268,8 @@ func (fc *file) appendValues(syms []parser.Symbol, decl *gotreesitter.Node, spec
 // the returned names are interface method names when n is an interface.
 // locals returns the parameter and variable names declared inside n.
 // shortcut: one set for the whole declaration, so a local shadows a package
-// function of the same name everywhere in it, not only after its declaration.
+// function or an import of the same name everywhere in it, not only after its
+// declaration.
 func (fc *file) locals(n *gotreesitter.Node) map[string]bool {
 	out := map[string]bool{}
 	idents := func(c *gotreesitter.Node) {
@@ -317,7 +319,7 @@ func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []pars
 				}
 			case "selector_expression":
 				name := fc.text(parser.Field(fn, fc.lang, "field"))
-				add(parser.RelCall, name, fc.callTarget(parser.Field(fn, fc.lang, "operand"), name, recv, owner), c)
+				add(parser.RelCall, name, fc.callTarget(parser.Field(fn, fc.lang, "operand"), name, recv, owner, locals), c)
 			}
 		case "composite_literal", "type_conversion_expression":
 			t := parser.Field(c, fc.lang, "type")
@@ -366,14 +368,17 @@ func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []pars
 
 // callTarget resolves the qualified name of "operand.name(...)": the
 // receiver variable, a type declared here (T.M, (*T).M, T{}.M), or an
-// import; "" when the operand's type is unknown.
-func (fc *file) callTarget(operand *gotreesitter.Node, name, recv, owner string) string {
+// import; "" when the operand's type is unknown, as for a parameter or local
+// that shadows an import.
+func (fc *file) callTarget(operand *gotreesitter.Node, name, recv, owner string, locals map[string]bool) string {
 	switch operand.Type(fc.lang) {
 	case "identifier":
 		id := fc.text(operand)
 		switch {
 		case recv != "" && id == recv:
 			return parser.Qualify(fc.module, owner, name)
+		case locals[id]:
+			return ""
 		case fc.types[id]:
 			return parser.Qualify(fc.module, id, name)
 		}
@@ -382,7 +387,7 @@ func (fc *file) callTarget(operand *gotreesitter.Node, name, recv, owner string)
 		}
 	case "parenthesized_expression":
 		if u := operand.NamedChild(0); u != nil && u.Type(fc.lang) == "unary_expression" {
-			return fc.callTarget(parser.Field(u, fc.lang, "operand"), name, "", "")
+			return fc.callTarget(parser.Field(u, fc.lang, "operand"), name, "", "", locals)
 		}
 	case "composite_literal":
 		if _, tqn := fc.resolveType(parser.Field(operand, fc.lang, "type")); tqn != "" {
@@ -483,10 +488,16 @@ func firstLine(s string) string {
 
 // ---- module path ----
 
-// modCache maps root+dir to the module path, so go.mod is read once per
-// directory. ponytail: never invalidated; a go.mod module-line edit needs a
-// process restart to show up.
+// modCache maps root+dir to a modEntry, so go.mod is read once per directory
+// and only stat-ed afterwards. shortcut: a go.mod created later in a
+// directory that had none is not seen until a restart.
 var modCache sync.Map
+
+type modEntry struct {
+	mod   string
+	gomod string // the go.mod it came from, "" when none
+	mtime time.Time
+}
 
 // modulePath is the Go import path of dir: the nearest go.mod at or above
 // dir (not above root) plus the relative directory, or the directory
@@ -495,23 +506,31 @@ func modulePath(root, dir string) string {
 	root, dir = filepath.Clean(root), filepath.Clean(dir)
 	key := root + "\x00" + dir
 	if v, ok := modCache.Load(key); ok {
-		return v.(string)
+		e := v.(modEntry)
+		if e.gomod == "" {
+			return e.mod
+		}
+		if fi, err := os.Stat(e.gomod); err == nil && fi.ModTime().Equal(e.mtime) {
+			return e.mod
+		}
 	}
-	mod := ""
+	e := modEntry{}
 	for d := dir; ; {
-		if m := readModuleLine(filepath.Join(d, "go.mod")); m != "" {
-			mod = joinSlash(m, relSlash(d, dir))
+		p := filepath.Join(d, "go.mod")
+		fi, err := os.Stat(p)
+		if m := readModuleLine(p); err == nil && m != "" {
+			e = modEntry{mod: joinSlash(m, relSlash(d, dir)), gomod: p, mtime: fi.ModTime()}
 			break
 		}
 		parent := filepath.Dir(d)
 		if d == root || parent == d {
-			mod = relSlash(root, dir)
+			e.mod = relSlash(root, dir)
 			break
 		}
 		d = parent
 	}
-	modCache.Store(key, mod)
-	return mod
+	modCache.Store(key, e)
+	return e.mod
 }
 
 func readModuleLine(path string) string {

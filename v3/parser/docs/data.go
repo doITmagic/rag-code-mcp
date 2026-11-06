@@ -184,7 +184,7 @@ var (
 // toml is a line scanner: [table] and [[table]] headers become chunks, keys
 // become chunks owned by the current table. A key spans to the line before
 // the next key or header, so multi-line values stay attached.
-// ponytail: a multi-line string whose line looks like `k = v` is read as a key; a real tokenizer fixes it if that shows up.
+// shortcut: a multi-line string whose line looks like `k = v` is read as a key; a real tokenizer fixes it if that shows up.
 func (d *doc) toml() []parser.Symbol {
 	type item struct {
 		name, owner string

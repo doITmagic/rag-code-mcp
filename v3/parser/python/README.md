@@ -152,6 +152,10 @@ keyed by root + path and invalidated by mtime and size.
 - `from m import *` is not recorded, so names it brings in stay unresolved,
   and a star re-export in an `__init__.py` is not followed.
 - No type inference: `obj.method()` on a local variable has an empty target.
+- A parameter or assignment / `for` / `with ... as` target name shadows an
+  import or module-level name for the whole function (one set per function,
+  not scoped by position), so `remove()` and `os.remove()` through it have an
+  empty target. `self` and `cls` are exempt.
 - Calls to `super()` methods are not resolved to the parent class.
 
 ## Files

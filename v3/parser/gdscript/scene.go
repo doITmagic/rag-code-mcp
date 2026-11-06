@@ -10,7 +10,7 @@ import (
 // Metadata truncated=true when the scene had more.
 const maxNodes = 500
 
-// ponytail: node Content is capped. Embedded resources (meshes, tile data)
+// shortcut: node Content is capped. Embedded resources (meshes, tile data)
 // serialize as megabyte-long lines and one such point bloats every search
 // response that carries it. Raise only with a store-side size check.
 const maxContent = 8 << 10

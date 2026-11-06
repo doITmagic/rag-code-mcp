@@ -408,3 +408,31 @@ export default function Button() { util(); x(); Button(); }
 	syms = analyze(t, "src/c.js", "function C() {}\nexport { C as default };\n")
 	assert.Equal(t, "C", find(t, syms, "src/c.default").Name)
 }
+
+func TestLocalsShadowImports(t *testing.T) {
+	syms := analyze(t, "src/a.js", `import {remove} from "./disk";
+import fs from "./fs";
+class Store { run() {} }
+function invoke(remove) { remove(); }
+function viaDefault(fs = 1) { fs.read(); }
+function viaLocal() { const Store = make(); Store.run(); }
+const arrow = ({remove: rm, fs}) => { rm(); fs.write(); };
+function nested() { return [1].map((remove) => remove()); }
+function real() { remove(); fs.stat(); Store.run(); }
+class K { m(fs) { fs.x(); this.n(); } n() {} }
+`)
+	qn := func(fn, name string) string {
+		return rel(t, find(t, syms, "src/a."+fn), parser.RelCall, name).TargetQualifiedName
+	}
+	assert.Equal(t, "", qn("invoke", "remove"))
+	assert.Equal(t, "", qn("viaDefault", "read"))
+	assert.Equal(t, "", qn("viaLocal", "run"))
+	assert.Equal(t, "", qn("arrow", "rm"))
+	assert.Equal(t, "", qn("arrow", "write"))
+	assert.Equal(t, "", qn("nested", "remove"))
+	assert.NotEmpty(t, qn("real", "remove"))
+	assert.NotEmpty(t, qn("real", "stat"))
+	assert.NotEmpty(t, qn("real", "run"))
+	assert.Equal(t, "", qn("K.m", "x"))
+	assert.Equal(t, "src/a.K.n", qn("K.m", "n"))
+}

@@ -165,7 +165,10 @@ method.
   `<template`, last `</template>`).
 - Only top-level statements produce symbols; functions declared inside other
   functions do not.
-- No type inference for calls on variables or parameters.
+- No type inference for calls on variables or parameters. A parameter or
+  `let`/`const`/`var` name shadows an import or top-level name for the whole
+  function (one set per function, not scoped by declaration position), so
+  `remove()` and `obj.m()` through it have an empty target.
 
 ## Files
 

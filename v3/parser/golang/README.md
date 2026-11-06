@@ -110,7 +110,7 @@ is not declared in this file); `Start` calls `Stop` ->
 |------------------|----------|----------------------------|
 | `f(x)` | `call` | `<module>.f`. Built-ins (`len`, `append`, `make`, conversion type names, ...) and names declared as locals or parameters in the same declaration are skipped. |
 | `T(x)` with `T` declared in the file | `uses_type` | Conversion to a local type: `<module>.T`. |
-| `pkg.F(x)` | `call` | Through the import table: `<import path>.F`. |
+| `pkg.F(x)` | `call` | Through the import table: `<import path>.F`, unless a parameter or local named `pkg` shadows the import (then `""`). |
 | `recv.M()` inside a method | `call` | Receiver variable: `<module>.<Owner>.M`. |
 | `T.M(...)`, `(*T).M(...)`, `T{}.M()` | `call` | Type declared in the file: `<module>.T.M`. |
 | `x.M()` on anything else | `call` | Target name only, qualified name `""`. |
@@ -126,11 +126,12 @@ Relations of a `var` or `const` spec are shared by every name in that spec.
 
 - No type inference: calls on variables, fields or return values
   (`s.Inner.Do()`, `a.Do()`) keep an empty target qualified name.
-- A local variable shadows a package function of the same name across the
-  whole declaration, not only after its declaration (marked as a `shortcut:`
+- A local variable shadows a package function or an import of the same name
+  across the whole declaration, not only after its declaration (marked as a `shortcut:`
   in `locals`).
-- The `go.mod` lookup is cached per root + directory for the life of the
-  process; editing a `module` line needs a restart to show up.
+- The `go.mod` lookup is cached per root + directory and re-read when that
+  `go.mod` changes (mtime) or disappears; a `go.mod` created later in a
+  directory that had none needs a restart to show up.
 - Methods whose receiver type cannot be read produce no symbol.
 
 ## Files
@@ -143,7 +144,7 @@ Relations of a `var` or `const` spec are shared by every name in that spec.
 
 | File | Covers |
 |------|--------|
-| `golang_test.go` | A fixture with grouped declarations, generics, embedded types, aliased/dot/blank imports: symbol kinds, owners, lines, signatures, docs, IDs, metadata; every relation and its target; module path without `go.mod`, nested `go.mod` stopping at the root; malformed input; analyzing the real `parser.go` of this repo; registration; concurrency; generic calls; `Exported` for test files and unexported owners; calls through local function values. |
+| `golang_test.go` | A fixture with grouped declarations, generics, embedded types, aliased/dot/blank imports: symbol kinds, owners, lines, signatures, docs, IDs, metadata; every relation and its target; module path without `go.mod`, nested `go.mod` stopping at the root; malformed input; analyzing the real `parser.go` of this repo; registration; concurrency; generic calls; `Exported` for test files and unexported owners; calls through local function values; a parameter shadowing an import; a renamed module seen without a restart. |
 | `zz_verify_test.go` | Verification tests: resolution probes, an unclean (non-normalized) root path, robustness on garbage and edge input, a second round of edge cases, very large and deeply nested files. |
 
 ## Testing

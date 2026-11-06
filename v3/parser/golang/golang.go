@@ -45,6 +45,7 @@ type file struct {
 	module  string
 	imports map[string]string // local name → import path
 	types   map[string]bool   // type names declared in this file
+	test    bool              // a _test.go file: nothing in it is package API
 }
 
 // Analyze parses one Go file. Malformed input yields whatever declarations
@@ -61,6 +62,7 @@ func (Analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 		module:  modulePath(f.Root, filepath.Dir(f.Path)),
 		imports: map[string]string{},
 		types:   map[string]bool{},
+		test:    strings.HasSuffix(f.Path, "_test.go"),
 	}
 	root := tree.RootNode()
 	// Pass 1: import table and locally declared type names.
@@ -150,7 +152,6 @@ func (fc *file) specs(decl *gotreesitter.Node, kinds ...string) []*gotreesitter.
 func (fc *file) base(n *gotreesitter.Node, name string, kind parser.Kind, owner string) parser.Symbol {
 	start, end := parser.Lines(n)
 	content := fc.text(n)
-	r, _ := utf8.DecodeRuneInString(name)
 	return parser.Symbol{
 		Name:          name,
 		Kind:          kind,
@@ -162,8 +163,14 @@ func (fc *file) base(n *gotreesitter.Node, name string, kind parser.Kind, owner 
 		Doc:           fc.docAbove(n),
 		StartLine:     start,
 		EndLine:       end,
-		Exported:      unicode.IsUpper(r),
+		Exported:      !fc.test && upper(name) && (owner == "" || upper(owner)),
 	}
+}
+
+// upper reports a Go exported identifier: the first rune is upper case.
+func upper(name string) bool {
+	r, _ := utf8.DecodeRuneInString(name)
+	return unicode.IsUpper(r)
 }
 
 func (fc *file) appendFunc(syms []parser.Symbol, n *gotreesitter.Node, kind parser.Kind, recv, owner string) []parser.Symbol {
@@ -258,6 +265,32 @@ func (fc *file) appendValues(syms []parser.Symbol, decl *gotreesitter.Node, spec
 // relations collects calls, type uses and embeddings under n. recv is the
 // enclosing method's receiver variable (calls on it resolve to owner), and
 // the returned names are interface method names when n is an interface.
+// locals returns the parameter and variable names declared inside n.
+// shortcut: one set for the whole declaration, so a local shadows a package
+// function of the same name everywhere in it, not only after its declaration.
+func (fc *file) locals(n *gotreesitter.Node) map[string]bool {
+	out := map[string]bool{}
+	idents := func(c *gotreesitter.Node) {
+		for _, id := range parser.NamedChildren(c) {
+			if id.Type(fc.lang) == "identifier" {
+				out[fc.text(id)] = true
+			}
+		}
+	}
+	parser.Walk(n, func(c *gotreesitter.Node) bool {
+		switch c.Type(fc.lang) {
+		case "parameter_declaration", "variadic_parameter_declaration", "var_spec":
+			idents(c)
+		case "short_var_declaration", "range_clause":
+			if l := parser.Field(c, fc.lang, "left"); l != nil {
+				idents(l)
+			}
+		}
+		return true
+	})
+	return out
+}
+
 func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []parser.Relation, methods []string) {
 	add := func(kind parser.RelationKind, name, tqn string, at *gotreesitter.Node) {
 		if name == "" {
@@ -266,6 +299,7 @@ func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []pars
 		line, _ := parser.Lines(at)
 		rels = append(rels, parser.Relation{Kind: kind, TargetName: name, TargetQualifiedName: tqn, Line: line})
 	}
+	locals := fc.locals(n)
 	var visit func(c *gotreesitter.Node) bool
 	visit = func(c *gotreesitter.Node) bool {
 		switch c.Type(fc.lang) {
@@ -275,7 +309,7 @@ func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []pars
 			case "identifier":
 				name := fc.text(fn)
 				switch {
-				case builtins[name]:
+				case builtins[name], locals[name]: // a local func value is no package symbol
 				case fc.types[name]: // conversion to a local type
 					add(parser.RelUsesType, name, parser.Qualify(fc.module, "", name), c)
 				default:

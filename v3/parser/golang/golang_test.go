@@ -193,11 +193,9 @@ func TestFixtureRelations(t *testing.T) {
 			rel(parser.RelUsesType, "Conn", "github.com/acme/app/pkg/db.Conn", 56),
 			rel(parser.RelUsesType, "Names", mod+".Names", 57),
 			rel(parser.RelCall, "later", mod+".later", 58),
-			rel(parser.RelCall, "f", mod+".f", 59),
 		}},
 		{mod + ".Server.Start", []parser.Relation{
 			rel(parser.RelCall, "Stop", mod+".Server.Stop", 64),
-			rel(parser.RelCall, "h", mod+".h", 66),
 			rel(parser.RelCall, "Query", "", 67),
 		}},
 		{mod + ".Server.Stop", nil},
@@ -353,4 +351,47 @@ func F[T any](x T) {
 		rel(parser.RelUsesType, "T", "github.com/acme/app/pkg/db.T", 11),
 		rel(parser.RelUsesType, "T", "github.com/acme/app/pkg/db.T", 12),
 	}, syms["F"].Relations)
+}
+
+// Only the package API counts as exported: not test files, not the methods
+// and fields of unexported types.
+func TestExportedIsPackageAPI(t *testing.T) {
+	src := "package p\n\ntype Pub struct{ Field int }\n\nfunc (Pub) Method() {}\n\ntype hidden struct{ Field int }\n\nfunc (hidden) Method() {}\n\nfunc (h *hidden) Close() error { return nil }\n"
+	syms := analyze(t, "/x", "/x/p/p.go", src)
+	exported := func(q string) bool { s, ok := syms[q]; require.True(t, ok, q); return s.Exported }
+	assert.True(t, exported("p.Pub"))
+	assert.True(t, exported("p.Pub.Method"))
+	assert.False(t, exported("p.hidden.Method"))
+	assert.False(t, exported("p.hidden.Close"))
+
+	tests := analyze(t, "/x", "/x/p/p_test.go", "package p\n\nfunc TestX(t *testing.T) {}\n\nfunc BenchmarkY(b *testing.B) {}\n\ntype Helper struct{}\n")
+	for q, s := range tests {
+		assert.False(t, s.Exported, q)
+	}
+}
+
+// A call through a parameter or a local variable is not a call to a package
+// function of that name.
+func TestCallThroughLocalIsNotPackageFunc(t *testing.T) {
+	src := `package p
+
+func helper() {}
+
+func Wrap(next func(), more ...func()) func() {
+	fn := helper
+	var cb, other = helper, helper
+	for _, m := range more {
+		m()
+	}
+	return func() { next(); fn(); cb(); other(); helper() }
+}
+`
+	syms := analyze(t, "/x", "/x/p/p.go", src)
+	var calls []string
+	for _, r := range syms["p.Wrap"].Relations {
+		if r.Kind == parser.RelCall {
+			calls = append(calls, r.TargetName+"="+r.TargetQualifiedName)
+		}
+	}
+	assert.Equal(t, []string{"helper=p.helper"}, calls)
 }

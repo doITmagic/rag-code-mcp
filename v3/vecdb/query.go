@@ -78,20 +78,34 @@ func checkDim(coll string, got, want int) error {
 
 // Upsert inserts or replaces points by ID, in one transaction.
 func (d *DB) Upsert(ctx context.Context, coll string, pts []Point) error {
-	db, n, err := d.open(ctx, coll)
-	if err != nil || len(pts) == 0 {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	for _, p := range pts {
-		if err := checkDim(coll, len(p.Vector), n); err != nil {
-			return err
-		}
+	db, err := d.conn(coll, false)
+	if err != nil {
+		return err
 	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return d.wrap(coll, err)
 	}
 	defer tx.Rollback()
+	// Ensure may recreate the collection before we acquire the write lock.
+	n, err := dim(ctx, tx)
+	if err != nil {
+		return d.wrap(coll, err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	for _, p := range pts {
+		if err := checkDim(coll, len(p.Vector), n); err != nil {
+			return err
+		}
+	}
+	if len(pts) == 0 {
+		return nil
+	}
 	up, err := tx.PrepareContext(ctx, "INSERT INTO points(id, payload, vector, zero) VALUES(?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, vector=excluded.vector, zero=excluded.zero RETURNING pk")
 	if err != nil {
 		return d.wrap(coll, err)
@@ -151,10 +165,11 @@ func (d *DB) Search(ctx context.Context, coll string, vec []float32, c Cond, lim
 	if limit <= 0 {
 		return nil, ctx.Err()
 	}
-	db, n, err := d.open(ctx, coll)
+	tx, n, err := d.readTx(ctx, coll)
 	if err != nil {
 		return nil, err
 	}
+	defer tx.Rollback()
 	if err := checkDim(coll, len(vec), n); err != nil {
 		return nil, err
 	}
@@ -162,7 +177,7 @@ func (d *DB) Search(ctx context.Context, coll string, vec []float32, c Cond, lim
 	query := "SELECT id, payload, " + scoreExpr + " AS score FROM points WHERE " + w + " ORDER BY score DESC, id LIMIT ?"
 	all := append([]any{zero(vec), encode(vec)}, args...)
 	all = append(all, limit)
-	rows, err := db.QueryContext(ctx, query, all...)
+	rows, err := tx.QueryContext(ctx, query, all...)
 	if err != nil {
 		return nil, d.wrap(coll, err)
 	}
@@ -200,12 +215,13 @@ func (d *DB) Scan(ctx context.Context, coll string, c Cond, limit int) ([]Hit, e
 	if limit <= 0 {
 		return nil, ctx.Err()
 	}
-	db, _, err := d.open(ctx, coll)
+	tx, _, err := d.readTx(ctx, coll)
 	if err != nil {
 		return nil, err
 	}
+	defer tx.Rollback()
 	w, args := c.where()
-	rows, err := db.QueryContext(ctx, "SELECT id, payload FROM points WHERE "+w+" ORDER BY id LIMIT ?", append(args, limit)...)
+	rows, err := tx.QueryContext(ctx, "SELECT id, payload FROM points WHERE "+w+" ORDER BY id LIMIT ?", append(args, limit)...)
 	if err != nil {
 		return nil, d.wrap(coll, err)
 	}

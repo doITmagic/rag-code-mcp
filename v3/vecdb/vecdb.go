@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -58,7 +59,7 @@ CREATE INDEX IF NOT EXISTS fields_pk ON fields(pk);
 
 // validName refuses collection names that would leave dir.
 func validName(coll string) error {
-	if coll == "" || coll == "." || coll == ".." || strings.ContainsAny(coll, `/\`+"\x00") {
+	if coll == "" || coll == "." || coll == ".." || strings.ContainsAny(coll, `/\%`+"\x00") {
 		return fmt.Errorf("vecdb: invalid collection name %q", coll)
 	}
 	return nil
@@ -87,9 +88,17 @@ func (d *DB) conn(coll string, create bool) (*sql.DB, error) {
 	}
 	// _txlock=immediate: a write transaction takes the write lock at BEGIN,
 	// so it waits on busy_timeout instead of failing on a lock upgrade.
-	dsn := "file:" + filepath.ToSlash(path) + "?mode=" + mode + "&_txlock=immediate" +
-		"&_pragma=journal_mode(WAL)&_pragma=busy_timeout(10000)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)"
-	db, err := sql.Open("sqlite", dsn)
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, d.wrap(coll, err)
+	}
+	uriPath := filepath.ToSlash(abs)
+	if len(uriPath) >= 2 && uriPath[1] == ':' {
+		uriPath = "/" + uriPath // A Windows drive is a URI path, not a host.
+	}
+	uri := url.URL{Scheme: "file", Path: uriPath, RawQuery: "mode=" + mode + "&_txlock=immediate" +
+		"&_pragma=journal_mode(WAL)&_pragma=busy_timeout(10000)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)"}
+	db, err := sql.Open("sqlite", uri.String())
 	if err != nil {
 		return nil, fmt.Errorf("vecdb: open %s: %w", path, err)
 	}
@@ -136,6 +145,31 @@ func (d *DB) open(ctx context.Context, coll string) (*sql.DB, int, error) {
 		return nil, 0, ErrNotFound
 	}
 	return db, n, nil
+}
+
+// readTx keeps metadata and points in one snapshot across a concurrent Drop.
+func (d *DB) readTx(ctx context.Context, coll string) (*sql.Tx, int, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
+	db, err := d.conn(coll, false)
+	if err != nil {
+		return nil, 0, err
+	}
+	// modernc uses deferred BEGIN for ReadOnly, even with _txlock=immediate.
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, 0, d.wrap(coll, err)
+	}
+	n, err := dim(ctx, tx)
+	if err != nil || n == 0 {
+		tx.Rollback()
+		if err != nil {
+			return nil, 0, d.wrap(coll, err)
+		}
+		return nil, 0, ErrNotFound
+	}
+	return tx, n, nil
 }
 
 func (d *DB) wrap(coll string, err error) error {

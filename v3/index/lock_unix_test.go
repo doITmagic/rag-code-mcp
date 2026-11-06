@@ -14,8 +14,8 @@ import (
 
 func TestRunLocked(t *testing.T) {
 	e := newEnv(t)
-	require.NoError(t, os.MkdirAll(filepath.Join(e.root, ".ragcode"), 0o755))
-	f, err := os.OpenFile(filepath.Join(e.root, ".ragcode", "index.lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	require.NoError(t, os.MkdirAll(Dir(e.root), 0o755))
+	f, err := os.OpenFile(filepath.Join(Dir(e.root), "index.lock"), os.O_CREATE|os.O_RDWR, 0o644)
 	require.NoError(t, err)
 	defer f.Close()
 	require.NoError(t, syscall.Flock(int(f.Fd()), syscall.LOCK_EX))

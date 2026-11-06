@@ -22,6 +22,7 @@ import (
 	"github.com/doITmagic/rag-code-mcp/v3/engine"
 	"github.com/doITmagic/rag-code-mcp/v3/internal/config"
 	"github.com/doITmagic/rag-code-mcp/v3/internal/idepaths"
+	"github.com/doITmagic/rag-code-mcp/v3/store"
 )
 
 // Options controls Run.
@@ -197,7 +198,7 @@ func StopProcess(ctx context.Context, binary string) {
 func deleteCollections(ctx context.Context, baseURL, apiKey string, roots []string, out io.Writer) error {
 	own := map[string]bool{}
 	for _, r := range roots {
-		own[engine.CollectionName(r)] = true
+		own[store.CollectionName(r)] = true
 	}
 	client := &http.Client{Timeout: 10 * time.Second}
 	do := func(method, path string) (*http.Response, error) {

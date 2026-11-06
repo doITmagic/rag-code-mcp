@@ -224,7 +224,7 @@ func TestVerifyStatusFromDiskBeforeRun(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.AutoIndex = false
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, ".ragcode", "index_status.json"), `{"root":"x","phase":"done","started_at":"2026-01-01T00:00:00Z","ended_at":"2026-01-01T00:00:01Z","done":7}`)
+	writeFile(t, filepath.Join(index.Dir(root), "index_status.json"), `{"root":"x","phase":"done","started_at":"2026-01-01T00:00:00Z","ended_at":"2026-01-01T00:00:01Z","done":7}`)
 	e := New(cfg, store.NewMemory(), &embed.Fake{}, nil)
 	defer e.Close()
 	w, err := e.Workspace(root)
@@ -234,7 +234,7 @@ func TestVerifyStatusFromDiskBeforeRun(t *testing.T) {
 	assert.Equal(t, "done", s.Phase)
 	assert.False(t, s.Running)
 	// Truncated / junk status file is ignored, not a panic.
-	writeFile(t, filepath.Join(root, ".ragcode", "index_status.json"), `{"root":`)
+	writeFile(t, filepath.Join(index.Dir(root), "index_status.json"), `{"root":`)
 	assert.Equal(t, "", w.Status().Phase)
 }
 
@@ -422,7 +422,7 @@ func TestVerifyResumeCatchUpAndNoAutoIndex(t *testing.T) {
 			require.NoError(t, os.WriteFile(rootsPath(), data, 0o644))
 			tc.status.Root = root
 			sd, _ := json.Marshal(tc.status)
-			writeFile(t, filepath.Join(root, ".ragcode", "index_status.json"), string(sd))
+			writeFile(t, filepath.Join(index.Dir(root), "index_status.json"), string(sd))
 			rec := &runRecorder{}
 			e := New(cfg, store.NewMemory(), &embed.Fake{}, nil)
 			defer e.Close()

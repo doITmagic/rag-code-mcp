@@ -1,6 +1,6 @@
 // Package index runs the indexing pipeline for one workspace root: walk,
 // skip rules, parse, workspace-wide relation resolution, embed, upsert.
-// Progress and the per-file snapshot live under <root>/.ragcode/.
+// Progress and the per-file snapshot live under Dir(root).
 package index
 
 import (
@@ -27,7 +27,7 @@ import (
 )
 
 var (
-	// ErrLocked means another run holds <root>/.ragcode/index.lock.
+	// ErrLocked means another run holds Dir(root)/index.lock.
 	ErrLocked = errors.New("index: another run holds the lock")
 	// ErrHeadChanged means git HEAD moved while the run was indexing; the
 	// caller should queue a full run.
@@ -57,7 +57,7 @@ type Options struct {
 }
 
 // Status is the progress of a run, also persisted to
-// <root>/.ragcode/index_status.json.
+// Dir(root)/index_status.json.
 type Status struct {
 	Root      string    `json:"root"`
 	Branch    string    `json:"branch,omitempty"`
@@ -71,7 +71,7 @@ type Status struct {
 	Phase     string    `json:"phase"` // scanning|parsing|embedding|done|failed
 }
 
-func statusPath(root string) string { return filepath.Join(root, ".ragcode", "index_status.json") }
+func statusPath(root string) string { return filepath.Join(Dir(root), "index_status.json") }
 
 // ReadStatus returns the last persisted status for root.
 func ReadStatus(root string) (Status, bool) {
@@ -111,15 +111,8 @@ func Run(ctx context.Context, o Options) (Status, error) {
 		o.Log = slog.New(slog.DiscardHandler)
 	}
 	r := &run{Options: o, root: root, status: Status{Root: root, StartedAt: time.Now(), Phase: "scanning"}}
-	// A cloned repository may commit .ragcode as a symlink: never write
-	// through it.
-	dir := filepath.Join(root, ".ragcode")
-	if fi, err := os.Lstat(dir); err == nil && !fi.IsDir() {
-		return r.fail(fmt.Errorf("index: %s is not a directory", dir))
-	}
-	// Keep the index files out of git without touching the repository;
-	// WriteAtomic replaces a committed symlink instead of following it.
-	if err := WriteAtomic(filepath.Join(dir, ".gitignore"), []byte("*\n")); err != nil {
+	dir := Dir(root)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return r.fail(err)
 	}
 	unlock, err := lock(filepath.Join(dir, "index.lock"))

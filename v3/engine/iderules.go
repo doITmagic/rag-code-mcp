@@ -28,9 +28,9 @@ Always pass workspace_root: the absolute path of this project directory.
 // IDEPointer is the line WriteIDERules adds to the PointerFiles.
 const IDEPointer = "RagCode MCP: read .ragcode/RAGCODE.md and always pass workspace_root to the rag_* tools."
 
-// WriteIDERules writes <root>/.ragcode/RAGCODE.md and adds a one-line
-// pointer to .cursor/rules/ragcode.mdc (when .cursor/rules exists) and to
-// each instructionFiles entry that exists, once. Called by the index tool, not the engine.
+// WriteIDERules writes <root>/.ragcode/RAGCODE.md plus a .gitignore of "*"
+// there, and adds a one-line pointer to .cursor/rules/ragcode.mdc (when
+// .cursor/rules exists) and to each instructionFiles entry that exists, once. Called by the index tool, not the engine.
 // A cloned repo controls these paths, so no write follows a symlink; a refused
 // file is reported but does not stop the others.
 func WriteIDERules(root string) error {
@@ -45,6 +45,9 @@ func WriteIDERules(root string) error {
 	} else if err := within(real, dir); err != nil {
 		errs = append(errs, err)
 	} else if err := index.WriteAtomic(filepath.Join(dir, "RAGCODE.md"), []byte(ideRules)); err != nil {
+		errs = append(errs, err)
+	} else if err := index.WriteAtomic(filepath.Join(dir, ".gitignore"), []byte("*\n")); err != nil {
+		// Keeps .ragcode out of git without touching the repository's own ignores.
 		errs = append(errs, err)
 	}
 	if info, err := os.Stat(filepath.Join(root, ".cursor", "rules")); err == nil && info.IsDir() {

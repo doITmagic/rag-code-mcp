@@ -37,8 +37,17 @@ func (lineAnalyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 }
 
 func TestMain(m *testing.M) {
+	// Backstop: a test that forgets RAGCODE_HOME must not write index files
+	// into the real ~/.ragcode.
+	home, err := os.MkdirTemp("", "ragcode-home-")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("RAGCODE_HOME", home)
 	parser.Register(lineAnalyzer{})
-	os.Exit(m.Run())
+	code := m.Run()
+	os.RemoveAll(home)
+	os.Exit(code)
 }
 
 // blockingEmbedder holds every Embed call until release is closed.
@@ -356,7 +365,7 @@ func TestResume(t *testing.T) {
 	require.NoError(t, os.MkdirAll(config.HomeDir(), 0o755))
 	require.NoError(t, os.WriteFile(rootsPath(), data, 0o644))
 	st, _ := json.Marshal(index.Status{Root: root, StartedAt: time.Now(), Phase: "embedding"})
-	writeFile(t, filepath.Join(root, ".ragcode", "index_status.json"), string(st))
+	writeFile(t, filepath.Join(index.Dir(root), "index_status.json"), string(st))
 
 	rec := &runRecorder{}
 	e := New(cfg, store.NewMemory(), &embed.Fake{}, nil)
@@ -403,6 +412,9 @@ func TestWriteIDERules(t *testing.T) {
 	md, err := os.ReadFile(filepath.Join(root, ".ragcode", "RAGCODE.md"))
 	require.NoError(t, err)
 	assert.Contains(t, string(md), "workspace_root")
+	gi, err := os.ReadFile(filepath.Join(root, ".ragcode", ".gitignore"))
+	require.NoError(t, err)
+	assert.Equal(t, "*\n", string(gi))
 	claude, err := os.ReadFile(filepath.Join(root, "CLAUDE.md"))
 	require.NoError(t, err)
 	assert.Equal(t, "# Project\n"+IDEPointer+"\n", string(claude))

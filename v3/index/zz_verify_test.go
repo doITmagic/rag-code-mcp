@@ -112,7 +112,7 @@ func TestVerifyDeletedUnknownToState(t *testing.T) {
 	_, err := e.run(t, nil)
 	require.NoError(t, err)
 	// Simulate the crash: state lost, points present.
-	require.NoError(t, os.Remove(filepath.Join(e.root, ".ragcode", "state.json")))
+	require.NoError(t, os.Remove(filepath.Join(Dir(e.root), "state.json")))
 	require.NoError(t, os.Remove(a))
 	st, err := e.run(t, func(o *Options) { o.Files = []string{}; o.Deleted = []string{a} })
 	require.NoError(t, err)
@@ -130,7 +130,7 @@ func TestVerifyFreshStateSkipsStoreLookup(t *testing.T) {
 	_, err := e.run(t, nil)
 	require.NoError(t, err)
 	require.Equal(t, parser.ResolutionExact, e.symbols(t, a)["Foo"].Relations[0].Resolution)
-	require.NoError(t, os.Remove(filepath.Join(e.root, ".ragcode", "state.json")))
+	require.NoError(t, os.Remove(filepath.Join(Dir(e.root), "state.json")))
 	e.write(t, "a.go", "func Foo -> b.Bar\n\n")
 	_, err = e.run(t, func(o *Options) { o.Files = []string{a} })
 	require.NoError(t, err)
@@ -169,7 +169,7 @@ func TestVerifyLockReleasedAfterRun(t *testing.T) {
 	e.write(t, "a.go", "func A\n")
 	_, err := e.run(t, nil)
 	require.NoError(t, err)
-	unlock, err := lock(filepath.Join(e.root, ".ragcode", "index.lock"))
+	unlock, err := lock(filepath.Join(Dir(e.root), "index.lock"))
 	require.NoError(t, err, "lock must be released after Run")
 	unlock()
 }

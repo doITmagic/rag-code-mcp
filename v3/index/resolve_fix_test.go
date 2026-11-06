@@ -117,10 +117,16 @@ func TestRunRefusesRagcodeSymlinks(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "IMPORTANT\n", string(data))
 
+	// Run writes nothing under the root, so a committed .ragcode symlink
+	// gets nothing through it.
 	e2 := newEnv(t)
-	require.NoError(t, os.Symlink(t.TempDir(), filepath.Join(e2.root, ".ragcode")))
+	target := t.TempDir()
+	require.NoError(t, os.Symlink(target, filepath.Join(e2.root, ".ragcode")))
 	_, err = e2.run(t, nil)
-	require.ErrorContains(t, err, "not a directory")
+	require.NoError(t, err)
+	entries, err := os.ReadDir(target)
+	require.NoError(t, err)
+	assert.Empty(t, entries)
 }
 
 func TestReadIndexFilesRefuseDevices(t *testing.T) {
@@ -128,7 +134,7 @@ func TestReadIndexFilesRefuseDevices(t *testing.T) {
 		t.Skip("no /dev/zero")
 	}
 	root := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(root, ".ragcode"), 0o755))
+	require.NoError(t, os.MkdirAll(Dir(root), 0o755))
 	require.NoError(t, os.Symlink("/dev/zero", statusPath(root)))
 	require.NoError(t, os.Symlink("/dev/zero", statePath(root)))
 	done := make(chan struct{})

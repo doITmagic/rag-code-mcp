@@ -54,8 +54,17 @@ type downEmbedder struct{ *embed.Fake }
 func (downEmbedder) Dimension(context.Context) (int, error) { return 0, embed.ErrUnavailable }
 
 func TestMain(m *testing.M) {
+	// Backstop: a test that forgets RAGCODE_HOME must not write index files
+	// into the real ~/.ragcode.
+	home, err := os.MkdirTemp("", "ragcode-home-")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("RAGCODE_HOME", home)
 	parser.Register(fakeAnalyzer{})
-	os.Exit(m.Run())
+	code := m.Run()
+	os.RemoveAll(home)
+	os.Exit(code)
 }
 
 type env struct {
@@ -442,6 +451,7 @@ func TestIndexWorkspace(t *testing.T) {
 	require.Equal(t, "indexing", r.Status, r.Message)
 	assert.Contains(t, []string{"queued", "indexing", "done"}, r.Index.State)
 	assert.FileExists(t, filepath.Join(v.root, ".ragcode", "RAGCODE.md"))
+	assert.FileExists(t, filepath.Join(v.root, ".ragcode", ".gitignore"))
 	w, err := v.e.Workspace(v.root)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool { s := w.Status(); return s.Phase == "done" && !s.Running }, 10*time.Second, 20*time.Millisecond)

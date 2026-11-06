@@ -5,8 +5,6 @@ package engine
 
 import (
 	"context"
-	"crypto/sha1"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -80,13 +78,6 @@ func New(cfg config.Config, st store.Store, em embed.Embedder, log *slog.Logger)
 		ctx: ctx, cancel: cancel, slot: make(chan struct{}, 1), ws: map[string]*Workspace{}}
 }
 
-// CollectionName is the Qdrant collection of a resolved root:
-// "ragcode-" + 16 hex characters of sha1(root).
-func CollectionName(root string) string {
-	sum := sha1.Sum([]byte(filepath.Clean(root)))
-	return "ragcode-" + hex.EncodeToString(sum[:])[:16]
-}
-
 // Workspace validates root, registers it and returns its workspace. The
 // returned error is a *RootError when the path is not usable. One call per
 // root does the work; later calls return the same workspace.
@@ -100,7 +91,7 @@ func (e *Engine) Workspace(root string) (*Workspace, error) {
 	if e.closed {
 		w = nil
 	} else if !ok {
-		w = &Workspace{e: e, Root: real, Collection: CollectionName(real)}
+		w = &Workspace{e: e, Root: real, Collection: store.CollectionName(real)}
 		e.ws[real] = w
 	}
 	e.mu.Unlock()

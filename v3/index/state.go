@@ -18,7 +18,7 @@ type Entry struct {
 	IDs     []string `json:"ids,omitempty"`
 }
 
-// State is the per-root snapshot stored at <root>/.ragcode/state.json. Only
+// State is the per-root snapshot stored at Dir(root)/state.json. Only
 // the run goroutine touches it; nothing here locks.
 type State struct {
 	root  string
@@ -30,7 +30,7 @@ func newState(root string) *State {
 	return &State{root: root, Files: map[string]Entry{}}
 }
 
-func statePath(root string) string { return filepath.Join(root, ".ragcode", "state.json") }
+func statePath(root string) string { return filepath.Join(Dir(root), "state.json") }
 
 // LoadState reads the snapshot for root. A missing file is an empty state;
 // a corrupt one returns an empty state and the error.
@@ -55,9 +55,9 @@ func LoadState(root string) (*State, error) {
 // maxIndexFile caps what readIndexFile reads.
 const maxIndexFile = 1 << 30
 
-// readIndexFile reads a file under <root>/.ragcode, which a cloned repository
-// may have committed: only a regular file in a real directory, at most
-// maxIndexFile bytes, so a symlink to /dev/zero or out of the tree is refused.
+// readIndexFile reads an index file: only a regular file in a real
+// directory, at most maxIndexFile bytes, so a symlink to /dev/zero or out
+// of the tree is refused.
 func readIndexFile(path string) ([]byte, error) {
 	if fi, err := os.Lstat(filepath.Dir(path)); err != nil {
 		return nil, err

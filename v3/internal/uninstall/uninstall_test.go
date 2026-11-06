@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/doITmagic/rag-code-mcp/v3/engine"
+	"github.com/doITmagic/rag-code-mcp/v3/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -37,7 +38,7 @@ func setup(t *testing.T) *fixture {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/collections":
-			w.Write([]byte(`{"result":{"collections":[{"name":"ragcode-abc"},{"name":"other"},{"name":"` + engine.CollectionName(f.root) + `"}]}}`))
+			w.Write([]byte(`{"result":{"collections":[{"name":"ragcode-abc"},{"name":"other"},{"name":"` + store.CollectionName(f.root) + `"}]}}`))
 		case r.Method == http.MethodDelete:
 			assert.Equal(t, "k", r.Header.Get("api-key"))
 			f.deleted = append(f.deleted, strings.TrimPrefix(r.URL.Path, "/collections/"))
@@ -73,7 +74,7 @@ func TestRun(t *testing.T) {
 	assert.NoDirExists(t, filepath.Join(f.root, ".ragcode"))
 	assert.FileExists(t, filepath.Join(f.root, "keep.go"))
 	assert.NoDirExists(t, filepath.Join(f.home, ".ragcode"))
-	assert.Equal(t, []string{engine.CollectionName(f.root)}, f.deleted, "other machines' ragcode-* stay")
+	assert.Equal(t, []string{store.CollectionName(f.root)}, f.deleted, "other machines' ragcode-* stay")
 	claude, _ := os.ReadFile(filepath.Join(f.root, "CLAUDE.md"))
 	assert.Equal(t, "# Project\n", string(claude))
 	assert.NoFileExists(t, filepath.Join(f.root, ".cursor", "rules", "ragcode.mdc"))

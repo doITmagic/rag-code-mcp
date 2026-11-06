@@ -41,7 +41,7 @@ type Status struct {
 }
 
 // Status returns the current status; before any run in this process it comes
-// from <root>/.ragcode/index_status.json.
+// from index.Dir(root)/index_status.json.
 func (w *Workspace) Status() Status {
 	w.e.mu.Lock()
 	s := Status{Status: w.status, Queued: w.queued != kindNone || (w.running && !w.active), Running: w.active}

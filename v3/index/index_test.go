@@ -60,9 +60,18 @@ func (a lineAnalyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 }
 
 func TestMain(m *testing.M) {
+	// Backstop: a test that forgets RAGCODE_HOME must not write index files
+	// into the real ~/.ragcode.
+	home, err := os.MkdirTemp("", "ragcode-home-")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("RAGCODE_HOME", home)
 	parser.Register(lineAnalyzer{"go", ".go"})
 	parser.Register(lineAnalyzer{"markdown", ".md"})
-	os.Exit(m.Run())
+	code := m.Run()
+	os.RemoveAll(home)
+	os.Exit(code)
 }
 
 // hookEmbedder runs before on every Embed call, so a test can block or fail
@@ -540,9 +549,6 @@ func TestRunFreshCollectionIgnoresFiles(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, st.Total)
 	assert.Equal(t, 2, e.count(t, store.Filter{}))
-	gi, err := os.ReadFile(filepath.Join(e.root, ".ragcode", ".gitignore"))
-	require.NoError(t, err)
-	assert.Equal(t, "*\n", string(gi))
 }
 
 type cancelStore struct {
@@ -720,4 +726,20 @@ func TestRunModelChangeRecreates(t *testing.T) {
 	again, err := e.run(t, func(o *Options) { o.Embedder = namedEmbedder{o.Embedder, "other-model"} })
 	require.NoError(t, err)
 	assert.Equal(t, 0, again.Total, "same model: nothing to do")
+}
+
+// The index files live under the global home, so a project gets nothing in
+// its tree from a run.
+func TestRunKeepsStateOutOfRoot(t *testing.T) {
+	t.Setenv("RAGCODE_HOME", t.TempDir())
+	e := newEnv(t)
+	e.write(t, "a.go", "func A\n")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(Dir(e.root), "state.json"))
+	assert.FileExists(t, filepath.Join(Dir(e.root), "index_status.json"))
+	assert.NoDirExists(t, filepath.Join(e.root, ".ragcode"))
+	st, ok := ReadStatus(e.root)
+	require.True(t, ok)
+	assert.Equal(t, "done", st.Phase)
 }

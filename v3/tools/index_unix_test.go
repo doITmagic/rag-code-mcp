@@ -20,7 +20,7 @@ import (
 func TestKnownRootsRunningIsNotInterrupted(t *testing.T) {
 	t.Setenv("RAGCODE_HOME", t.TempDir())
 	root := t.TempDir()
-	dir := filepath.Join(root, ".ragcode")
+	dir := index.Dir(root)
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	roots, _ := json.Marshal([]string{root})
 	require.NoError(t, os.WriteFile(filepath.Join(config.HomeDir(), "roots.json"), roots, 0o644))

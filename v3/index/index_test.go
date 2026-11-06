@@ -906,3 +906,22 @@ func TestRunTargetChangedBetweenPasses(t *testing.T) {
 		})
 	}
 }
+
+// A files run after a branch switch lists paths the full run already purged,
+// or that never were indexed: they are not counted as deleted.
+func TestDeletedCountsOnlyIndexedFiles(t *testing.T) {
+	e := newEnv(t)
+	a := e.write(t, "a.go", "func A1\n")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	st, err := e.run(t, func(o *Options) {
+		o.Files = []string{}
+		o.Deleted = []string{filepath.Join(e.root, "never.go"), filepath.Join(e.root, "gone.go")}
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 0, st.Deleted)
+	require.NoError(t, os.Remove(a))
+	st, err = e.run(t, func(o *Options) { o.Files = []string{}; o.Deleted = []string{a} })
+	require.NoError(t, err)
+	assert.Equal(t, 1, st.Deleted)
+}

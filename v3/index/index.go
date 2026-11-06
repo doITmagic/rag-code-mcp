@@ -222,11 +222,23 @@ func Run(ctx context.Context, o Options) (Status, error) {
 	}
 	var goneIDs []string
 	purge := func(f string) error {
+		// A files run after a branch switch lists paths already purged or never
+		// indexed: count only those that had state or points.
+		_, ok := r.state.Files[f]
+		if !ok {
+			hits, err := o.Store.Scroll(ctx, o.Collection, store.Filter{FilePath: f}, 1)
+			if err != nil {
+				return err
+			}
+			ok = len(hits) > 0
+		}
 		if err := o.Store.DeleteByFile(ctx, o.Collection, f); err != nil {
 			return err
 		}
 		delete(r.state.Files, f)
-		r.status.Deleted++
+		if ok {
+			r.status.Deleted++
+		}
 		return nil
 	}
 	for _, f := range gone { // purged after staleReferrers, which reads their names

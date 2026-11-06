@@ -4,6 +4,7 @@
 package python
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -272,6 +273,7 @@ func (c *fileCtx) class(n, decl *gotreesitter.Node, owner string, decorators []s
 			Line:                line,
 		})
 	}
+	s.Relations = append(s.Relations, c.classCalls(parser.Field(n, c.lang, "body"))...)
 	return s
 }
 
@@ -382,9 +384,58 @@ func dedent(s string) string {
 // functions, lambdas and comprehensions, attributed to the enclosing symbol.
 // A callee whose first segment is a parameter or local of fn is unresolved.
 func (c *fileCtx) calls(def *gotreesitter.Node, owner string) []parser.Relation {
+	return c.callsUnder(def, parser.Field(def, c.lang, "body"), owner, false)
+}
+
+// classCalls collects the calls of a class body outside its methods and
+// nested classes, which are symbols of their own: field defaults, class-level
+// assignments.
+func (c *fileCtx) classCalls(body *gotreesitter.Node) []parser.Relation {
+	return c.callsUnder(body, body, "", true)
+}
+
+// isDef reports a definition that is a symbol of its own.
+func (c *fileCtx) isDef(n *gotreesitter.Node) bool {
+	switch n.Type(c.lang) {
+	case "function_definition", "class_definition", "decorated_definition":
+		return true
+	}
+	return false
+}
+
+func (c *fileCtx) callsUnder(scope, body *gotreesitter.Node, owner string, skipDefs bool) []parser.Relation {
+	if body == nil {
+		return nil
+	}
 	var rels []parser.Relation
-	locals := c.locals(def)
-	parser.Walk(parser.Field(def, c.lang, "body"), func(n *gotreesitter.Node) bool {
+	locals := c.locals(scope, skipDefs)
+	// Imports inside the scope (often to dodge a circular import) resolve
+	// its calls only.
+	// shortcut: they apply to the whole scope, not only after the import statement.
+	parent, cloned := c.imports, false
+	defer func() { c.imports = parent }()
+	parser.Walk(body, func(n *gotreesitter.Node) bool {
+		if skipDefs && n != body && c.isDef(n) {
+			return false
+		}
+		switch n.Type(c.lang) {
+		case "import_statement", "import_from_statement":
+			if !cloned {
+				c.imports, cloned = maps.Clone(parent), true
+			}
+			if n.Type(c.lang) == "import_statement" {
+				c.addImport(n)
+			} else {
+				c.addImportFrom(n)
+			}
+			return false
+		}
+		return true
+	})
+	parser.Walk(body, func(n *gotreesitter.Node) bool {
+		if skipDefs && n != body && c.isDef(n) {
+			return false
+		}
 		if n.Type(c.lang) != "call" {
 			return true
 		}
@@ -419,12 +470,15 @@ func (c *fileCtx) calls(def *gotreesitter.Node, owner string) []parser.Relation 
 }
 
 // locals returns the parameter and assignment / for / with / except target
-// names bound anywhere in def, nested functions and lambdas included. self
-// and cls stay out: resolveMethod handles them.
+// names bound anywhere in def, nested functions and lambdas included (unless
+// skipDefs). self and cls stay out: resolveMethod handles them.
 // shortcut: one set for the whole function, so a local shadows an import everywhere in it, not only after its declaration.
-func (c *fileCtx) locals(def *gotreesitter.Node) map[string]bool {
+func (c *fileCtx) locals(def *gotreesitter.Node, skipDefs bool) map[string]bool {
 	set := map[string]bool{}
 	parser.Walk(def, func(n *gotreesitter.Node) bool {
+		if skipDefs && n != def && c.isDef(n) {
+			return false
+		}
 		switch n.Type(c.lang) {
 		case "function_definition", "lambda":
 			c.bind(parser.Field(n, c.lang, "parameters"), set)

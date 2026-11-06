@@ -404,3 +404,39 @@ class K:
 	assert.Equal(t, "", call("K.m")["z"])
 	assert.Equal(t, "mod.K.n", call("K.m")["n"])
 }
+
+// An import inside a function resolves the calls of that function only; a
+// call in a class body outside the methods (a field default) belongs to the
+// class.
+func TestLocalImportsAndClassBodyCalls(t *testing.T) {
+	src := `from helpers import guids
+
+def activate(context_id):
+    from agent import AgentContext
+    return AgentContext.get(context_id)
+
+def other():
+    return AgentContext.get(1)
+
+class Task(Model):
+    uuid: str = Field(default_factory=lambda: guids.generate_id())
+
+    def run(self):
+        return guids.other()
+`
+	m := byQN(analyze(t, "/ws/pkg/projects.py", "/ws", src))
+	rels := func(qn string) map[string]string {
+		out := map[string]string{}
+		for _, r := range m[qn].Relations {
+			out[r.TargetName] = r.TargetQualifiedName
+		}
+		return out
+	}
+	assert.Equal(t, "agent.AgentContext.get", rels("pkg.projects.activate")["get"])
+	assert.Equal(t, "", rels("pkg.projects.other")["get"], "the import was local to activate")
+	task := rels("pkg.projects.Task")
+	assert.Equal(t, "helpers.guids.generate_id", task["generate_id"])
+	assert.Contains(t, task, "Field", "unknown, but still a call of the class")
+	assert.NotContains(t, task, "other", "the method's calls are its own")
+	assert.Equal(t, "helpers.guids.other", rels("pkg.projects.Task.run")["other"])
+}

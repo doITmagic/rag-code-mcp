@@ -56,7 +56,11 @@ graph TD
 2. **collect** walks the module body and, recursively, every class body.
 3. Each function body is walked for calls, including calls inside nested
    functions, lambdas and comprehensions; they all count toward the enclosing
-   symbol.
+   symbol. Calls in a class body outside its methods and nested classes
+   (field defaults such as `Field(default_factory=lambda: guids.new())`,
+   class-level assignments) count toward the class. An `import` inside a
+   function (or class body) resolves the calls of that scope only, wherever
+   it stands in it.
 
 ### Import table
 
@@ -90,7 +94,7 @@ level fewer is dropped, because the module already names the package.
   without `@`. The symbol's lines and content include the decorators.
 - **Exported** is false for names starting with `_`.
 - Functions nested inside functions and class-level assignments are not
-  symbols (their calls still count toward the enclosing function).
+  symbols (their calls still count toward the enclosing function or class).
 
 ### Example
 
@@ -168,7 +172,7 @@ keyed by root + path and invalidated by mtime and size.
 
 | File | Covers |
 |------|--------|
-| `python_test.go` | Symbols (kinds, owners, signatures, docstrings, decorators, overloads), call targets for every import form, base classes, module names, relative imports from `__init__.py`, malformed input, registration, concurrency, package re-exports (also under a `src/` root and with the cache). |
+| `python_test.go` | Symbols (kinds, owners, signatures, docstrings, decorators, overloads), call targets for every import form, base classes, module names, relative imports from `__init__.py`, malformed input, registration, concurrency, package re-exports (also under a `src/` root and with the cache), function-local imports and class-body calls. |
 | `zz_verify_test.go` | Verification tests: a fresh fixture exercising every import form, symbols, `from` not importing the module itself, `.pyi` files and the root module, robustness. |
 
 ## Testing

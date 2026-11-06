@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -468,6 +469,26 @@ func TestWriteIDERules(t *testing.T) {
 	assert.True(t, os.IsNotExist(err))
 	_, err = os.Stat(filepath.Join(bare, ".cursor"))
 	assert.True(t, os.IsNotExist(err))
+}
+
+// A pointer in a git-tracked instruction file would dirty the working tree
+// and can block a checkout or pull: only untracked files get it.
+func TestWriteIDERulesSkipsTrackedFiles(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "AGENTS.md"), "# Agents")
+	writeFile(t, filepath.Join(root, "CLAUDE.md"), "# Mine")
+	for _, args := range [][]string{{"init", "-q"}, {"add", "AGENTS.md"}} {
+		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(out))
+	}
+	require.NoError(t, WriteIDERules(root))
+	agents, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+	require.NoError(t, err)
+	assert.Equal(t, "# Agents", string(agents), "tracked file left alone")
+	claude, err := os.ReadFile(filepath.Join(root, "CLAUDE.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(claude), IDEPointer, "untracked file gets the pointer")
 }
 
 // A repo-committed symlink must never redirect the IDE rules writes.

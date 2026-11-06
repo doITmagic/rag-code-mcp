@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -30,7 +31,8 @@ const IDEPointer = "RagCode MCP: read .ragcode/RAGCODE.md and always pass worksp
 
 // WriteIDERules writes <root>/.ragcode/RAGCODE.md plus a .gitignore of "*"
 // there, and adds a one-line pointer to .cursor/rules/ragcode.mdc (when
-// .cursor/rules exists) and to each instructionFiles entry that exists, once. Called by the index tool, not the engine.
+// .cursor/rules exists) and to each instructionFiles entry that exists, once,
+// skipping the files git tracks. Called by the index tool, not the engine.
 // A cloned repo controls these paths, so no write follows a symlink; a refused
 // file is reported but does not stop the others.
 func WriteIDERules(root string) error {
@@ -82,6 +84,12 @@ func PointerFiles(root string) []string {
 // (AGENTS.md), Gemini CLI, GitHub Copilot, Windsurf, Cline.
 var instructionFiles = []string{"CLAUDE.md", "AGENTS.md", "GEMINI.md", ".github/copilot-instructions.md", ".windsurfrules", ".clinerules"}
 
+// tracked reports whether git tracks path: a pointer there would leave the
+// working tree dirty and can block a checkout or pull. Without git, false.
+func tracked(path string) bool {
+	return exec.Command("git", "-C", filepath.Dir(path), "ls-files", "--error-unmatch", "--", filepath.Base(path)).Run() == nil
+}
+
 // within refuses dir when, symlinks resolved, it is outside the real root.
 func within(real, dir string) error {
 	d, err := filepath.EvalSymlinks(dir)
@@ -102,6 +110,9 @@ func appendPointer(real, path, header string) error {
 	}
 	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("%s is a symlink, not appending to it", path)
+	}
+	if tracked(path) {
+		return nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {

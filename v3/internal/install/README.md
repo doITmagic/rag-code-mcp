@@ -50,7 +50,7 @@ Tests:
 | File | Covers |
 |:---|:---|
 | `install_test.go` | Full run with a fake `docker` (GPU start fails, CPU retry) and an `httptest` Ollama: binary mode `0755`, config written, exact Docker commands, model pulled with progress, PATH line once, Cursor entry and summary snippet; a second run keeps the config and does no Docker or model work; `-ollama local` and `-models-dir`; errors (bad `-ollama`, binary missing, user answers no); `pullModel` errors and the 412 "Ollama too old" message; a failed container still pulls from an Ollama already on the port; no Qdrant is started. |
-| `v1_test.go` | A v1 install is removed (install dir, `~/.local/share/qdrant`, PATH line, the `ragcode` entry in `~/.cursor/mcp.config.json`, Docker `rm -f`); answering no to "Replace?" leaves v1 untouched. |
+| `v1_test.go` | A v1 install is removed (install dir, `~/.local/share/qdrant` when it holds only ragcode collections, PATH line, the `ragcode` entry in `~/.cursor/mcp.config.json`, Docker `rm -f`); answering no to "Replace?" leaves v1 untouched; a collection RagCode did not create is kept. |
 | `zz_verify_test.go` | Verification tests: `-ollama local` without Docker still waits and pulls; a cancelled context does not hang `Run`; `waitHTTP` on an unreachable URL returns an error; a reinstall replaces the binary, leaves no temp file and writes `.zshrc` when `SHELL` is zsh. |
 
 ## Key types and functions
@@ -165,9 +165,13 @@ Most users upgrade from v1, whose indexes are not compatible with v3. When
 3. deletes `~/.local/share/ragcode`;
 4. removes the line `export PATH="<home>/.local/share/ragcode/bin:$PATH"`
    (absolute path, exact match) from `~/.bashrc`, `~/.zshrc` and `~/.profile`;
-5. deletes `~/.local/share/qdrant`. Qdrant wrote it as root, so if a plain
-   delete fails it runs `rm -rf` inside a throwaway `qdrant/qdrant:v1.19.1`
-   container; if that fails too it prints a `sudo rm -rf` hint.
+5. deletes v1's Qdrant collections, the directories under
+   `~/.local/share/qdrant/collections` whose name starts with `ragcode`. The
+   path is generic and a user's own Qdrant may keep collections there too, so
+   `~/.local/share/qdrant` itself is deleted only when no other collection is
+   left. Qdrant wrote the data as root, so if a plain delete fails it runs
+   `rm -rf` inside a throwaway `qdrant/qdrant:v1.19.1` container; if that fails
+   too it prints a `sudo rm -rf` hint.
 
 Each failure is a warning; v1 removal never stops the install. It runs after
 the "Replace?" question, so answering no leaves v1 in place. Projects are

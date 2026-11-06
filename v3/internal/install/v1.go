@@ -72,12 +72,32 @@ func removeV1(ctx context.Context, home string, out io.Writer) {
 		}
 	}
 
-	// The v1 Qdrant container wrote its data as root, so a plain delete fails.
-	data := filepath.Join(share, "qdrant")
-	if os.RemoveAll(data) != nil {
-		if exec.CommandContext(ctx, "docker", "run", "--rm", "-v", share+":/p", "--entrypoint", "rm", qdrantImage, "-rf", "/p/qdrant").Run() != nil {
-			warn(out, "could not delete "+data+"; run: sudo rm -rf "+data)
+	// ~/.local/share/qdrant is a generic path a user's own Qdrant may share:
+	// only v1's collections (prefix "ragcode") go, and the directory only when
+	// no other collection is left.
+	entries, _ := os.ReadDir(filepath.Join(share, "qdrant", "collections"))
+	foreign := false
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "ragcode") {
+			removeRootOwned(ctx, share, filepath.Join("qdrant", "collections", e.Name()), out)
+		} else {
+			foreign = true
 		}
 	}
+	if !foreign {
+		removeRootOwned(ctx, share, "qdrant", out)
+	}
 	ok(out, "RagCode v1 removed")
+}
+
+// removeRootOwned deletes share/rel. The v1 Qdrant container wrote its data
+// as root, so a plain delete can fail: it is retried inside a container.
+func removeRootOwned(ctx context.Context, share, rel string, out io.Writer) {
+	p := filepath.Join(share, rel)
+	if os.RemoveAll(p) == nil {
+		return
+	}
+	if exec.CommandContext(ctx, "docker", "run", "--rm", "-v", share+":/p", "--entrypoint", "rm", qdrantImage, "-rf", "/p/"+filepath.ToSlash(rel)).Run() != nil {
+		warn(out, "could not delete "+p+"; run: sudo rm -rf "+p)
+	}
 }

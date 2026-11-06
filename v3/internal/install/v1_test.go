@@ -52,3 +52,19 @@ func TestRunCancelKeepsV1(t *testing.T) {
 	require.ErrorContains(t, err, "cancelled")
 	assert.DirExists(t, v1Dir)
 }
+
+// ~/.local/share/qdrant is a generic path: a user's own Qdrant may keep its
+// collections there too. Only v1's ragcode collections are deleted.
+func TestRunRemovesV1KeepsForeignQdrantCollections(t *testing.T) {
+	home, _, _ := env(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".local", "share", "ragcode", "bin"), 0o755))
+	colls := filepath.Join(home, ".local", "share", "qdrant", "collections")
+	require.NoError(t, os.MkdirAll(filepath.Join(colls, "ragcode-abc123"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(colls, "my-app"), 0o755))
+
+	var out bytes.Buffer
+	require.NoError(t, Run(context.Background(), Options{Ollama: "skip", Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}), out.String())
+
+	assert.NoDirExists(t, filepath.Join(colls, "ragcode-abc123"))
+	assert.DirExists(t, filepath.Join(colls, "my-app"), "a collection RagCode did not create is kept")
+}

@@ -165,6 +165,9 @@ func (t *tools) fallback(ctx context.Context, root string, in SearchInput, f sto
 		files = append(files, path)
 		return nil
 	})
+	if ign := index.GitIgnored(root, files); len(ign) > 0 {
+		files = slices.DeleteFunc(files, func(f string) bool { return ign[f] })
+	}
 	words := strings.Fields(strings.ToLower(in.Query))
 	var hits []SearchHit
 	for _, path := range files {

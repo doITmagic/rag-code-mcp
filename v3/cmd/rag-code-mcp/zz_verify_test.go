@@ -81,3 +81,14 @@ func TestVerifyRunBadConfig(t *testing.T) {
 	require.Error(t, err)
 }
 func writeFile(p, s string) error { return os.WriteFile(p, []byte(s), 0o644) }
+
+// A typo in -log-level is an error, not a silent fall back to info.
+func TestVerifyRunBadLogLevelFlag(t *testing.T) {
+	t.Setenv("RAGCODE_HOME", t.TempDir())
+	dir := t.TempDir()
+	require.NoError(t, writeFile(dir+"/config.yaml", "log_level: info\n"))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := run(ctx, dir+"/config.yaml", "", "debgu")
+	require.ErrorContains(t, err, "log_level")
+}

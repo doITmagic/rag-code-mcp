@@ -75,6 +75,9 @@ func run(ctx context.Context, cfgPath, httpAddr, logLevel string) error {
 	}
 	if logLevel != "" {
 		cfg.LogLevel = logLevel
+		if err := cfg.Validate(); err != nil {
+			return err
+		}
 	}
 	logPath := filepath.Join(config.HomeDir(), "logs", "ragcode.log")
 	var out io.Writer = os.Stderr

@@ -57,6 +57,7 @@ Tests:
 |---|---|
 | [`tools_test.go`](tools_test.go) | an MCP client and server over in-memory transports with a real engine on `store.NewMemory()`, `embed.Fake` and a fake `.fk` analyzer. Missing and bad roots, the root taken from client roots, every tool, the not-indexed and during-recreate fallbacks, dependency down, tool schemas, helpers, fallback skip rules, edits and deletes keeping results right, no Qdrant left in `rag_server_info` |
 | [`zz_verify_test.go`](zz_verify_test.go) | verification tests: short package names past the scroll cap, call-hierarchy cycles and the node cap, cancelled contexts, stalled `rag_server_info` endpoints, read-file edge cases (degenerate files, symlink out of the root, ranges, minified files, long lines, secrets), the 200-file fallback cap, multi-byte usage line cut, compact/full output and path boost, the 24 h update cache, a second index confirm while running, huge limits |
+| [`fifo_unix_test.go`](fifo_unix_test.go) | the not-indexed fallback keeps the index skip rules: no symlink out of the root, no fifo, no secret file (Unix only) |
 | [`index_unix_test.go`](index_unix_test.go) | (`//go:build unix`) a known root with no `ended_at` is `interrupted` only when nobody holds its lock |
 
 ## The response
@@ -381,9 +382,10 @@ Output `data`:
 **Update check.** The latest release tag comes from
 `$RAGCODE_HOME/cache/update.json` when it was checked in the last 24 hours,
 otherwise from the GitHub API
-(`/repos/doITmagic/rag-code-mcp/releases/latest`); a successful answer is
-written back to the cache. When the check fails, `latest` is `"unknown"` and
-`available` is `false`. `available` compares `vMAJOR.MINOR.PATCH` tags (a
+(`/repos/doITmagic/rag-code-mcp/releases/latest`); the answer is written back
+to the cache. When the check fails, `latest` is `"unknown"` and `available` is
+`false`; the failure is cached for one hour, so an offline machine does not
+wait on GitHub at every call (a request canceled by the client is not cached). `available` compares `vMAJOR.MINOR.PATCH` tags (a
 `-suffix` is ignored); a version that does not parse, such as a dev build, is
 never reported as outdated. Every HTTP request uses a 3-second client timeout,
 and the Ollama probe and the update check run in parallel, so two stalled

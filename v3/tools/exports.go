@@ -115,7 +115,7 @@ func shortModule(ctx context.Context, w *engine.Workspace, name string, ks []par
 			filters = append(filters, store.Filter{FilePath: p, Kinds: ks})
 		}
 	}
-	// ponytail: one scroll per candidate, capped; a module_suffix payload
+	// shortcut: one scroll per candidate, capped; a module_suffix payload
 	// index would make this one call.
 	if len(filters) > shortModuleScrolls {
 		filters = filters[:shortModuleScrolls]

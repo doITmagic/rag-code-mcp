@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 	"unicode"
@@ -507,6 +507,29 @@ func TestServerInfo(t *testing.T) {
 	assert.FileExists(t, filepath.Join(config.HomeDir(), "cache", "update.json"))
 }
 
+// Offline, a failed release check is remembered too, so every rag_server_info
+// does not wait on GitHub again.
+func TestServerInfoCachesFailedUpdateCheck(t *testing.T) {
+	hits := 0
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer gh.Close()
+	v := newEnv(t, false, func(c *config.Config) { c.OllamaBaseURL = "http://127.0.0.1:1"; c.AutoIndex = false })
+	v.t.releases = gh.URL
+	var out struct {
+		Update Update `json:"update"`
+	}
+	for range 2 {
+		r, _ := v.call(t, "rag_server_info", map[string]any{})
+		require.Equal(t, "ok", r.Status, r.Message)
+		data(t, r, &out)
+		assert.Equal(t, "unknown", out.Update.Latest)
+	}
+	assert.Equal(t, 1, hits)
+}
+
 func TestDependencyDown(t *testing.T) {
 	v := newEnv(t, true, nil)
 	e := engine.New(v.t.cfg, store.NewMemory(), downEmbedder{&embed.Fake{}}, nil)
@@ -553,16 +576,13 @@ func TestHelpers(t *testing.T) {
 	assert.Equal(t, "top", got[1].QualifiedName)
 }
 
-// The fallback keeps the index skip rules: no symlink out of the root, no
-// fifo (it would block the read), no secret file.
-func TestSearchFallbackSkipRules(t *testing.T) {
+// A file git ignores is never indexed, so the fallback must not serve it either.
+func TestSearchFallbackSkipsGitIgnored(t *testing.T) {
 	v := newEnv(t, false, func(c *config.Config) { c.AutoIndex = false })
-	outside := filepath.Join(t.TempDir(), "s.fk")
-	require.NoError(t, os.WriteFile(outside, []byte("func Secret\n"), 0o644))
-	require.NoError(t, os.Symlink(outside, filepath.Join(v.root, "link.fk")))
-	require.NoError(t, syscall.Mkfifo(filepath.Join(v.root, "x.fk"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(v.root, ".env.fk"), []byte("func Secret\n"), 0o644))
-	r, _ := v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "Secret"})
+	require.NoError(t, exec.Command("git", "-C", v.root, "init", "-q").Run())
+	require.NoError(t, os.WriteFile(filepath.Join(v.root, ".gitignore"), []byte("local.fk\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(v.root, "local.fk"), []byte("func Password\n"), 0o644))
+	r, _ := v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "Password"})
 	var out struct{ Results []SearchHit }
 	data(t, r, &out)
 	assert.Empty(t, out.Results)

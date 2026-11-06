@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -139,6 +141,29 @@ func TestLogsConnectedClient(t *testing.T) {
 			assert.Equal(t, 1, strings.Count(buf.String(), `msg="client connected"`), "once per session")
 		})
 	}
+}
+
+// Stateless HTTP makes a session per request: the client is still named once,
+// and nothing is kept per request.
+func TestLogsConnectedClientOnceOverStatelessHTTP(t *testing.T) {
+	t.Setenv("RAGCODE_HOME", t.TempDir())
+	cfg := config.Default()
+	cfg.WatchEnabled = false
+	var buf syncBuf
+	a, err := New(Options{Config: cfg, Version: "v3", Log: slog.New(slog.NewTextHandler(&buf, nil)), Store: store.NewMemory(), Embedder: &embed.Fake{}})
+	require.NoError(t, err)
+	t.Cleanup(func() { a.Close(context.Background()) })
+	srv := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return a.Server }, &mcp.StreamableHTTPOptions{Stateless: true}))
+	defer srv.Close()
+
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "codex", Version: "1"}, nil).Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: srv.URL}, nil)
+	require.NoError(t, err)
+	defer cs.Close()
+	for range 3 {
+		_, err = cs.ListTools(context.Background(), nil)
+		require.NoError(t, err)
+	}
+	assert.Equal(t, 1, strings.Count(buf.String(), `msg="client connected"`), buf.String())
 }
 
 type syncBuf struct {

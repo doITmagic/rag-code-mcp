@@ -160,19 +160,30 @@ type updateCache struct {
 }
 
 // update returns the latest release tag, from HomeDir()/cache/update.json
-// when checked in the last 24 h, otherwise from GitHub.
+// when checked in the last 24 h (1 h after a failed check, cached with an
+// empty Latest), otherwise from GitHub.
 func (t *tools) update(ctx context.Context) Update {
 	u := Update{Current: t.version, Latest: "unknown"}
 	path := filepath.Join(config.HomeDir(), "cache", "update.json")
 	var c updateCache
-	if data, err := os.ReadFile(path); err == nil && json.Unmarshal(data, &c) == nil && c.Latest != "" && time.Since(c.CheckedAt) < 24*time.Hour {
-		u.Latest = c.Latest
+	ttl := 24 * time.Hour
+	data, err := os.ReadFile(path)
+	if err == nil && json.Unmarshal(data, &c) == nil && c.Latest == "" {
+		ttl = time.Hour
+	}
+	if err == nil && !c.CheckedAt.IsZero() && time.Since(c.CheckedAt) < ttl {
+		if c.Latest != "" {
+			u.Latest = c.Latest
+		}
 	} else {
 		var body struct {
 			TagName string `json:"tag_name"`
 		}
 		if err := t.getJSON(ctx, t.releases, &body); err == nil && body.TagName != "" {
 			u.Latest = body.TagName
+		}
+		// A canceled request says nothing about GitHub; don't cache it.
+		if ctx.Err() == nil {
 			data, _ := json.Marshal(updateCache{Latest: body.TagName, CheckedAt: time.Now()})
 			_ = index.WriteAtomic(path, data)
 		}

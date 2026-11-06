@@ -44,7 +44,7 @@ Tests:
 
 | File | Covers |
 |:---|:---|
-| `app_test.go` | Smoke test over in-memory transports (server name `ragcode`, version, the seven tool names); `New` with defaults does not dial Ollama; a stop by signal logs no `level=ERROR`; the default store is SQLite and writes `RAGCODE_HOME/index/<collection>/index.db`; one `client connected` line per session, both on the `initialize` handshake and on per-request client metadata (protocol 2026-07-28). |
+| `app_test.go` | Smoke test over in-memory transports (server name `ragcode`, version, the seven tool names); `New` with defaults does not dial Ollama; a stop by signal logs no `level=ERROR`; the default store is SQLite and writes `RAGCODE_HOME/index/<collection>/index.db`; one `client connected` line per client, both on the `initialize` handshake and on per-request client metadata (protocol 2026-07-28), and once over stateless HTTP where every request is a new session. |
 | `zz_verify_test.go` | Verification tests: `Close` with an already-expired context returns promptly; `Engine.Resume` with a cancelled context returns at once; a nil `Log` is tolerated. |
 
 ## Key types and functions
@@ -129,10 +129,11 @@ The language parsers register themselves in `init`. `app.go` blank-imports
 
 Several clients usually share one log file, so the middleware logs
 `client connected client=<name> client_version=<v> protocol=<p>` once per
-MCP session. The client info comes from the `initialize` request, or from
-per-request metadata on the 2026-07-28 protocol. Seen sessions are kept in a
-`sync.Map`; entries of closed HTTP sessions are never pruned (one pointer
-each, noted in the code as a shortcut).
+client and process. The client info comes from the `initialize` request, or
+from per-request metadata on the 2026-07-28 protocol. Seen clients are kept in
+a `sync.Map` keyed by name, version and protocol, not by session: stateless
+HTTP creates a session per request, and keeping those would grow without
+bound (and log every request).
 
 ### SDK log filter (`sdkLog`)
 

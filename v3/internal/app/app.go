@@ -67,10 +67,12 @@ func New(o Options) (*App, error) {
 	return &App{Server: srv, Engine: eng, store: o.Store, log: o.Log}, nil
 }
 
-// logClient names the client of each session once: several clients share one
+// logClient names each client once per process: several clients share one
 // log file. ClientInfo comes from initialize, or per request on 2026-07-28.
+// It is keyed by the client, not the session: stateless HTTP makes a session
+// per request, and keeping those would grow without bound.
 func logClient(log *slog.Logger) mcp.Middleware {
-	var named sync.Map // shortcut: keys of closed HTTP sessions stay, one pointer each; prune if HTTP serves many clients
+	var named sync.Map // client name, version, protocol -> true
 	return func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 			if r, ok := req.(interface {
@@ -78,7 +80,7 @@ func logClient(log *slog.Logger) mcp.Middleware {
 				ProtocolVersion() string
 			}); ok {
 				if ci := r.ClientInfo(); ci != nil {
-					if _, seen := named.LoadOrStore(req.GetSession(), true); !seen {
+					if _, seen := named.LoadOrStore([3]string{ci.Name, ci.Version, r.ProtocolVersion()}, true); !seen {
 						log.Info("client connected", "client", ci.Name, "client_version", ci.Version, "protocol", r.ProtocolVersion())
 					}
 				}

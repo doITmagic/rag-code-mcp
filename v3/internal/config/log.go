@@ -32,7 +32,7 @@ func OpenLogFile(path string, maxMB int) (io.WriteCloser, error) {
 }
 
 // logFile is an append-only file with size-based rotation.
-// ponytail: one mutex around each write; a log line is the only I/O here.
+// shortcut: one mutex around each write; a log line is the only I/O here.
 type logFile struct {
 	mu   sync.Mutex
 	path string

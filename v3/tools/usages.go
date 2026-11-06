@@ -36,7 +36,7 @@ func toCandidate(s parser.Symbol) Candidate {
 // resolveSymbol finds the one symbol named by query. The result is nil with
 // a non-nil answer when there is none or several (ambiguous).
 func resolveSymbol(ctx context.Context, w *engine.Workspace, query, filePath string) (*parser.Symbol, *mcp.CallToolResult) {
-	hits, err := w.Scroll(ctx, store.Filter{QualifiedSuffix: parser.Normalize(query)}, candidateLimit)
+	hits, err := byName(ctx, w, store.Filter{}, query, candidateLimit)
 	if err != nil {
 		res, _, _ := storeErr(ctx, w, err)
 		return nil, res
@@ -45,18 +45,23 @@ func resolveSymbol(ctx context.Context, w *engine.Workspace, query, filePath str
 		res, _, _ := reply("ok", fmt.Sprintf("no indexed symbol named %q; try rag_search", query), nil, w)
 		return nil, res
 	}
-	if filePath != "" && len(hits) > 1 {
-		if p, err := insideRoot(w.Root, filePath); err == nil {
-			var same []store.Hit
-			for _, h := range hits {
-				if h.Symbol.FilePath == p {
-					same = append(same, h)
-				}
-			}
-			if len(same) > 0 {
-				hits = same
+	if filePath != "" {
+		p, err := insideRoot(w.Root, filePath)
+		if err != nil {
+			res, _, _ := fail(err.Error())
+			return nil, res
+		}
+		var same []store.Hit
+		for _, h := range hits {
+			if h.Symbol.FilePath == p {
+				same = append(same, h)
 			}
 		}
+		if len(same) == 0 {
+			res, _, _ := reply("ok", fmt.Sprintf("no indexed symbol named %q in %s (%d elsewhere); fix file_path or drop it", query, p, len(hits)), nil, w)
+			return nil, res
+		}
+		hits = same
 	}
 	if len(hits) > 1 {
 		cands := make([]Candidate, len(hits))
@@ -70,6 +75,33 @@ func resolveSymbol(ctx context.Context, w *engine.Workspace, query, filePath str
 	}
 	s := hits[0].Symbol
 	return &s, nil
+}
+
+// byName lists the symbols whose qualified name ends with query and, for a
+// plain name, those named query: a JS default export is named after its
+// declaration but qualified as "<module>.default".
+func byName(ctx context.Context, w *engine.Workspace, f store.Filter, query string, limit int) ([]store.Hit, error) {
+	q := parser.Normalize(query)
+	f.QualifiedSuffix = q
+	hits, err := w.Scroll(ctx, f, limit)
+	if err != nil || strings.Contains(q, ".") {
+		return hits, err
+	}
+	f.QualifiedSuffix, f.Name = "", q
+	named, err := w.Scroll(ctx, f, limit)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool, len(hits))
+	for _, h := range hits {
+		seen[h.Symbol.ID] = true
+	}
+	for _, h := range named {
+		if !seen[h.Symbol.ID] {
+			hits = append(hits, h)
+		}
+	}
+	return hits, nil
 }
 
 // ---- rag_find_usages ----
@@ -90,6 +122,7 @@ type Usage struct {
 	Text      string `json:"text,omitempty"`
 	CallerID  string `json:"caller_id"`
 	CallerDef int    `json:"caller_start_line"`
+	ByName    bool   `json:"by_name,omitempty"` // matched by name only: the receiver's type is unknown, check it
 }
 
 // FileUsages groups the usages of one file.
@@ -119,7 +152,7 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 	}
 	byFile := map[string]*FileUsages{}
 	lines := map[string][]string{}
-	total := 0
+	total, guessed := 0, 0
 	for _, c := range callers {
 		for _, r := range c.Relations {
 			if r.TargetID != sym.ID && (r.TargetQualifiedName == "" || r.TargetQualifiedName != sym.QualifiedName) {
@@ -133,9 +166,13 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 			if _, ok := lines[c.FilePath]; !ok {
 				lines[c.FilePath] = readLines(w.Root, c.FilePath)
 			}
+			guess := r.TargetQualifiedName == ""
 			g.Usages = append(g.Usages, Usage{Caller: c.QualifiedName, Kind: string(r.Kind), Line: r.Line,
-				Text: lineText(lines[c.FilePath], r.Line), CallerID: c.ID, CallerDef: c.StartLine})
+				Text: lineText(lines[c.FilePath], r.Line), CallerID: c.ID, CallerDef: c.StartLine, ByName: guess})
 			total++
+			if guess {
+				guessed++
+			}
 		}
 	}
 	files := make([]FileUsages, 0, len(byFile))
@@ -145,8 +182,11 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].FilePath < files[j].FilePath })
 	ambiguous := ambiguousByName(ctx, w, sym)
-	data := map[string]any{"symbol": toCandidate(*sym), "files": files, "total": total, "ambiguous_by_name": ambiguous}
+	data := map[string]any{"symbol": toCandidate(*sym), "files": files, "total": total, "ambiguous_by_name": ambiguous, "by_name": guessed}
 	msg := fmt.Sprintf("%d usages in %d files", total, len(files))
+	if guessed > 0 {
+		msg += fmt.Sprintf("; %d matched by name only (receiver type unknown, may be another type's method), marked by_name", guessed)
+	}
 	if ambiguous > 0 {
 		msg += fmt.Sprintf("; %d more relations name %q but could not be resolved to one symbol", ambiguous, sym.Name)
 	}
@@ -223,6 +263,7 @@ type HierarchyInput struct {
 // Node is one symbol in the hierarchy tree.
 type Node struct {
 	Candidate
+	ByName   bool    `json:"by_name,omitempty"` // linked by name only: the receiver's type is unknown, check it
 	Children []*Node `json:"children,omitempty"`
 }
 
@@ -287,6 +328,7 @@ func (wk *walker) expand(ctx context.Context, n *Node, sym parser.Symbol, incomi
 		return
 	}
 	var next []parser.Symbol
+	exact := map[string]bool{} // linked by at least one relation naming a qualified name
 	if incoming {
 		callers, err := referrers(ctx, wk.w, &sym, candidateLimit)
 		if err != nil {
@@ -294,15 +336,30 @@ func (wk *walker) expand(ctx context.Context, n *Node, sym parser.Symbol, incomi
 			return
 		}
 		next = callers
+		for _, c := range callers {
+			for _, r := range c.Relations {
+				if r.TargetQualifiedName != "" && (r.TargetID == sym.ID || r.TargetQualifiedName == sym.QualifiedName) {
+					exact[c.ID] = true
+				}
+			}
+		}
 	} else {
+		// An ambiguous call naming a qualified name (build-tagged variants
+		// of one function) lists every variant, as incoming does.
+		target := func(r parser.Relation) (store.Filter, string, int) {
+			if r.TargetID == "" && r.Resolution == parser.ResolutionAmbiguous && r.TargetQualifiedName != "" {
+				return store.Filter{QualifiedName: r.TargetQualifiedName}, "qn:" + r.TargetQualifiedName, candidateLimit
+			}
+			return store.Filter{IDs: []string{r.TargetID}}, r.TargetID, 1
+		}
+		for _, r := range sym.Relations {
+			if _, key, _ := target(r); r.Kind == parser.RelCall && r.TargetQualifiedName != "" {
+				exact[key] = true
+			}
+		}
 		seen := map[string]bool{}
 		for _, r := range sym.Relations {
-			// An ambiguous call naming a qualified name (build-tagged
-			// variants of one function) lists every variant, as incoming does.
-			f, key, n := store.Filter{IDs: []string{r.TargetID}}, r.TargetID, 1
-			if r.TargetID == "" && r.Resolution == parser.ResolutionAmbiguous && r.TargetQualifiedName != "" {
-				f, key, n = store.Filter{QualifiedName: r.TargetQualifiedName}, "qn:"+r.TargetQualifiedName, candidateLimit
-			}
+			f, key, n := target(r)
 			if r.Kind != parser.RelCall || key == "" || seen[key] {
 				continue
 			}
@@ -316,6 +373,9 @@ func (wk *walker) expand(ctx context.Context, n *Node, sym parser.Symbol, incomi
 				// As the index resolves: code never calls across languages.
 				if r.TargetID != "" || h.Symbol.Language == sym.Language || sym.Language == "docs" || sym.Language == "html" {
 					next = append(next, h.Symbol)
+					if exact[key] {
+						exact[h.Symbol.ID] = true
+					}
 				}
 			}
 		}
@@ -325,7 +385,7 @@ func (wk *walker) expand(ctx context.Context, n *Node, sym parser.Symbol, incomi
 		if wk.nodes >= maxNodes {
 			return
 		}
-		child := &Node{Candidate: toCandidate(s)}
+		child := &Node{Candidate: toCandidate(s), ByName: !exact[s.ID]}
 		n.Children = append(n.Children, child)
 		wk.nodes++
 		if wk.visited[s.ID] {
@@ -337,7 +397,11 @@ func (wk *walker) expand(ctx context.Context, n *Node, sym parser.Symbol, incomi
 }
 
 func writeTree(b *strings.Builder, n *Node, indent int) {
-	fmt.Fprintf(b, "%s%s (%s:%d)\n", strings.Repeat("  ", indent), n.QualifiedName, n.FilePath, n.StartLine)
+	mark := ""
+	if n.ByName {
+		mark = " [by name only]"
+	}
+	fmt.Fprintf(b, "%s%s (%s:%d)%s\n", strings.Repeat("  ", indent), n.QualifiedName, n.FilePath, n.StartLine, mark)
 	for _, c := range n.Children {
 		writeTree(b, c, indent+1)
 	}

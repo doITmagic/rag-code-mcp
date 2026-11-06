@@ -55,7 +55,7 @@ Tests:
 
 | File | What it covers |
 |---|---|
-| [`tools_test.go`](tools_test.go) | an MCP client and server over in-memory transports with a real engine on `store.NewMemory()`, `embed.Fake` and a fake `.fk` analyzer. Missing and bad roots, the root taken from client roots, every tool, the not-indexed and during-recreate fallbacks, dependency down, tool schemas, helpers, fallback skip rules, edits and deletes keeping results right, no Qdrant left in `rag_server_info` |
+| [`tools_test.go`](tools_test.go) | an MCP client and server over in-memory transports with a real engine on `store.NewMemory()`, `embed.Fake` and a fake `.fk` analyzer. Missing and bad roots, the root taken from client roots, every tool, the not-indexed and during-recreate fallbacks, dependency down, tool schemas, helpers, fallback skip rules, edits and deletes keeping results right, no Qdrant left in `rag_server_info`, same-name variants, lookup by declared name with `file_path` as a hard filter, `by_name` usages and hierarchy nodes |
 | [`zz_verify_test.go`](zz_verify_test.go) | verification tests: short package names past the scroll cap, call-hierarchy cycles and the node cap, cancelled contexts, stalled `rag_server_info` endpoints, read-file edge cases (degenerate files, symlink out of the root, ranges, minified files, long lines, secrets), the 200-file fallback cap, multi-byte usage line cut, compact/full output and path boost, the 24 h update cache, a second index confirm while running, huge limits |
 | [`fifo_unix_test.go`](fifo_unix_test.go) | the not-indexed fallback keeps the index skip rules: no symlink out of the root, no fifo, no secret file (Unix only) |
 | [`index_unix_test.go`](index_unix_test.go) | (`//go:build unix`) a known root with no `ended_at` is `interrupted` only when nobody holds its lock |
@@ -160,7 +160,7 @@ looks like an identifier, semantic search otherwise.
 | `limit` | int | default 10, at most 100 |
 | `file_path` | string | the file being edited; results near it rank higher |
 | `language` | string | only this language (`go`, `python`, `php`, ...) |
-| `path_prefix` | string | only files under this directory |
+| `path_prefix` | string | only files under this directory; a file is an error (pass its directory) |
 | `kinds` | []string | only these kinds: `function`, `method`, `class`, `interface`, `type`, `variable`, `constant`, `route`, `hook`, `template`, `scene`, `chunk` |
 | `full` | bool | always include the symbol content |
 
@@ -168,8 +168,10 @@ How it works:
 
 1. **Exact.** When the query has no whitespace, only letters, digits and
    `_ . : / \ $ -`, and at least one letter, it scrolls up to 20 symbols whose
-   normalized qualified name equals the query or ends with `.query`. They get
-   score 1 and `match: "exact"`.
+   normalized qualified name equals the query or ends with `.query`, plus,
+   for a plain name, up to 20 named the query (a JS default export is named
+   after its declaration but qualified `<module>.default`). They get score 1
+   and `match: "exact"`.
 2. **Semantic.** The query is embedded and the `2 × limit` nearest symbols
    are fetched; those scoring at least 0.55 and not already found are added
    with `match: "semantic"`.
@@ -213,16 +215,22 @@ grouped by file, with the referencing symbol and the line.
 | `limit` | int | maximum referencing symbols per lookup, default 100 |
 
 The symbol is resolved first (`resolveSymbol`): up to 50 symbols whose
-qualified name ends with the query. None gives `ok` with a "try rag_search"
-message; several (after narrowing by `file_path`) give `ambiguous` with
-`data.candidates` (`id, qualified_name, kind, file_path, start_line`).
+qualified name ends with the query, plus, for a plain name, up to 50 named
+the query. None gives `ok` with a "try rag_search" message. `file_path` keeps
+only the symbols defined in that file; none there gives `ok` with a message
+naming the file, never a symbol from elsewhere. Several left give `ambiguous`
+with `data.candidates` (`id, qualified_name, kind, file_path, start_line`).
 
 The references are the symbols with a relation whose resolved `target_id` is
 the symbol's id or whose `target_qualified_name` is its qualified name. The
 source line of each reference is read from disk and cut at 200 bytes.
 
 Output `data`: `{symbol, files: [{file_path, usages: [{caller, kind, line,
-text, caller_id, caller_start_line}]}], total, ambiguous_by_name}`.
+text, caller_id, caller_start_line, by_name?}]}], total, ambiguous_by_name,
+by_name}`. A usage with `by_name: true` was matched by name only: the call's
+receiver has no known type (`x.Close()` on a local or parameter), and exactly
+one symbol in the workspace has that name, so it may be another type's method
+(a stdlib cursor, a file). `data.by_name` counts them and the message says so.
 `ambiguous_by_name` counts relations that name the symbol but were left
 unresolved because several symbols share the name; the message mentions them.
 Calls to symbols sharing one qualified name (build-tagged variants such as
@@ -256,8 +264,10 @@ Callers (incoming) and callees (outgoing) of a function as a tree.
 - Resolution errors are the same `ok` / `ambiguous` answers as above.
 
 Output `data`: `{symbol, direction, depth, incoming?, outgoing?, text}`. Each
-tree node has `id, qualified_name, kind, file_path, start_line, children`;
-`text` is the same tree as indented lines `Name (file:line)`.
+tree node has `id, qualified_name, kind, file_path, start_line, by_name?,
+children`; `by_name` marks a node linked to its parent only by name, as in
+`rag_find_usages`. `text` is the same tree as indented lines
+`Name (file:line)`, with ` [by name only]` on those nodes.
 
 ```json
 {"name": "rag_call_hierarchy", "arguments": {

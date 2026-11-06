@@ -76,14 +76,15 @@ func (t *tools) search(ctx context.Context, req *mcp.CallToolRequest, in SearchI
 		if err != nil {
 			return fail(err.Error())
 		}
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return fail("path_prefix " + in.PathPrefix + " is a file: pass its directory, or file_path to rank that file first")
+		}
 		f.PathPrefix = p
 	}
 	var hits []SearchHit
 	seen := map[string]bool{}
 	if isIdentifier(in.Query) {
-		ef := f
-		ef.QualifiedSuffix = parser.Normalize(in.Query)
-		exact, err := w.Scroll(ctx, ef, exactLimit)
+		exact, err := byName(ctx, w, f, in.Query, exactLimit)
 		if err != nil {
 			return t.searchErr(ctx, w, in, f, err)
 		}

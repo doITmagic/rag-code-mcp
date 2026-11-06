@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -35,12 +36,20 @@ func (fakeAnalyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 	var syms []parser.Symbol
 	for i, line := range strings.Split(string(f.Source), "\n") {
 		if name, ok := strings.CutPrefix(line, "func "); ok {
-			syms = append(syms, parser.Symbol{Name: name, Kind: parser.KindFunction, Module: mod, Content: line, StartLine: i + 1,
+			var qn string // "func X as default": named X, qualified like a JS default export
+			if n, ok := strings.CutSuffix(name, " as default"); ok {
+				name, qn = n, mod+".default"
+			}
+			syms = append(syms, parser.Symbol{Name: name, QualifiedName: qn, Kind: parser.KindFunction, Module: mod, Content: line, StartLine: i + 1,
 				EndLine: i + 1, Exported: unicode.IsUpper(rune(name[0])), Signature: "func " + name + "()"})
 		} else if target, ok := strings.CutPrefix(strings.TrimSpace(line), "call "); ok && len(syms) > 0 {
 			s := &syms[len(syms)-1]
+			tqn := target // "call x" without a dot: a call by name only (receiver type unknown)
+			if !strings.Contains(target, ".") {
+				tqn = ""
+			}
 			s.Relations = append(s.Relations, parser.Relation{Kind: parser.RelCall, TargetName: target[strings.LastIndex(target, ".")+1:],
-				TargetQualifiedName: target, Line: i + 1})
+				TargetQualifiedName: tqn, Line: i + 1})
 			s.Content += "\n" + line
 			s.EndLine = i + 1
 		}
@@ -677,4 +686,75 @@ func TestSameQualifiedNameVariants(t *testing.T) {
 	for _, c := range h.Outgoing.Children {
 		assert.NotEqual(t, ".fk2", filepath.Ext(c.FilePath))
 	}
+}
+
+// A symbol whose name is not the end of its qualified name (a JS default
+// export) is found by name; file_path is a hard filter, never a hint.
+func TestResolveByNameAndFile(t *testing.T) {
+	v := newEnv(t, false, func(c *config.Config) { c.AutoIndex = false })
+	files := map[string]string{"web/sleep.fk": "func sleep as default\n", "web/store.fk": "func sleep\nfunc tick\n  call m/web.default\n  call Close\n",
+		"gem/client.fk": "func Close\n"}
+	for p, c := range files {
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(v.root, p)), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(v.root, p), []byte(c), 0o644))
+	}
+	w, err := v.e.Workspace(v.root)
+	require.NoError(t, err)
+	w.Index(false)
+	require.Eventually(t, func() bool { s := w.Status(); return s.Phase == "done" && !s.Running && !s.Queued }, 10*time.Second, 20*time.Millisecond)
+
+	var out struct {
+		Symbol Candidate    `json:"symbol"`
+		Files  []FileUsages `json:"files"`
+		Total  int          `json:"total"`
+		ByName int          `json:"by_name"`
+	}
+	r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "sleep", "file_path": "web/sleep.fk"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	data(t, r, &out)
+	assert.Equal(t, "m/web.default", out.Symbol.QualifiedName)
+	assert.Equal(t, 1, out.Total)
+
+	r, _ = v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "tick", "file_path": "web/sleep.fk"})
+	assert.Equal(t, "ok", r.Status)
+	assert.Contains(t, r.Message, "web/sleep.fk", "no tick there: say so, do not pick the one elsewhere")
+
+	var s struct{ Results []SearchHit }
+	r, _ = v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "sleep", "path_prefix": "web"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	data(t, r, &s)
+	assert.True(t, slices.ContainsFunc(s.Results, func(h SearchHit) bool { return h.QualifiedName == "m/web.default" && h.Match == "exact" }), s.Results)
+
+	// path_prefix names a directory: a file there would match nothing, silently.
+	_, res := v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "sleep", "path_prefix": "web/sleep.fk"})
+	require.NotNil(t, res)
+	assert.True(t, res.IsError)
+
+	// A call matched by name only is a guess: marked, and counted.
+	r, _ = v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "Close"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	data(t, r, &out)
+	require.Equal(t, 1, out.Total)
+	assert.True(t, out.Files[0].Usages[0].ByName)
+	assert.Equal(t, 1, out.ByName)
+	assert.Contains(t, r.Message, "by name only")
+
+	var h struct {
+		Outgoing *Node
+		Text     string
+	}
+	r, _ = v.call(t, "rag_call_hierarchy", map[string]any{"workspace_root": v.root, "symbol": "tick", "direction": "outgoing"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	data(t, r, &h)
+	require.Len(t, h.Outgoing.Children, 2)
+	for _, c := range h.Outgoing.Children {
+		assert.Equal(t, c.QualifiedName == "m/gem.Close", c.ByName, c.QualifiedName)
+	}
+	assert.Contains(t, h.Text, "client.fk:1) [by name only]")
+	var in struct{ Incoming *Node }
+	r, _ = v.call(t, "rag_call_hierarchy", map[string]any{"workspace_root": v.root, "symbol": "Close"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	data(t, r, &in)
+	require.Len(t, in.Incoming.Children, 1)
+	assert.True(t, in.Incoming.Children[0].ByName)
 }

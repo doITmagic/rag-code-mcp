@@ -68,18 +68,18 @@ func Walk(root string, exclude []string) ([]string, error) {
 		}
 		return nil
 	})
-	if ign := gitIgnored(root, out); len(ign) > 0 {
+	if ign := GitIgnored(root, out); len(ign) > 0 {
 		out = slices.DeleteFunc(out, func(f string) bool { return ign[f] })
 	}
 	return out, err
 }
 
-// gitIgnored returns the files among files that git ignores, by every
+// GitIgnored returns the files among files that git ignores, by every
 // .gitignore and the user's excludes; tracked files are never ignored. A
 // directory with its own .git is a separate repository and follows its own
-// rules, not its parent's (barou keeps its legacy PHP app as a nested repo
+// rules, not its parent's (e.g. a legacy app kept as a nested repo that
 // its parent ignores). Files outside any git work tree are never ignored.
-func gitIgnored(root string, files []string) map[string]bool {
+func GitIgnored(root string, files []string) map[string]bool {
 	repoOf := map[string]string{}
 	var repo func(dir string) string
 	repo = func(dir string) string {

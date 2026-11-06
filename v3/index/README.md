@@ -58,23 +58,28 @@ graph LR
 | File | Contents |
 |------|----------|
 | `index.go` | Package doc, `ErrLocked`, `ErrHeadChanged`, `Options`, `Status`, `ReadStatus`, `Run` and the whole run: scan, two-pass parse, `staleReferrers`, the name index and `resolve`, `embedUpsert`, `record`, progress ticks, `gitHead`, `embedText`. |
-| `state.go` | `Entry`, `Format`, `State`, `LoadState`, `State.Save`, `WriteAtomic`, and `readIndexFile` (the guarded reader for index files). |
-| `walk.go` | Size and batch constants, `Walk`, `gitIgnored`, `IsLinkedWorktree`, `Skip`, `Secret`, the lockfile list and `readHead`. |
+| `state.go` | `Entry`, `Format`, `State`, `LoadState`, `StateModel`, `State.Save`, `WriteAtomic`, and `readIndexFile` (the guarded reader for index files). |
+| `walk.go` | Size and batch constants, `Walk`, `GitIgnored`, `IsLinkedWorktree`, `Skip`, `Secret`, the lockfile list and `readHead`. |
 | `dir.go` | `Dir(root)`: the per-root index directory under the global home. |
-| `running.go` | `Running(root)`: non-blocking probe of the run lock. |
+| `running.go` | `Running(root)`: non-blocking probe of the run lock; `LockFile(path)`: the same cross-process lock on any path (the engine uses it for `roots.json`). |
 | `lock_unix.go` | `lock` on Unix: exclusive, non-blocking `flock`; returns `ErrLocked` when held. Build tag `unix`. |
-| `lock_other.go` | `lock` elsewhere: a no-op. Build tag `!unix`. |
+| `lock_windows.go` | `lock` on Windows: exclusive, non-blocking `LockFileEx`; returns `ErrLocked` when held. Build tag `windows`. |
+| `lock_other.go` | `lock` elsewhere: a no-op. Build tag `!unix && !windows`. |
 
 ### Tests
 
 | File | Covers |
 |------|--------|
-| `index_test.go` | The main suite, with a line-based fake analyzer and a hook embedder: full, incremental, delete, recreate, model and `Format` change, embed failure, parse failures and panics, cancel, `ErrHeadChanged`, relation resolution, `Skip`, `Walk`, `.gitignore`, linked worktrees, symlinks in `Files`, byte-budgeted upsert batches, empty collection with stale state, moved targets, vanished referrers, a file that changed between the two passes. Its `TestMain` points `RAGCODE_HOME` at a temp dir. |
+| `index_test.go` | The main suite, with a line-based fake analyzer and a hook embedder: full, incremental, delete, recreate, model and `Format` change, embed failure, parse failures and panics, cancel, `ErrHeadChanged`, relation resolution, `Skip`, `Walk`, `.gitignore`, linked worktrees, symlinks in `Files`, byte-budgeted upsert batches, empty collection with stale state, a crash between a recreate's state save and its drop, moved targets, vanished referrers, a file that changed between the two passes. Its `TestMain` points `RAGCODE_HOME` at a temp dir. |
 | `budget_test.go` | The parse byte budget is respected, and batches still resolve forward references. |
 | `resolve_test.go` | A non-fresh run resolves more than 500 targets through the store. |
-| `resolve_fix_test.go` | Name resolution stays within one language, targets defined later, inherited-member fallback, a files run after a failed run widens to a full walk, symlinked `.ragcode` directories and device files are refused. |
+| `resolve_files_test.go` | A files run sees the stored candidates too: a target ambiguous in a full run stays ambiguous by exact and suffix match; removing one of two candidates (file deleted or symbol edited away) makes the unchanged caller unique. |
+| `resolve_fix_test.go` | Name and qualified resolution stay within one language (html may cross), targets defined later, inherited-member fallback, a files run after a failed run widens to a full walk, symlinked `.ragcode` directories and device files are refused. |
+| `gdscript_test.go` | `extends "res://x.gd"` resolves to the script's class, named by `class_name` or after the file, in full and files runs. |
 | `prefix_test.go` | `Run` adds the model's document prefix before embedding. |
 | `lock_unix_test.go` | A second run on a locked root gets `ErrLocked`. Build tag `unix`. |
+| `lock_test.go` | Two holders of `index.lock` exclude each other, on every platform. |
+| `fifo_unix_test.go` | A binary file and a fifo in `Files` are skipped without blocking. Build tag `unix`. |
 | `walk_unix_test.go` | `IsLinkedWorktree` refuses a `.git` that is a FIFO, device or oversized file. Build tag `linux`. |
 | `zz_verify_test.go` | Verification tests: edge inputs, unreachable store, wrong vector count, pre-cancelled context, explicit files and directory rules, progress cadence, lock release, batch sizes and purge order, lookups stopping on a store error, repos without commits, binaries and FIFOs among explicit files. |
 
@@ -194,10 +199,10 @@ flowchart TD
 ### 1. Lock and the previous run
 
 `Run` resolves `Root` with `filepath.Abs`, creates `Dir(root)` and takes an
-exclusive, non-blocking `flock` on `Dir(root)/index.lock`. If another process
-or run holds it, `Run` returns `ErrLocked` without touching the status file.
-On platforms without `flock` the lock is a no-op: two processes indexing the
-same root produce the same points.
+exclusive, non-blocking lock (`flock` on Unix, `LockFileEx` on Windows) on
+`Dir(root)/index.lock`. If another process or run holds it, `Run` returns
+`ErrLocked` without touching the status file. On other platforms the lock is
+a no-op.
 
 If the persisted status of the last run is not `done` (it failed, was
 interrupted, or the process was killed mid-run), `Files` is reset to `nil`:
@@ -220,7 +225,11 @@ Then `EnsureCollection` creates the collection with the embedder's dimension
 (when the collection exists with another vector size, the store drops and recreates it and reports `recreated`). The run is
 **fresh** when the collection did not exist, was recreated, or holds no
 points although the state lists some (an interrupted first run, a failed
-recreate, a manual delete). A fresh run starts from an empty state and walks
+recreate, a manual delete). When the collection holds points but the state
+lists no file (a crash between a recreate's state save and its drop, an
+unreadable `state.json`), the collection is dropped and the run is fresh too:
+otherwise the points of files deleted or ignored meanwhile would stay
+searchable forever. A fresh run starts from an empty state and walks
 everything, since a files-only run on an empty store would leave a partial
 index nothing ever completes. A fresh run also skips every store lookup.
 
@@ -229,7 +238,7 @@ index nothing ever completes. A fresh run also skips every store lookup.
 - Full run (`Files == nil`): `Walk` lists the files; every state entry not
   seen on disk is **gone**.
 - Files run: each listed path is made absolute, checked with `os.Lstat`,
-  filtered by `gitIgnored` and by `skipExplicit` (must lie under the root,
+  filtered by `GitIgnored` and by `skipExplicit` (must lie under the root,
   outside hidden or excluded directories, and pass `Skip`). A listed file that
   fails these checks but is in the state is gone. Every `Deleted` path not
   seen is gone, even one the state never recorded, because an interrupted run
@@ -275,6 +284,10 @@ re-parsed and re-resolved in the same run:
 4. For each language, query for points targeting the new symbols'
    `TargetQualifiedNames`, and for points with a matching `TargetName` whose
    relation was resolved by name or not at all.
+5. Read the names of the vanished IDs; for a `(language, name)` no symbol of
+   the run still has, query for points with that `TargetName` whose relation
+   is ambiguous: one candidate fewer may make it unique. The points of gone
+   files are purged only after this step, so their names can still be read.
 
 Lookups are batched: 500 values per query, and a batch whose hits reach
 `store.MaxScroll` is halved until nothing is cut off. At most 500 lookups are
@@ -288,14 +301,19 @@ A name index of every symbol in the run maps normalized qualified names,
 every dot-boundary suffix of them, and `(language, name)` pairs to IDs. For
 each relation:
 
-- With a `TargetQualifiedName`: an exact match (run first, then the store) is
+- With a `TargetQualifiedName`: an exact match (run and store candidates
+  together, so a files run sees what a full run sees) is
   `ResolutionExact`. Otherwise a unique qualified-suffix match is taken
   (`ResolutionUnique`), which covers Python `src/` layouts and monorepo
   subprojects. If the owner (`a.b` of `a.b.m`) exists but does not define the
   member (inherited through a parent class, trait or embedded type), it falls
-  back to the bare name.
-- With only a `TargetName`: matched by `(language, name)`; a call never crosses
-  languages.
+  back to the bare name. An `extends` whose target is a whole module (GDScript
+  `extends "res://x/y.gd"`) takes that module's one top-level class
+  (`ResolutionUnique`).
+- With only a `TargetName`: matched by `(language, name)`.
+- Code never resolves into another language, by name or qualified name; only
+  relations from `docs` and `html` (links, scripts, `onclick` handlers) cross
+  into code on purpose.
 - One ID sets `TargetID`; several set `ResolutionAmbiguous`.
 
 Store lookups take up to 20 hits, are cached per key, ignore points of files
@@ -357,7 +375,7 @@ Files must have an analyzer (`parser.ForFile`) and pass `Skip`:
 
 ### .gitignore handling
 
-After the walk, `gitIgnored` pipes the file list to
+After the walk, `GitIgnored` pipes the file list to
 `git -C <repo> check-ignore --stdin -z`, so every `.gitignore` and the user's
 excludes apply, and tracked files are
 never ignored. A directory with its own `.git` below the root is a separate
@@ -413,8 +431,8 @@ go test ./index/
 go test -race ./index/
 ```
 
-No build tags are needed to run the suite; `lock_unix_test.go` only builds on
-Unix and `walk_unix_test.go` only on Linux. The tests use `store.NewMemory()`
+No build tags are needed to run the suite; `lock_unix_test.go` and
+`fifo_unix_test.go` only build on Unix and `walk_unix_test.go` only on Linux. The tests use `store.NewMemory()`
 and `embed.Fake`, need the `git` binary, and never touch the real
 `~/.ragcode` (`TestMain` sets `RAGCODE_HOME` to a temp directory).
 

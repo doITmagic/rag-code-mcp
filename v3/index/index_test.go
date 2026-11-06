@@ -630,7 +630,7 @@ func TestWalkSkipsGitIgnored(t *testing.T) {
 	git("init", "-q")
 	git("add", "-f", "kept.gen.go")
 	// A nested repository the parent ignores is a separate project: its
-	// own rules apply (barou keeps its legacy PHP app like this).
+	// own rules apply (e.g. a legacy app kept as a nested repo).
 	e.write(t, ".gitignore", "lucrari/\n*.gen.go\nlegacy/\n")
 	x := e.write(t, "legacy/x.go", "package x\nfunc X() {}\n")
 	e.write(t, "legacy/.gitignore", "y.go\n")
@@ -685,6 +685,59 @@ func TestRunRecreateSavesEmptyStateBeforeDrop(t *testing.T) {
 	_, err = e.run(t, func(o *Options) { o.Recreate = true; o.Store = ds })
 	require.NoError(t, err)
 	assert.Equal(t, 0, ds.files, "state.json on disk when the collection is dropped")
+}
+
+// An unchanged caller re-resolved because its callee moved must not be
+// forgotten when the run fails after the callee's file was stored: the retry
+// still repairs the caller's edge.
+func TestRunEmbedFailureKeepsStaleCallerQueued(t *testing.T) {
+	e := newEnv(t)
+	a := e.write(t, "a.go", "func Caller -> b.Target\n")
+	b := e.write(t, "b.go", "func Target\n"+funcs(63, "P"))
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+
+	// Target moves a line down: new ID. b.go's 64 symbols fill embed calls
+	// 1-4 and one upsert; call 5, the stale caller a.go, fails.
+	e.write(t, "b.go", "\nfunc Target\n"+funcs(63, "P"))
+	e.emb.calls.Store(0)
+	e.emb.before = func(_ context.Context, call int32) error {
+		if call >= 5 {
+			return errors.New("ollama down")
+		}
+		return nil
+	}
+	_, err = e.run(t, nil)
+	require.EqualError(t, err, "ollama down")
+
+	e.emb.before = func(context.Context, int32) error { return nil }
+	_, err = e.run(t, nil)
+	require.NoError(t, err)
+	target := e.symbols(t, b)["Target"]
+	require.Equal(t, 2, target.StartLine)
+	assert.Equal(t, target.ID, e.symbols(t, a)["Caller"].Relations[0].TargetID)
+}
+
+// A crash after a recreate saved its empty state but before the drop leaves
+// points that no state lists: the next run must not keep the ones of files
+// that are gone (deleted or newly ignored) searchable.
+func TestRunCrashBeforeDropForgetsGoneFiles(t *testing.T) {
+	e := newEnv(t)
+	e.write(t, "a.go", "func A\n")
+	b := e.write(t, "b.go", "func B\n")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(b))
+	// What the crash leaves: the empty state, the old collection, a status not done.
+	st := newState(e.root)
+	st.Model, st.Format = e.emb.Model(), Format
+	require.NoError(t, st.Save())
+	(&run{root: e.root, status: Status{Root: e.root, Phase: "embedding"}}).writeStatus()
+
+	_, err = e.run(t, nil)
+	require.NoError(t, err)
+	assert.Zero(t, e.count(t, store.Filter{FilePath: b}), "points of the deleted file")
+	assert.Equal(t, 1, e.count(t, store.Filter{}))
 }
 
 // A collection emptied behind the state's back (an automatic recreate on a

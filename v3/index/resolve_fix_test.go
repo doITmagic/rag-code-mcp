@@ -50,6 +50,35 @@ func TestResolveNameStaysInLanguage(t *testing.T) {
 	assert.Empty(t, r.TargetID)
 }
 
+// A qualified target in code never resolves into another language either
+// (an external Python module foo vs a foo.go file); docs and html links do
+// cross on purpose.
+func TestResolveQualifiedStaysInLanguage(t *testing.T) {
+	parser.Register(lineAnalyzer{"python", ".py"})
+	parser.Register(lineAnalyzer{"html", ".htm"})
+	e := newEnv(t)
+	e.write(t, "web.py", "func Render -> foo.run\n")
+	e.write(t, "page.htm", "func Click -> foo.run\n")
+	e.write(t, "foo.go", "func run\n")
+	check := func(t *testing.T) {
+		t.Helper()
+		r, _ := e.rel(t, "Render", "")
+		assert.Empty(t, r.TargetID, "exact match into another language")
+		r, _ = e.rel(t, "Click", "")
+		assert.NotEmpty(t, r.TargetID, "html calls into code")
+	}
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	t.Run("full run", check)
+
+	// Same through the store lookup: only the callers are in the run.
+	e.write(t, "web.py", "\nfunc Render -> foo.run\n")
+	e.write(t, "page.htm", "\nfunc Click -> foo.run\n")
+	_, err = e.run(t, func(o *Options) { o.Files = []string{"web.py", "page.htm"} })
+	require.NoError(t, err)
+	t.Run("files run", check)
+}
+
 func TestResolveTargetDefinedLater(t *testing.T) {
 	e := newEnv(t)
 	e.write(t, "b.go", "func Caller -> a.Foo\nfunc Named -> Bar\n")

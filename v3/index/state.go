@@ -59,6 +59,20 @@ func LoadState(root string) (*State, error) {
 	return s, nil
 }
 
+// StateModel returns the embedding model the root's points were made with,
+// "" when no state says.
+func StateModel(root string) string {
+	data, err := readIndexFile(statePath(root))
+	if err != nil {
+		return ""
+	}
+	var s struct {
+		Model string `json:"model"`
+	}
+	_ = json.Unmarshal(data, &s)
+	return s.Model
+}
+
 // maxIndexFile caps what readIndexFile reads.
 const maxIndexFile = 1 << 30
 

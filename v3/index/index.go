@@ -8,9 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"golang.org/x/sync/semaphore"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +20,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"golang.org/x/sync/semaphore"
 
 	"github.com/doITmagic/rag-code-mcp/v3/embed"
 	"github.com/doITmagic/rag-code-mcp/v3/parser"
@@ -188,8 +190,22 @@ func Run(ctx context.Context, o Options) (Status, error) {
 		// An empty collection is fresh: left so by an interrupted first run,
 		// or emptied behind a state that lists points (a failed or crashed
 		// recreate, a manual delete), which would otherwise stay empty and done.
-		if hits, err := o.Store.Scroll(ctx, o.Collection, store.Filter{}, 1); err == nil && len(hits) == 0 {
+		hits, err := o.Store.Scroll(ctx, o.Collection, store.Filter{}, 1)
+		switch {
+		case err != nil:
+		case len(hits) == 0:
 			r.fresh = true
+		case len(r.state.Files) == 0:
+			// Points no state lists (a crash between a recreate's state save and
+			// its drop, an unreadable state.json): gone files would stay forever.
+			o.Log.Info("index: the store holds points the state does not list, re-indexing everything", "root", root)
+			if err := o.Store.DeleteCollection(ctx, o.Collection); err != nil {
+				return r.finish(ctx, err)
+			}
+			if _, err := o.Store.EnsureCollection(ctx, o.Collection, dim); err != nil {
+				return r.finish(ctx, err)
+			}
+			r.fresh, r.status.Recreated = true, true
 		}
 	}
 	if r.fresh {
@@ -209,17 +225,12 @@ func Run(ctx context.Context, o Options) (Status, error) {
 		if err := o.Store.DeleteByFile(ctx, o.Collection, f); err != nil {
 			return err
 		}
-		if e, ok := r.state.Files[f]; ok {
-			goneIDs = append(goneIDs, e.IDs...)
-			delete(r.state.Files, f)
-		}
+		delete(r.state.Files, f)
 		r.status.Deleted++
 		return nil
 	}
-	for _, f := range gone {
-		if err := purge(f); err != nil {
-			return r.finish(ctx, err)
-		}
+	for _, f := range gone { // purged after staleReferrers, which reads their names
+		goneIDs = append(goneIDs, r.state.Files[f].IDs...)
 	}
 	r.status.Total = len(changed)
 	r.status.Phase = "parsing"
@@ -229,7 +240,13 @@ func Run(ctx context.Context, o Options) (Status, error) {
 	// and the resolve index need; pass 2 parses again batch by batch, so the
 	// memory of a run does not grow with the size of the workspace.
 	files := names(r.parse(ctx, changed))
-	if extra := r.staleReferrers(ctx, files, goneIDs, changed, gone); len(extra) > 0 {
+	extra := r.staleReferrers(ctx, files, goneIDs, changed, gone)
+	for _, f := range gone {
+		if err := purge(f); err != nil {
+			return r.finish(ctx, err)
+		}
+	}
+	if len(extra) > 0 {
 		live := extra[:0]
 		for _, f := range extra {
 			if _, err := os.Lstat(f); errors.Is(err, fs.ErrNotExist) {
@@ -239,6 +256,11 @@ func Run(ctx context.Context, o Options) (Status, error) {
 					return r.finish(ctx, err)
 				}
 				continue
+			}
+			if e, ok := r.state.Files[f]; ok {
+				// Until it is stored again: a failed run's retry re-parses it.
+				e.ModTime = 0
+				r.state.Files[f] = e
 			}
 			live = append(live, f)
 		}
@@ -295,7 +317,7 @@ func (r *run) finish(ctx context.Context, err error) (Status, error) {
 	r.status.EndedAt = time.Now()
 	r.status.Phase = "done"
 	if err != nil && ctx.Err() != nil {
-		err = ctx.Err() // a store call cut short reports a gRPC status, not ctx.Err()
+		err = ctx.Err() // a store call cut short reports its own error, not ctx.Err()
 	}
 	if err != nil {
 		r.status.Phase, r.status.Error = "failed", err.Error()
@@ -366,7 +388,7 @@ func (r *run) scan(ctx context.Context) (changed, gone []string, err error) {
 	ex := set(r.Exclude)
 	var ign map[string]bool // Walk already dropped git-ignored files
 	if r.Files != nil {
-		ign = gitIgnored(r.root, files)
+		ign = GitIgnored(r.root, files)
 	}
 	goneSet := map[string]bool{}
 	seen := make(map[string]bool, len(files))
@@ -612,6 +634,33 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 		}
 	}
 	ok := query(gone, func(v []string) store.Filter { return store.Filter{TargetIDs: v} }, add(all))
+	// A name the run removes for good can turn an ambiguous call unique.
+	kept := map[[2]string]bool{}
+	for _, p := range files {
+		for _, s := range p.syms {
+			kept[[2]string{s.Language, s.Name}] = true
+		}
+	}
+	lost := map[string]map[string]bool{} // language -> names
+	ok = ok && query(gone, func(v []string) store.Filter { return store.Filter{IDs: v} }, func(h store.Hit) {
+		if l, n := h.Symbol.Language, h.Symbol.Name; !kept[[2]string{l, n}] {
+			if lost[l] == nil {
+				lost[l] = map[string]bool{}
+			}
+			lost[l][n] = true
+		}
+	})
+	for lang, names := range lost {
+		if !ok {
+			break
+		}
+		ambiguous := func(h parser.Symbol) bool {
+			return slices.ContainsFunc(h.Relations, func(rel parser.Relation) bool {
+				return names[rel.TargetName] && rel.Resolution == parser.ResolutionAmbiguous
+			})
+		}
+		ok = query(slices.Collect(maps.Keys(names)), func(v []string) store.Filter { return store.Filter{TargetNames: v, Language: lang} }, add(ambiguous))
+	}
 	for lang, syms := range byLang {
 		if !ok {
 			break
@@ -637,12 +686,12 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 	return out
 }
 
-// names drops everything but the names of each symbol: what staleReferrers
-// and newNameIndex read.
+// names drops everything but the names (and kind, module, owner) of each
+// symbol: what staleReferrers and newNameIndex read.
 func names(files []parsed) []parsed {
 	for i := range files {
 		for j, s := range files[i].syms {
-			files[i].syms[j] = parser.Symbol{ID: s.ID, QualifiedName: s.QualifiedName, Name: s.Name, Language: s.Language}
+			files[i].syms[j] = parser.Symbol{ID: s.ID, QualifiedName: s.QualifiedName, Name: s.Name, Language: s.Language, Kind: s.Kind, Module: s.Module, Owner: s.Owner}
 		}
 	}
 	return files
@@ -653,15 +702,18 @@ type nameIndex struct {
 	byQN     map[string][]string
 	bySuffix map[string][]string    // every dot-boundary suffix of a qualified name
 	byName   map[[2]string][]string // language, name: a call never crosses languages
+	byModule map[string][]string    // top-level classes per module
+	lang     map[string]string      // symbol id -> language
 	changed  map[string]bool        // files of the run: their stored points are stale
 }
 
 func newNameIndex(files []parsed) nameIndex {
-	idx := nameIndex{map[string][]string{}, map[string][]string{}, map[[2]string][]string{}, make(map[string]bool, len(files))}
+	idx := nameIndex{map[string][]string{}, map[string][]string{}, map[[2]string][]string{}, map[string][]string{}, map[string]string{}, make(map[string]bool, len(files))}
 	for i := range files {
 		idx.changed[files[i].path] = true
 		for _, s := range files[i].syms {
 			qn := parser.Normalize(s.QualifiedName)
+			idx.lang[s.ID] = s.Language
 			idx.byQN[qn] = append(idx.byQN[qn], s.ID)
 			for j := 0; j < len(qn); j++ {
 				if j == 0 || qn[j-1] == '.' {
@@ -669,6 +721,9 @@ func newNameIndex(files []parsed) nameIndex {
 				}
 			}
 			idx.byName[[2]string{s.Language, s.Name}] = append(idx.byName[[2]string{s.Language, s.Name}], s.ID)
+			if s.Kind == parser.KindClass && s.Owner == "" {
+				idx.byModule[s.Module] = append(idx.byModule[s.Module], s.ID)
+			}
 		}
 	}
 	return idx
@@ -678,7 +733,7 @@ func newNameIndex(files []parsed) nameIndex {
 // when the store already holds the rest of the workspace, store lookups for
 // the targets the run does not define.
 func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
-	byQN, bySuffix, byName, changed := idx.byQN, idx.bySuffix, idx.byName, idx.changed
+	byQN, bySuffix, byName, byModule, langOf, changed := idx.byQN, idx.bySuffix, idx.byName, idx.byModule, idx.lang, idx.changed
 	// No lookup cap: a target left unresolved here stays so until its caller
 	// file changes. One store error stops the lookups for the run.
 	failed := false
@@ -701,17 +756,35 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 			// Points of files in this run are stale until their upsert.
 			if !changed[h.Symbol.FilePath] && match(h.Symbol) {
 				ids = append(ids, h.Symbol.ID)
+				langOf[h.Symbol.ID] = h.Symbol.Language
 			}
 		}
 		cache[key] = ids
 		return ids
 	}
-	exact := func(tqn string) []string {
-		key := parser.Normalize(tqn)
-		if ids := byQN[key]; len(ids) > 0 {
-			return ids
+	// keep drops the candidates of another language: code never calls across
+	// languages, while docs and html links point into code on purpose.
+	keep := func(lang string, ids []string) []string {
+		out := make([]string, 0, len(ids))
+		for _, id := range ids {
+			if lang == "docs" || lang == "html" || langOf[id] == lang {
+				out = append(out, id)
+			}
 		}
-		return fromStore("q:"+key, store.Filter{QualifiedName: tqn}, func(s parser.Symbol) bool {
+		return out
+	}
+	// lookup takes run and store candidates together, so a files run sees
+	// what a full run sees; two in the run already make it ambiguous.
+	lookup := func(lang string, run []string, key string, f store.Filter, match func(parser.Symbol) bool) []string {
+		ids := keep(lang, run)
+		if len(ids) < 2 {
+			ids = append(ids, keep(lang, fromStore(key, f, match))...)
+		}
+		return ids
+	}
+	exact := func(lang, tqn string) []string {
+		key := parser.Normalize(tqn)
+		return lookup(lang, byQN[key], "q:"+key, store.Filter{QualifiedName: tqn}, func(s parser.Symbol) bool {
 			return parser.Normalize(s.QualifiedName) == key
 		})
 	}
@@ -734,23 +807,28 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 				if tqn := rel.TargetQualifiedName; tqn != "" {
 					resolution = parser.ResolutionExact
 					key := parser.Normalize(tqn)
-					ids = exact(tqn)
+					ids = exact(lang, tqn)
 					// A TQN written relative to a source root other than the
 					// workspace root (Python src/ layouts, monorepo subprojects)
 					// names a qualified suffix; only a unique match is taken.
 					if len(ids) == 0 {
 						resolution = parser.ResolutionUnique
-						if ids = bySuffix[key]; len(ids) == 0 {
-							ids = fromStore("s:"+key, store.Filter{QualifiedSuffix: tqn}, func(s parser.Symbol) bool {
-								return parser.MatchQualified(s.QualifiedName, key)
-							})
-						}
+						ids = lookup(lang, bySuffix[key], "s:"+key, store.Filter{QualifiedSuffix: tqn}, func(s parser.Symbol) bool {
+							return parser.MatchQualified(s.QualifiedName, key)
+						})
+					}
+					// extends "res://x.gd" (GDScript) names a whole script: its
+					// one top-level class, whatever that class is called.
+					if len(ids) == 0 && rel.Kind == parser.RelExtends {
+						ids = lookup(lang, byModule[tqn], "m:"+tqn, store.Filter{Module: tqn, Kinds: []parser.Kind{parser.KindClass}}, func(s parser.Symbol) bool {
+							return s.Module == tqn && s.Kind == parser.KindClass && s.Owner == ""
+						})
 					}
 					// $this->m(), self.m(), this.m() on a member the owner
 					// inherits (parent class, trait, embedded type) name the
 					// owner, which exists but does not define it: fall back
 					// to the name. An unknown owner is external (vendor, stdlib).
-					if dot := strings.LastIndex(tqn, "."); len(ids) == 0 && dot > 0 && rel.TargetName != "" && len(exact(tqn[:dot])) > 0 {
+					if dot := strings.LastIndex(tqn, "."); len(ids) == 0 && dot > 0 && rel.TargetName != "" && len(exact(lang, tqn[:dot])) > 0 {
 						ids = named(lang, rel.TargetName)
 					}
 				} else if name := rel.TargetName; name != "" {

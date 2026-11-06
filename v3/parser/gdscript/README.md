@@ -172,7 +172,9 @@ For `/ws/levels/main.tscn`: `res://levels/main.Main` (uses_type ->
 - `extends "path.gd"` and scene connection targets are built from the script
   **module** (`res://x/y`, `res://x/y.method`), while the symbols of a script
   that declares `class_name` are qualified with that class name
-  (`res://x/y.Player.method`).
+  (`res://x/y.Player.method`). The indexer resolves such an `extends` to the
+  module's one top-level class; a connection target to a `class_name` script
+  stays unresolved.
 - Calls on any receiver other than `self` or a declared signal stay
   unresolved.
 

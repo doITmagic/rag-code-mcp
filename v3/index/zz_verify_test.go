@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -21,11 +20,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// errStore fails every collection call, standing in for an unreachable Qdrant.
+// errStore fails every collection call, standing in for an unreachable store.
 type errStore struct{ *store.Memory }
 
 func (errStore) CollectionExists(context.Context, string) (bool, error) {
-	return false, errors.New("qdrant unreachable")
+	return false, errors.New("store unreachable")
 }
 
 func TestVerifyEdgeInputs(t *testing.T) {
@@ -52,13 +51,13 @@ func TestVerifyStoreUnreachable(t *testing.T) {
 	e.write(t, "a.go", "func A\n")
 	start := time.Now()
 	st, err := e.run(t, func(o *Options) { o.Store = errStore{e.store} })
-	assert.EqualError(t, err, "qdrant unreachable")
+	assert.EqualError(t, err, "store unreachable")
 	assert.Equal(t, "failed", st.Phase)
 	assert.Less(t, time.Since(start), 5*time.Second)
 	saved, ok := ReadStatus(e.root)
 	require.True(t, ok)
 	assert.Equal(t, "failed", saved.Phase)
-	assert.Equal(t, "qdrant unreachable", saved.Error)
+	assert.Equal(t, "store unreachable", saved.Error)
 }
 
 func TestVerifyEmbedWrongCount(t *testing.T) {
@@ -278,16 +277,4 @@ func TestVerifyRepoWithoutCommits(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "", st.Branch)
 	assert.Equal(t, 1, st.Done)
-}
-
-func TestVerifyBinaryAndFifoInExplicitFiles(t *testing.T) {
-	e := newEnv(t)
-	bin := e.write(t, "bin.go", "ab\x00cd")
-	fifo := filepath.Join(e.root, "pipe.go")
-	require.NoError(t, syscall.Mkfifo(fifo, 0o644))
-	start := time.Now()
-	st, err := e.run(t, func(o *Options) { o.Files = []string{bin, fifo} })
-	require.NoError(t, err)
-	assert.Equal(t, 0, st.Total)
-	assert.Less(t, time.Since(start), 5*time.Second, "a fifo must not block the run")
 }

@@ -313,7 +313,10 @@ func (wk *walker) expand(ctx context.Context, n *Node, sym parser.Symbol, incomi
 				return
 			}
 			for _, h := range live(wk.w, hits) {
-				next = append(next, h.Symbol)
+				// As the index resolves: code never calls across languages.
+				if r.TargetID != "" || h.Symbol.Language == sym.Language || sym.Language == "docs" || sym.Language == "html" {
+					next = append(next, h.Symbol)
+				}
 			}
 		}
 	}

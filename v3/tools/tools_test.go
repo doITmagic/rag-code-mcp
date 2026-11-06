@@ -48,6 +48,19 @@ func (fakeAnalyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 	return parser.Finalize(f, syms), nil
 }
 
+// otherLangAnalyzer parses .fk2 files like fakeAnalyzer, as another language.
+type otherLangAnalyzer struct{ fakeAnalyzer }
+
+func (otherLangAnalyzer) Language() string     { return "fake2" }
+func (otherLangAnalyzer) Extensions() []string { return []string{".fk2"} }
+func (o otherLangAnalyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
+	syms, err := o.fakeAnalyzer.Analyze(f)
+	for i := range syms {
+		syms[i].Language = "fake2"
+	}
+	return syms, err
+}
+
 // downEmbedder is an embedder whose service is unreachable.
 type downEmbedder struct{ *embed.Fake }
 
@@ -62,6 +75,7 @@ func TestMain(m *testing.M) {
 	}
 	os.Setenv("RAGCODE_HOME", home)
 	parser.Register(fakeAnalyzer{})
+	parser.Register(otherLangAnalyzer{})
 	code := m.Run()
 	os.RemoveAll(home)
 	os.Exit(code)
@@ -635,7 +649,9 @@ func TestServerInfoHasNoQdrant(t *testing.T) {
 // shows them as callees too.
 func TestSameQualifiedNameVariants(t *testing.T) {
 	v := newEnv(t, false, func(c *config.Config) { c.AutoIndex = false })
-	for p, c := range map[string]string{"pkg/lk_unix.fk": "func Lk\n", "pkg/lk_windows.fk": "func Lk\n", "pkg/use.fk": "func UseLk\n  call m/pkg.Lk\n"} {
+	files := map[string]string{"pkg/lk_unix.fk": "func Lk\n", "pkg/lk_windows.fk": "func Lk\n", "pkg/use.fk": "func UseLk\n  call m/pkg.Lk\n",
+		"pkg/lk.fk2": "func Lk\n"} // same qualified name in another language: never a callee
+	for p, c := range files {
 		require.NoError(t, os.WriteFile(filepath.Join(v.root, p), []byte(c), 0o644))
 	}
 	w, err := v.e.Workspace(v.root)
@@ -657,6 +673,8 @@ func TestSameQualifiedNameVariants(t *testing.T) {
 	r, _ = v.call(t, "rag_call_hierarchy", map[string]any{"workspace_root": v.root, "symbol": "UseLk", "direction": "outgoing"})
 	require.Equal(t, "ok", r.Status, r.Message)
 	data(t, r, &h)
-	require.Len(t, h.Outgoing.Children, 2, "both variants")
-	assert.Equal(t, "m/pkg.Lk", h.Outgoing.Children[0].QualifiedName)
+	require.Len(t, h.Outgoing.Children, 2, "both variants, not the other language's")
+	for _, c := range h.Outgoing.Children {
+		assert.NotEqual(t, ".fk2", filepath.Ext(c.FilePath))
+	}
 }

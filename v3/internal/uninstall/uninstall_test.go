@@ -12,14 +12,12 @@ import (
 	"testing"
 
 	"github.com/doITmagic/rag-code-mcp/v3/engine"
-	"github.com/doITmagic/rag-code-mcp/v3/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 type fixture struct {
 	home, root, dockerLog string
-	deleted               []string
 }
 
 func setup(t *testing.T) *fixture {
@@ -35,23 +33,9 @@ func setup(t *testing.T) *fixture {
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\necho \"$*\" >> "+f.dockerLog+"\n"), 0o755))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/collections":
-			w.Write([]byte(`{"result":{"collections":[{"name":"ragcode-abc"},{"name":"other"},{"name":"` + store.CollectionName(f.root) + `"}]}}`))
-		case r.Method == http.MethodDelete:
-			assert.Equal(t, "k", r.Header.Get("api-key"))
-			f.deleted = append(f.deleted, strings.TrimPrefix(r.URL.Path, "/collections/"))
-			w.Write([]byte(`{"result":true}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(srv.Close)
-
 	rag := filepath.Join(f.home, ".ragcode")
 	require.NoError(t, os.MkdirAll(filepath.Join(rag, "bin"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(rag, "config.yaml"), []byte("qdrant_url: "+srv.URL+"\nqdrant_api_key: k\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(rag, "config.yaml"), []byte("log_level: info\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(rag, "roots.json"), []byte(`["`+f.root+`","`+filepath.Join(f.root, "missing")+`"]`), 0o644))
 	require.NoError(t, os.MkdirAll(filepath.Join(f.root, ".ragcode"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(f.root, "keep.go"), nil, 0o644))
@@ -74,7 +58,6 @@ func TestRun(t *testing.T) {
 	assert.NoDirExists(t, filepath.Join(f.root, ".ragcode"))
 	assert.FileExists(t, filepath.Join(f.root, "keep.go"))
 	assert.NoDirExists(t, filepath.Join(f.home, ".ragcode"))
-	assert.Equal(t, []string{store.CollectionName(f.root)}, f.deleted, "other machines' ragcode-* stay")
 	claude, _ := os.ReadFile(filepath.Join(f.root, "CLAUDE.md"))
 	assert.Equal(t, "# Project\n", string(claude))
 	assert.NoFileExists(t, filepath.Join(f.root, ".cursor", "rules", "ragcode.mdc"))
@@ -111,15 +94,6 @@ func TestRunAsksForWorkspaceData(t *testing.T) {
 	}
 }
 
-func TestQdrantDown(t *testing.T) {
-	f := setup(t)
-	require.NoError(t, os.WriteFile(filepath.Join(f.home, ".ragcode", "config.yaml"), []byte("qdrant_url: http://127.0.0.1:1\n"), 0o644))
-	var out bytes.Buffer
-	require.NoError(t, Run(context.Background(), Options{Yes: true, Out: &out}))
-	assert.Contains(t, out.String(), "collections kept")
-	assert.NoDirExists(t, filepath.Join(f.home, ".ragcode"))
-}
-
 func dirExists(p string) bool {
 	st, err := os.Stat(p)
 	return err == nil && st.IsDir()
@@ -137,4 +111,21 @@ func TestRunStripsEveryPointerFile(t *testing.T) {
 	assert.Equal(t, "# Agents\n", string(agents))
 	copilot, _ := os.ReadFile(filepath.Join(f.root, ".github", "copilot-instructions.md"))
 	assert.Equal(t, "# Copilot\n", string(copilot))
+}
+
+// The index lives in RAGCODE_HOME/index: removing the home removes it, and
+// no Qdrant is asked to drop anything.
+func TestUninstallRemovesIndexDir(t *testing.T) {
+	f := setup(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected HTTP call %s %s", r.Method, r.URL.Path)
+	}))
+	defer srv.Close()
+	rag := filepath.Join(f.home, ".ragcode")
+	require.NoError(t, os.WriteFile(filepath.Join(rag, "config.yaml"), []byte("qdrant_url: "+srv.URL+"\n"), 0o644))
+	db := filepath.Join(rag, "index", "ragcode-x", "index.db")
+	require.NoError(t, os.MkdirAll(filepath.Dir(db), 0o755))
+	require.NoError(t, os.WriteFile(db, []byte("db"), 0o644))
+	require.NoError(t, Run(context.Background(), Options{Yes: true, Out: &bytes.Buffer{}}))
+	assert.NoDirExists(t, rag)
 }

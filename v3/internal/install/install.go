@@ -1,6 +1,6 @@
 // Package install sets RagCode up on this machine: the server binary under
-// ~/.ragcode/bin, config.yaml, the Qdrant and Ollama containers, the
-// embedding model, IDE configs and PATH.
+// ~/.ragcode/bin, config.yaml, the Ollama container, the embedding model,
+// IDE configs and PATH.
 package install
 
 import (
@@ -27,7 +27,6 @@ import (
 // Options controls Run.
 type Options struct {
 	Ollama    string // docker | local | skip
-	Qdrant    string // docker | skip
 	GPU       bool   // try --gpus all for the Ollama container first
 	Yes       bool   // replace an existing installation without asking
 	ModelsDir string // host directory mounted at /root/.ollama; "" uses a volume
@@ -39,14 +38,12 @@ type Options struct {
 }
 
 const (
-	qdrantImage = "qdrant/qdrant:v1.19.1"
 	ollamaImage = "ollama/ollama"
 	readyWait   = 60 * time.Second
 )
 
 // Run performs the installation. Ollama, model and IDE failures are reported
-// and skipped; a missing binary fails Run at once, and a Qdrant container that
-// cannot start fails it after the remaining steps.
+// and skipped; a missing binary fails Run at once.
 func Run(ctx context.Context, o Options) error {
 	if o.Out == nil {
 		o.Out = os.Stdout
@@ -65,11 +62,6 @@ func Run(ctx context.Context, o Options) error {
 	case "docker", "local", "skip":
 	default:
 		return fmt.Errorf("install: -ollama must be docker, local or skip, got %q", o.Ollama)
-	}
-	switch o.Qdrant {
-	case "docker", "skip":
-	default:
-		return fmt.Errorf("install: -qdrant must be docker or skip, got %q", o.Qdrant)
 	}
 
 	home := config.HomeDir()
@@ -108,29 +100,10 @@ func Run(ctx context.Context, o Options) error {
 		ok(o.Out, "Wrote "+cfgPath)
 	}
 
-	if o.Qdrant == "docker" || o.Ollama == "docker" {
+	if o.Ollama == "docker" {
 		if _, err := exec.LookPath("docker"); err != nil {
-			warn(o.Out, "docker not found in PATH; containers not started")
-			if o.Qdrant == "docker" {
-				o.Qdrant = "skip"
-			}
-			if o.Ollama == "docker" {
-				o.Ollama = "local" // a native Ollama may still answer
-			}
-		}
-	}
-	var qdrantErr error
-	if o.Qdrant == "docker" {
-		step(o.Out, "Starting Qdrant container")
-		if err := runContainer(ctx, o.Out, "ragcode-qdrant", qdrantImage,
-			"-p", "127.0.0.1:6333:6333", "-p", "127.0.0.1:6334:6334", "-v", "ragcode-qdrant:/qdrant/storage"); err != nil {
-			// Usually another project's Qdrant holds the port: never adopt it silently.
-			qdrantErr = fmt.Errorf("install: %w; free port 6333 and rerun, or rerun with -qdrant skip to use the Qdrant at %s", err, cfg.QdrantURL)
-			warn(o.Out, qdrantErr.Error())
-		} else if err := waitHTTP(ctx, cfg.QdrantURL+"/readyz", readyWait); err != nil {
-			warn(o.Out, "Qdrant: "+err.Error())
-		} else {
-			ok(o.Out, "Qdrant ready")
+			warn(o.Out, "docker not found in PATH; container not started")
+			o.Ollama = "local" // a native Ollama may still answer
 		}
 	}
 	ollamaFailed := false
@@ -201,11 +174,8 @@ func Run(ctx context.Context, o Options) error {
 	snippet, _ := json.MarshalIndent(map[string]any{"mcpServers": map[string]any{
 		"ragcode": map[string]any{"command": binary, "args": []string{"--config", cfgPath}},
 	}}, "", "  ")
-	fmt.Fprintf(o.Out, "\nBinary:  %s\nConfig:  %s\nOllama:  %s (model %s)\nQdrant:  %s\n\nmcp.json entry for any other client:\n%s\n",
-		binary, cfgPath, cfg.OllamaBaseURL, cfg.OllamaEmbed, cfg.QdrantURL, snippet)
-	if qdrantErr != nil {
-		return qdrantErr
-	}
+	fmt.Fprintf(o.Out, "\nBinary:  %s\nConfig:  %s\nOllama:  %s (model %s)\nIndex:   %s\n\nmcp.json entry for any other client:\n%s\n",
+		binary, cfgPath, cfg.OllamaBaseURL, cfg.OllamaEmbed, filepath.Join(home, "index"), snippet)
 	ok(o.Out, "RagCode MCP installed")
 	return nil
 }

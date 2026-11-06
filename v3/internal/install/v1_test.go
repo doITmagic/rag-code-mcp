@@ -25,7 +25,7 @@ func TestRunRemovesV1(t *testing.T) {
 	require.NoError(t, os.WriteFile(cursor, []byte(`{"mcpServers":{"ragcode":{"command":"`+v1Bin+`/rag-code-mcp"},"github":{"command":"gh"}}}`), 0o644))
 
 	var out bytes.Buffer
-	require.NoError(t, Run(context.Background(), Options{Ollama: "skip", Qdrant: "skip", Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}), out.String())
+	require.NoError(t, Run(context.Background(), Options{Ollama: "skip", Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}), out.String())
 
 	assert.NoDirExists(t, filepath.Join(home, ".local", "share", "ragcode"))
 	assert.NoDirExists(t, filepath.Join(home, ".local", "share", "qdrant"))
@@ -48,7 +48,7 @@ func TestRunCancelKeepsV1(t *testing.T) {
 	good := src(t)
 	require.NoError(t, os.MkdirAll(filepath.Join(home, ".ragcode", "bin"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(home, ".ragcode", "bin", "rag-code-mcp"), []byte("v3"), 0o755))
-	err := Run(context.Background(), Options{Ollama: "skip", Qdrant: "skip", SkipIDE: true, In: strings.NewReader("n\n"), Out: &bytes.Buffer{}, srcDir: good})
+	err := Run(context.Background(), Options{Ollama: "skip", SkipIDE: true, In: strings.NewReader("n\n"), Out: &bytes.Buffer{}, srcDir: good})
 	require.ErrorContains(t, err, "cancelled")
 	assert.DirExists(t, v1Dir)
 }

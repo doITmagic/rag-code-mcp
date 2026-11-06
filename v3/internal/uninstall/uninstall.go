@@ -1,5 +1,5 @@
 // Package uninstall removes RagCode from the machine: running processes, IDE
-// entries, per-root .ragcode directories, Qdrant collections, ~/.ragcode and
+// entries, per-root .ragcode directories, ~/.ragcode (with every index) and
 // the PATH line. The server binary runs it for --uninstall.
 package uninstall
 
@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,13 +21,12 @@ import (
 	"github.com/doITmagic/rag-code-mcp/v3/engine"
 	"github.com/doITmagic/rag-code-mcp/v3/internal/config"
 	"github.com/doITmagic/rag-code-mcp/v3/internal/idepaths"
-	"github.com/doITmagic/rag-code-mcp/v3/store"
 )
 
 // Options controls Run.
 type Options struct {
 	Yes    bool // remove every <root>/.ragcode without asking
-	Docker bool // also remove the ragcode-qdrant and ragcode-ollama containers
+	Docker bool // also remove the ragcode-ollama container and a leftover ragcode-qdrant (v1)
 	In     io.Reader
 	Out    io.Writer
 }
@@ -90,17 +88,6 @@ func Run(ctx context.Context, o Options) error {
 		} else {
 			ok(o.Out, "Removed "+dir)
 		}
-	}
-
-	step(o.Out, "Deleting Qdrant collections")
-	cfg := config.Default()
-	if _, err := os.Stat(config.DefaultPath()); err == nil {
-		if c, err := config.Load(config.DefaultPath()); err == nil {
-			cfg = c
-		}
-	}
-	if err := deleteCollections(ctx, cfg.QdrantURL, cfg.QdrantAPIKey, rs, o.Out); err != nil {
-		warn(o.Out, "Qdrant: "+err.Error())
 	}
 
 	userHome, _ := os.UserHomeDir()
@@ -191,60 +178,6 @@ func StopProcess(ctx context.Context, binary string) {
 	if pids = alive(); len(pids) > 0 {
 		_ = exec.CommandContext(ctx, "kill", append([]string{"-KILL"}, pids...)...).Run()
 	}
-}
-
-// deleteCollections drops the collections of roots through Qdrant's REST API.
-// Only this machine's roots: the server may hold other machines' collections.
-func deleteCollections(ctx context.Context, baseURL, apiKey string, roots []string, out io.Writer) error {
-	own := map[string]bool{}
-	for _, r := range roots {
-		own[store.CollectionName(r)] = true
-	}
-	client := &http.Client{Timeout: 10 * time.Second}
-	do := func(method, path string) (*http.Response, error) {
-		req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(baseURL, "/")+path, nil)
-		if err != nil {
-			return nil, err
-		}
-		if apiKey != "" {
-			req.Header.Set("api-key", apiKey)
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		if resp.StatusCode/100 != 2 {
-			resp.Body.Close()
-			return nil, fmt.Errorf("%s %s: status %d", method, path, resp.StatusCode)
-		}
-		return resp, nil
-	}
-	resp, err := do(http.MethodGet, "/collections")
-	if err != nil {
-		return fmt.Errorf("not reachable, collections kept (%w)", err)
-	}
-	var list struct {
-		Result struct {
-			Collections []struct{ Name string } `json:"collections"`
-		} `json:"result"`
-	}
-	err = json.NewDecoder(resp.Body).Decode(&list)
-	resp.Body.Close()
-	if err != nil {
-		return err
-	}
-	for _, c := range list.Result.Collections {
-		if !own[c.Name] {
-			continue
-		}
-		if r, err := do(http.MethodDelete, "/collections/"+c.Name); err != nil {
-			warn(out, err.Error())
-		} else {
-			r.Body.Close()
-			ok(out, "Deleted collection "+c.Name)
-		}
-	}
-	return nil
 }
 
 // removePointer drops the engine.IDEPointer line WriteIDERules added to path,

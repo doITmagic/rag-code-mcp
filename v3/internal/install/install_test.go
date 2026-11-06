@@ -17,7 +17,7 @@ import (
 )
 
 // env sets up a temp HOME, a fake docker on PATH that logs its arguments and
-// fails on --gpus, and an httptest Ollama/Qdrant. It returns the home, the
+// fails on --gpus, and an httptest Ollama. It returns the home, the
 // docker log path and the pulled model names.
 func env(t *testing.T) (home, dockerLog string, pulled *[]string) {
 	t.Helper()
@@ -51,7 +51,6 @@ func env(t *testing.T) (home, dockerLog string, pulled *[]string) {
 	}))
 	t.Cleanup(srv.Close)
 	t.Setenv("OLLAMA_BASE_URL", srv.URL)
-	t.Setenv("QDRANT_URL", srv.URL)
 	return home, dockerLog, pulled
 }
 
@@ -65,7 +64,7 @@ func TestRun(t *testing.T) {
 	home, dockerLog, pulled := env(t)
 	require.NoError(t, os.MkdirAll(filepath.Join(home, ".cursor"), 0o755))
 	var out bytes.Buffer
-	opts := Options{Ollama: "docker", Qdrant: "docker", GPU: true, Yes: true, Out: &out, srcDir: src(t)}
+	opts := Options{Ollama: "docker", GPU: true, Yes: true, Out: &out, srcDir: src(t)}
 	require.NoError(t, Run(context.Background(), opts), out.String())
 
 	binary := filepath.Join(home, ".ragcode", "bin", "rag-code-mcp")
@@ -78,8 +77,6 @@ func TestRun(t *testing.T) {
 	log, _ := os.ReadFile(dockerLog)
 	lines := strings.Split(strings.TrimSpace(string(log)), "\n")
 	assert.Equal(t, []string{
-		"rm -f ragcode-qdrant",
-		"run -d --name ragcode-qdrant --restart always -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v ragcode-qdrant:/qdrant/storage qdrant/qdrant:v1.19.1",
 		"rm -f ragcode-ollama",
 		"run -d --name ragcode-ollama --restart always --gpus all -p 127.0.0.1:11434:11434 -v ragcode-ollama:/root/.ollama ollama/ollama",
 		"rm -f ragcode-ollama",
@@ -111,7 +108,7 @@ func TestRun(t *testing.T) {
 	require.NoError(t, os.Remove(dockerLog))
 	*pulled = nil
 	out.Reset()
-	opts.Ollama, opts.Qdrant, opts.SkipIDE = "skip", "skip", true
+	opts.Ollama, opts.SkipIDE = "skip", true
 	require.NoError(t, Run(context.Background(), opts), out.String())
 	data, _ = os.ReadFile(cfgPath)
 	assert.Equal(t, "# keep\nlog_level: debug\n", string(data))
@@ -125,12 +122,12 @@ func TestRunLocalOllamaAndModelsDir(t *testing.T) {
 	home, dockerLog, pulled := env(t)
 	models := filepath.Join(home, "models")
 	var out bytes.Buffer
-	require.NoError(t, Run(context.Background(), Options{Ollama: "local", Qdrant: "skip", Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}))
+	require.NoError(t, Run(context.Background(), Options{Ollama: "local", Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}))
 	assert.NoFileExists(t, dockerLog)
 	assert.Len(t, *pulled, 1)
 
 	*pulled = nil
-	require.NoError(t, Run(context.Background(), Options{Ollama: "docker", Qdrant: "skip", ModelsDir: models, Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}))
+	require.NoError(t, Run(context.Background(), Options{Ollama: "docker", ModelsDir: models, Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}))
 	log, _ := os.ReadFile(dockerLog)
 	assert.Contains(t, string(log), "-v "+models+":/root/.ollama ollama/ollama")
 	assert.NotContains(t, string(log), "ragcode-qdrant")
@@ -146,9 +143,8 @@ func TestRunErrors(t *testing.T) {
 		opts Options
 		want string
 	}{
-		{"bad ollama", Options{Ollama: "remote", Qdrant: "skip", srcDir: good}, "-ollama"},
-		{"bad qdrant", Options{Ollama: "skip", Qdrant: "local", srcDir: good}, "-qdrant"},
-		{"no binary", Options{Ollama: "skip", Qdrant: "skip", srcDir: t.TempDir()}, "next to the installer"},
+		{"bad ollama", Options{Ollama: "remote", srcDir: good}, "-ollama"},
+		{"no binary", Options{Ollama: "skip", srcDir: t.TempDir()}, "next to the installer"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -160,8 +156,8 @@ func TestRunErrors(t *testing.T) {
 	}
 
 	// Existing install, user answers no.
-	require.NoError(t, Run(context.Background(), Options{Ollama: "skip", Qdrant: "skip", Yes: true, SkipIDE: true, Out: &bytes.Buffer{}, srcDir: good}))
-	err := Run(context.Background(), Options{Ollama: "skip", Qdrant: "skip", SkipIDE: true, In: strings.NewReader("n\n"), Out: &bytes.Buffer{}, srcDir: good})
+	require.NoError(t, Run(context.Background(), Options{Ollama: "skip", Yes: true, SkipIDE: true, Out: &bytes.Buffer{}, srcDir: good}))
+	err := Run(context.Background(), Options{Ollama: "skip", SkipIDE: true, In: strings.NewReader("n\n"), Out: &bytes.Buffer{}, srcDir: good})
 	assert.ErrorContains(t, err, "cancelled")
 }
 
@@ -188,28 +184,26 @@ func TestPullModelOllamaTooOld(t *testing.T) {
 	assert.ErrorContains(t, err, "newer Ollama")
 }
 
-// A failed Qdrant container (port held by another project's Qdrant) must fail
-// Run instead of reporting success against a database that is not ours.
-func TestQdrantContainerFailFailsRun(t *testing.T) {
-	home, dockerLog, _ := env(t)
-	require.NoError(t, os.MkdirAll(filepath.Join(home, ".cursor"), 0o755))
-	fail := "#!/bin/sh\necho \"$*\" >> " + dockerLog + "\ncase \"$*\" in run*) exit 125;; esac\n"
-	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(dockerLog), "docker"), []byte(fail), 0o755))
-	var out bytes.Buffer
-	err := Run(context.Background(), Options{Ollama: "skip", Qdrant: "docker", Yes: true, Out: &out, srcDir: src(t)})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "ragcode-qdrant")
-	assert.Contains(t, err.Error(), "-qdrant skip")
-	assert.NotContains(t, out.String(), "RagCode MCP installed")
-	assert.FileExists(t, filepath.Join(home, ".cursor", "mcp.json"), "remaining steps still run")
-}
-
 // A failed Ollama container (port held by a native Ollama) must still pull the model.
 func TestOllamaContainerFailStillPulls(t *testing.T) {
 	_, dockerLog, pulled := env(t)
 	fail := "#!/bin/sh\necho \"$*\" >> " + dockerLog + "\ncase \"$*\" in run*) exit 125;; esac\n"
 	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(dockerLog), "docker"), []byte(fail), 0o755))
 	var out bytes.Buffer
-	require.NoError(t, Run(context.Background(), Options{Ollama: "docker", Qdrant: "skip", Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}), out.String())
+	require.NoError(t, Run(context.Background(), Options{Ollama: "docker", Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}), out.String())
 	assert.Equal(t, []string{"embeddinggemma-2:270m"}, *pulled)
+}
+
+// v3 keeps its index in SQLite files: the installer starts no Qdrant.
+func TestInstallStartsNoQdrant(t *testing.T) {
+	_, dockerLog, _ := env(t)
+	var out bytes.Buffer
+	require.NoError(t, Run(context.Background(), Options{Ollama: "docker", Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}), out.String())
+	log, _ := os.ReadFile(dockerLog)
+	for _, line := range strings.Split(string(log), "\n") {
+		if strings.HasPrefix(line, "run ") {
+			assert.NotContains(t, line, "qdrant")
+		}
+	}
+	assert.Contains(t, string(log), "ragcode-ollama")
 }

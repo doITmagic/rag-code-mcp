@@ -16,12 +16,12 @@ import (
 )
 
 // -ollama=local must still wait for Ollama and pull the model when docker is
-// absent and -qdrant=docker is requested; only the container steps are skipped.
+// absent.
 func TestVerifyLocalOllamaWithoutDocker(t *testing.T) {
 	_, dockerLog, pulled := env(t)
 	t.Setenv("PATH", t.TempDir()) // no docker, no codex
 	var out bytes.Buffer
-	require.NoError(t, Run(context.Background(), Options{Ollama: "local", Qdrant: "docker", Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}), out.String())
+	require.NoError(t, Run(context.Background(), Options{Ollama: "local", Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}), out.String())
 	assert.NoFileExists(t, dockerLog)
 	assert.Equal(t, 1, len(*pulled), "local Ollama was skipped because docker is missing")
 }
@@ -33,7 +33,7 @@ func TestVerifyCancelledCtxNoHang(t *testing.T) {
 	cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(ctx, Options{Ollama: "docker", Qdrant: "docker", Yes: true, SkipIDE: true, Out: &bytes.Buffer{}, srcDir: src(t)})
+		done <- Run(ctx, Options{Ollama: "docker", Yes: true, SkipIDE: true, Out: &bytes.Buffer{}, srcDir: src(t)})
 	}()
 	select {
 	case <-done:
@@ -57,7 +57,7 @@ func TestVerifyReinstallAndZsh(t *testing.T) {
 	home, _, _ := env(t)
 	t.Setenv("SHELL", "/usr/bin/zsh")
 	s := src(t)
-	opts := Options{Ollama: "skip", Qdrant: "skip", Yes: true, SkipIDE: true, Out: &bytes.Buffer{}, srcDir: s}
+	opts := Options{Ollama: "skip", Yes: true, SkipIDE: true, Out: &bytes.Buffer{}, srcDir: s}
 	require.NoError(t, Run(context.Background(), opts))
 	require.NoError(t, os.WriteFile(filepath.Join(s, "rag-code-mcp"), []byte("v2"), 0o644))
 	require.NoError(t, Run(context.Background(), opts))

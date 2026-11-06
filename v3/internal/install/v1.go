@@ -12,6 +12,10 @@ import (
 	"github.com/doITmagic/rag-code-mcp/v3/internal/idepaths"
 )
 
+// qdrantImage is only used to delete v1's root-owned Qdrant data; v3 runs no
+// Qdrant.
+const qdrantImage = "qdrant/qdrant:v1.19.1"
+
 // removeV1 deletes a RagCode v1 install (~/.local/share/ragcode): what v1's
 // own uninstaller removes, plus the PATH line and Qdrant data it leaves.
 // Nothing from v1 is reusable by v3. Failures are warned and skipped.

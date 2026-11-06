@@ -444,6 +444,7 @@ func TestIndexWorkspace(t *testing.T) {
 	assert.Equal(t, v.root, out.Root)
 	assert.True(t, strings.HasPrefix(out.Collection, "ragcode-"))
 	assert.Equal(t, 3, out.EstimatedFiles)
+	assert.Contains(t, r.Message, "to run an index (incremental) of 3 files")
 	assert.Equal(t, "incremental", out.Mode)
 	assert.Equal(t, "not_indexed", r.Index.State)
 

@@ -47,7 +47,7 @@ func (t *tools) indexWorkspace(ctx context.Context, req *mcp.CallToolRequest, in
 			return fail(fmt.Sprintf("cannot walk %s: %v", w.Root, err))
 		}
 		data["estimated_files"] = len(files)
-		msg := fmt.Sprintf("call again with confirm=true to run a %s index of %d files into %s", in.Mode, len(files), w.Collection)
+		msg := fmt.Sprintf("call again with confirm=true to run an index (%s) of %d files into %s", in.Mode, len(files), w.Collection)
 		return reply("confirmation_required", msg, data, w)
 	}
 	var notes []string
@@ -57,7 +57,7 @@ func (t *tools) indexWorkspace(ctx context.Context, req *mcp.CallToolRequest, in
 		}
 	}
 	w.Index(in.Mode == "recreate")
-	return reply("indexing", strings.Join(append([]string{"queued a " + in.Mode + " index run; poll rag_server_info or any tool for progress"}, notes...), "; "), data, w)
+	return reply("indexing", strings.Join(append([]string{"queued an index run (" + in.Mode + "); poll rag_server_info or any tool for progress"}, notes...), "; "), data, w)
 }
 
 // ---- rag_server_info ----

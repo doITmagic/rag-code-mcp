@@ -663,3 +663,26 @@ func TestRunEndIsLogged(t *testing.T) {
 	assert.Contains(t, logBuf.String(), "duration=")
 	assert.Contains(t, logBuf.String(), "phase=done")
 }
+
+// A checkout fires many watcher events: the full run is logged once while it
+// is already queued, and a run stopped by the HEAD change says so.
+func TestWatcherFullRunLoggedOnce(t *testing.T) {
+	cfg := testConfig(t)
+	var logBuf safeBuf
+	rec := &runRecorder{hold: make(chan struct{}), errs: []error{index.ErrHeadChanged}}
+	e := New(cfg, store.NewMemory(), &embed.Fake{}, slog.New(slog.NewTextHandler(&logBuf, nil)))
+	defer e.Close()
+	e.run = rec.run
+	w, err := e.Workspace(t.TempDir())
+	require.NoError(t, err)
+	w.Index(false) // run 1, blocked in the fake
+	require.Eventually(t, func() bool { return len(rec.snapshot()) == 1 }, time.Second, 5*time.Millisecond)
+	wt := &watcher{ws: w}
+	for range 5 {
+		wt.full("directory removed")
+	}
+	assert.Equal(t, 1, strings.Count(logBuf.String(), "watcher queues a full run"))
+	close(rec.hold)
+	require.Eventually(t, func() bool { return strings.Contains(logBuf.String(), "engine: index run finished") }, 2*time.Second, 5*time.Millisecond)
+	assert.Contains(t, logBuf.String(), "git HEAD changed during the run")
+}

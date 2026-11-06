@@ -400,6 +400,10 @@ func (e *Engine) runOne(w *Workspace, kind queueKind, files, deleted []string) (
 	e.log.Info("engine: index run", "root", w.Root, "kind", kind, "files", len(files), "deleted", len(deleted))
 	start := time.Now()
 	st, err := e.run(e.ctx, o)
+	if errors.Is(err, index.ErrHeadChanged) {
+		e.log.Info("engine: index run stopped, git HEAD changed during the run; a full run follows", "root", w.Root,
+			"done", st.Done, "deleted", st.Deleted, "duration", time.Since(start).Round(time.Millisecond))
+	}
 	if err == nil { // failures are logged by the caller, with the retry
 		e.log.Info("engine: index run finished", "root", w.Root, "phase", st.Phase, "total", st.Total, "done", st.Done,
 			"failed", st.Failed, "deleted", st.Deleted, "duration", time.Since(start).Round(time.Millisecond))

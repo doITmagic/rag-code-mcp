@@ -233,7 +233,13 @@ func (wt *watcher) flush() {
 }
 
 func (wt *watcher) full(reason string) {
-	wt.ws.e.log.Info("engine: watcher queues a full run", "root", wt.ws.Root, "reason", reason)
+	e := wt.ws.e
+	e.mu.Lock()
+	queued := wt.ws.queued >= kindFull // a checkout fires many events: log the first
+	e.mu.Unlock()
+	if !queued {
+		e.log.Info("engine: watcher queues a full run", "root", wt.ws.Root, "reason", reason)
+	}
 	wt.ws.Index(false)
 }
 

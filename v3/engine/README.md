@@ -72,6 +72,7 @@ graph TD
 |------|--------|
 | `engine_test.go` | Root validation, auto-index on first contact, request coalescing, `ErrHeadChanged` re-queue, retry of failed runs, a failed recreate that resumes without dropping again, no watcher without `auto_index`, recreate, embedding model change, concurrent root registration from several engines, a search refused on an index of another model with the same vector size, a lock held by another engine, `Resume`, no goroutines left after `Close`, `WriteIDERules` (tracked files, symlinks, symlinked parent directories, continuing after a refused file), backoff, a run waiting for the slot counts as queued. `TestMain` points `RAGCODE_HOME` at a temp dir. |
 | `watch_test.go` | The watcher end to end, a `.gitignore` edit queues a full run, root removed, root that comes back, unreadable subdirectory, watcher restart retried. |
+| `watch_linux_test.go` | All roots share one inotify instance (nested roots both see an event, `Close` releases it); a watcher that cannot start is retried. |
 | `prefix_test.go` | `Search` adds the model's query prefix. |
 | `zz_verify_test.go` | Verification tests: concurrent `Workspace` calls, cancelled contexts, enqueue during a lock retry, recreate while locked, a directory moved out and the forced debounce flush, status read from disk before any run, home symlink guard, `Close` cancelling a blocked run, junk `roots.json`, a files run with only deletions, junk paths, `Ready` remediation text, a failed query embed does not enqueue, recreate absorbing queued files, catch-up with and without `auto_index`, double `Close`, `.git/refs` plus hidden and excluded directories, kernel file systems refused. |
 
@@ -228,8 +229,11 @@ diff keeps it cheap. An interrupted run is completed this way, since
 
 ## File watcher
 
-One `fsnotify` watcher per root (only when `watch_enabled` and `auto_index`
-are both on). It watches the root and every directory below it, except
+One watcher per root (only when `watch_enabled` and `auto_index` are both
+on), all sharing one `fsnotify` instance per process: the per-user inotify
+instance limit is small (128 by default on Linux) and every client starts its
+own server. A watcher that cannot start is logged and retried, with a
+catch-up run, on the next call for that root. It watches the root and every directory below it, except
 hidden directories, directories named in `exclude_patterns` and linked git
 worktrees; it also watches `.git` and the `.git/refs` tree. A subdirectory
 that cannot be watched is logged and skipped.

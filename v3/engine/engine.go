@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/fsnotify/fsnotify"
 	"log/slog"
 	"maps"
 	"os"
@@ -62,10 +63,11 @@ type Engine struct {
 	wg     sync.WaitGroup // job runners and watcher loops
 	slot   chan struct{}  // capacity 1: workspaces index one at a time
 
-	mu      sync.Mutex // guards ws, closed and every job field of a Workspace
+	mu      sync.Mutex // guards ws, closed, fsw and every job field of a Workspace
 	ws      map[string]*Workspace
 	closed  bool
-	rootsMu sync.Mutex // with roots.json.lock across processes: held across the roots.json rewrite
+	fsw     *fsnotify.Watcher // one inotify instance for every root, started on first watch
+	rootsMu sync.Mutex        // with roots.json.lock across processes: held across the roots.json rewrite
 }
 
 // New returns an engine. log may be nil.
@@ -122,7 +124,10 @@ func (e *Engine) Workspace(root string) (*Workspace, error) {
 	// no watcher may start one.
 	if e.cfg.WatchEnabled && e.cfg.AutoIndex {
 		if err := e.startWatcher(w); err != nil {
-			e.log.Warn("engine: watcher not started", "root", real, "err", err)
+			e.log.Warn("engine: watcher not started, retrying on the next call", "root", real, "err", err)
+			e.mu.Lock()
+			w.gone = true // the next Workspace call retries, with a catch-up run
+			e.mu.Unlock()
 		}
 	}
 	return w, nil
@@ -252,9 +257,13 @@ func (e *Engine) Close() {
 			w.retry.Stop()
 		}
 	}
+	fsw := e.fsw
 	e.mu.Unlock()
 	for _, w := range watchers {
 		w.Stop()
+	}
+	if fsw != nil {
+		fsw.Close() // ends the watch loop
 	}
 	e.wg.Wait()
 }
@@ -312,6 +321,9 @@ func (e *Engine) kick(w *Workspace) {
 	go e.runJobs(w)
 }
 
+// idleHook runs when the runner found its queue empty; tests use it.
+var idleHook func()
+
 // runJobs drains w's queue: a request made during a run starts right after
 // it. Runs of different workspaces serialize on the slot.
 func (e *Engine) runJobs(w *Workspace) {
@@ -330,7 +342,15 @@ func (e *Engine) runJobs(w *Workspace) {
 			}
 		}
 		if kind == kindNone || e.ctx.Err() != nil {
+			if idleHook != nil {
+				idleHook()
+			}
 			e.mu.Lock()
+			if w.queued != kindNone && e.ctx.Err() == nil {
+				// Queued after the read above: kick saw running and left it to us.
+				e.mu.Unlock()
+				continue
+			}
 			w.running = false
 			e.mu.Unlock()
 			return

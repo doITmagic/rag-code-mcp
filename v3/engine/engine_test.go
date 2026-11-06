@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -685,4 +686,28 @@ func TestWatcherFullRunLoggedOnce(t *testing.T) {
 	close(rec.hold)
 	require.Eventually(t, func() bool { return strings.Contains(logBuf.String(), "engine: index run finished") }, 2*time.Second, 5*time.Millisecond)
 	assert.Contains(t, logBuf.String(), "git HEAD changed during the run")
+}
+
+// A request queued between the runner's last empty read and its exit is not
+// stranded: kick sees running and returns, so the runner must pick it up.
+func TestRequestQueuedWhileRunnerExits(t *testing.T) {
+	cfg := testConfig(t)
+	rec := &runRecorder{}
+	e := New(cfg, store.NewMemory(), &embed.Fake{}, nil)
+	defer e.Close()
+	e.run = rec.run
+	w, err := e.Workspace(t.TempDir())
+	require.NoError(t, err)
+	var once sync.Once
+	idleHook = func() { once.Do(func() { w.IndexFiles([]string{"late.go"}, nil) }) }
+	t.Cleanup(func() { idleHook = nil })
+	w.Index(false)
+	require.Eventually(t, func() bool {
+		for _, c := range rec.snapshot() {
+			if slices.Contains(c.Files, "late.go") {
+				return true
+			}
+		}
+		return false
+	}, 2*time.Second, 5*time.Millisecond)
 }

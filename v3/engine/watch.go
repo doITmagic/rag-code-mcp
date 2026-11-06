@@ -24,11 +24,10 @@ const maxDebounces = 10
 // directory queue a full run instead.
 type watcher struct {
 	ws   *Workspace
-	fsw  *fsnotify.Watcher
-	stop chan struct{}
+	fsw  *fsnotify.Watcher // the engine's, shared by every root
 	once sync.Once
 
-	dirs map[string]bool // watched directories; the loop goroutine owns it
+	dirs map[string]bool // watched directories; the engine's watch loop owns it
 
 	mu      sync.Mutex
 	timer   *time.Timer
@@ -37,33 +36,96 @@ type watcher struct {
 	deleted map[string]bool
 }
 
+// newFSWatcher is fsnotify.NewWatcher; tests swap it.
+var newFSWatcher = fsnotify.NewWatcher
+
+// watchFS returns the engine's one inotify instance, started on first use.
+// Every root shares it: the per-user instance limit is small (128 on Linux)
+// and every client starts its own server. Caller holds e.mu.
+func (e *Engine) watchFS() (*fsnotify.Watcher, error) {
+	if e.closed {
+		return nil, ErrClosed
+	}
+	if e.fsw == nil {
+		fsw, err := newFSWatcher()
+		if err != nil {
+			return nil, err
+		}
+		e.fsw = fsw
+		e.wg.Add(1)
+		go e.watchLoop(fsw)
+	}
+	return e.fsw, nil
+}
+
 func (e *Engine) startWatcher(w *Workspace) error {
-	fsw, err := fsnotify.NewWatcher()
+	e.mu.Lock()
+	fsw, err := e.watchFS()
+	e.mu.Unlock()
 	if err != nil {
 		return err
 	}
-	wt := &watcher{ws: w, fsw: fsw, stop: make(chan struct{}), dirs: map[string]bool{}, changed: map[string]bool{}, deleted: map[string]bool{}}
+	wt := &watcher{ws: w, fsw: fsw, dirs: map[string]bool{}, changed: map[string]bool{}, deleted: map[string]bool{}}
 	if err := wt.addTree(w.Root, false); err != nil {
-		fsw.Close()
+		wt.forget()
 		return err
 	}
 	if git := filepath.Join(w.Root, ".git"); fsw.Add(git) == nil {
+		wt.dirs[git] = true
 		_ = wt.addTree(filepath.Join(git, "refs"), false)
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.closed {
-		fsw.Close()
 		return ErrClosed
 	}
-	if w.watch != nil { // a concurrent call won
-		fsw.Close()
+	if w.watch != nil { // a concurrent call won; its watches are the same
 		return nil
 	}
 	w.watch = wt
-	e.wg.Add(1)
-	go wt.loop()
 	return nil
+}
+
+// watchLoop hands each event to every watcher of a root containing it.
+func (e *Engine) watchLoop(fsw *fsnotify.Watcher) {
+	defer e.wg.Done()
+	watchers := func() []*watcher {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		var out []*watcher
+		for _, w := range e.ws {
+			if w.watch != nil {
+				out = append(out, w.watch)
+			}
+		}
+		return out
+	}
+	for {
+		select {
+		case ev, ok := <-fsw.Events:
+			if !ok {
+				return
+			}
+			for _, wt := range watchers() {
+				wt.handle(ev)
+			}
+		case err, ok := <-fsw.Errors:
+			if !ok {
+				return
+			}
+			for _, wt := range watchers() {
+				if errors.Is(err, fsnotify.ErrEventOverflow) {
+					// Lost events may include the Create of a new directory.
+					if err := wt.addTree(wt.ws.Root, false); err != nil {
+						e.log.Warn("engine: cannot re-watch after overflow", "root", wt.ws.Root, "err", err)
+					}
+					wt.full("event overflow")
+				} else {
+					e.log.Warn("engine: watcher error", "root", wt.ws.Root, "err", err)
+				}
+			}
+		}
+	}
 }
 
 // addTree watches dir and every non-hidden, non-excluded directory below it.
@@ -102,36 +164,13 @@ func (wt *watcher) skipDir(name string) bool {
 	return strings.HasPrefix(name, ".") || slices.Contains(wt.ws.e.cfg.ExcludePatterns, name)
 }
 
-func (wt *watcher) loop() {
-	defer wt.ws.e.wg.Done()
-	defer wt.fsw.Close()
-	for {
-		select {
-		case ev, ok := <-wt.fsw.Events:
-			if !ok || wt.handle(ev) {
-				return
-			}
-		case err, ok := <-wt.fsw.Errors:
-			if !ok {
-				return
-			}
-			if errors.Is(err, fsnotify.ErrEventOverflow) {
-				wt.full("event overflow")
-			} else {
-				wt.ws.e.log.Warn("engine: watcher error", "root", wt.ws.Root, "err", err)
-			}
-		case <-wt.stop:
-			return
-		}
-	}
-}
-
-// handle processes one event; it returns true when the watcher must stop.
-func (wt *watcher) handle(ev fsnotify.Event) bool {
+// handle processes one event of the shared instance; events outside the
+// root are ignored.
+func (wt *watcher) handle(ev fsnotify.Event) {
 	root := wt.ws.Root
 	rel, err := filepath.Rel(root, ev.Name)
 	if ev.Op == fsnotify.Chmod || err != nil || strings.HasPrefix(rel, "..") {
-		return false
+		return
 	}
 	gone := ev.Has(fsnotify.Remove | fsnotify.Rename)
 	if rel == "." {
@@ -144,22 +183,23 @@ func (wt *watcher) handle(ev fsnotify.Event) bool {
 			}
 			wt.ws.e.mu.Unlock()
 			wt.Stop()
+			wt.forget() // a renamed root keeps its watches under the new name
 		}
-		return gone
+		return
 	}
 	parts := strings.Split(rel, string(filepath.Separator))
 	if parts[0] == ".git" {
 		if rel == filepath.Join(".git", "HEAD") || (len(parts) > 2 && parts[1] == "refs") {
 			wt.full("git HEAD changed")
 		}
-		return false
+		return
 	}
 	if slices.ContainsFunc(parts[:len(parts)-1], wt.skipDir) {
-		return false
+		return
 	}
 	if parts[len(parts)-1] == ".gitignore" { // only a walk applies ignore rules to indexed files
 		wt.full(".gitignore changed")
-		return false
+		return
 	}
 	switch {
 	case gone && wt.dropDir(ev.Name):
@@ -175,7 +215,6 @@ func (wt *watcher) handle(ev fsnotify.Event) bool {
 	default:
 		wt.add(ev.Name, false)
 	}
-	return false
 }
 
 func isDir(path string) bool {
@@ -187,6 +226,14 @@ func isDir(path string) bool {
 // was a watched directory. It consults the watcher's own set: the inotify
 // backend has already dropped a moved directory from WatchList() by the time
 // the parent's Rename event arrives.
+// forget removes every watch of this root from the shared instance.
+func (wt *watcher) forget() {
+	for p := range wt.dirs {
+		_ = wt.fsw.Remove(p)
+	}
+	wt.dirs = map[string]bool{}
+}
+
 func (wt *watcher) dropDir(path string) bool {
 	was := wt.dirs[path]
 	for p := range wt.dirs {
@@ -243,7 +290,8 @@ func (wt *watcher) full(reason string) {
 	wt.ws.Index(false)
 }
 
-// Stop ends the loop; idempotent.
+// Stop cancels the pending batch; idempotent. The engine stops handing
+// events to a watcher once it is no longer its workspace's watch.
 func (wt *watcher) Stop() {
 	wt.once.Do(func() {
 		wt.mu.Lock()
@@ -251,6 +299,5 @@ func (wt *watcher) Stop() {
 			wt.timer.Stop()
 		}
 		wt.mu.Unlock()
-		close(wt.stop)
 	})
 }

@@ -128,7 +128,7 @@ func TestVerifyEnqueueDuringLockRetryWaits(t *testing.T) {
 	require.Eventually(t, func() bool { return wa.Status().Phase == "done" }, 2*time.Second, 5*time.Millisecond)
 }
 
-// Two processes share one Qdrant: a recreate requested while the other one
+// Two processes share one index: a recreate requested while the other one
 // holds the lock drops the collection under the running job.
 func TestVerifyRecreateWhileLockedDropsLiveCollection(t *testing.T) {
 	cfg := testConfig(t)
@@ -355,8 +355,9 @@ func TestVerifyReadyRemediation(t *testing.T) {
 	require.NoError(t, err)
 	ok, msg = w2.Ready(context.Background())
 	assert.False(t, ok)
-	assert.Contains(t, msg, "Qdrant")
-	assert.Contains(t, msg, cfg.QdrantURL)
+	assert.Contains(t, msg, "index store unavailable")
+	assert.Contains(t, msg, "connection refused")
+	assert.NotContains(t, msg, "Ollama")
 }
 
 func TestVerifySearchEmbedFailureDoesNotEnqueue(t *testing.T) {

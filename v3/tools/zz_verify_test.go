@@ -124,7 +124,7 @@ func TestVerifyCancelledContext(t *testing.T) {
 }
 
 // Every dependency probe of rag_server_info runs in sequence with its own
-// 3 s timeout: three stalled endpoints add up.
+// 3 s timeout: two stalled endpoints add up.
 func TestVerifyServerInfoStalledEndpoints(t *testing.T) {
 	if testing.Short() {
 		t.Skip("takes ~9 s")
@@ -136,7 +136,7 @@ func TestVerifyServerInfoStalledEndpoints(t *testing.T) {
 		}
 	}))
 	defer stall.Close()
-	v := newEnv(t, false, func(c *config.Config) { c.OllamaBaseURL = stall.URL; c.QdrantURL = stall.URL })
+	v := newEnv(t, false, func(c *config.Config) { c.OllamaBaseURL = stall.URL })
 	v.t.releases = stall.URL
 	v.t.http = &http.Client{Timeout: 3 * time.Second} // production client (Register)
 	start := time.Now()
@@ -145,14 +145,12 @@ func TestVerifyServerInfoStalledEndpoints(t *testing.T) {
 	require.Equal(t, "ok", r.Status)
 	var out struct {
 		Ollama Service `json:"ollama"`
-		Qdrant Service `json:"qdrant"`
 		Update Update  `json:"update"`
 	}
 	data(t, r, &out)
 	assert.False(t, out.Ollama.Reachable)
-	assert.False(t, out.Qdrant.Reachable)
 	assert.Equal(t, "unknown", out.Update.Latest)
-	t.Logf("rag_server_info with three stalled endpoints took %s", elapsed.Round(100*time.Millisecond))
+	t.Logf("rag_server_info with two stalled endpoints took %s", elapsed.Round(100*time.Millisecond))
 }
 
 // Degenerate files and a symlink that leaves the root.
@@ -299,7 +297,7 @@ func TestVerifyUpdateCacheExpiry(t *testing.T) {
 		_, _ = w.Write([]byte(`{"tag_name":"v3.0.0"}`))
 	}))
 	defer gh.Close()
-	v := newEnv(t, false, func(c *config.Config) { c.QdrantURL = "http://127.0.0.1:1"; c.OllamaBaseURL = "http://127.0.0.1:1" })
+	v := newEnv(t, false, func(c *config.Config) { c.OllamaBaseURL = "http://127.0.0.1:1" })
 	v.t.releases = gh.URL
 	path := filepath.Join(config.HomeDir(), "cache", "update.json")
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))

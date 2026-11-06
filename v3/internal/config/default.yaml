@@ -4,9 +4,6 @@
 ollama_base_url: http://localhost:11434
 ollama_embed: embeddinggemma-2:270m   # needs Ollama 0.40 or later
 
-qdrant_url: http://localhost:6333
-qdrant_api_key: ""
-
 log_level: info      # debug | info | warn | error
 log_max_size_mb: 10
 

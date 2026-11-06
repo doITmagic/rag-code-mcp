@@ -23,8 +23,6 @@ var defaultYAML []byte
 type Config struct {
 	OllamaBaseURL         string        `yaml:"ollama_base_url"`
 	OllamaEmbed           string        `yaml:"ollama_embed"`
-	QdrantURL             string        `yaml:"qdrant_url"`
-	QdrantAPIKey          string        `yaml:"qdrant_api_key"`
 	LogLevel              string        `yaml:"log_level"`
 	LogMaxSizeMB          int           `yaml:"log_max_size_mb"`
 	ExcludePatterns       []string      `yaml:"exclude_patterns"`
@@ -40,7 +38,6 @@ func Default() Config {
 	return Config{
 		OllamaBaseURL:      "http://localhost:11434",
 		OllamaEmbed:        "embeddinggemma-2:270m",
-		QdrantURL:          "http://localhost:6333",
 		LogLevel:           "info",
 		LogMaxSizeMB:       10,
 		ExcludePatterns:    []string{"node_modules", "vendor", "target", "build", "dist", "__pycache__"},
@@ -101,8 +98,6 @@ func (c *Config) applyEnv() {
 	}
 	set(&c.OllamaBaseURL, "OLLAMA_BASE_URL")
 	set(&c.OllamaEmbed, "OLLAMA_EMBED")
-	set(&c.QdrantURL, "QDRANT_URL")
-	set(&c.QdrantAPIKey, "QDRANT_API_KEY")
 	set(&c.LogLevel, "MCP_LOG_LEVEL")
 	if v := os.Getenv("RAGCODE_ALLOWED_PATHS"); v != "" {
 		c.AllowedWorkspacePaths = c.AllowedWorkspacePaths[:0]
@@ -117,9 +112,6 @@ func (c *Config) applyEnv() {
 // Validate reports the first invalid field.
 func (c Config) Validate() error {
 	if err := checkURL("ollama_base_url", c.OllamaBaseURL); err != nil {
-		return err
-	}
-	if err := checkURL("qdrant_url", c.QdrantURL); err != nil {
 		return err
 	}
 	if c.OllamaEmbed == "" {

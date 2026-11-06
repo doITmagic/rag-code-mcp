@@ -89,16 +89,15 @@ type KnownRoot struct {
 }
 
 func (t *tools) serverInfo(ctx context.Context, _ *mcp.CallToolRequest, _ InfoInput) (*mcp.CallToolResult, any, error) {
-	// The probes run together so three stalled endpoints cost one client
-	// timeout, not three.
+	// The probes run together so two stalled endpoints cost one client
+	// timeout, not two.
 	var (
-		ollama, qdrant Service
-		update         Update
-		wg             sync.WaitGroup
+		ollama Service
+		update Update
+		wg     sync.WaitGroup
 	)
-	wg.Add(3)
+	wg.Add(2)
 	go func() { defer wg.Done(); ollama = t.probeOllama(ctx) }()
-	go func() { defer wg.Done(); qdrant = t.probeQdrant(ctx) }()
 	go func() { defer wg.Done(); update = t.update(ctx) }()
 	wg.Wait()
 	data := map[string]any{
@@ -106,7 +105,6 @@ func (t *tools) serverInfo(ctx context.Context, _ *mcp.CallToolRequest, _ InfoIn
 		"pid":       os.Getpid(),
 		"uptime":    time.Since(t.started).Round(time.Second).String(),
 		"ollama":    ollama,
-		"qdrant":    qdrant,
 		"update":    update,
 		"languages": parser.Languages(),
 		"roots":     knownRoots(),
@@ -132,16 +130,6 @@ func (t *tools) probeOllama(ctx context.Context) Service {
 		}
 	}
 	s.Error = fmt.Sprintf("model %s not pulled: run ollama pull %s", s.Model, s.Model)
-	return s
-}
-
-func (t *tools) probeQdrant(ctx context.Context) Service {
-	s := Service{URL: t.cfg.QdrantURL}
-	if err := t.getJSON(ctx, strings.TrimRight(s.URL, "/")+"/healthz", nil); err != nil {
-		s.Error = err.Error() + ": start Qdrant"
-		return s
-	}
-	s.Reachable = true
 	return s
 }
 

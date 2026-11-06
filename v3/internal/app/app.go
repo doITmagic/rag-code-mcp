@@ -4,8 +4,8 @@ package app
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
+	"path/filepath"
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/v3/embed"
@@ -25,8 +25,8 @@ import (
 	_ "github.com/doITmagic/rag-code-mcp/v3/parser/web"
 )
 
-// Options configures New. Store and Embedder default to Qdrant and Ollama
-// from Config; tests pass store.NewMemory() and &embed.Fake{}.
+// Options configures New. Store defaults to SQLite under HomeDir()/index and
+// Embedder to Ollama from Config; tests pass store.NewMemory() and &embed.Fake{}.
 type Options struct {
 	Config   config.Config
 	Version  string
@@ -43,7 +43,7 @@ type App struct {
 	log    *slog.Logger
 }
 
-// New builds the app. Nothing here dials Ollama or Qdrant.
+// New builds the app. Nothing here dials Ollama or opens an index file.
 func New(o Options) (*App, error) {
 	if o.Log == nil {
 		o.Log = slog.New(slog.DiscardHandler)
@@ -52,11 +52,7 @@ func New(o Options) (*App, error) {
 		o.Embedder = embed.NewOllama(o.Config.OllamaBaseURL, o.Config.OllamaEmbed, nil)
 	}
 	if o.Store == nil {
-		q, err := store.NewQdrant(o.Config.QdrantURL, o.Config.QdrantAPIKey)
-		if err != nil {
-			return nil, fmt.Errorf("app: %w", err)
-		}
-		o.Store = q
+		o.Store = store.NewSQLite(filepath.Join(config.HomeDir(), "index"))
 	}
 	if o.Log != nil {
 		slog.SetDefault(o.Log) // the one process-wide logger; tools log through it

@@ -56,19 +56,15 @@ func TestLoadInvalidYAML(t *testing.T) {
 
 func TestEnvOverrides(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	require.NoError(t, os.WriteFile(path, []byte("qdrant_url: http://file:1\nallowed_workspace_paths: [/from/file]\n"), 0o644))
+	require.NoError(t, os.WriteFile(path, []byte("ollama_embed: file-embed\nallowed_workspace_paths: [/from/file]\n"), 0o644))
 	t.Setenv("OLLAMA_BASE_URL", "http://env:11434")
 	t.Setenv("OLLAMA_EMBED", "env-embed")
-	t.Setenv("QDRANT_URL", "http://env:6333")
-	t.Setenv("QDRANT_API_KEY", "secret")
 	t.Setenv("MCP_LOG_LEVEL", "warn")
 	t.Setenv("RAGCODE_ALLOWED_PATHS", strings.Join([]string{"/a", " /b ", ""}, string(os.PathListSeparator)))
 	cfg, err := Load(path)
 	require.NoError(t, err)
 	assert.Equal(t, "http://env:11434", cfg.OllamaBaseURL)
-	assert.Equal(t, "env-embed", cfg.OllamaEmbed)
-	assert.Equal(t, "http://env:6333", cfg.QdrantURL, "env wins over file")
-	assert.Equal(t, "secret", cfg.QdrantAPIKey)
+	assert.Equal(t, "env-embed", cfg.OllamaEmbed, "env wins over file")
 	assert.Equal(t, "warn", cfg.LogLevel)
 	assert.Equal(t, []string{"/a", "/b"}, cfg.AllowedWorkspacePaths)
 }
@@ -80,7 +76,6 @@ func TestValidate(t *testing.T) {
 		wantErr string
 	}{
 		{"bad ollama url", func(c *Config) { c.OllamaBaseURL = "localhost:11434" }, "ollama_base_url"},
-		{"bad qdrant url", func(c *Config) { c.QdrantURL = "ftp://x" }, "qdrant_url"},
 		{"empty embed", func(c *Config) { c.OllamaEmbed = "" }, "ollama_embed"},
 		{"bad level", func(c *Config) { c.LogLevel = "verbose" }, "log_level"},
 		{"zero log size", func(c *Config) { c.LogMaxSizeMB = 0 }, "log_max_size_mb"},
@@ -191,4 +186,13 @@ func TestOpenLogFileKeepsWritingWhenRotationFails(t *testing.T) {
 	st, err := os.Stat(path)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1001), st.Size(), "no line lost when rotation fails")
+}
+
+// A v1 or early v3 config.yaml still carries the Qdrant keys; they are
+// ignored, not an error.
+func TestLoadIgnoresOldQdrantKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("qdrant_url: http://x:6333\nqdrant_api_key: k\n"), 0o644))
+	_, err := Load(path)
+	require.NoError(t, err)
 }

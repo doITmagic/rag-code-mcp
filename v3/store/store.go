@@ -48,7 +48,7 @@ type Filter struct {
 	TargetName          string // any relation with this target_name
 }
 
-// Store is implemented by the Qdrant client and by the in-memory store used
+// Store is implemented by SQLite (on disk) and by the in-memory store used
 // in tests. Collection names are opaque; the engine derives them from the root.
 type Store interface {
 	// EnsureCollection creates the collection when missing. When it exists

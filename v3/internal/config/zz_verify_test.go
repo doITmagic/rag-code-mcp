@@ -101,11 +101,11 @@ func TestVerifyEnvAppliesOnMissingFileAndIsValidated(t *testing.T) {
 
 func TestVerifyEnvEmptyValueDoesNotOverride(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	require.NoError(t, os.WriteFile(path, []byte("qdrant_api_key: fromfile\n"), 0o644))
-	t.Setenv("QDRANT_API_KEY", "")
+	require.NoError(t, os.WriteFile(path, []byte("ollama_embed: fromfile\n"), 0o644))
+	t.Setenv("OLLAMA_EMBED", "")
 	cfg, err := Load(path)
 	require.NoError(t, err)
-	assert.Equal(t, "fromfile", cfg.QdrantAPIKey)
+	assert.Equal(t, "fromfile", cfg.OllamaEmbed)
 }
 
 func TestVerifyYAMLTagsSnakeCase(t *testing.T) {
@@ -113,8 +113,6 @@ func TestVerifyYAMLTagsSnakeCase(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(strings.Join([]string{
 		"ollama_base_url: http://o:1",
 		"ollama_embed: m",
-		"qdrant_url: https://q:2",
-		"qdrant_api_key: k",
 		"log_level: error",
 		"log_max_size_mb: 3",
 		"exclude_patterns: [a, b]",
@@ -128,7 +126,7 @@ func TestVerifyYAMLTagsSnakeCase(t *testing.T) {
 	cfg, err := Load(path)
 	require.NoError(t, err)
 	assert.Equal(t, Config{
-		OllamaBaseURL: "http://o:1", OllamaEmbed: "m", QdrantURL: "https://q:2", QdrantAPIKey: "k",
+		OllamaBaseURL: "http://o:1", OllamaEmbed: "m",
 		LogLevel: "error", LogMaxSizeMB: 3, ExcludePatterns: []string{"a", "b"},
 		AllowedWorkspacePaths: []string{"/x"}, AutoIndex: false, WatchEnabled: false,
 		WatchDebounce: 2 * time.Minute, AutoCreateIDERules: false,
@@ -139,8 +137,6 @@ func TestVerifyDefaultsExact(t *testing.T) {
 	d := Default()
 	assert.Equal(t, "http://localhost:11434", d.OllamaBaseURL)
 	assert.Equal(t, "embeddinggemma-2:270m", d.OllamaEmbed)
-	assert.Equal(t, "http://localhost:6333", d.QdrantURL)
-	assert.Equal(t, "", d.QdrantAPIKey)
 	assert.Equal(t, "info", d.LogLevel)
 	assert.Equal(t, 10, d.LogMaxSizeMB)
 	assert.Equal(t, []string{"node_modules", "vendor", "target", "build", "dist", "__pycache__"}, d.ExcludePatterns)

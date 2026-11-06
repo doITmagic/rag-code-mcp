@@ -474,13 +474,12 @@ func TestServerInfo(t *testing.T) {
 		_, _ = w.Write([]byte(`{"models":[{"name":"embeddinggemma-2:270m"}]}`))
 	}))
 	defer ollama.Close()
-	v := newEnv(t, true, func(c *config.Config) { c.OllamaBaseURL = ollama.URL; c.QdrantURL = "http://127.0.0.1:1" })
+	v := newEnv(t, true, func(c *config.Config) { c.OllamaBaseURL = ollama.URL })
 	v.t.releases = gh.URL
 	var out struct {
 		Version   string      `json:"version"`
 		PID       int         `json:"pid"`
 		Ollama    Service     `json:"ollama"`
-		Qdrant    Service     `json:"qdrant"`
 		Update    Update      `json:"update"`
 		Languages []string    `json:"languages"`
 		Roots     []KnownRoot `json:"roots"`
@@ -492,8 +491,6 @@ func TestServerInfo(t *testing.T) {
 	assert.Equal(t, os.Getpid(), out.PID)
 	assert.True(t, out.Ollama.Reachable)
 	assert.Empty(t, out.Ollama.Error)
-	assert.False(t, out.Qdrant.Reachable)
-	assert.Contains(t, out.Qdrant.Error, "start Qdrant")
 	assert.Equal(t, Update{Current: "v1.0.0", Latest: "v2.0.0", Available: true}, out.Update)
 	assert.Contains(t, out.Languages, "fake")
 	require.Len(t, out.Roots, 1)
@@ -598,4 +595,15 @@ func TestEditAndDeleteKeepResultsRight(t *testing.T) {
 	for _, h := range hits.Results {
 		assert.NotContains(t, h.FilePath, "c.fk")
 	}
+}
+
+func TestServerInfoHasNoQdrant(t *testing.T) {
+	v := newEnv(t, false, func(c *config.Config) { c.OllamaBaseURL = "http://127.0.0.1:1"; c.AutoIndex = false })
+	v.t.releases = "http://127.0.0.1:1/none"
+	r, _ := v.call(t, "rag_server_info", map[string]any{})
+	require.Equal(t, "ok", r.Status, r.Message)
+	var out map[string]json.RawMessage
+	data(t, r, &out)
+	assert.NotContains(t, out, "qdrant")
+	assert.Contains(t, out, "ollama")
 }

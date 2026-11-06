@@ -129,7 +129,7 @@ func (w *Workspace) Ready(ctx context.Context) (bool, string) {
 	}
 	exists, err := w.e.store.CollectionExists(ctx, w.Collection)
 	if err != nil {
-		return false, fmt.Sprintf("vector store unavailable at %s (%v): start Qdrant", w.e.cfg.QdrantURL, err)
+		return false, fmt.Sprintf("index store unavailable (%v)", err) // the error names the path
 	}
 	if !exists {
 		return false, ErrNotIndexed.Error()

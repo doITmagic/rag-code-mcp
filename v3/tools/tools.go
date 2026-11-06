@@ -67,7 +67,7 @@ func (t *tools) register(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{Name: "rag_list_package_exports", Description: "The exported symbols of a package or module, grouped by kind."}, t.listExports)
 	mcp.AddTool(server, &mcp.Tool{Name: "rag_read_file_context", Description: "Read a file of the workspace: a symbol with its relations, a line range, or the outline plus the first 120 lines."}, t.readFile)
 	mcp.AddTool(server, &mcp.Tool{Name: "rag_index_workspace", Description: "Index the workspace. Without confirm=true it only reports what would be indexed. mode=incremental re-indexes changed files; mode=recreate drops the collection and re-embeds everything."}, t.indexWorkspace)
-	mcp.AddTool(server, &mcp.Tool{Name: "rag_server_info", Description: "Server version, uptime, Ollama/Qdrant reachability, update availability, registered languages and known workspaces."}, t.serverInfo)
+	mcp.AddTool(server, &mcp.Tool{Name: "rag_server_info", Description: "Server version, uptime, Ollama reachability, update availability, registered languages and known workspaces."}, t.serverInfo)
 }
 
 // ---- responses ----
@@ -177,7 +177,7 @@ func storeErr(ctx context.Context, w *engine.Workspace, err error) (*mcp.CallToo
 	if errors.Is(err, engine.ErrNotIndexed) {
 		return notIndexed(w)
 	}
-	return reply("dependency_down", err.Error()+": check that Ollama and Qdrant are running (rag_server_info)", nil, w)
+	return reply("dependency_down", err.Error()+": check that Ollama is running (rag_server_info)", nil, w)
 }
 
 // insideRoot resolves p (absolute or relative to root, symlinks followed like

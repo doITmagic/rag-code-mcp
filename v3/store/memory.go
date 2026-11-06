@@ -102,7 +102,7 @@ func (m *Memory) DeleteByFile(ctx context.Context, collection, filePath string) 
 	return m.deleteWhere(ctx, collection, filePath, func(s *parser.Symbol) bool { return s.FilePath == filePath })
 }
 
-// deleteWhere refuses an empty path: it is never a wildcard (Qdrant parity).
+// deleteWhere refuses an empty path: it is never a wildcard (SQLite parity).
 func (m *Memory) deleteWhere(ctx context.Context, collection, path string, pred func(*parser.Symbol) bool) error {
 	if path == "" {
 		return errEmptyPath
@@ -207,7 +207,7 @@ func (f Filter) matches(s *parser.Symbol) bool {
 }
 
 // underDir reports whether prefix is the directory of path or one of its
-// ancestors: the dir_parts keyword match Qdrant does, never a raw string
+// ancestors: the dir_parts match SQLite does, never a raw string
 // prefix ("/w/mod" does not cover "/w/models/x.go").
 func underDir(path, prefix string) bool {
 	return slices.Contains(dirParts(path), filepath.Clean(prefix))

@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
@@ -12,21 +11,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestStoreContract runs the same behaviour checks on every Store. Qdrant
-// runs only when QDRANT_URL is set (e.g. http://localhost:6333).
+// TestStoreContract runs the same behaviour checks on every Store.
 func TestStoreContract(t *testing.T) {
 	t.Run("memory", func(t *testing.T) { storeContract(t, NewMemory()) })
 	t.Run("sqlite", func(t *testing.T) { s := NewSQLite(t.TempDir()); defer s.Close(); storeContract(t, s) })
-	t.Run("qdrant", func(t *testing.T) {
-		u := os.Getenv("QDRANT_URL")
-		if u == "" {
-			t.Skip("QDRANT_URL not set")
-		}
-		q, err := NewQdrant(u, os.Getenv("QDRANT_API_KEY"))
-		require.NoError(t, err)
-		defer q.Close()
-		storeContract(t, q)
-	})
 }
 
 func storeContract(t *testing.T, s Store) {
@@ -109,4 +97,13 @@ func storeContract(t *testing.T, s Store) {
 func count(ctx context.Context, s Store, col string, f Filter) (int, error) {
 	hits, err := s.Scroll(ctx, col, f, MaxScroll)
 	return len(hits), err
+}
+
+func TestQnSuffixesAndDirParts(t *testing.T) {
+	assert.Equal(t, []string{"a.b.c", "b.c", "c"}, qnSuffixes("a.b.c"))
+	assert.Equal(t, []string{"c"}, qnSuffixes("c"))
+	assert.Nil(t, qnSuffixes(""))
+	assert.Equal(t, []string{"/w/models", "/w", "/"}, dirParts("/w/models/user.go"))
+	assert.Equal(t, []string{"/"}, dirParts("/user.go"))
+	assert.Equal(t, []string{"x", "."}, dirParts("x/y.go"))
 }

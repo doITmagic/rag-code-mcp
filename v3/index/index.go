@@ -37,7 +37,7 @@ var (
 const (
 	embedBatch   = 16
 	upsertBatch  = 64
-	upsertBytes  = 8 << 20 // Content bytes per upsert, well under Qdrant's 32 MB gRPC limit
+	upsertBytes  = 8 << 20 // Content bytes per upsert, so one batch never holds a huge transaction
 	maxEmbedText = 2000
 	maxLookups   = 500 // store lookups per run while finding stale referrers
 )
@@ -761,7 +761,7 @@ func (r *run) embedUpsert(ctx context.Context, files []parsed) error {
 			items = append(items, store.Item{Vector: vecs[j], Symbol: *s})
 			itemOwner = append(itemOwner, owner[i+j])
 			// Content is uncapped and a whole file can be one symbol:
-			// a count-only cut could exceed Qdrant's 32 MB message limit.
+			// a count-only cut could make one batch hundreds of MB.
 			if bytes += len(s.Content); len(items) >= upsertBatch || bytes >= upsertBytes {
 				if err := flush(); err != nil {
 					return err

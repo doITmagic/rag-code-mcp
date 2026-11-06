@@ -170,3 +170,26 @@ func cond(f Filter) vecdb.Cond {
 	add("rel_target_name", f.TargetName)
 	return c
 }
+
+// qnSuffixes lists every suffix of the normalized qualified name on "."
+// boundaries, longest first: "a.b.c" -> a.b.c, b.c, c.
+func qnSuffixes(norm string) []string {
+	var out []string
+	for i := 0; i < len(norm); i++ {
+		if i == 0 || norm[i-1] == '.' {
+			out = append(out, norm[i:])
+		}
+	}
+	return out
+}
+
+// dirParts lists every ancestor directory of path, nearest first.
+func dirParts(path string) []string {
+	var out []string
+	for d := filepath.Dir(path); ; d = filepath.Dir(d) {
+		out = append(out, d)
+		if d == filepath.Dir(d) {
+			return out
+		}
+	}
+}

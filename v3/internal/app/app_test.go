@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -49,8 +51,9 @@ func TestSmoke(t *testing.T) {
 }
 
 func TestNewDefaultsDoNotDial(t *testing.T) {
+	t.Setenv("RAGCODE_HOME", t.TempDir())
 	cfg := config.Default()
-	cfg.OllamaBaseURL, cfg.QdrantURL = "http://127.0.0.1:1", "http://127.0.0.1:1"
+	cfg.OllamaBaseURL = "http://127.0.0.1:1"
 	a, err := New(Options{Config: cfg})
 	require.NoError(t, err)
 	require.NotNil(t, a.Server)
@@ -82,4 +85,24 @@ func TestShutdownLogsNoError(t *testing.T) {
 	<-done
 	assert.Contains(t, buf.String(), "server run cancelled")
 	assert.NotContains(t, buf.String(), "level=ERROR")
+}
+
+// Without a Store option the server indexes into one SQLite file per root
+// under RAGCODE_HOME/index.
+func TestAppDefaultStoreIsSQLite(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("RAGCODE_HOME", home)
+	cfg := config.Default()
+	cfg.WatchEnabled = false
+	a, err := New(Options{Config: cfg, Embedder: &embed.Fake{}})
+	require.NoError(t, err)
+	t.Cleanup(func() { a.Close(context.Background()) })
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "a.md"), []byte("# Title\n\nSome text.\n"), 0o644))
+	w, err := a.Engine.Workspace(root)
+	require.NoError(t, err)
+	w.Index(false)
+	require.Eventually(t, func() bool { s := w.Status(); return s.Phase == "done" && !s.Running }, 10*time.Second, 20*time.Millisecond)
+	assert.FileExists(t, filepath.Join(home, "index", store.CollectionName(root), "index.db"))
 }

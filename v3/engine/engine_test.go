@@ -647,3 +647,19 @@ func TestRegisterRootAcrossEngines(t *testing.T) {
 	wg.Wait()
 	assert.ElementsMatch(t, roots, readRoots())
 }
+
+// The end of a run is logged with its counts and duration, so the log alone
+// tells how long indexing took.
+func TestRunEndIsLogged(t *testing.T) {
+	cfg := testConfig(t)
+	var logBuf safeBuf
+	e := New(cfg, store.NewMemory(), &embed.Fake{}, slog.New(slog.NewTextHandler(&logBuf, nil)))
+	defer e.Close()
+	e.run = (&runRecorder{}).run
+	w, err := e.Workspace(t.TempDir())
+	require.NoError(t, err)
+	w.Index(false)
+	require.Eventually(t, func() bool { return strings.Contains(logBuf.String(), "engine: index run finished") }, 2*time.Second, 5*time.Millisecond)
+	assert.Contains(t, logBuf.String(), "duration=")
+	assert.Contains(t, logBuf.String(), "phase=done")
+}

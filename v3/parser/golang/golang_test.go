@@ -172,7 +172,7 @@ func TestFixtureRelations(t *testing.T) {
 		want []parser.Relation
 	}{
 		{mod + ".Server", []parser.Relation{
-			rel(parser.RelExtends, "Base", "", 15),
+			rel(parser.RelExtends, "Base", mod+".Base", 15),
 			rel(parser.RelExtends, "Conn", "github.com/acme/app/pkg/db.Conn", 16),
 		}},
 		{mod + ".Handler", []parser.Relation{
@@ -430,4 +430,39 @@ func Wrap(next func(), more ...func()) func() {
 		}
 	}
 	assert.Equal(t, []string{"helper=p.helper"}, calls)
+}
+
+// An unqualified type name is either predeclared, a type parameter, or
+// declared in the same package, in this file or another one.
+func TestSamePackageTypeUses(t *testing.T) {
+	root := t.TempDir()
+	src := `package llm
+
+type Adapter struct {
+	provider Provider
+	Base
+}
+
+func NewAdapter(p Provider) *Adapter { return &Adapter{provider: p} }
+
+func (a *Adapter) Run() (Result, error) { return Result{}, nil }
+
+func Map[T comparable](x T) T { return x }
+`
+	syms := analyze(t, root, filepath.Join(root, "llm", "adapter.go"), src)
+	mod := "llm."
+	assert.Equal(t, []parser.Relation{
+		rel(parser.RelUsesType, "Provider", mod+"Provider", 4),
+		rel(parser.RelExtends, "Base", mod+"Base", 5),
+	}, syms["llm.Adapter"].Relations, "no relation to itself")
+	assert.Equal(t, []parser.Relation{
+		rel(parser.RelUsesType, "Provider", mod+"Provider", 8),
+		rel(parser.RelUsesType, "Adapter", mod+"Adapter", 8),
+		rel(parser.RelUsesType, "Adapter", mod+"Adapter", 8),
+	}, syms["llm.NewAdapter"].Relations)
+	assert.Equal(t, []parser.Relation{
+		rel(parser.RelUsesType, "Result", mod+"Result", 10),
+		rel(parser.RelUsesType, "Result", mod+"Result", 10),
+	}, syms["llm.Adapter.Run"].Relations, "the receiver is the owner, not a use")
+	assert.Empty(t, syms["llm.Map"].Relations, "type parameters and predeclared types")
 }

@@ -156,13 +156,15 @@ type State struct {
     Files  map[string]Entry `json:"files"`            // absolute path -> entry
 }
 
-const Format = 2
+const Format = 3
 ```
 
 `Format` is the version of what parsers and the indexer store. It is bumped
 when a change must reach files that did not change; a state with another
 `Format` is re-indexed from scratch. Version 2: Go `Exported` means package
-API, and calls through locals are not package calls.
+API, and calls through locals are not package calls. Version 3: Go types of
+the same package declared in another file, Python function-local imports and
+class-body calls.
 
 ---
 

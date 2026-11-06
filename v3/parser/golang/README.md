@@ -99,8 +99,9 @@ func (s *Server) Start() {
 | `github.com/acme/app/internal/svc.Server` | `class` | |
 | `github.com/acme/app/internal/svc.Server.Start` | `method` | `Server` |
 
-Relations: `Server` extends `Base` (target qualified name `""`, because `Base`
-is not declared in this file); `Start` calls `Stop` ->
+Relations: `Server` extends `Base` -> `github.com/acme/app/internal/svc.Base`
+(an unqualified type is declared in the same package, in this file or
+another); `Start` calls `Stop` ->
 `github.com/acme/app/internal/svc.Server.Stop` and `ToUpper` ->
 `strings.ToUpper`.
 
@@ -115,9 +116,9 @@ is not declared in this file); `Start` calls `Stop` ->
 | `T.M(...)`, `(*T).M(...)`, `T{}.M()` | `call` | Type declared in the file: `<module>.T.M`. |
 | `x.M()` on anything else | `call` | Target name only, qualified name `""`. |
 | `F[int](x)` / `pkg.F[T](x)` | `call` (or `uses_type` when `F` is a local type) | Generic calls parse as conversions; classified by whether `F` is a type declared here. |
-| `T{...}` composite literal | `uses_type` | Local type or `pkg.T` through imports; unknown types are dropped. |
+| `T` in any type position (field, parameter, result, `var`, composite literal, `new(T)`, type switch) | `uses_type` | `<module>.T`: not predeclared (`int`, `error`, `any`, `comparable`, ...) and not a type parameter, so declared in the same package, in this file or another. The declared name of a type and a method's receiver type are not uses. |
 | `pkg.T` in any type position | `uses_type` | `<import path>.T`, or `""` when `pkg` is not imported. |
-| Embedded struct field | `extends` | Local type or imported type. |
+| Embedded struct field | `extends` | Same-package type or imported type. |
 | Embedded interface (`fmt.Stringer`) | `extends` | Same rule. |
 
 Relations of a `var` or `const` spec are shared by every name in that spec.
@@ -144,7 +145,7 @@ Relations of a `var` or `const` spec are shared by every name in that spec.
 
 | File | Covers |
 |------|--------|
-| `golang_test.go` | A fixture with grouped declarations, generics, embedded types, aliased/dot/blank imports: symbol kinds, owners, lines, signatures, docs, IDs, metadata; every relation and its target; module path without `go.mod`, nested `go.mod` stopping at the root; malformed input; analyzing the real `parser.go` of this repo; registration; concurrency; generic calls; `Exported` for test files and unexported owners; calls through local function values; a parameter shadowing an import; a renamed module seen without a restart. |
+| `golang_test.go` | A fixture with grouped declarations, generics, embedded types, aliased/dot/blank imports: symbol kinds, owners, lines, signatures, docs, IDs, metadata; every relation and its target; module path without `go.mod`, nested `go.mod` stopping at the root; malformed input; analyzing the real `parser.go` of this repo; registration; concurrency; generic calls; `Exported` for test files and unexported owners; calls through local function values; a parameter shadowing an import; a renamed module seen without a restart; same-package types declared in another file, type parameters (receiver ones too) and the receiver skipped. |
 | `zz_verify_test.go` | Verification tests: resolution probes, an unclean (non-normalized) root path, robustness on garbage and edge input, a second round of edge cases, very large and deeply nested files. |
 
 ## Testing

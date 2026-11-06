@@ -22,7 +22,9 @@ type Entry struct {
 // change must reach files that did not change: a state with another Format
 // is re-indexed from scratch.
 // 2: Go Exported means package API; calls through locals are not package calls.
-const Format = 2
+// 3: Go same-package types declared in another file; Python local imports and
+// class-body calls.
+const Format = 3
 
 // State is the per-root snapshot stored at Dir(root)/state.json. Only
 // the run goroutine touches it; nothing here locks.

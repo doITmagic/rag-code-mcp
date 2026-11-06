@@ -36,7 +36,7 @@ var builtins = map[string]bool{
 	"bool": true, "byte": true, "rune": true, "string": true, "error": true, "any": true,
 	"int": true, "int8": true, "int16": true, "int32": true, "int64": true,
 	"uint": true, "uint8": true, "uint16": true, "uint32": true, "uint64": true, "uintptr": true,
-	"float32": true, "float64": true, "complex64": true, "complex128": true,
+	"float32": true, "float64": true, "complex64": true, "complex128": true, "comparable": true,
 }
 
 // file is the per-call context: nothing in it outlives Analyze.
@@ -46,6 +46,7 @@ type file struct {
 	module  string
 	imports map[string]string // local name → import path
 	types   map[string]bool   // type names declared in this file
+	tparams map[string]bool   // type parameters of the declaration being walked
 	test    bool              // a _test.go file: nothing in it is package API
 }
 
@@ -302,9 +303,39 @@ func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []pars
 		rels = append(rels, parser.Relation{Kind: kind, TargetName: name, TargetQualifiedName: tqn, Line: line})
 	}
 	locals := fc.locals(n)
+	fc.tparams = map[string]bool{}
+	parser.Walk(n, func(c *gotreesitter.Node) bool {
+		if c.Type(fc.lang) == "type_parameter_declaration" {
+			for i := 0; i < c.ChildCount(); i++ {
+				if c.FieldNameForChild(i, fc.lang) == "name" {
+					fc.tparams[fc.text(c.Child(i))] = true
+				}
+			}
+		}
+		return true
+	})
+	recvList := parser.Field(n, fc.lang, "receiver") // the owner, not a use of it
+	parser.Walk(recvList, func(c *gotreesitter.Node) bool {
+		if c.Type(fc.lang) == "type_identifier" && fc.text(c) != owner { // T of (s *Stack[T])
+			fc.tparams[fc.text(c)] = true
+		}
+		return true
+	})
 	var visit func(c *gotreesitter.Node) bool
 	visit = func(c *gotreesitter.Node) bool {
 		switch c.Type(fc.lang) {
+		case "parameter_list":
+			if recvList != nil && c.StartByte() == recvList.StartByte() {
+				return false
+			}
+		case "type_spec", "type_alias": // skip the declared name
+			parser.Walk(parser.Field(c, fc.lang, "type_parameters"), visit)
+			parser.Walk(parser.Field(c, fc.lang, "type"), visit)
+			return false
+		case "type_identifier":
+			if name, tqn := fc.resolveType(c); tqn != "" {
+				add(parser.RelUsesType, name, tqn, c)
+			}
 		case "call_expression":
 			fn := parser.Field(c, fc.lang, "function")
 			switch fn.Type(fc.lang) {
@@ -331,12 +362,8 @@ func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []pars
 				parser.Walk(parser.Field(c, fc.lang, "operand"), visit)
 				return false
 			}
-			// Qualified types are picked up by the qualified_type case below.
-			if inner := fc.bare(t); inner != nil && inner.Type(fc.lang) != "qualified_type" {
-				if name, tqn := fc.resolveType(t); tqn != "" {
-					add(parser.RelUsesType, name, tqn, c)
-				}
-			}
+			// The type itself is picked up by the type_identifier and
+			// qualified_type cases.
 		case "qualified_type":
 			name, tqn := fc.resolveType(c)
 			add(parser.RelUsesType, name, tqn, c)
@@ -439,8 +466,10 @@ func (fc *file) resolveType(t *gotreesitter.Node) (name, tqn string) {
 	}
 	switch t.Type(fc.lang) {
 	case "type_identifier":
+		// Not predeclared, not a type parameter: declared in this package,
+		// in this file or another one.
 		name = fc.text(t)
-		if fc.types[name] {
+		if !builtins[name] && !fc.tparams[name] {
 			tqn = parser.Qualify(fc.module, "", name)
 		}
 	case "qualified_type":

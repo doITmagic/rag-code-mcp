@@ -16,6 +16,7 @@ import (
 // runs only when QDRANT_URL is set (e.g. http://localhost:6333).
 func TestStoreContract(t *testing.T) {
 	t.Run("memory", func(t *testing.T) { storeContract(t, NewMemory()) })
+	t.Run("sqlite", func(t *testing.T) { s := NewSQLite(t.TempDir()); defer s.Close(); storeContract(t, s) })
 	t.Run("qdrant", func(t *testing.T) {
 		u := os.Getenv("QDRANT_URL")
 		if u == "" {

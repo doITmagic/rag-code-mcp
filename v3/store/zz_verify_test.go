@@ -33,6 +33,11 @@ func liveQdrant(t *testing.T) Store {
 
 func eachStore(t *testing.T, fn func(t *testing.T, s Store)) {
 	t.Run("memory", func(t *testing.T) { fn(t, NewMemory()) })
+	t.Run("sqlite", func(t *testing.T) {
+		s := NewSQLite(t.TempDir())
+		t.Cleanup(func() { _ = s.Close() })
+		fn(t, s)
+	})
 	t.Run("qdrant", func(t *testing.T) { fn(t, liveQdrant(t)) })
 }
 
@@ -275,23 +280,24 @@ func TestVerifyQdrantLive(t *testing.T) {
 // fit the client's gRPC receive limit (grpc-go defaults to 4 MB per message),
 // and a large Search result page as well.
 func TestVerifyLargeContentPages(t *testing.T) {
-	s := liveQdrant(t)
-	ctx := context.Background()
-	col := newCol(t, s, 1)
-	body := strings.Repeat("x", 20<<10) // 20 KiB: a long function or doc chunk
-	items := make([]Item, scrollPage)
-	for i := range items {
-		sy := sym(fmt.Sprintf("big%03d", i), "q", "q", parser.KindFunction, "/f")
-		sy.Content = body
-		items[i] = Item{Vector: []float32{1}, Symbol: sy}
-	}
-	require.NoError(t, s.Upsert(ctx, col, items))
-	hits, err := s.Scroll(ctx, col, Filter{}, scrollPage)
-	require.NoError(t, err, "scroll page over 4 MB")
-	assert.Len(t, hits, scrollPage)
-	hits, err = s.Search(ctx, col, []float32{1}, Filter{}, scrollPage)
-	require.NoError(t, err, "search page over 4 MB")
-	assert.Len(t, hits, scrollPage)
+	eachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		col := newCol(t, s, 1)
+		body := strings.Repeat("x", 20<<10) // 20 KiB: a long function or doc chunk
+		items := make([]Item, scrollPage)
+		for i := range items {
+			sy := sym(fmt.Sprintf("big%03d", i), "q", "q", parser.KindFunction, "/f")
+			sy.Content = body
+			items[i] = Item{Vector: []float32{1}, Symbol: sy}
+		}
+		require.NoError(t, s.Upsert(ctx, col, items))
+		hits, err := s.Scroll(ctx, col, Filter{}, scrollPage)
+		require.NoError(t, err, "scroll page over 4 MB")
+		assert.Len(t, hits, scrollPage)
+		hits, err = s.Search(ctx, col, []float32{1}, Filter{}, scrollPage)
+		require.NoError(t, err, "search page over 4 MB")
+		assert.Len(t, hits, scrollPage)
+	})
 }
 
 // QualifiedSuffix parity: both stores must agree with parser.MatchQualified

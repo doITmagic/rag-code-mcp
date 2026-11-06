@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -153,7 +154,9 @@ func StopProcess(ctx context.Context, binary string) {
 		return
 	}
 	alive := func() []string {
-		out, _ := exec.CommandContext(ctx, "pgrep", "-f", binary).Output()
+		// Anchored: argv[0] must be the binary, so a shell, tail -f or a
+		// launcher wrapper that only mentions the path is left alone.
+		out, _ := exec.CommandContext(ctx, "pgrep", "-f", "^"+regexp.QuoteMeta(binary)+"( |$)").Output()
 		var pids []string
 		for _, p := range strings.Fields(string(out)) {
 			if p != self {

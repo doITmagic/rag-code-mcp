@@ -48,9 +48,9 @@ func storeContract(t *testing.T, s Store) {
 		{"leaf suffix", Filter{QualifiedSuffix: "find"}, []string{"a", "b"}},
 		{"name and prefix", Filter{Name: "find", PathPrefix: "/w/models"}, []string{"a", "b"}},
 		{"kinds", Filter{Kinds: []parser.Kind{parser.KindFunction}}, []string{"c"}},
-		{"target id", Filter{TargetID: "c"}, []string{"a"}},
-		{"target qualified name", Filter{TargetQualifiedName: "app.db.query"}, []string{"a"}},
-		{"target name", Filter{TargetName: "query"}, []string{"a"}},
+		{"target id", Filter{TargetIDs: []string{"c"}}, []string{"a"}},
+		{"target qualified name", Filter{TargetQualifiedNames: []string{"app.db.query"}}, []string{"a"}},
+		{"target name", Filter{TargetNames: []string{"query"}}, []string{"a"}},
 		{"module+language", Filter{Module: "app", Language: "go"}, []string{"a", "b", "c"}},
 		{"miss", Filter{Name: "Nobody"}, nil},
 	}

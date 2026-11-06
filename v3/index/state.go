@@ -18,12 +18,19 @@ type Entry struct {
 	IDs     []string `json:"ids,omitempty"`
 }
 
+// Format is the version of what parsers and the indexer store. Bump it when a
+// change must reach files that did not change: a state with another Format
+// is re-indexed from scratch.
+// 2: Go Exported means package API; calls through locals are not package calls.
+const Format = 2
+
 // State is the per-root snapshot stored at Dir(root)/state.json. Only
 // the run goroutine touches it; nothing here locks.
 type State struct {
-	root  string
-	Model string           `json:"model,omitempty"` // embedding model the points were made with
-	Files map[string]Entry `json:"files"`
+	root   string
+	Model  string           `json:"model,omitempty"`  // embedding model the points were made with
+	Format int              `json:"format,omitempty"` // Format the points were made with
+	Files  map[string]Entry `json:"files"`
 }
 
 func newState(root string) *State {

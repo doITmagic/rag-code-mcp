@@ -63,10 +63,10 @@ func TestMemoryFilter(t *testing.T) {
 		{"prefix is a directory, not a string prefix", Filter{PathPrefix: "/w/mod"}, nil},
 		{"module and language", Filter{Module: "app", Language: "go"}, []string{"a", "b", "c"}},
 		{"language miss", Filter{Language: "php"}, nil},
-		{"target id", Filter{TargetID: "c"}, []string{"a"}},
-		{"target qualified name", Filter{TargetQualifiedName: "app.db.query"}, []string{"a"}},
-		{"target name", Filter{TargetName: "query"}, []string{"a"}},
-		{"target miss", Filter{TargetName: "nothing"}, nil},
+		{"target id", Filter{TargetIDs: []string{"c"}}, []string{"a"}},
+		{"target qualified name", Filter{TargetQualifiedNames: []string{"app.db.query"}}, []string{"a"}},
+		{"target name", Filter{TargetNames: []string{"query"}}, []string{"a"}},
+		{"target miss", Filter{TargetNames: []string{"nothing"}}, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

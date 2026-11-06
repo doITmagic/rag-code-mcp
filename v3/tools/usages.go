@@ -156,11 +156,11 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 // referrers lists the symbols with a relation to sym, by target id and by
 // target qualified name, deduplicated.
 func referrers(ctx context.Context, w *engine.Workspace, sym *parser.Symbol, limit int) ([]parser.Symbol, error) {
-	byID, err := w.Scroll(ctx, store.Filter{TargetID: sym.ID}, limit)
+	byID, err := w.Scroll(ctx, store.Filter{TargetIDs: []string{sym.ID}}, limit)
 	if err != nil {
 		return nil, err
 	}
-	byQN, err := w.Scroll(ctx, store.Filter{TargetQualifiedName: sym.QualifiedName}, limit)
+	byQN, err := w.Scroll(ctx, store.Filter{TargetQualifiedNames: []string{sym.QualifiedName}}, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +178,7 @@ func referrers(ctx context.Context, w *engine.Workspace, sym *parser.Symbol, lim
 // ambiguousByName counts the relations that name the symbol but were left
 // unresolved because several symbols share the name; 0 on a store error.
 func ambiguousByName(ctx context.Context, w *engine.Workspace, name string) int {
-	hits, err := w.Scroll(ctx, store.Filter{TargetName: name}, store.MaxScroll)
+	hits, err := w.Scroll(ctx, store.Filter{TargetNames: []string{name}}, store.MaxScroll)
 	if err != nil {
 		return 0
 	}
@@ -300,7 +300,7 @@ func (wk *walker) expand(ctx context.Context, n *Node, sym parser.Symbol, incomi
 				continue
 			}
 			seen[r.TargetID] = true
-			hits, err := wk.w.Scroll(ctx, store.Filter{ID: r.TargetID}, 1)
+			hits, err := wk.w.Scroll(ctx, store.Filter{IDs: []string{r.TargetID}}, 1)
 			if err != nil {
 				wk.err = err
 				return

@@ -144,7 +144,12 @@ func cond(f Filter) vecdb.Cond {
 			c = append(c, vecdb.Match{Field: field, Values: []string{val}})
 		}
 	}
-	add("id", f.ID)
+	addAll := func(field string, vals []string) {
+		if len(vals) > 0 {
+			c = append(c, vecdb.Match{Field: field, Values: vals})
+		}
+	}
+	addAll("id", f.IDs)
 	add("language", f.Language)
 	add("file_path", f.FilePath)
 	if f.PathPrefix != "" {
@@ -165,9 +170,9 @@ func cond(f Filter) vecdb.Cond {
 		}
 		c = append(c, vecdb.Match{Field: "kind", Values: kinds})
 	}
-	add("rel_target_id", f.TargetID)
-	add("rel_target_qualified_name", f.TargetQualifiedName)
-	add("rel_target_name", f.TargetName)
+	addAll("rel_target_id", f.TargetIDs)
+	addAll("rel_target_qualified_name", f.TargetQualifiedNames)
+	addAll("rel_target_name", f.TargetNames)
 	return c
 }
 

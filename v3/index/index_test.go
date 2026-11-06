@@ -656,6 +656,7 @@ func TestRunRecreate(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, st.Total, "everything is re-embedded")
 	assert.Equal(t, 1, e.count(t, store.Filter{}), "the old collection was dropped")
+	assert.True(t, st.Recreated)
 }
 
 // dropStore checks, at the moment the collection is dropped, what a kill -9
@@ -728,6 +729,26 @@ func TestRunModelChangeRecreates(t *testing.T) {
 	assert.Equal(t, 0, again.Total, "same model: nothing to do")
 }
 
+// A state written by an older parser format re-indexes everything once, so a
+// parser fix reaches files that did not change.
+func TestRunFormatChangeRecreates(t *testing.T) {
+	e := newEnv(t)
+	e.write(t, "a.go", "func A\n")
+	e.write(t, "b.go", "func B\n")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	st, err := LoadState(e.root)
+	require.NoError(t, err)
+	st.Format = Format - 1
+	require.NoError(t, st.Save())
+	again, err := e.run(t, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, again.Total, "re-indexed with the new format")
+	last, err := e.run(t, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 0, last.Total, "same format: nothing to do")
+}
+
 // The index files live under the global home, so a project gets nothing in
 // its tree from a run.
 func TestRunKeepsStateOutOfRoot(t *testing.T) {
@@ -742,4 +763,93 @@ func TestRunKeepsStateOutOfRoot(t *testing.T) {
 	st, ok := ReadStatus(e.root)
 	require.True(t, ok)
 	assert.Equal(t, "done", st.Phase)
+}
+
+// A branch switch moves symbols in more files than one store lookup per
+// file or per id could cover: an unchanged caller must still be re-resolved
+// to the new target ids, none may dangle.
+func TestRunManyMovedTargetsKeepCallersResolved(t *testing.T) {
+	e := newEnv(t)
+	n := maxLookups + 100
+	for i := 0; i < n; i++ { // three callers per target: a batch of ids hits more than MaxScroll points
+		e.write(t, fmt.Sprintf("t%d.go", i), fmt.Sprintf("func T%d\n", i))
+		e.write(t, fmt.Sprintf("c%d.go", i), fmt.Sprintf("func A%d -> t%d.T%d\nfunc B%d -> t%d.T%d\nfunc C%d -> t%d.T%d\n", i, i, i, i, i, i, i, i, i))
+	}
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+
+	for i := 0; i < n; i++ { // every target moves one line down: new ids
+		e.write(t, fmt.Sprintf("t%d.go", i), fmt.Sprintf("\nfunc T%d\n", i))
+	}
+	_, err = e.run(t, nil)
+	require.NoError(t, err)
+
+	dangling := 0
+	for i := 0; i < n; i++ {
+		for _, s := range e.symbols(t, filepath.Join(e.root, fmt.Sprintf("c%d.go", i))) {
+			for _, rel := range s.Relations {
+				if e.count(t, store.Filter{IDs: []string{rel.TargetID}}) != 1 {
+					dangling++
+				}
+			}
+		}
+	}
+	assert.Zero(t, dangling, "callers left with stale target ids")
+}
+
+// A files-only run whose stale referrer was deleted from disk meanwhile (a
+// branch switch the run has not reconciled yet) purges it: not a parse failure.
+func TestRunPurgesVanishedReferrer(t *testing.T) {
+	e := newEnv(t)
+	a := e.write(t, "a.go", "func A -> b.B\n")
+	b := e.write(t, "b.go", "func B\n")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+
+	require.NoError(t, os.Remove(a))
+	e.write(t, "b.go", "\nfunc B\n")
+	st, err := e.run(t, func(o *Options) { o.Files = []string{b} })
+	require.NoError(t, err)
+	assert.Zero(t, st.Failed)
+	assert.Equal(t, 1, st.Deleted)
+	assert.Zero(t, e.count(t, store.Filter{FilePath: a}))
+	state, err := LoadState(e.root)
+	require.NoError(t, err)
+	assert.NotContains(t, state.Files, a)
+}
+
+// A checkout rewrites files while a run indexes them: a target changed or
+// removed between the name pass and its own batch must not leave a caller,
+// resolved against the first parse, pointing at an id that was never stored,
+// past the next run.
+func TestRunTargetChangedBetweenPasses(t *testing.T) {
+	for name, change := range map[string]func(t *testing.T, e *env, b string){
+		"moved":   func(t *testing.T, e *env, b string) { e.write(t, "b.go", "\nfunc B\n") },
+		"removed": func(t *testing.T, e *env, b string) { require.NoError(t, os.Remove(b)) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			defer func(old int64) { batchBytes = old }(batchBytes)
+			batchBytes = 1 // one file per batch, in path order: a.go before b.go
+			e := newEnv(t)
+			a := e.write(t, "a.go", "func A -> B\n")
+			b := e.write(t, "b.go", "func B\n")
+			e.emb.before = func(_ context.Context, call int32) error {
+				if call == 1 { // embedding a.go: b.go is not parsed for storage yet
+					change(t, e, b)
+				}
+				return nil
+			}
+			_, err := e.run(t, nil)
+			require.NoError(t, err)
+			e.emb.before = func(context.Context, int32) error { return nil }
+			_, err = e.run(t, nil)
+			require.NoError(t, err)
+
+			for _, rel := range e.symbols(t, a)["A"].Relations {
+				if rel.TargetID != "" {
+					assert.Equal(t, 1, e.count(t, store.Filter{IDs: []string{rel.TargetID}}), "dangling target id")
+				}
+			}
+		})
+	}
 }

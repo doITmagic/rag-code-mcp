@@ -189,7 +189,7 @@ func (m *Memory) Close() error { return nil }
 // matches reports whether s satisfies every set field of f.
 func (f Filter) matches(s *parser.Symbol) bool {
 	switch {
-	case f.ID != "" && s.ID != f.ID,
+	case len(f.IDs) > 0 && !slices.Contains(f.IDs, s.ID),
 		f.Language != "" && s.Language != f.Language,
 		f.FilePath != "" && s.FilePath != f.FilePath,
 		f.PathPrefix != "" && !underDir(s.FilePath, f.PathPrefix),
@@ -198,9 +198,9 @@ func (f Filter) matches(s *parser.Symbol) bool {
 		f.QualifiedSuffix != "" && !parser.MatchQualified(s.QualifiedName, f.QualifiedSuffix),
 		f.Module != "" && s.Module != f.Module,
 		len(f.Kinds) > 0 && !slices.Contains(f.Kinds, s.Kind),
-		f.TargetID != "" && !slices.ContainsFunc(s.Relations, func(r parser.Relation) bool { return r.TargetID == f.TargetID }),
-		f.TargetQualifiedName != "" && !slices.ContainsFunc(s.Relations, func(r parser.Relation) bool { return r.TargetQualifiedName == f.TargetQualifiedName }),
-		f.TargetName != "" && !slices.ContainsFunc(s.Relations, func(r parser.Relation) bool { return r.TargetName == f.TargetName }):
+		len(f.TargetIDs) > 0 && !slices.ContainsFunc(s.Relations, func(r parser.Relation) bool { return slices.Contains(f.TargetIDs, r.TargetID) }),
+		len(f.TargetQualifiedNames) > 0 && !slices.ContainsFunc(s.Relations, func(r parser.Relation) bool { return slices.Contains(f.TargetQualifiedNames, r.TargetQualifiedName) }),
+		len(f.TargetNames) > 0 && !slices.ContainsFunc(s.Relations, func(r parser.Relation) bool { return slices.Contains(f.TargetNames, r.TargetName) }):
 		return false
 	}
 	return true

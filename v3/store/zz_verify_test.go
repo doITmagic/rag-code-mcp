@@ -283,7 +283,7 @@ func TestVerifyParityEdges(t *testing.T) {
 		assert.Equal(t, parser.KindConstant, hits[0].Symbol.Kind)
 
 		// Full round trip through Search, with a relation filter.
-		hits, err = s.Search(ctx, col, []float32{1, 0}, Filter{TargetName: "Exec", Kinds: []parser.Kind{parser.KindMethod, parser.KindFunction}}, 10)
+		hits, err = s.Search(ctx, col, []float32{1, 0}, Filter{TargetNames: []string{"Exec"}, Kinds: []parser.Kind{parser.KindMethod, parser.KindFunction}}, 10)
 		require.NoError(t, err)
 		require.Len(t, hits, 1)
 		assert.InDelta(t, 1, hits[0].Score, 1e-5)
@@ -301,8 +301,8 @@ func TestVerifyParityEdges(t *testing.T) {
 			{"absolute does not match relative", Filter{PathPrefix: "/x"}, nil},
 			{"suffix exact full", Filter{QualifiedSuffix: "app.Repo.Save"}, []string{"full"}},
 			{"suffix with slash", Filter{QualifiedSuffix: "Repo/Save"}, []string{"full"}},
-			{"target qn", Filter{TargetQualifiedName: "db.Exec", TargetID: "t9"}, []string{"full"}},
-			{"target id miss", Filter{TargetQualifiedName: "db.Exec", TargetID: "nope"}, nil},
+			{"target qn", Filter{TargetQualifiedNames: []string{"db.Exec"}, TargetIDs: []string{"t9"}}, []string{"full"}},
+			{"target id miss", Filter{TargetQualifiedNames: []string{"db.Exec"}, TargetIDs: []string{"nope"}}, nil},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {

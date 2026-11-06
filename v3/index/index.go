@@ -40,6 +40,7 @@ const (
 	upsertBytes  = 8 << 20 // Content bytes per upsert, so one batch never holds a huge transaction
 	maxEmbedText = 2000
 	maxLookups   = 500 // store lookups per run while finding stale referrers
+	lookupBatch  = 500 // values per lookup: ids, qualified names or names
 )
 
 // Options configures one run.
@@ -68,7 +69,8 @@ type Status struct {
 	Failed    int       `json:"failed"`  // files that did not parse
 	Deleted   int       `json:"deleted"` // files purged
 	Error     string    `json:"error,omitempty"`
-	Phase     string    `json:"phase"` // scanning|parsing|embedding|done|failed
+	Phase     string    `json:"phase"`               // scanning|parsing|embedding|done|failed
+	Recreated bool      `json:"recreated,omitempty"` // the collection was dropped by this run
 }
 
 func statusPath(root string) string { return filepath.Join(Dir(root), "index_status.json") }
@@ -95,7 +97,8 @@ type run struct {
 	root         string
 	status       Status
 	state        *State
-	fresh        bool // the collection was (re)created this run: nothing to look up
+	fresh        bool                // the collection was (re)created this run: nothing to look up
+	named        map[string][]string // ids of the name pass, which callers are resolved against
 	lastProgress time.Time
 	lastSave     time.Time
 }
@@ -143,18 +146,23 @@ func Run(ctx context.Context, o Options) (Status, error) {
 		o.Log.Info("index: embedding model changed, re-embedding everything", "root", root, "from", r.state.Model, "to", model)
 		o.Recreate = true
 	}
-	r.state.Model = model
+	if len(r.state.Files) > 0 && r.state.Format != Format {
+		o.Log.Info("index: index format changed, re-indexing everything", "root", root, "from", r.state.Format, "to", Format)
+		o.Recreate = true
+	}
+	r.state.Model, r.state.Format = model, Format
 	if o.Recreate {
 		// Saved before the drop: after a crash in between, a stale state.json
 		// would match every file and incremental runs would never re-embed them.
 		r.state = newState(root)
-		r.state.Model = model
+		r.state.Model, r.state.Format = model, Format
 		if err := r.state.Save(); err != nil {
 			return r.finish(ctx, err)
 		}
 		if err := o.Store.DeleteCollection(ctx, o.Collection); err != nil && !errors.Is(err, store.ErrNotFound) {
 			return r.finish(ctx, err)
 		}
+		r.status.Recreated = true
 	}
 	exists, err := o.Store.CollectionExists(ctx, o.Collection)
 	if err != nil {
@@ -188,7 +196,7 @@ func Run(ctx context.Context, o Options) (Status, error) {
 		// The store is empty: everything is new, and a files-only run would
 		// leave a partial index that nothing ever completes.
 		r.state = newState(root)
-		r.state.Model = model
+		r.state.Model, r.state.Format = model, Format
 		r.Files = nil
 	}
 
@@ -197,15 +205,21 @@ func Run(ctx context.Context, o Options) (Status, error) {
 		return r.finish(ctx, err)
 	}
 	var goneIDs []string
-	for _, f := range gone {
+	purge := func(f string) error {
 		if err := o.Store.DeleteByFile(ctx, o.Collection, f); err != nil {
-			return r.finish(ctx, err)
+			return err
 		}
 		if e, ok := r.state.Files[f]; ok {
 			goneIDs = append(goneIDs, e.IDs...)
 			delete(r.state.Files, f)
 		}
 		r.status.Deleted++
+		return nil
+	}
+	for _, f := range gone {
+		if err := purge(f); err != nil {
+			return r.finish(ctx, err)
+		}
 	}
 	r.status.Total = len(changed)
 	r.status.Phase = "parsing"
@@ -216,14 +230,30 @@ func Run(ctx context.Context, o Options) (Status, error) {
 	// memory of a run does not grow with the size of the workspace.
 	files := names(r.parse(ctx, changed))
 	if extra := r.staleReferrers(ctx, files, goneIDs, changed, gone); len(extra) > 0 {
-		r.status.Total += len(extra)
-		files = append(files, names(r.parse(ctx, extra))...)
+		live := extra[:0]
+		for _, f := range extra {
+			if _, err := os.Lstat(f); errors.Is(err, fs.ErrNotExist) {
+				// Deleted since its points were stored (a files-only run after a
+				// branch switch): purge it, it is not a parse failure.
+				if err := purge(f); err != nil {
+					return r.finish(ctx, err)
+				}
+				continue
+			}
+			live = append(live, f)
+		}
+		r.status.Total += len(live)
+		files = append(files, names(r.parse(ctx, live))...)
 	}
 	if ctx.Err() != nil {
 		return r.finish(ctx, ctx.Err())
 	}
 	r.status.Phase = "embedding"
 	idx := newNameIndex(files)
+	r.named = make(map[string][]string, len(files))
+	for _, p := range files {
+		r.named[p.path] = symIDs(p)
+	}
 	for len(files) > 0 {
 		n, size := 0, int64(0)
 		for n < len(files) && (n == 0 || size < batchBytes) {
@@ -238,6 +268,11 @@ func Run(ctx context.Context, o Options) (Status, error) {
 		batch := r.parse(ctx, paths)
 		if ctx.Err() != nil {
 			return r.finish(ctx, ctx.Err())
+		}
+		for _, f := range paths { // gone since the name pass: see record
+			if !slices.ContainsFunc(batch, func(p parsed) bool { return p.path == f }) && len(r.named[f]) > 0 {
+				r.state.Files[f] = Entry{IDs: append(slices.Clone(r.state.Files[f].IDs), r.named[f]...)}
+			}
 		}
 		r.resolve(ctx, idx, batch)
 		if err := r.embedUpsert(ctx, batch); err != nil {
@@ -503,28 +538,54 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 		}
 		return hits, true
 	}
+	// query looks vals up lookupBatch at a time, halving a batch whose hits
+	// reach MaxScroll so that no match is cut off. False: stop looking.
+	var query func(vals []string, mk func([]string) store.Filter, use func(store.Hit)) bool
+	query = func(vals []string, mk func([]string) store.Filter, use func(store.Hit)) bool {
+		for len(vals) > 0 {
+			n := min(len(vals), lookupBatch)
+			hits, ok := scroll(mk(vals[:n]))
+			switch {
+			case !ok:
+				return false
+			case len(hits) >= store.MaxScroll && n > 1:
+				if !query(vals[:n/2], mk, use) || !query(vals[n/2:n], mk, use) {
+					return false
+				}
+			default:
+				for _, h := range hits {
+					use(h)
+				}
+			}
+			vals = vals[n:]
+		}
+		return true
+	}
 	now := map[string]bool{}
-	var added []parser.Symbol
+	var oldOfGained []string // old ids of the files that gained an id
 	for _, p := range files {
 		old := r.state.Files[p.path].IDs // the old ids until record()
 		vanished = append(vanished, old...)
-		var had map[string]bool // qualified names in p.path's points, not yet purged
+		gained := false
 		for _, s := range p.syms {
 			now[s.ID] = true
-			if slices.Contains(old, s.ID) {
-				continue
-			}
-			if had == nil { // a symbol that only moved keeps its name: not added
-				had = map[string]bool{}
-				if len(old) > 0 {
-					hits, _ := scroll(store.Filter{FilePath: p.path})
-					for _, h := range hits {
-						had[h.Symbol.QualifiedName] = true
-					}
-				}
-			}
-			if !had[s.QualifiedName] {
-				added = append(added, s)
+			gained = gained || !slices.Contains(old, s.ID)
+		}
+		if gained {
+			oldOfGained = append(oldOfGained, old...)
+		}
+	}
+	had := map[[2]string]bool{} // {file, qualified name} of the old points, not yet purged
+	query(oldOfGained, func(v []string) store.Filter { return store.Filter{IDs: v} }, func(h store.Hit) {
+		had[[2]string{h.Symbol.FilePath, h.Symbol.QualifiedName}] = true
+	})
+	byLang := map[string][]parser.Symbol{} // the symbols the run adds
+	for _, p := range files {
+		old := r.state.Files[p.path].IDs
+		for _, s := range p.syms {
+			// a symbol that only moved keeps its name: not added
+			if !slices.Contains(old, s.ID) && !had[[2]string{p.path, s.QualifiedName}] {
+				byLang[s.Language] = append(byLang[s.Language], s)
 			}
 		}
 	}
@@ -535,33 +596,42 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 		}
 	}
 	var out []string
-	// ponytail: one scroll per vanished id or added symbol, capped; a
-	// payload-only target_id rewrite would also spare re-embedding referrers.
-	refs := func(f store.Filter, keep func(parser.Symbol) bool) bool {
-		hits, ok := scroll(f)
-		for _, h := range hits {
+	add := func(keep func(parser.Symbol) bool) func(store.Hit) {
+		return func(h store.Hit) {
 			if f := h.Symbol.FilePath; !skip[f] && keep(h.Symbol) {
 				skip[f] = true
 				out = append(out, f)
 			}
 		}
-		return ok
 	}
 	all := func(parser.Symbol) bool { return true }
+	var gone []string
 	for _, id := range vanished {
-		if !now[id] && !refs(store.Filter{TargetID: id}, all) {
-			break
+		if !now[id] {
+			gone = append(gone, id)
 		}
 	}
-	for _, s := range added {
-		guessed := func(h parser.Symbol) bool { // a relation resolved by name, or not at all
-			return slices.ContainsFunc(h.Relations, func(rel parser.Relation) bool {
-				return rel.TargetName == s.Name && rel.Resolution != parser.ResolutionExact && rel.Resolution != parser.ResolutionAmbiguous
-			})
-		}
-		if !refs(store.Filter{TargetQualifiedName: s.QualifiedName}, all) || !refs(store.Filter{TargetName: s.Name, Language: s.Language}, guessed) {
+	ok := query(gone, func(v []string) store.Filter { return store.Filter{TargetIDs: v} }, add(all))
+	for lang, syms := range byLang {
+		if !ok {
 			break
 		}
+		qns, names := make([]string, len(syms)), map[string]bool{}
+		var nameList []string
+		for i, s := range syms {
+			qns[i] = s.QualifiedName
+			if !names[s.Name] {
+				names[s.Name] = true
+				nameList = append(nameList, s.Name)
+			}
+		}
+		guessed := func(h parser.Symbol) bool { // a relation resolved by name, or not at all
+			return slices.ContainsFunc(h.Relations, func(rel parser.Relation) bool {
+				return names[rel.TargetName] && rel.Resolution != parser.ResolutionExact && rel.Resolution != parser.ResolutionAmbiguous
+			})
+		}
+		ok = query(qns, func(v []string) store.Filter { return store.Filter{TargetQualifiedNames: v} }, add(all)) &&
+			query(nameList, func(v []string) store.Filter { return store.Filter{TargetNames: v, Language: lang} }, add(guessed))
 	}
 	sort.Strings(out)
 	return out
@@ -778,12 +848,24 @@ func (r *run) embedUpsert(ctx context.Context, files []parsed) error {
 
 // record marks a file as fully indexed in the state.
 func (r *run) record(p parsed) {
+	e := Entry{ModTime: p.info.ModTime().UnixNano(), Size: p.info.Size(), IDs: symIDs(p)}
+	if first, ok := r.named[p.path]; ok && !slices.Equal(first, e.IDs) {
+		// The file changed after the name pass (a checkout in progress):
+		// callers resolved in this run may hold its first ids, never stored.
+		// Keep those ids and force a re-parse, so the next run sees them
+		// vanish and re-resolves the callers.
+		e.ModTime, e.IDs = 0, append(e.IDs, first...)
+	}
+	r.state.Files[p.path] = e
+	r.status.Done++
+}
+
+func symIDs(p parsed) []string {
 	ids := make([]string, len(p.syms))
 	for i := range p.syms {
 		ids[i] = p.syms[i].ID
 	}
-	r.state.Files[p.path] = Entry{ModTime: p.info.ModTime().UnixNano(), Size: p.info.Size(), IDs: ids}
-	r.status.Done++
+	return ids
 }
 
 // embed calls the embedder; transport retries are the embedder's job.

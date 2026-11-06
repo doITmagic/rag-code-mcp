@@ -341,9 +341,19 @@ func (e *Engine) runJobs(w *Workspace) {
 		case err != nil && e.ctx.Err() == nil:
 			// Keep the request and retry it after a pause, so neither another
 			// process's lock nor an embedder or store outage drops its files.
-			delay := retryDelay(w.fails)
-			w.fails++
-			e.log.Warn("engine: index run failed, retrying", "root", w.Root, "in", delay, "err", err)
+			delay := lockRetry
+			if errors.Is(err, index.ErrLocked) {
+				// Normal with several clients on one root: not a failure, so
+				// no backoff, and the poll of a free flock costs nothing.
+				e.log.Info("engine: another process is indexing this root, retrying", "root", w.Root, "in", delay)
+			} else {
+				delay = retryDelay(w.fails)
+				w.fails++
+				e.log.Warn("engine: index run failed, retrying", "root", w.Root, "in", delay, "err", err)
+			}
+			if kind == kindRecreate && st.Recreated {
+				kind = kindFull // dropped already: resume, do not throw away what was re-indexed
+			}
 			e.merge(w, kind, files, deleted)
 			w.running = false
 			w.retry = time.AfterFunc(delay, func() {

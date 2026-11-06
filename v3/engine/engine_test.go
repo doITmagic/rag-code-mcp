@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -98,7 +99,7 @@ func (r *runRecorder) run(ctx context.Context, o index.Options) (index.Status, e
 			return index.Status{}, ctx.Err()
 		}
 	}
-	return index.Status{Root: o.Root, Phase: "done", StartedAt: time.Now(), EndedAt: time.Now()}, err
+	return index.Status{Root: o.Root, Phase: "done", StartedAt: time.Now(), EndedAt: time.Now(), Recreated: o.Recreate}, err
 }
 
 func (r *runRecorder) snapshot() []index.Options {
@@ -280,6 +281,24 @@ func TestFailedRunIsRetried(t *testing.T) {
 	assert.True(t, files["a.go"], "failed file still queued")
 }
 
+// A recreate that fails after its drop (Ollama down mid-run) retries as a
+// full run: dropping again would throw away every file already re-indexed.
+func TestFailedRecreateRetriesWithoutDropping(t *testing.T) {
+	cfg := testConfig(t)
+	rec := &runRecorder{errs: []error{errors.New("embed: connection refused")}}
+	e := New(cfg, store.NewMemory(), &embed.Fake{}, nil)
+	defer e.Close()
+	e.run = rec.run
+	w, err := e.Workspace(t.TempDir())
+	require.NoError(t, err)
+	w.Index(true)
+	require.Eventually(t, func() bool { s := w.Status(); return s.LastError != "" && !s.Running }, 2*time.Second, 5*time.Millisecond)
+	e.mu.Lock()
+	queued := w.queued
+	e.mu.Unlock()
+	assert.Equal(t, kindFull, queued)
+}
+
 // auto_index: false starts no watcher, so no edit can trigger a first index.
 func TestNoWatcherWithoutAutoIndex(t *testing.T) {
 	cfg := testConfig(t)
@@ -336,11 +355,19 @@ func TestLockedByOtherEngine(t *testing.T) {
 	wa.Index(false)
 	require.Eventually(t, func() bool { p := wa.Status().Phase; return p == "parsing" || p == "embedding" }, 2*time.Second, 5*time.Millisecond)
 
-	b := New(cfg, store.NewMemory(), &embed.Fake{}, nil)
+	var logBuf safeBuf
+	b := New(cfg, store.NewMemory(), &embed.Fake{}, slog.New(slog.NewTextHandler(&logBuf, nil)))
 	wb, err := b.Workspace(root)
 	require.NoError(t, err)
 	wb.Index(false)
 	require.Eventually(t, func() bool { return errors.Is(wb.lastErrLocked(), index.ErrLocked) }, 2*time.Second, 5*time.Millisecond)
+	// Another server indexing the root is normal with several clients: no
+	// WARN, and the retry stays at lockRetry instead of backing off.
+	assert.NotContains(t, logBuf.String(), "level=WARN")
+	assert.Contains(t, logBuf.String(), "another process is indexing")
+	b.mu.Lock()
+	assert.Zero(t, wb.fails)
+	b.mu.Unlock()
 	s := wb.Status()
 	assert.Contains(t, s.LastError, "another process is indexing")
 	assert.True(t, s.Queued)
@@ -350,6 +377,14 @@ func TestLockedByOtherEngine(t *testing.T) {
 	close(be.release)
 	require.Eventually(t, func() bool { return wa.Status().Phase == "done" }, 2*time.Second, 5*time.Millisecond)
 }
+
+type safeBuf struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *safeBuf) Write(p []byte) (int, error) { s.mu.Lock(); defer s.mu.Unlock(); return s.b.Write(p) }
+func (s *safeBuf) String() string              { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
 
 func (w *Workspace) lastErrLocked() error {
 	w.e.mu.Lock()

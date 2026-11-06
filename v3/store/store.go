@@ -34,18 +34,18 @@ type Hit struct {
 // must match (AND). QualifiedName and Name are exact matches; use
 // QualifiedSuffix for the "ends with .X" lookup parser.MatchQualified does.
 type Filter struct {
-	ID                  string // the symbol id
-	Language            string
-	FilePath            string
-	PathPrefix          string // file_path starts with
-	Name                string
-	QualifiedName       string
-	QualifiedSuffix     string // qualified_name == x or ends with "."+x (normalized form)
-	Module              string
-	Kinds               []parser.Kind
-	TargetID            string // any relation with this target_id
-	TargetQualifiedName string // any relation with this target_qualified_name
-	TargetName          string // any relation with this target_name
+	IDs                  []string // the symbol id is one of these
+	Language             string
+	FilePath             string
+	PathPrefix           string // file_path starts with
+	Name                 string
+	QualifiedName        string
+	QualifiedSuffix      string // qualified_name == x or ends with "."+x (normalized form)
+	Module               string
+	Kinds                []parser.Kind
+	TargetIDs            []string // any relation with one of these target_ids
+	TargetQualifiedNames []string // any relation with one of these target_qualified_names
+	TargetNames          []string // any relation with one of these target_names
 }
 
 // Store is implemented by SQLite (on disk) and by the in-memory store used

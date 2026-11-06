@@ -3,6 +3,7 @@ package embed
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -178,4 +179,26 @@ func TestOllamaLive(t *testing.T) {
 	vecs, err := o.Embed(ctx, []string{"func main() {}"})
 	require.NoError(t, err)
 	assert.Len(t, vecs[0], d)
+}
+
+// Threads caps the CPU threads Ollama uses (options.num_thread); 0 leaves it
+// to Ollama and sends no options, so a GPU setup is not touched.
+func TestOllamaThreads(t *testing.T) {
+	for _, threads := range []int{0, 4} {
+		var got map[string]any
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&got))
+			fmt.Fprint(w, `{"embeddings":[[1,0]]}`)
+		}))
+		o := NewOllama(srv.URL, "m", nil)
+		o.Threads = threads
+		_, err := o.Embed(context.Background(), []string{"a"})
+		srv.Close()
+		require.NoError(t, err)
+		if threads == 0 {
+			assert.NotContains(t, got, "options")
+		} else {
+			assert.Equal(t, map[string]any{"num_thread": float64(threads)}, got["options"])
+		}
+	}
 }

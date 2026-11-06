@@ -113,6 +113,7 @@ func TestVerifyYAMLTagsSnakeCase(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(strings.Join([]string{
 		"ollama_base_url: http://o:1",
 		"ollama_embed: m",
+		"embed_threads: 3",
 		"log_level: error",
 		"log_max_size_mb: 3",
 		"exclude_patterns: [a, b]",
@@ -126,7 +127,7 @@ func TestVerifyYAMLTagsSnakeCase(t *testing.T) {
 	cfg, err := Load(path)
 	require.NoError(t, err)
 	assert.Equal(t, Config{
-		OllamaBaseURL: "http://o:1", OllamaEmbed: "m",
+		OllamaBaseURL: "http://o:1", OllamaEmbed: "m", EmbedThreads: 3,
 		LogLevel: "error", LogMaxSizeMB: 3, ExcludePatterns: []string{"a", "b"},
 		AllowedWorkspacePaths: []string{"/x"}, AutoIndex: false, WatchEnabled: false,
 		WatchDebounce: 2 * time.Minute, AutoCreateIDERules: false,

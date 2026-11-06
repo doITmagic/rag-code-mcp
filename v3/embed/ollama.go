@@ -27,6 +27,10 @@ type Ollama struct {
 	model  string
 	client *http.Client
 	dim    atomic.Int32 // 0 until the first successful probe
+	// Threads caps the CPU threads Ollama computes with (num_thread); 0 lets
+	// Ollama pick. Set before use. Keep it constant: Ollama reloads the
+	// model whenever it changes.
+	Threads int
 }
 
 // NewOllama returns an embedder for model at baseURL. A nil client means http.DefaultClient.
@@ -74,7 +78,11 @@ func (o *Ollama) Dimension(ctx context.Context) (int, error) {
 
 // embedBatch sends one /api/embed request, retrying once on a transport error.
 func (o *Ollama) embedBatch(ctx context.Context, texts []string) ([][]float32, error) {
-	body, err := json.Marshal(map[string]any{"model": o.model, "input": texts})
+	req := map[string]any{"model": o.model, "input": texts}
+	if o.Threads > 0 {
+		req["options"] = map[string]int{"num_thread": o.Threads}
+	}
+	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}

@@ -50,7 +50,9 @@ func New(o Options) (*App, error) {
 		o.Log = slog.New(slog.DiscardHandler)
 	}
 	if o.Embedder == nil {
-		o.Embedder = embed.NewOllama(o.Config.OllamaBaseURL, o.Config.OllamaEmbed, nil)
+		ol := embed.NewOllama(o.Config.OllamaBaseURL, o.Config.OllamaEmbed, nil)
+		ol.Threads = o.Config.EmbedThreads
+		o.Embedder = ol
 	}
 	if o.Store == nil {
 		o.Store = store.NewSQLite(filepath.Join(config.HomeDir(), "index"))

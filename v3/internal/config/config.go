@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -23,6 +24,7 @@ var defaultYAML []byte
 type Config struct {
 	OllamaBaseURL         string        `yaml:"ollama_base_url"`
 	OllamaEmbed           string        `yaml:"ollama_embed"`
+	EmbedThreads          int           `yaml:"embed_threads"`
 	LogLevel              string        `yaml:"log_level"`
 	LogMaxSizeMB          int           `yaml:"log_max_size_mb"`
 	ExcludePatterns       []string      `yaml:"exclude_patterns"`
@@ -36,8 +38,10 @@ type Config struct {
 // Default returns the built-in configuration; default.yaml mirrors it.
 func Default() Config {
 	return Config{
-		OllamaBaseURL:      "http://localhost:11434",
-		OllamaEmbed:        "embeddinggemma-2:270m",
+		OllamaBaseURL: "http://localhost:11434",
+		OllamaEmbed:   "embeddinggemma-2:270m",
+		// A CPU-only Ollama otherwise takes every performance core.
+		EmbedThreads:       max(2, runtime.NumCPU()/8),
 		LogLevel:           "info",
 		LogMaxSizeMB:       10,
 		ExcludePatterns:    []string{"node_modules", "vendor", "target", "build", "dist", "__pycache__"},
@@ -121,6 +125,9 @@ func (c Config) Validate() error {
 	case "debug", "info", "warn", "error":
 	default:
 		return fmt.Errorf("config: log_level %q must be debug, info, warn or error", c.LogLevel)
+	}
+	if c.EmbedThreads < 0 {
+		return fmt.Errorf("config: embed_threads must not be negative, got %d", c.EmbedThreads)
 	}
 	if c.LogMaxSizeMB <= 0 {
 		return fmt.Errorf("config: log_max_size_mb must be positive, got %d", c.LogMaxSizeMB)

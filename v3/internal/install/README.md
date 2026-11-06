@@ -5,9 +5,9 @@
 Package `install` sets RagCode up on the current machine. It is the logic
 behind [`rag-code-install`](../../cmd/rag-code-install/README.md):
 
-1. remove a RagCode v1 install, if there is one;
-2. copy the `rag-code-mcp` server binary to `~/.ragcode/bin`;
-3. write `~/.ragcode/config.yaml` (an existing one is kept);
+1. copy the `rag-code-mcp` server binary to `~/.ragcode/bin`;
+2. write `~/.ragcode/config.yaml` (an existing one is kept);
+3. remove a RagCode v1 install, if there is one;
 4. start Ollama in Docker (or use a running one);
 5. pull the embedding model;
 6. register the server in every installed IDE;
@@ -50,7 +50,7 @@ Tests:
 | File | Covers |
 |:---|:---|
 | `install_test.go` | Full run with a fake `docker` (GPU start fails, CPU retry) and an `httptest` Ollama: binary mode `0755`, config written, exact Docker commands, model pulled with progress, PATH line once, Cursor entry and summary snippet; a second run keeps the config and does no Docker or model work; `-ollama local` and `-models-dir`; errors (bad `-ollama`, binary missing, user answers no); `pullModel` errors and the 412 "Ollama too old" message; a failed container still pulls from an Ollama already on the port; no Qdrant is started. |
-| `v1_test.go` | A v1 install is removed (install dir, `~/.local/share/qdrant` when it holds only ragcode collections, PATH line, the `ragcode` entry in `~/.cursor/mcp.config.json`, Docker `rm -f`); answering no to "Replace?" leaves v1 untouched; a collection RagCode did not create is kept. |
+| `v1_test.go` | A v1 install is removed (install dir, `~/.local/share/qdrant` when it holds only ragcode collections, PATH line, the `ragcode` entry in `~/.cursor/mcp.config.json`, Docker `rm -f`); answering no to "Replace?", a failed copy or an invalid config leaves v1 untouched; a collection RagCode did not create, or an unreadable collections directory, is kept; a running v1 server is stopped. |
 | `zz_verify_test.go` | Verification tests: `-ollama local` without Docker still waits and pulls; a cancelled context does not hang `Run`; `waitHTTP` on an unreachable URL returns an error; a reinstall replaces the binary, leaves no temp file and writes `.zshrc` when `SHELL` is zsh. |
 
 ## Key types and functions
@@ -84,10 +84,10 @@ flowchart TD
     B -- no --> X[error]
     B -- yes --> C{already installed and not -y?}
     C -- answer no --> Y[error: cancelled]
-    C -- yes / -y --> D[removeV1 if ~/.local/share/ragcode exists]
-    D --> E[StopProcess, copy binary]
+    C -- yes / -y --> E[StopProcess, copy binary]
     E --> F[config.Load: keep or write config.yaml]
-    F --> G{-ollama}
+    F --> D[removeV1 if ~/.local/share/ragcode exists]
+    D --> G{-ollama}
     G -- docker --> H[docker run ragcode-ollama, GPU then CPU]
     G -- local --> I
     H --> I[wait for /api/tags, pull model]
@@ -162,19 +162,21 @@ Most users upgrade from v1, whose indexes are not compatible with v3. When
    `~/.aitk/mcp.json`, `~/.config/mcp-servers.json`,
    `<cfg>/Claude/mcp-servers.json`, `<cfg>/Code/User/mcp.json`,
    `<cfg>/Code/User/globalStorage/mcp-servers.json`);
-3. deletes `~/.local/share/ragcode`;
+3. stops a running v1 server (`StopProcess` on its binary) and deletes
+   `~/.local/share/ragcode`;
 4. removes the line `export PATH="<home>/.local/share/ragcode/bin:$PATH"`
    (absolute path, exact match) from `~/.bashrc`, `~/.zshrc` and `~/.profile`;
 5. deletes v1's Qdrant collections, the directories under
    `~/.local/share/qdrant/collections` whose name starts with `ragcode`. The
    path is generic and a user's own Qdrant may keep collections there too, so
    `~/.local/share/qdrant` itself is deleted only when no other collection is
-   left. Qdrant wrote the data as root, so if a plain delete fails it runs
+   left (or when the collections directory cannot be read). Qdrant wrote the data as root, so if a plain delete fails it runs
    `rm -rf` inside a throwaway `qdrant/qdrant:v1.19.1` container; if that fails
    too it prints a `sudo rm -rf` hint.
 
-Each failure is a warning; v1 removal never stops the install. It runs after
-the "Replace?" question, so answering no leaves v1 in place. Projects are
+Each failure is a warning; v1 removal never stops the install. It runs only
+after the v3 binary is copied and its config loads, so answering no to
+"Replace?", a failed copy or a broken config leaves v1 in place. Projects are
 indexed again by v3 on first use.
 
 ## Testing

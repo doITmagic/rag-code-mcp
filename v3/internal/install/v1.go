@@ -2,7 +2,9 @@ package install
 
 import (
 	"context"
+	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/doITmagic/rag-code-mcp/v3/internal/idepaths"
+	"github.com/doITmagic/rag-code-mcp/v3/internal/uninstall"
 )
 
 // qdrantImage is only used to delete v1's root-owned Qdrant data; v3 runs no
@@ -48,6 +51,12 @@ func removeV1(ctx context.Context, home string, out io.Writer) {
 		}
 	}
 
+	// A v1 server left running would serve from deleted files without Qdrant.
+	v1Bin := filepath.Join(installDir, "bin", "rag-code-mcp")
+	if runtime.GOOS == "windows" {
+		v1Bin += ".exe"
+	}
+	uninstall.StopProcess(ctx, v1Bin)
 	if err := os.RemoveAll(installDir); err != nil {
 		warn(out, err.Error())
 	}
@@ -75,8 +84,11 @@ func removeV1(ctx context.Context, home string, out io.Writer) {
 	// ~/.local/share/qdrant is a generic path a user's own Qdrant may share:
 	// only v1's collections (prefix "ragcode") go, and the directory only when
 	// no other collection is left.
-	entries, _ := os.ReadDir(filepath.Join(share, "qdrant", "collections"))
-	foreign := false
+	entries, err := os.ReadDir(filepath.Join(share, "qdrant", "collections"))
+	foreign := err != nil && !errors.Is(err, fs.ErrNotExist) // unreadable: it may hold anything
+	if foreign {
+		warn(out, "kept "+filepath.Join(share, "qdrant")+": "+err.Error())
+	}
 	for _, e := range entries {
 		if strings.HasPrefix(e.Name(), "ragcode") {
 			removeRootOwned(ctx, share, filepath.Join("qdrant", "collections", e.Name()), out)

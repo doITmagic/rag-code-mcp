@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -67,4 +69,76 @@ func TestRunRemovesV1KeepsForeignQdrantCollections(t *testing.T) {
 
 	assert.NoDirExists(t, filepath.Join(colls, "ragcode-abc123"))
 	assert.DirExists(t, filepath.Join(colls, "my-app"), "a collection RagCode did not create is kept")
+}
+
+// An unreadable collections directory may hold anything: Qdrant is kept, not
+// deleted through the root container.
+func TestRunRemovesV1KeepsUnreadableQdrant(t *testing.T) {
+	home, dockerLog, _ := env(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".local", "share", "ragcode", "bin"), 0o755))
+	colls := filepath.Join(home, ".local", "share", "qdrant", "collections")
+	require.NoError(t, os.MkdirAll(filepath.Join(colls, "my-app"), 0o755))
+	require.NoError(t, os.Chmod(colls, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(colls, 0o755) })
+
+	var out bytes.Buffer
+	require.NoError(t, Run(context.Background(), Options{Ollama: "skip", Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}), out.String())
+
+	require.NoError(t, os.Chmod(colls, 0o755))
+	assert.DirExists(t, filepath.Join(colls, "my-app"))
+	log, _ := os.ReadFile(dockerLog)
+	assert.NotContains(t, string(log), "/p/qdrant")
+}
+
+// v1 goes only once v3 is in place: a failed copy or a broken config leaves
+// the working v1 untouched.
+func TestRunFailureKeepsV1(t *testing.T) {
+	for name, breakIt := range map[string]func(t *testing.T, home string){
+		"copy": func(t *testing.T, home string) {
+			require.NoError(t, os.MkdirAll(filepath.Join(home, ".ragcode"), 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(home, ".ragcode", "bin"), nil, 0o644)) // bin is a file
+		},
+		"config": func(t *testing.T, home string) {
+			require.NoError(t, os.MkdirAll(filepath.Join(home, ".ragcode"), 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(home, ".ragcode", "config.yaml"), []byte("log_level: loud\n"), 0o644))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			home, dockerLog, _ := env(t)
+			v1Dir := filepath.Join(home, ".local", "share", "ragcode")
+			require.NoError(t, os.MkdirAll(v1Dir, 0o755))
+			breakIt(t, home)
+			err := Run(context.Background(), Options{Ollama: "skip", Yes: true, SkipIDE: true, Out: &bytes.Buffer{}, srcDir: src(t)})
+			require.Error(t, err)
+			assert.DirExists(t, v1Dir)
+			log, _ := os.ReadFile(dockerLog)
+			assert.NotContains(t, string(log), "ragcode-qdrant")
+		})
+	}
+}
+
+// A v1 server still running would keep serving from deleted files with its
+// Qdrant gone: the upgrade stops it.
+func TestRunStopsV1Server(t *testing.T) {
+	home, _, _ := env(t)
+	v1Bin := filepath.Join(home, ".local", "share", "ragcode", "bin", "rag-code-mcp")
+	require.NoError(t, os.MkdirAll(filepath.Dir(v1Bin), 0o755))
+	sleep, err := exec.LookPath("sleep")
+	require.NoError(t, err)
+	data, err := os.ReadFile(sleep)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(v1Bin, data, 0o755))
+	server := exec.Command(v1Bin, "30")
+	require.NoError(t, server.Start())
+	t.Cleanup(func() { _ = server.Process.Kill() })
+	done := make(chan error, 1)
+	go func() { done <- server.Wait() }()
+	time.Sleep(100 * time.Millisecond)
+
+	require.NoError(t, Run(context.Background(), Options{Ollama: "skip", Yes: true, SkipIDE: true, Out: &bytes.Buffer{}, srcDir: src(t)}))
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("v1 server still running")
+	}
 }

@@ -77,10 +77,6 @@ func Run(ctx context.Context, o Options) error {
 			return errors.New("install: cancelled")
 		}
 	}
-	if userHome, err := os.UserHomeDir(); err == nil {
-		removeV1(ctx, userHome, o.Out)
-	}
-
 	step(o.Out, "Installing binary to "+binary)
 	uninstall.StopProcess(ctx, binary)
 	if err := copyFile(src, binary); err != nil {
@@ -98,6 +94,11 @@ func Run(ctx context.Context, o Options) error {
 		ok(o.Out, "Kept existing "+cfgPath)
 	} else {
 		ok(o.Out, "Wrote "+cfgPath)
+	}
+	// v1 goes only once v3 is in place, and before the ragcode-ollama
+	// container (same name in v1) is started again.
+	if userHome, err := os.UserHomeDir(); err == nil {
+		removeV1(ctx, userHome, o.Out)
 	}
 
 	if o.Ollama == "docker" {

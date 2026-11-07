@@ -466,3 +466,33 @@ func Map[T comparable](x T) T { return x }
 	}, syms["llm.Adapter.Run"].Relations, "the receiver is the owner, not a use")
 	assert.Empty(t, syms["llm.Map"].Relations, "type parameters and predeclared types")
 }
+
+// A blank var (Ginkgo's var _ = Describe(...), interface assertions) keeps
+// its relations: they are the only record of those calls.
+func TestBlankVarKeepsRelations(t *testing.T) {
+	root := t.TempDir()
+	src := `package tests
+
+import "github.com/acme/app/pkg/llm"
+
+var _ = Describe("registry", func() {
+	llm.Register("x", nil)
+})
+
+var _ llm.Provider = (*fake)(nil)
+
+var _ = 1
+`
+	syms, err := Analyzer{}.Analyze(parser.File{Path: filepath.Join(root, "tests", "r_test.go"), Root: root, Source: []byte(src), Language: "go"})
+	require.NoError(t, err)
+	var blanks []parser.Symbol
+	for _, s := range syms {
+		if s.Name == "_" {
+			blanks = append(blanks, s)
+		}
+	}
+	require.Len(t, blanks, 2, "the one without relations is dropped")
+	assert.Contains(t, blanks[0].Relations, rel(parser.RelCall, "Register", "github.com/acme/app/pkg/llm.Register", 6))
+	assert.Contains(t, blanks[1].Relations, rel(parser.RelUsesType, "Provider", "github.com/acme/app/pkg/llm.Provider", 9))
+	assert.False(t, blanks[0].Exported)
+}

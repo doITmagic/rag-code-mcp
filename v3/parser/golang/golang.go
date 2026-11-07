@@ -253,7 +253,7 @@ func (fc *file) appendValues(syms []parser.Symbol, decl *gotreesitter.Node, spec
 		}
 		rels, _ := fc.relations(spec, "", "")
 		for _, name := range names {
-			if name == "_" {
+			if name == "_" && len(rels) == 0 { // var _ = Describe(...) keeps its calls
 				continue
 			}
 			s := fc.base(node, name, kind, "")

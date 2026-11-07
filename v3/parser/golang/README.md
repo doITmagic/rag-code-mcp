@@ -61,7 +61,7 @@ graph TD
 | `type T struct{...}` | `class` | | |
 | `type I interface{...}` | `interface` | | `Metadata["methods"]` lists the interface's method names, comma separated. |
 | `type A = B`, `type N []string` | `type` | | Any other type spec, aliases included. |
-| `var x, y = ...` | `variable` | | One symbol per name; `_` is skipped. |
+| `var x, y = ...` | `variable` | | One symbol per name; `_` is skipped unless the spec has relations (`var _ = Describe(...)` in Ginkgo tests, `var _ I = (*T)(nil)`): their calls and type uses would be lost otherwise. |
 | `const ...` | `constant` | | One symbol per name; `_` is skipped. |
 
 - **Grouped declarations** (`type (...)`, `var (...)`, `const (...)`): each
@@ -145,7 +145,7 @@ Relations of a `var` or `const` spec are shared by every name in that spec.
 
 | File | Covers |
 |------|--------|
-| `golang_test.go` | A fixture with grouped declarations, generics, embedded types, aliased/dot/blank imports: symbol kinds, owners, lines, signatures, docs, IDs, metadata; every relation and its target; module path without `go.mod`, nested `go.mod` stopping at the root; malformed input; analyzing the real `parser.go` of this repo; registration; concurrency; generic calls; `Exported` for test files and unexported owners; calls through local function values; a parameter shadowing an import; a renamed module seen without a restart; same-package types declared in another file, type parameters (receiver ones too) and the receiver skipped. |
+| `golang_test.go` | A fixture with grouped declarations, generics, embedded types, aliased/dot/blank imports: symbol kinds, owners, lines, signatures, docs, IDs, metadata; every relation and its target; module path without `go.mod`, nested `go.mod` stopping at the root; malformed input; analyzing the real `parser.go` of this repo; registration; concurrency; generic calls; `Exported` for test files and unexported owners; calls through local function values; a parameter shadowing an import; a renamed module seen without a restart; same-package types declared in another file, type parameters (receiver ones too) and the receiver skipped; blank vars keeping their relations. |
 | `zz_verify_test.go` | Verification tests: resolution probes, an unclean (non-normalized) root path, robustness on garbage and edge input, a second round of edge cases, very large and deeply nested files. |
 
 ## Testing

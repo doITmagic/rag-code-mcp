@@ -24,7 +24,9 @@ type Entry struct {
 // 2: Go Exported means package API; calls through locals are not package calls.
 // 3: Go same-package types declared in another file; Python local imports and
 // class-body calls.
-const Format = 3
+// 4: JS root-absolute imports and TypeScript type uses; Go blank vars keep
+// their relations; Python signatures stop at the def's colon.
+const Format = 4
 
 // State is the per-root snapshot stored at Dir(root)/state.json. Only
 // the run goroutine touches it; nothing here locks.

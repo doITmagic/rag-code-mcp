@@ -156,7 +156,7 @@ type State struct {
     Files  map[string]Entry `json:"files"`            // absolute path -> entry
 }
 
-const Format = 4
+const Format = 5
 ```
 
 `Format` is the version of what parsers and the indexer store. It is bumped
@@ -166,7 +166,8 @@ API, and calls through locals are not package calls. Version 3: Go types of
 the same package declared in another file, Python function-local imports and
 class-body calls. Version 4: JS root-absolute imports and TypeScript type
 uses, Go blank vars keeping their relations, Python signatures stopping at the
-def's colon.
+def's colon. Version 5: JS methods of an object literal bound to a top-level
+const.
 
 ---
 

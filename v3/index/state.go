@@ -26,7 +26,8 @@ type Entry struct {
 // class-body calls.
 // 4: JS root-absolute imports and TypeScript type uses; Go blank vars keep
 // their relations; Python signatures stop at the def's colon.
-const Format = 4
+// 5: JS methods of an object literal bound to a top-level const.
+const Format = 5
 
 // State is the per-root snapshot stored at Dir(root)/state.json. Only
 // the run goroutine touches it; nothing here locks.

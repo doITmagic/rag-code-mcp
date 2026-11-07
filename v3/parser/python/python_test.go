@@ -440,3 +440,11 @@ class Task(Model):
 	assert.NotContains(t, task, "other", "the method's calls are its own")
 	assert.Equal(t, "helpers.guids.other", rels("pkg.projects.Task.run")["other"])
 }
+
+// Comments between the colon and the first statement are not the signature.
+func TestSignatureStopsAtColon(t *testing.T) {
+	src := "class W:\n    def get_variables(self, x: dict[str, int] = {}) -> dict[str, Any]:\n        # agent = kwargs.get('_agent')\n        # return {}\n        return {}\n"
+	m := byQN(analyze(t, "/ws/w.py", "/ws", src))
+	assert.Equal(t, "def get_variables(self, x: dict[str, int] = {}) -> dict[str, Any]", m["w.W.get_variables"].Signature)
+	assert.Equal(t, "class W", m["w.W"].Signature)
+}

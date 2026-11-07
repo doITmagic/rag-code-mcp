@@ -86,8 +86,9 @@ level fewer is dropped, because the module already names the package.
 | `class` (module level or nested) | `class` | enclosing class path, `""` at top level |
 | Module-level `NAME = ...` / `a, b = ...` | `constant` for UPPER_SNAKE names, else `variable` | |
 
-- **Signature** is the header up to the body with whitespace collapsed and
-  the colon removed: `async def fetch(url: str, *args, timeout=2, **kw) -> str`.
+- **Signature** is the header up to its own colon with whitespace collapsed
+  and the colon removed (comments before the first statement are body):
+  `async def fetch(url: str, *args, timeout=2, **kw) -> str`.
   For assignments it is the text before `=`.
 - **Doc** is the dedented docstring (first statement of the body).
 - **Decorators** are stored in `Metadata["decorators"]`, comma separated,

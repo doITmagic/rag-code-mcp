@@ -334,6 +334,12 @@ func (c *fileCtx) header(n *gotreesitter.Node) string {
 	if b := parser.Field(n, c.lang, "body"); b != nil {
 		end = b.StartByte()
 	}
+	for i := 0; i < n.ChildCount(); i++ { // the def's own colon: comments after it are body
+		if ch := n.Child(i); ch.Type(c.lang) == ":" && ch.EndByte() <= end {
+			end = ch.EndByte()
+			break
+		}
+	}
 	h := strings.Join(strings.Fields(string(c.src[n.StartByte():end])), " ")
 	return strings.TrimSpace(strings.TrimSuffix(h, ":"))
 }

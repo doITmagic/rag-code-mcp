@@ -247,7 +247,8 @@ error recovery can be quadratic on garbage input.
 
 | File | Contents |
 |------|----------|
-| `parser.go` | `Kind`, `RelationKind`, resolution constants, `Symbol`, `Relation`, `File`, `Analyzer`; `Qualify`, `Normalize`, `MatchQualified`, `SymbolID`, `Finalize`; the registry (`Register`, `ForFile`, `ForLanguage`, `Languages`, `Analyze`); `RelModule`. |
+| `parser.go` | `Kind`, `RelationKind`, resolution constants, `Symbol`, `Relation`, `File`, `Analyzer`; `Qualify`, `Normalize` (also turns a Go method expression `(*T).M` into `T.M`), `MatchQualified`, `SymbolID`, `Finalize`; the registry (`Register`, `ForFile`, `ForLanguage`, `Languages`, `Analyze`); `RelModule`. |
+| `normalize_test.go` | `Normalize` on Go method expressions and PHP separators. |
 | `ts.go` | Pooled tree-sitter parsers with a parse timeout, `ParseTree`, `Walk`, `NamedChildren`, `Field`, `Text`, `Lines`, `ReleaseParsers`. |
 
 There are no test files in this directory. The contract is exercised by every

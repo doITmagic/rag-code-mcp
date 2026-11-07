@@ -124,6 +124,9 @@ func Normalize(s string) string {
 	s = strings.ReplaceAll(s, "\\", ".")
 	s = strings.ReplaceAll(s, "/", ".")
 	s = strings.ReplaceAll(s, "->", ".")
+	if strings.HasPrefix(s, "(*") { // Go method expression (*T).M
+		s = strings.Replace(strings.TrimPrefix(s, "(*"), ").", ".", 1)
+	}
 	s = strings.Trim(s, ".")
 	return s
 }

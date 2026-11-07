@@ -582,22 +582,24 @@ func (c *fileCtx) method(m, fn *gotreesitter.Node, owner string, ownerExported b
 // options-API object (export default {...} / defineComponent({...})) as
 // methods owned by the component, which is named after the file.
 func (c *fileCtx) componentObject(obj *gotreesitter.Node, out *[]parser.Symbol) {
-	c.objectMethods(obj, true, out)
+	c.objectMethods(obj, c.component, true, out)
 }
 
-func (c *fileCtx) objectMethods(obj *gotreesitter.Node, top bool, out *[]parser.Symbol) {
+// objectMethods emits the methods and function-valued pairs of obj as methods
+// of owner; top descends into Vue's methods / computed / watch.
+func (c *fileCtx) objectMethods(obj *gotreesitter.Node, owner string, top bool, out *[]parser.Symbol) {
 	for _, p := range parser.NamedChildren(obj) {
 		switch p.Type(c.lang) {
 		case "method_definition":
-			c.method(p, p, c.component, true, out)
+			c.method(p, p, owner, true, out)
 		case "pair":
 			key, v := parser.Text(parser.Field(p, c.lang, "key"), c.src), parser.Field(p, c.lang, "value")
 			switch {
 			case v == nil:
 			case isFunc(v.Type(c.lang)):
-				c.method(p, v, c.component, true, out)
+				c.method(p, v, owner, true, out)
 			case top && v.Type(c.lang) == "object" && (key == "methods" || key == "computed" || key == "watch"):
-				c.objectMethods(v, false, out)
+				c.objectMethods(v, owner, false, out)
 			}
 		}
 	}
@@ -624,6 +626,9 @@ func (c *fileCtx) variables(n, decl *gotreesitter.Node, exported bool, out *[]pa
 			s.Relations = c.calls(v, "")
 		}
 		*out = append(*out, s)
+		if v != nil && v.Type(c.lang) == "object" { // const model = { load() {...} }: a store model
+			c.objectMethods(v, s.Name, false, out)
+		}
 	}
 }
 

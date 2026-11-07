@@ -495,3 +495,23 @@ export function load<T>(p: Plant, x: string): Promise<ApiResponse<T>> {
 	assert.Equal(t, []string{"src/types.ApiResponse@9", "src/model.Err@9"}, uses("src/hooks/use.Res"), "T is a type parameter")
 	assert.ElementsMatch(t, []string{"src/types.Plant@14", "src/model.Item@15", "src/types.Plant@13", "src/types.ApiResponse@13"}, uses("src/hooks/use.load"))
 }
+
+// The methods of an object literal bound to a top-level const (an Alpine or
+// Pinia store model) are methods of that const, with their calls.
+func TestObjectLiteralMethods(t *testing.T) {
+	src := `import * as api from './api';
+const model = {
+  items: [],
+  async load() { await api.callJsonApi('/x'); this.render(); },
+  render: () => draw(),
+};
+`
+	syms := analyze(t, "src/store.js", src)
+	load := find(t, syms, "src/store.model.load")
+	assert.Equal(t, parser.KindMethod, load.Kind)
+	assert.Equal(t, "model", load.Owner)
+	assert.Equal(t, "src/api.callJsonApi", rel(t, load, parser.RelCall, "callJsonApi").TargetQualifiedName)
+	assert.Equal(t, "src/store.model.render", rel(t, load, parser.RelCall, "render").TargetQualifiedName)
+	find(t, syms, "src/store.model.render")
+	find(t, syms, "src/store.model")
+}

@@ -43,6 +43,9 @@ func (a lineAnalyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 		case strings.HasPrefix(line, "func "):
 			name, target, _ := strings.Cut(strings.TrimPrefix(line, "func "), " -> ")
 			s := parser.Symbol{Name: name, Kind: parser.KindFunction, Module: module, Content: line, StartLine: i + 1}
+			if n, ok := strings.CutSuffix(name, " as default"); ok { // a JS default export
+				s.Name, s.QualifiedName = n, module+".default"
+			}
 			if target != "" {
 				rel := parser.Relation{Kind: parser.RelCall, Line: i + 1}
 				if strings.Contains(target, ".") {

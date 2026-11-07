@@ -1,6 +1,7 @@
 package javascript
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -435,4 +436,62 @@ class K { m(fs) { fs.x(); this.n(); } n() {} }
 	assert.NotEmpty(t, qn("real", "run"))
 	assert.Equal(t, "", qn("K.m", "x"))
 	assert.Equal(t, "src/a.K.n", qn("K.m", "n"))
+}
+
+// A root-absolute specifier ("/js/api.js") names a file under the web root the
+// page is served from: the nearest ancestor of the importing file that has it.
+func TestRootAbsoluteImport(t *testing.T) {
+	ws := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(ws, "webui", "js"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(ws, "webui", "components", "chat"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(ws, "webui", "js", "api.js"), nil, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(ws, "webui", "js", "sleep.js"), nil, 0o644))
+	src := `import { callJsonApi } from "/js/api.js";
+import * as api from "/js/api.js";
+import sleep from "/js/sleep";
+import { y } from "/nowhere/y.js";
+export function load() { callJsonApi(); api.fetchApi(); sleep(); y(); }
+`
+	syms, err := analyzer{}.Analyze(parser.File{Path: filepath.Join(ws, "webui", "components", "chat", "store.js"), Root: ws, Source: []byte(src)})
+	require.NoError(t, err)
+	l := find(t, syms, "webui/components/chat/store.load")
+	assert.Equal(t, "webui/js/api.callJsonApi", rel(t, l, parser.RelCall, "callJsonApi").TargetQualifiedName)
+	assert.Equal(t, "webui/js/api.fetchApi", rel(t, l, parser.RelCall, "fetchApi").TargetQualifiedName)
+	assert.Equal(t, "webui/js/sleep.default", rel(t, l, parser.RelCall, "sleep").TargetQualifiedName)
+	assert.Equal(t, "/nowhere/y.js.y", rel(t, l, parser.RelCall, "y").TargetQualifiedName, "not found: left as written")
+}
+
+// TypeScript type annotations, generic arguments and interface / alias
+// bodies use the types they name, when an import or this file defines them.
+func TestTypeScriptTypeUses(t *testing.T) {
+	src := `import { ApiResponse, Plant } from '../types';
+import * as m from '../model';
+
+interface AuthCtx {
+  user: AuthUser | null;
+  plants: Plant[];
+}
+
+type Res<T> = ApiResponse<T> | m.Err;
+
+export interface AuthUser { id: string }
+
+export function load<T>(p: Plant, x: string): Promise<ApiResponse<T>> {
+  const list = useState<Plant[]>([]);
+  return fetchIt<m.Item>(p);
+}
+`
+	syms := analyze(t, "src/hooks/use.ts", src)
+	uses := func(qn string) []string {
+		var out []string
+		for _, r := range find(t, syms, qn).Relations {
+			if r.Kind == parser.RelUsesType {
+				out = append(out, fmt.Sprintf("%s@%d", r.TargetQualifiedName, r.Line))
+			}
+		}
+		return out
+	}
+	assert.Equal(t, []string{"src/hooks/use.AuthUser@5", "src/types.Plant@6"}, uses("src/hooks/use.AuthCtx"))
+	assert.Equal(t, []string{"src/types.ApiResponse@9", "src/model.Err@9"}, uses("src/hooks/use.Res"), "T is a type parameter")
+	assert.ElementsMatch(t, []string{"src/types.Plant@14", "src/model.Item@15", "src/types.Plant@13", "src/types.ApiResponse@13"}, uses("src/hooks/use.load"))
 }

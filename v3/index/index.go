@@ -711,16 +711,18 @@ func names(files []parsed) []parsed {
 
 // nameIndex maps the names of every symbol of the run to their ids.
 type nameIndex struct {
-	byQN     map[string][]string
-	bySuffix map[string][]string    // every dot-boundary suffix of a qualified name
-	byName   map[[2]string][]string // language, name: a call never crosses languages
-	byModule map[string][]string    // top-level classes per module
-	lang     map[string]string      // symbol id -> language
-	changed  map[string]bool        // files of the run: their stored points are stale
+	byQN      map[string][]string
+	bySuffix  map[string][]string    // every dot-boundary suffix of a qualified name
+	byName    map[[2]string][]string // language, name: a call never crosses languages
+	byModule  map[string][]string    // top-level classes per module
+	byModName map[[2]string][]string // module, name of top-level symbols
+	lang      map[string]string      // symbol id -> language
+	changed   map[string]bool        // files of the run: their stored points are stale
 }
 
 func newNameIndex(files []parsed) nameIndex {
-	idx := nameIndex{map[string][]string{}, map[string][]string{}, map[[2]string][]string{}, map[string][]string{}, map[string]string{}, make(map[string]bool, len(files))}
+	idx := nameIndex{byQN: map[string][]string{}, bySuffix: map[string][]string{}, byName: map[[2]string][]string{}, byModule: map[string][]string{},
+		byModName: map[[2]string][]string{}, lang: map[string]string{}, changed: make(map[string]bool, len(files))}
 	for i := range files {
 		idx.changed[files[i].path] = true
 		for _, s := range files[i].syms {
@@ -735,6 +737,9 @@ func newNameIndex(files []parsed) nameIndex {
 			idx.byName[[2]string{s.Language, s.Name}] = append(idx.byName[[2]string{s.Language, s.Name}], s.ID)
 			if s.Kind == parser.KindClass && s.Owner == "" {
 				idx.byModule[s.Module] = append(idx.byModule[s.Module], s.ID)
+			}
+			if s.Owner == "" {
+				idx.byModName[[2]string{s.Module, s.Name}] = append(idx.byModName[[2]string{s.Module, s.Name}], s.ID)
 			}
 		}
 	}
@@ -834,6 +839,15 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 					if len(ids) == 0 && rel.Kind == parser.RelExtends {
 						ids = lookup(lang, byModule[tqn], "m:"+tqn, store.Filter{Module: tqn, Kinds: []parser.Kind{parser.KindClass}}, func(s parser.Symbol) bool {
 							return s.Module == tqn && s.Kind == parser.KindClass && s.Owner == ""
+						})
+					}
+					// import { sleep } of a JS declaration both named and
+					// default-exported, so qualified "<module>.default": the
+					// module's top-level symbol of that name.
+					if dot := strings.LastIndex(tqn, "."); len(ids) == 0 && dot > 0 && lang == "javascript" {
+						m, n := tqn[:dot], tqn[dot+1:]
+						ids = lookup(lang, idx.byModName[[2]string{m, n}], "mn:"+m+"\x00"+n, store.Filter{Module: m, Name: n}, func(s parser.Symbol) bool {
+							return s.Module == m && s.Name == n && s.Owner == ""
 						})
 					}
 					// $this->m(), self.m(), this.m() on a member the owner

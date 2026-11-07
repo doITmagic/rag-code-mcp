@@ -376,10 +376,18 @@ func (c *fileCtx) scanExportsAssign(n *gotreesitter.Node) {
 // with no sibling file of that name becomes its index module; bare specifiers
 // ('react', '@scope/pkg') stay as they are.
 func (c *fileCtx) resolveSpec(spec string) string {
+	if strings.HasPrefix(spec, "/") && !strings.HasPrefix(spec, "//") {
+		return c.rootAbsolute(spec)
+	}
 	if !strings.HasPrefix(spec, "./") && !strings.HasPrefix(spec, "../") {
 		return spec
 	}
-	p := path.Join(c.dir, spec)
+	return c.modulePath(path.Join(c.dir, spec))
+}
+
+// modulePath strips a source extension off a root-relative path and turns a
+// directory with no sibling file of that name into its index module.
+func (c *fileCtx) modulePath(p string) string {
 	switch strings.ToLower(path.Ext(p)) {
 	case ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".vue", ".json":
 		p = strings.TrimSuffix(p, path.Ext(p))
@@ -388,6 +396,24 @@ func (c *fileCtx) resolveSpec(spec string) string {
 		p += "/index"
 	}
 	return p
+}
+
+// rootAbsolute maps "/js/api.js" to the file under the web root the page is
+// served from, unknown here: the nearest ancestor of this file's directory
+// that has it. Not found: the specifier as written.
+func (c *fileCtx) rootAbsolute(spec string) string {
+	if c.root == "" {
+		return spec
+	}
+	for dir := c.dir; ; dir = path.Dir(dir) {
+		p := c.modulePath(path.Join(dir, spec))
+		if abs := filepath.Join(c.root, filepath.FromSlash(p)); hasSource(abs) {
+			return p
+		}
+		if dir == "." || dir == "/" || dir == "" {
+			return spec
+		}
+	}
 }
 
 func isDir(p string) bool {
@@ -466,9 +492,12 @@ func (c *fileCtx) topLevel(n *gotreesitter.Node, out *[]parser.Symbol) {
 				s.Relations = append(s.Relations, c.typeRel(parser.RelExtends, parser.Text(nc, c.src), line))
 			}
 		}
+		s.Relations = append(s.Relations, c.typeUses(parser.Field(n, c.lang, "body"))...)
 		*out = append(*out, s)
 	case "type_alias_declaration":
-		*out = append(*out, c.symbol(n, decl, "", name, parser.KindType, exported))
+		s := c.symbol(n, decl, "", name, parser.KindType, exported)
+		s.Relations = c.typeUses(parser.Field(n, c.lang, "value"))
+		*out = append(*out, s)
 	case "enum_declaration":
 		*out = append(*out, c.symbol(n, decl, "", name, parser.KindClass, exported))
 	case "lexical_declaration", "variable_declaration":
@@ -725,6 +754,9 @@ func (c *fileCtx) calls(fn *gotreesitter.Node, owner string) []parser.Relation {
 			if ctor := parser.Field(n, c.lang, "constructor"); ctor != nil {
 				rels = append(rels, c.typeRel(parser.RelUsesType, parser.Text(ctor, c.src), line))
 			}
+		case "type_identifier", "nested_type_identifier":
+			rels = append(rels, c.typeUses(n)...)
+			return false
 		case "jsx_opening_element", "jsx_self_closing_element":
 			if n.NamedChildCount() == 0 {
 				return true
@@ -733,6 +765,26 @@ func (c *fileCtx) calls(fn *gotreesitter.Node, owner string) []parser.Relation {
 			if r := []rune(name); len(r) > 0 && (unicode.IsUpper(r[0]) || strings.Contains(name, ".")) {
 				rels = append(rels, c.typeRel(parser.RelUsesType, name, line))
 			}
+		}
+		return true
+	})
+	rels = append(rels, c.typeUses(parser.Field(fn, c.lang, "parameters"))...)
+	return append(rels, c.typeUses(parser.Field(fn, c.lang, "return_type"))...)
+}
+
+// typeUses lists the TypeScript types named under n (annotations, generic
+// arguments, interface and alias bodies) that an import or this file
+// defines; type parameters and globals resolve to nothing and are dropped.
+func (c *fileCtx) typeUses(n *gotreesitter.Node) []parser.Relation {
+	var rels []parser.Relation
+	parser.Walk(n, func(t *gotreesitter.Node) bool {
+		switch t.Type(c.lang) {
+		case "type_identifier", "nested_type_identifier":
+			if text := parser.Text(t, c.src); c.resolveDotted(text) != "" {
+				line, _ := parser.Lines(t)
+				rels = append(rels, c.typeRel(parser.RelUsesType, text, line))
+			}
+			return false
 		}
 		return true
 	})

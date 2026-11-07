@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/doITmagic/rag-code-mcp/v3/parser"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -43,4 +44,26 @@ func TestRunResolvesBeyondFiveHundredTargets(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 0, unresolved, "after an unchanged rerun")
+}
+
+// A JS declaration both named and default-exported is qualified
+// "<module>.default", while `import { sleep }` names "<module>.sleep": the
+// top-level symbol of that module with that name is the target.
+func TestResolveByModuleAndName(t *testing.T) {
+	parser.Register(lineAnalyzer{"javascript", ".js"})
+	e := newEnv(t)
+	b := e.write(t, "b.js", "func sleep as default")
+	a := e.write(t, "a.js", "func F -> b.sleep")
+	e.write(t, "g.go", "func H -> b.sleep") // Go never takes this path
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	target := e.symbols(t, b)["sleep"].ID
+	require.NotEmpty(t, target)
+	assert.Equal(t, target, e.symbols(t, a)["F"].Relations[0].TargetID, "full run")
+
+	c := e.write(t, "c.js", "func G -> b.sleep")
+	_, err = e.run(t, nil)
+	require.NoError(t, err)
+	assert.Equal(t, target, e.symbols(t, c)["G"].Relations[0].TargetID, "from the store")
+	assert.Empty(t, e.symbols(t, e.root+"/g.go")["H"].Relations[0].TargetID)
 }

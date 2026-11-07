@@ -77,7 +77,12 @@ graph TD
 Relative specifiers are joined to the file's directory and lose a known
 extension (`.js .mjs .cjs .jsx .ts .tsx .vue .json`). When the result is a
 directory with no sibling source file of the same name, `/index` is appended.
-Bare specifiers (`react`, `@scope/pkg`) are kept as written.
+Root-absolute specifiers (`/js/api.js`, as served from a web root the parser
+cannot know) resolve to the nearest ancestor of the importing file's
+directory that has that file: `webui/components/chat/store.js` importing
+`/js/api.js` gets `webui/js/api` when `webui/js/api.js` exists. Not found,
+they are kept as written. Bare specifiers (`react`, `@scope/pkg`) are kept as
+written.
 
 ## Symbols extracted
 
@@ -150,6 +155,7 @@ call `fetch` -> `src/services/api.default.fetch`.
 | `this.m()` in a class or component | `call` | `<module>.<Owner>.m` |
 | `new Foo()` | `uses_type` | Same resolution as a name. |
 | `<Comp />`, `<ns.Comp>` in JSX | `uses_type` | Only for capitalized or dotted tag names. |
+| TypeScript type in a parameter or return annotation, a generic argument (`useState<Plant[]>`), the body of an `interface` or a `type` alias | `uses_type` | Only types an import or this file defines; type parameters and globals are dropped. |
 | `class A extends B` | `extends` | Generics (`Base<T>`) stripped. |
 | `class A implements I` | `implements` | |
 | `interface I extends J` | `extends` | |
@@ -180,7 +186,7 @@ method.
 
 | File | Covers |
 |------|--------|
-| `javascript_test.go` | ESM and CommonJS imports and exports, classes and methods, TypeScript (interfaces, types, enums, abstract classes), TSX, Vue options API, Vue `<script setup lang="ts">`, malformed and unbalanced input, files outside the root, concurrency, registration, default exports and directory (`index`) imports. |
+| `javascript_test.go` | ESM and CommonJS imports and exports, classes and methods, TypeScript (interfaces, types, enums, abstract classes), TSX, Vue options API, Vue `<script setup lang="ts">`, malformed and unbalanced input, files outside the root, concurrency, registration, default exports and directory (`index`) imports, root-absolute imports, TypeScript type uses. |
 | `zz_verify_test.go` | Verification tests: JSX and import forms, TS enums and generics, `defineComponent` and CRLF files, robustness, nested CommonJS, component objects in plain JS, template-first `<script setup>`, statelessness, private TS members and syntax-error recovery, two script blocks, deep nesting, concurrent analysis. |
 
 ## Testing

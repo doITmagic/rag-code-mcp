@@ -72,7 +72,7 @@ graph LR
 |------|--------|
 | `index_test.go` | The main suite, with a line-based fake analyzer and a hook embedder: full, incremental, delete, recreate, model and `Format` change, embed failure, parse failures and panics, cancel, `ErrHeadChanged`, relation resolution, `Skip`, `Walk`, `.gitignore`, linked worktrees, symlinks in `Files`, byte-budgeted upsert batches, empty collection with stale state, a crash between a recreate's state save and its drop, moved targets, vanished referrers, a file that changed between the two passes. Its `TestMain` points `RAGCODE_HOME` at a temp dir. |
 | `budget_test.go` | The parse byte budget is respected, and batches still resolve forward references. |
-| `resolve_test.go` | A non-fresh run resolves more than 500 targets through the store. |
+| `resolve_test.go` | A non-fresh run resolves more than 500 targets through the store; a JS `import { n }` of a default-exported declaration resolves by module and name, in a full run and from the store. |
 | `resolve_files_test.go` | A files run sees the stored candidates too: a target ambiguous in a full run stays ambiguous by exact and suffix match; removing one of two candidates (file deleted or symbol edited away) makes the unchanged caller unique. |
 | `resolve_fix_test.go` | Name and qualified resolution stay within one language (html may cross), targets defined later, inherited-member fallback, a files run after a failed run widens to a full walk, symlinked `.ragcode` directories and device files are refused. |
 | `gdscript_test.go` | `extends "res://x.gd"` resolves to the script's class, named by `class_name` or after the file, in full and files runs. |
@@ -156,7 +156,7 @@ type State struct {
     Files  map[string]Entry `json:"files"`            // absolute path -> entry
 }
 
-const Format = 3
+const Format = 4
 ```
 
 `Format` is the version of what parsers and the indexer store. It is bumped
@@ -164,7 +164,9 @@ when a change must reach files that did not change; a state with another
 `Format` is re-indexed from scratch. Version 2: Go `Exported` means package
 API, and calls through locals are not package calls. Version 3: Go types of
 the same package declared in another file, Python function-local imports and
-class-body calls.
+class-body calls. Version 4: JS root-absolute imports and TypeScript type
+uses, Go blank vars keeping their relations, Python signatures stopping at the
+def's colon.
 
 ---
 
@@ -311,7 +313,9 @@ each relation:
   member (inherited through a parent class, trait or embedded type), it falls
   back to the bare name. An `extends` whose target is a whole module (GDScript
   `extends "res://x/y.gd"`) takes that module's one top-level class
-  (`ResolutionUnique`).
+  (`ResolutionUnique`). In JavaScript, `m.n` with no match takes module `m`'s
+  top-level symbol named `n`: a declaration both named and default-exported
+  is qualified `m.default`, while `import { n }` names `m.n`.
 - With only a `TargetName`: matched by `(language, name)`.
 - Code never resolves into another language, by name or qualified name; only
   relations from `docs` and `html` (links, scripts, `onclick` handlers) cross

@@ -68,6 +68,9 @@ func (t *tools) readFile(ctx context.Context, req *mcp.CallToolRequest, in ReadI
 	data := map[string]any{"file_path": path, "total_lines": len(lines)}
 	if in.StartLine > 0 || in.EndLine > 0 {
 		start, end := max(in.StartLine, 1), in.EndLine
+		if end > 0 && end < start {
+			return fail(fmt.Sprintf("end_line %d is before start_line %d", end, start))
+		}
 		if end <= 0 {
 			end = start + defaultLines - 1
 		}

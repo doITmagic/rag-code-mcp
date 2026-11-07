@@ -326,7 +326,7 @@ Modes:
 
 | Arguments | Returns |
 |---|---|
-| `start_line` and/or `end_line` | the numbered line range (end clamped to the file; start past the end is an error) |
+| `start_line` and/or `end_line` | the numbered line range (end clamped to the file; start past the end, or end before start, is an error) |
 | `symbol` | every symbol in the file whose name equals it or whose qualified name matches it, with content and relations (`data.symbols`) |
 | neither | the outline (`name, qualified_name, kind, start_line, end_line, signature, exported`) plus the first 120 numbered lines |
 

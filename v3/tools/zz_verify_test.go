@@ -337,6 +337,7 @@ func TestVerifyReadRangeAndExportKinds(t *testing.T) {
 	assert.Equal(t, "    4 |   call m/pkg.Foo\n    5 | \n", out.Lines)
 	_, res = v.call(t, "rag_read_file_context", map[string]any{"workspace_root": v.root, "file_path": "pkg/a.fk", "start_line": 4, "end_line": 2})
 	assert.True(t, res.IsError)
+	assert.Contains(t, res.Content[0].(*mcp.TextContent).Text, "end_line 2 is before start_line 4")
 
 	var ex struct {
 		Exports map[string][]Export `json:"exports"`

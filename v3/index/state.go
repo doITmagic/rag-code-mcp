@@ -37,7 +37,10 @@ type Entry struct {
 // 8: twins (same qualified name in one file) are one target; a qualified
 // name that normalizes to a bare name resolves by name; a qualified-suffix
 // match is exact only in python and gdscript, unique elsewhere.
-const Format = 8
+// 9: JS await f<T>() calls, top-level const/let type uses, one module per
+// .vue; GDScript calls in property set/get bodies; a Go local named like the
+// receiver shadows it.
+const Format = 9
 
 // State is the per-root snapshot stored at Dir(root)/state.json. Only
 // the run goroutine touches it; nothing here locks.

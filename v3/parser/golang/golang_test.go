@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -387,6 +388,45 @@ func G() {
 	syms := analyze(t, root, filepath.Join(root, "g.go"), src)
 	assert.Contains(t, syms["F"].Relations, rel(parser.RelCall, "Close", "", 6))
 	assert.Equal(t, []parser.Relation{rel(parser.RelCall, "Close", "github.com/acme/app/pkg/db.Close", 10)}, syms["G"].Relations)
+}
+
+// A local named like the receiver shadows it: its method call has an
+// unknown target, not the receiver type's method; the receiver still binds
+// where nothing shadows it.
+func TestLocalShadowsReceiver(t *testing.T) {
+	root := t.TempDir()
+	src := `package g
+
+type A struct{}
+
+func (s *A) X(bs []*B) {
+	for _, s := range bs {
+		s.Close()
+	}
+}
+
+func (s *A) Y() {
+	s.Close()
+}
+`
+	syms := analyze(t, root, filepath.Join(root, "g.go"), src)
+	var x, y parser.Symbol
+	for q, s := range syms {
+		switch {
+		case strings.HasSuffix(q, "A.X"):
+			x = s
+		case strings.HasSuffix(q, "A.Y"):
+			y = s
+		}
+	}
+	require.NotEmpty(t, x.Relations)
+	for _, r := range x.Relations {
+		if r.Kind == parser.RelCall {
+			assert.Equal(t, rel(parser.RelCall, "Close", "", 7), r)
+		}
+	}
+	require.Len(t, y.Relations, 1)
+	assert.True(t, strings.HasSuffix(y.Relations[0].TargetQualifiedName, "A.Close"), y.Relations[0].TargetQualifiedName)
 }
 
 // Only the package API counts as exported: not test files, not the methods

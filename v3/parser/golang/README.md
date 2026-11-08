@@ -130,9 +130,10 @@ Relations of a `var` or `const` spec are shared by every name in that spec.
 
 - No type inference: calls on variables, fields or return values
   (`s.Inner.Do()`, `a.Do()`) keep an empty target qualified name.
-- A local variable shadows a package function or an import of the same name
-  across the whole declaration, not only after its declaration (marked as a `shortcut:`
-  in `locals`).
+- A local variable shadows a package function, an import or the method's
+  receiver of the same name across the whole declaration, not only after its
+  declaration (marked as a `shortcut:` in `locals`); a call on a shadowed
+  receiver keeps an empty target.
 - The `go.mod` lookup is cached per root + directory and re-read when that
   `go.mod` changes (mtime) or disappears; a `go.mod` created later in a
   directory that had none needs a restart to show up.
@@ -152,7 +153,7 @@ Relations of a `var` or `const` spec are shared by every name in that spec.
 
 | File | Covers |
 |------|--------|
-| `golang_test.go` | A fixture with grouped declarations, generics, embedded types, aliased/dot/blank imports: symbol kinds, owners, lines, signatures, docs, IDs, metadata; every relation and its target; module path without `go.mod`, nested `go.mod` stopping at the root; malformed input; analyzing the real `parser.go` of this repo; registration; concurrency; generic calls; `Exported` for test files and unexported owners; calls through local function values; a parameter shadowing an import; a renamed module seen without a restart; same-package types declared in another file, type parameters (receiver ones too) and the receiver skipped; blank vars keeping their relations; goimports-style assumed import names. |
+| `golang_test.go` | A fixture with grouped declarations, generics, embedded types, aliased/dot/blank imports: symbol kinds, owners, lines, signatures, docs, IDs, metadata; every relation and its target; module path without `go.mod`, nested `go.mod` stopping at the root; malformed input; analyzing the real `parser.go` of this repo; registration; concurrency; generic calls; `Exported` for test files and unexported owners; calls through local function values; a parameter shadowing an import; a local shadowing the receiver; a renamed module seen without a restart; same-package types declared in another file, type parameters (receiver ones too) and the receiver skipped; blank vars keeping their relations; goimports-style assumed import names. |
 | `zz_verify_test.go` | Verification tests: resolution probes, an unclean (non-normalized) root path, robustness on garbage and edge input, a second round of edge cases, very large and deeply nested files. |
 
 ## Testing

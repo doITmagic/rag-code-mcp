@@ -297,7 +297,11 @@ func (fc *file) locals(n *gotreesitter.Node) map[string]bool {
 			}
 		}
 	}
+	recvList := parser.Field(n, fc.lang, "receiver") // the receiver is no local: a local of its name shadows it
 	parser.Walk(n, func(c *gotreesitter.Node) bool {
+		if recvList != nil && c.StartByte() == recvList.StartByte() && c.Type(fc.lang) == "parameter_list" {
+			return false
+		}
 		switch c.Type(fc.lang) {
 		case "parameter_declaration", "variadic_parameter_declaration", "var_spec":
 			idents(c)
@@ -419,10 +423,10 @@ func (fc *file) callTarget(operand *gotreesitter.Node, name, recv, owner string,
 	case "identifier":
 		id := fc.text(operand)
 		switch {
-		case recv != "" && id == recv:
-			return parser.Qualify(fc.module, owner, name)
 		case locals[id]:
 			return ""
+		case recv != "" && id == recv:
+			return parser.Qualify(fc.module, owner, name)
 		case fc.types[id]:
 			return parser.Qualify(fc.module, id, name)
 		}

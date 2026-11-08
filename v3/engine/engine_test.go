@@ -711,3 +711,37 @@ func TestRequestQueuedWhileRunnerExits(t *testing.T) {
 		return false
 	}, 2*time.Second, 5*time.Millisecond)
 }
+
+// A run that fails because the root was deleted is not retried: the root is
+// marked gone, and the next call after it reappears catches up.
+func TestRunFailingOnDeletedRootNotRetried(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.WatchEnabled = true
+	var logBuf safeBuf
+	root := filepath.Join(t.TempDir(), "r")
+	require.NoError(t, os.Mkdir(root, 0o755))
+	rec := &runRecorder{errs: []error{errors.New("lstat " + root + ": no such file or directory")}}
+	e := New(cfg, store.NewMemory(), &embed.Fake{}, slog.New(slog.NewTextHandler(&logBuf, nil)))
+	defer e.Close()
+	e.run = rec.run
+	w, err := e.Workspace(root)
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(root))
+	w.Index(false)
+	require.Eventually(t, func() bool {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		return len(rec.snapshot()) == 1 && !w.running
+	}, 2*time.Second, 5*time.Millisecond)
+	e.mu.Lock()
+	assert.Nil(t, w.retry, "no retry for a root that is gone")
+	assert.True(t, w.gone)
+	e.mu.Unlock()
+	assert.NotContains(t, logBuf.String(), "index run failed")
+	assert.Contains(t, logBuf.String(), "workspace root is gone")
+
+	require.NoError(t, os.Mkdir(root, 0o755))
+	_, err = e.Workspace(root)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return len(rec.snapshot()) == 2 }, 2*time.Second, 5*time.Millisecond)
+}

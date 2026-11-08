@@ -68,6 +68,9 @@ func (e *Engine) startWatcher(w *Workspace) error {
 	wt := &watcher{ws: w, fsw: fsw, dirs: map[string]bool{}, changed: map[string]bool{}, deleted: map[string]bool{}}
 	if err := wt.addTree(w.Root, false); err != nil {
 		wt.forget()
+		if errors.Is(err, fsnotify.ErrClosed) {
+			return ErrClosed // Close began after watchFS
+		}
 		return err
 	}
 	if git := filepath.Join(w.Root, ".git"); fsw.Add(git) == nil {
@@ -145,7 +148,7 @@ func (wt *watcher) addTree(dir string, collect bool) error {
 		case path != dir && (wt.skipDir(d.Name()) || index.IsLinkedWorktree(path)):
 			return fs.SkipDir
 		default:
-			if err := wt.fsw.Add(path); err != nil && path == dir {
+			if err := wt.fsw.Add(path); err != nil && (path == dir || errors.Is(err, fsnotify.ErrClosed)) {
 				return err
 			} else if err != nil {
 				if !os.IsNotExist(err) {

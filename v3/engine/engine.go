@@ -121,7 +121,9 @@ func (e *Engine) Workspace(root string) (*Workspace, error) {
 		w.gone = false
 		e.mu.Unlock()
 		if back {
-			if err := e.startWatcher(w); err != nil {
+			if err := e.startWatcher(w); errors.Is(err, ErrClosed) {
+				return nil, err
+			} else if err != nil {
 				e.log.Warn("engine: watcher not restarted", "root", real, "err", err)
 				e.mu.Lock()
 				w.gone = true // retry on the next call
@@ -138,7 +140,9 @@ func (e *Engine) Workspace(root string) (*Workspace, error) {
 	// auto_index: false leaves indexing to an explicit rag_index_workspace, so
 	// no watcher may start one.
 	if e.cfg.WatchEnabled && e.cfg.AutoIndex {
-		if err := e.startWatcher(w); err != nil {
+		if err := e.startWatcher(w); errors.Is(err, ErrClosed) {
+			return nil, err
+		} else if err != nil {
 			e.log.Warn("engine: watcher not started, retrying on the next call", "root", real, "err", err)
 			e.mu.Lock()
 			w.gone = true // the next Workspace call retries, with a catch-up run
@@ -246,13 +250,15 @@ func (e *Engine) Resume(ctx context.Context) {
 			return
 		}
 		w, err := e.Workspace(root)
+		if errors.Is(err, ErrClosed) {
+			return
+		}
 		if err != nil {
 			e.log.Info("engine: skipping known root", "root", root, "err", err)
 			continue
 		}
-		if _, ok := index.ReadStatus(root); ok && e.cfg.AutoIndex {
+		if _, ok := index.ReadStatus(root); ok && e.cfg.AutoIndex && e.enqueue(w, kindFull, nil, nil) {
 			e.log.Info("engine: catch-up index", "root", root)
-			w.Index(false)
 		}
 	}
 }
@@ -295,8 +301,8 @@ const (
 )
 
 // enqueue merges a request into the workspace queue and starts its runner
-// when idle.
-func (e *Engine) enqueue(w *Workspace, kind queueKind, files, deleted []string) {
+// when idle; false once Close has begun.
+func (e *Engine) enqueue(w *Workspace, kind queueKind, files, deleted []string) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if !e.closed {
@@ -304,6 +310,7 @@ func (e *Engine) enqueue(w *Workspace, kind queueKind, files, deleted []string) 
 		e.merge(w, kind, files, deleted)
 		e.kick(w)
 	}
+	return !e.closed
 }
 
 // merge adds a request to w's queue; a queued full run absorbs file runs.
@@ -390,6 +397,19 @@ func (e *Engine) runJobs(w *Workspace) {
 		switch {
 		case errors.Is(err, index.ErrHeadChanged):
 			w.queued = max(w.queued, kindFull)
+		case err != nil && e.ctx.Err() == nil && !isDir(w.Root):
+			// The root was deleted: a retry would fail forever. The next call
+			// re-validates it, and catches up if it is back.
+			e.log.Warn("engine: workspace root is gone, not retrying", "root", w.Root, "err", err)
+			w.gone, w.running = e.cfg.WatchEnabled && e.cfg.AutoIndex, false // gone restarts the watcher
+			wt := w.watch
+			w.watch = nil
+			e.mu.Unlock()
+			if wt != nil {
+				wt.Stop()
+				wt.forget()
+			}
+			return
 		case err != nil && e.ctx.Err() == nil:
 			// Keep the request and retry it after a pause, so neither another
 			// process's lock nor an embedder or store outage drops its files.

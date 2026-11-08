@@ -23,7 +23,9 @@ line that tells AI agents to use the RagCode tools.
 - **Stay current**: a file watcher queues small "files" runs on edits and full
   runs on branch switches; on start-up every known root gets a catch-up run.
 - **Clean shutdown**: `Close` stops watchers and timers, cancels the running
-  job and waits for every goroutine.
+  job and waits for every goroutine; once it has begun, no catch-up run or
+  watcher starts, and watches failing because the instance closed are not
+  logged as warnings.
 
 ---
 
@@ -70,8 +72,8 @@ graph TD
 
 | File | Covers |
 |------|--------|
-| `engine_test.go` | Root validation, auto-index on first contact, request coalescing, `ErrHeadChanged` re-queue, retry of failed runs, a failed recreate that resumes without dropping again, no watcher without `auto_index`, recreate, embedding model change, concurrent root registration from several engines, a search refused on an index of another model with the same vector size, a lock held by another engine, `Resume`, no goroutines left after `Close`, `WriteIDERules` (tracked files, symlinks, symlinked parent directories, continuing after a refused file), backoff, a run waiting for the slot counts as queued, the end of a run logged with its counts and duration, the watcher's full run logged once while queued, a request queued while the runner exits is still picked up. `TestMain` points `RAGCODE_HOME` at a temp dir. |
-| `watch_test.go` | The watcher end to end, a `.gitignore` edit queues a full run, root removed, root that comes back, unreadable subdirectory, watcher restart retried. |
+| `engine_test.go` | Root validation, auto-index on first contact, request coalescing, `ErrHeadChanged` re-queue, retry of failed runs, a failed recreate that resumes without dropping again, no watcher without `auto_index`, recreate, embedding model change, concurrent root registration from several engines, a search refused on an index of another model with the same vector size, a lock held by another engine, `Resume`, no goroutines left after `Close`, `WriteIDERules` (tracked files, symlinks, symlinked parent directories, continuing after a refused file), backoff, a run waiting for the slot counts as queued, the end of a run logged with its counts and duration, the watcher's full run logged once while queued, a request queued while the runner exits is still picked up, a run failing because the root was deleted is not retried and the root is caught up when it is back. `TestMain` points `RAGCODE_HOME` at a temp dir. |
+| `watch_test.go` | The watcher end to end, a `.gitignore` edit queues a full run, root removed, root that comes back, unreadable subdirectory, watcher restart retried, `Close` beginning during `Resume`'s watcher setup (no catch-up, no warning). |
 | `watch_linux_test.go` | All roots share one inotify instance (nested roots both see an event, `Close` releases it); a watcher that cannot start is retried; an event overflow re-walks the tree so new directories are watched again. |
 | `prefix_test.go` | `Search` adds the model's query prefix. |
 | `zz_verify_test.go` | Verification tests: concurrent `Workspace` calls, cancelled contexts, enqueue during a lock retry, recreate while locked, a directory moved out and the forced debounce flush, status read from disk before any run, home symlink guard, `Close` cancelling a blocked run, junk `roots.json`, a files run with only deletions, junk paths, `Ready` remediation text, a failed query embed does not enqueue, recreate absorbing queued files, catch-up with and without `auto_index`, double `Close`, `.git/refs` plus hidden and excluded directories, kernel file systems refused. |
@@ -224,6 +226,12 @@ process's lock nor an embedder or store outage drops its files.
 - **Recreate that already dropped**: if the failed run had `Recreated` set,
   the retry becomes a full run, so what was re-indexed is not thrown away.
 - **`index.ErrHeadChanged`**: not a failure; a full run is queued at once.
+- **The root is gone**: when the root is no longer a directory after a failed
+  run (deleted while the server runs), nothing is retried. One warning
+  ("workspace root is gone, not retrying") is logged, the watcher is stopped
+  and its queue dropped; the next call re-validates the root (an error while
+  it is missing; a watcher restart and a catch-up run when it is back, if
+  watching is on), and the next start skips it.
 
 ### Catch-up on start (Resume)
 
@@ -233,6 +241,11 @@ logged and skipped). When `auto_index` is on and the root has an
 run, so edits made while the server was down are picked up; the mtime/size
 diff keeps it cheap. An interrupted run is completed this way, since
 `index.Run` widens to a full walk after a run that did not end `done`.
+`Resume` stops at the first root that returns `ErrClosed` (the session ended
+during start-up), and logs "catch-up index" only when the run was queued.
+`Workspace` returns `ErrClosed` when `Close` begins while it sets up the
+root's watcher (the watch fails with `fsnotify.ErrClosed`), instead of
+warning that the watcher did not start.
 
 ---
 

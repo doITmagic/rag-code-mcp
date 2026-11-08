@@ -1,6 +1,9 @@
 package engine
 
 import (
+	"context"
+	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -9,7 +12,9 @@ import (
 
 	"github.com/doITmagic/rag-code-mcp/v3/embed"
 	"github.com/doITmagic/rag-code-mcp/v3/index"
+	"github.com/doITmagic/rag-code-mcp/v3/internal/config"
 	"github.com/doITmagic/rag-code-mcp/v3/store"
+	"github.com/fsnotify/fsnotify"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -199,4 +204,43 @@ func TestWatcherGitignoreQueuesFullRun(t *testing.T) {
 			return len(s) > n && s[len(s)-1].Files == nil
 		}, 2*time.Second, 10*time.Millisecond, p)
 	}
+}
+
+// Close beginning while Resume sets up a root's watcher (a session that ends
+// right after initialize): no catch-up run is queued or logged, and the
+// watches that fail because the instance closed are not warnings.
+func TestCloseDuringResumeWatchSetup(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.WatchEnabled = true
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "sub", "a.go"), "func A\n")
+	writeFile(t, filepath.Join(root, "other", "b.go"), "func B\n")
+	data, _ := json.Marshal([]string{root})
+	require.NoError(t, os.MkdirAll(config.HomeDir(), 0o755))
+	require.NoError(t, os.WriteFile(rootsPath(), data, 0o644))
+	st, _ := json.Marshal(index.Status{Root: root, StartedAt: time.Now(), EndedAt: time.Now(), Phase: "done"})
+	writeFile(t, filepath.Join(index.Dir(root), "index_status.json"), string(st))
+
+	var logBuf safeBuf
+	rec := &runRecorder{}
+	e := New(cfg, store.NewMemory(), &embed.Fake{}, slog.New(slog.NewTextHandler(&logBuf, nil)))
+	defer e.Close()
+	e.run = rec.run
+	// Close starts right after the watcher instance is created, before the
+	// root's directories are added: the first half of Close, under e.mu.
+	newFSWatcher = func() (*fsnotify.Watcher, error) {
+		fsw, err := fsnotify.NewWatcher()
+		if err == nil {
+			e.closed = true
+			e.cancel()
+			fsw.Close()
+		}
+		return fsw, err
+	}
+	t.Cleanup(func() { newFSWatcher = fsnotify.NewWatcher })
+	e.Resume(context.Background())
+	e.Close()
+	assert.Empty(t, rec.snapshot())
+	assert.NotContains(t, logBuf.String(), "level=WARN")
+	assert.NotContains(t, logBuf.String(), "catch-up index")
 }

@@ -59,7 +59,12 @@ func (analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 	component := pascal(strings.TrimSuffix(filepath.Base(f.Path), filepath.Ext(f.Path)))
 	var syms []parser.Symbol
 	if strings.EqualFold(filepath.Ext(f.Path), ".vue") {
-		var setup *parser.Symbol // the component: top-level statements of <script setup>
+		type script struct {
+			b    vueBlock
+			c    *fileCtx
+			tree *gotreesitter.Tree
+		}
+		var scripts []script
 		for _, b := range vueBlocks(f.Source) {
 			if b.template {
 				start, end := lineSpan(f.Source, b.start, b.end)
@@ -71,15 +76,38 @@ func (analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 			}
 			// Leading newlines keep tree-sitter rows equal to .vue file rows.
 			src := append(bytes.Repeat([]byte{'\n'}, bytes.Count(f.Source[:b.start], []byte{'\n'})), f.Source[b.start:b.end]...)
-			out, rels, err := analyzeScript(b.grammar, src, f.Root, module, dir, component)
+			c, tree, err := scanScript(b.grammar, src, f.Root, module, dir, component)
 			if err != nil {
 				return nil, err
 			}
+			if tree != nil {
+				defer tree.Release()
+				scripts = append(scripts, script{b, c, tree})
+			}
+		}
+		// <script> and <script setup> are one module: each sees the other's names.
+		for _, s := range scripts {
+			for _, o := range scripts {
+				for k, v := range o.c.imports {
+					if s.c.imports[k] == "" && s.c.defs[k] == "" {
+						s.c.imports[k] = v
+					}
+				}
+				for k, v := range o.c.defs {
+					if s.c.imports[k] == "" && s.c.defs[k] == "" {
+						s.c.defs[k] = v
+					}
+				}
+			}
+		}
+		var setup *parser.Symbol // the component: top-level statements of <script setup>
+		for _, sc := range scripts {
+			out, rels := sc.c.emit(sc.tree)
 			syms = append(syms, out...)
-			if b.setup && len(rels) > 0 {
-				start, end := lineSpan(f.Source, b.start, b.end)
+			if sc.b.setup && len(rels) > 0 {
+				start, end := lineSpan(f.Source, sc.b.start, sc.b.end)
 				setup = &parser.Symbol{Name: "default", Kind: parser.KindFunction, Module: module, Exported: true,
-					Content: string(f.Source[b.start:b.end]), StartLine: start, EndLine: end, Relations: rels}
+					Content: string(f.Source[sc.b.start:sc.b.end]), StartLine: start, EndLine: end, Relations: rels}
 			}
 		}
 		if setup != nil {
@@ -118,6 +146,19 @@ func appendDefault(syms []parser.Symbol, d parser.Symbol) []parser.Symbol {
 // top-level expression statements (watch(...), defineProps<T>()), which no
 // symbol owns.
 func analyzeScript(grammar string, src []byte, wsRoot, module, dir, component string) ([]parser.Symbol, []parser.Relation, error) {
+	c, tree, err := scanScript(grammar, src, wsRoot, module, dir, component)
+	if err != nil || tree == nil {
+		return nil, nil, err
+	}
+	defer tree.Release()
+	syms, rels := c.emit(tree)
+	return syms, rels, nil
+}
+
+// scanScript parses one script and runs pass 1: imports, top-level names and
+// export lists, so calls resolve forward references. The tree is nil for a
+// script the bracket guard rejects; the caller releases it.
+func scanScript(grammar string, src []byte, wsRoot, module, dir, component string) (*fileCtx, *gotreesitter.Tree, error) {
 	if unbalanced(src) {
 		return nil, nil, nil
 	}
@@ -125,13 +166,17 @@ func analyzeScript(grammar string, src []byte, wsRoot, module, dir, component st
 	if err != nil {
 		return nil, nil, err
 	}
-	defer tree.Release()
 	c := newCtx(src, lang, wsRoot, module, dir, component)
-	root := tree.RootNode()
-	// Pass 1: imports, top-level names and export lists, so calls resolve forward references.
-	for _, nc := range parser.NamedChildren(root) {
+	for _, nc := range parser.NamedChildren(tree.RootNode()) {
 		c.scan(nc)
 	}
+	return c, tree, nil
+}
+
+// emit runs pass 2 over a scanned script: its symbols and the relations of
+// its top-level expression statements.
+func (c *fileCtx) emit(tree *gotreesitter.Tree) ([]parser.Symbol, []parser.Relation) {
+	root := tree.RootNode()
 	var syms []parser.Symbol
 	var rels []parser.Relation
 	for _, nc := range parser.NamedChildren(root) {
@@ -140,7 +185,7 @@ func analyzeScript(grammar string, src []byte, wsRoot, module, dir, component st
 			rels = append(rels, c.relsUnder(nc, c.locals(nc), "")...)
 		}
 	}
-	return syms, rels, nil
+	return syms, rels
 }
 
 // maxUnclosed is the most brackets a file may leave open before it is
@@ -714,6 +759,7 @@ func (c *fileCtx) variables(n, decl *gotreesitter.Node, exported bool, out *[]pa
 			// shortcut: an object literal's non-method values are not walked (its methods own their calls).
 			s.Relations = c.relsUnder(v, c.locals(v), "")
 		}
+		s.Relations = append(s.Relations, c.typeUses(parser.Field(d, c.lang, "type"))...) // const c: Foo[] = ...
 		*out = append(*out, s)
 		if v != nil && v.Type(c.lang) == "object" { // const model = { load() {...} }: a store model
 			c.objectMethods(v, s.Name, false, s.Exported, out)
@@ -848,6 +894,11 @@ func (c *fileCtx) relsUnder(root *gotreesitter.Node, locals map[string]bool, own
 			callee := parser.Field(n, c.lang, "function")
 			if callee == nil {
 				return true
+			}
+			if callee.Type(c.lang) == "await_expression" { // TS parses `await f<T>()` as (await f)<T>()
+				if ch := parser.NamedChildren(callee); len(ch) == 1 {
+					callee = ch[0]
+				}
 			}
 			switch callee.Type(c.lang) {
 			case "identifier":

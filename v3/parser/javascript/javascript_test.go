@@ -761,3 +761,55 @@ func TestDotSpecifiers(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "pkg/index.delta", rel(t, find(t, syms, "pkg/sub/w.w"), parser.RelCall, "d5").TargetQualifiedName)
 }
+
+// `await f<T>(...)` parses as a call whose callee is the await expression:
+// f is still the call target and T a type use.
+func TestAwaitGenericCall(t *testing.T) {
+	syms := analyze(t, "app/p.ts", `import { useAsyncIDBKeyval } from './idb';
+import type { UserLogin } from './types';
+export async function setup() {
+  const { readIDB } = await useAsyncIDBKeyval<UserLogin[]>(key(1));
+  await useAsyncData<UserLogin>(load());
+}
+function key(n) {}
+`)
+	s := find(t, syms, "app/p.setup")
+	assert.Equal(t, "app/idb.useAsyncIDBKeyval", rel(t, s, parser.RelCall, "useAsyncIDBKeyval").TargetQualifiedName)
+	assert.Equal(t, "app/p.key", rel(t, s, parser.RelCall, "key").TargetQualifiedName)
+	rel(t, s, parser.RelCall, "useAsyncData")
+	rel(t, s, parser.RelCall, "load")
+	assert.Equal(t, "app/types.UserLogin", rel(t, s, parser.RelUsesType, "UserLogin").TargetQualifiedName)
+}
+
+// The type annotation of a top-level const / let is a type use of it.
+func TestTopLevelVariableTypeAnnotation(t *testing.T) {
+	syms := analyze(t, "app/v.ts", `import type { Foo, Bar } from './types';
+const c1: Foo[] = [];
+export const c2: Foo = makeIt();
+let c3: Bar = { load() {} };
+`)
+	for _, qn := range []string{"app/v.c1", "app/v.c2"} {
+		assert.Equal(t, "app/types.Foo", rel(t, find(t, syms, qn), parser.RelUsesType, "Foo").TargetQualifiedName, qn)
+	}
+	rel(t, find(t, syms, "app/v.c2"), parser.RelCall, "makeIt")
+	assert.Equal(t, "app/types.Bar", rel(t, find(t, syms, "app/v.c3"), parser.RelUsesType, "Bar").TargetQualifiedName)
+}
+
+// The <script> and <script setup> blocks of one SFC are one module: each
+// sees the other's imports and top-level names.
+func TestVueTwoScriptBlocksShareNames(t *testing.T) {
+	syms := analyze(t, "src/Two.vue", `<script lang="ts">
+import { api } from './api';
+export function helper() { fromSetup() }
+</script>
+<script setup lang="ts">
+function fromSetup() {}
+helper()
+const x = api()
+</script>
+`)
+	d := find(t, syms, "src/Two.default")
+	assert.Equal(t, "src/Two.helper", rel(t, d, parser.RelCall, "helper").TargetQualifiedName)
+	assert.Equal(t, "src/api.api", rel(t, find(t, syms, "src/Two.x"), parser.RelCall, "api").TargetQualifiedName)
+	assert.Equal(t, "src/Two.fromSetup", rel(t, find(t, syms, "src/Two.helper"), parser.RelCall, "fromSetup").TargetQualifiedName)
+}

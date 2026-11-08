@@ -70,7 +70,11 @@ graph TD
 3. **Pass 2** emits the symbols of each top-level statement.
 4. **Vue files**: each `<script>` body is parsed separately with leading
    newlines added so line numbers match the `.vue` file; the outermost
-   `<template>...</template>` becomes one `template` symbol.
+   `<template>...</template>` becomes one `template` symbol. The blocks are
+   one module: pass 1 runs on every block first, then each block also sees
+   the other blocks' imports and top-level names (its own win), so a
+   `helper()` in `<script setup>` resolves to a `helper` declared in the
+   plain `<script>`, and the other way round.
 
 ### Import table
 
@@ -211,12 +215,12 @@ call `fetch` -> `src/services/api.default.fetch`.
 
 | Source construct | Relation | Target qualified name |
 |------------------|----------|-----------------------|
-| `f()` | `call` | Through the import table or a top-level name in the file; `""` otherwise. |
+| `f()`, `await f<T>()` | `call` | Through the import table or a top-level name in the file; `""` otherwise. |
 | `ns.g()`, `a.b.c()` | `call` | First segment through imports; for a local name only when it is a class or enum (a variable's type is never guessed). |
 | `this.m()` in a class or component | `call` | `<module>.<Owner>.m` |
 | `new Foo()` | `uses_type` | Same resolution as a name. |
 | `<Comp />`, `<ns.Comp>` in JSX | `uses_type` | Only for capitalized or dotted tag names. |
-| TypeScript type in a parameter or return annotation, a generic argument (`useState<Plant[]>`), the body of an `interface` or a `type` alias | `uses_type` | Only types an import or this file defines; type parameters and globals are dropped. |
+| TypeScript type in a parameter or return annotation, a top-level `const` / `let` / `var` annotation (`const c: Foo[] = ...`), a generic argument (`useState<Plant[]>`), the body of an `interface` or a `type` alias | `uses_type` | Only types an import or this file defines; type parameters and globals are dropped. |
 | `class A extends B` | `extends` | Generics (`Base<T>`) stripped. |
 | `class A implements I` | `implements` | |
 | `interface I extends J` | `extends` | |
@@ -258,7 +262,7 @@ literal's values are not walked, its methods own their calls.
 
 | File | Contents |
 |------|----------|
-| `javascript.go` | The analyzer, grammar choice, the bracket guard, module and component naming, Vue block scanner, pass 1 (imports, `require`, export lists, CommonJS exports, specifier resolution), pass 2 (functions, classes, methods, interfaces, types, enums, variables, options-API objects, `exports.x`), doc and signature extraction, call/type relation collection and resolution. |
+| `javascript.go` | The analyzer, grammar choice, the bracket guard, module and component naming, Vue block scanner and name sharing between blocks, pass 1 (imports, `require`, export lists, CommonJS exports, specifier resolution), pass 2 (functions, classes, methods, interfaces, types, enums, variables, options-API objects, `exports.x`), doc and signature extraction, call/type relation collection and resolution. |
 | `barrel.go` | Re-export following: reads the imported module file (pass 1 only, cached by root+path, mtime and size) and maps an imported name to the module that declares it. |
 | `alias.go` | Aliased specifiers: nearest `tsconfig.json`/`jsconfig.json` `paths` (JSONC, relative `extends`), the Nuxt/Vite conventions, and the existence check. |
 
@@ -266,7 +270,7 @@ literal's values are not walked, its methods own their calls.
 
 | File | Covers |
 |------|--------|
-| `javascript_test.go` | ESM and CommonJS imports and exports, classes and methods, TypeScript (interfaces, types, enums, abstract classes), TSX, Vue options API, Vue `<script setup lang="ts">`, malformed and unbalanced input, files outside the root, concurrency, registration, default exports and directory (`index`) imports, root-absolute imports, TypeScript type uses, methods of an object literal bound to a const, aliased imports (tsconfig paths, Nuxt conventions), calls in top-level initializers and `export default defineX(...)`, export of object-literal methods, `const C = defineComponent(...)`, barrel re-exports (`export *`, `export { a as b } from`, local alias exports, cycles, cache invalidation, package specifiers never read from disk, `.`/`..` specifiers), top-level calls of `<script setup>` attributed to `default`. |
+| `javascript_test.go` | ESM and CommonJS imports and exports, classes and methods, TypeScript (interfaces, types, enums, abstract classes), TSX, Vue options API, Vue `<script setup lang="ts">`, malformed and unbalanced input, files outside the root, concurrency, registration, default exports and directory (`index`) imports, root-absolute imports, TypeScript type uses, methods of an object literal bound to a const, aliased imports (tsconfig paths, Nuxt conventions), calls in top-level initializers and `export default defineX(...)`, export of object-literal methods, `const C = defineComponent(...)`, barrel re-exports (`export *`, `export { a as b } from`, local alias exports, cycles, cache invalidation, package specifiers never read from disk, `.`/`..` specifiers), top-level calls of `<script setup>` attributed to `default`, `await f<T>()` calls, top-level variable type annotations, `<script>` and `<script setup>` sharing names. |
 | `zz_verify_test.go` | Verification tests: JSX and import forms, TS enums and generics, `defineComponent` and CRLF files, robustness, nested CommonJS, component objects in plain JS, template-first `<script setup>`, statelessness, private TS members and syntax-error recovery, two script blocks, deep nesting, concurrent analysis. |
 
 ## Testing

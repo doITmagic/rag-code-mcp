@@ -345,9 +345,13 @@ func (r *run) finish(ctx context.Context, err error) (Status, error) {
 		}
 	}
 	r.tick(true)
-	if r.status.Phase == "interrupted" && r.prev.Phase == "done" && !r.touched && !r.fresh && !r.status.Recreated {
-		// Cancelled before it changed the index (a catch-up cut short by the
-		// session's end): the index is still the one the last run finished.
+	// Cancelled before it changed the index (a catch-up cut short by the
+	// session's end), or finished with nothing to do (a run queued behind a
+	// full one): the index is still the one the last run finished, so are
+	// its counters on disk. The caller still gets this run's own status.
+	unchanged := r.prev.Phase == "done" && !r.touched && !r.fresh && !r.status.Recreated
+	idle := r.status.Phase == "done" && r.status.Failed == 0
+	if unchanged && (r.status.Phase == "interrupted" || idle) {
 		data, _ := json.Marshal(r.prev)
 		if err := WriteAtomic(statusPath(r.root), data); err != nil {
 			r.Log.Warn("index: cannot write status", "root", r.root, "err", err)

@@ -119,8 +119,10 @@ func (w *Workspace) Status() Status
 
 `Status` embeds `index.Status` and adds `Queued` (a run is waiting, including
 a runner waiting for the slot), `Running` (a run holds the slot) and
-`LastError`. Before any run in this process, the index part comes from
-`index_status.json` on disk.
+`LastError`. Before any run in this process, and after a run that found
+nothing to do (no file indexed, failed or deleted), the index part comes from
+`index_status.json` on disk, so the counters stay those of the last run that
+changed the index. `LastError` is cleared when a new run starts.
 
 ### Errors
 

@@ -21,7 +21,10 @@ owns lives under `~/.ragcode/index/<collection>/`.
 - **Bounded memory**: parsing is capped by source bytes in flight, and the
   symbols of the workspace are never all held at once.
 - **Crash safety**: a run that is killed, cancelled or fails is detected on the
-  next run, which widens to a full walk so the index is completed.
+  next run, which widens to a full walk so the index is completed. A run
+  cancelled before it changed the index, or one that found nothing to do,
+  leaves the previous `done` status (and its counters) in
+  `index_status.json`; the caller still gets the run's own status.
 - **One writer per root**: an exclusive file lock keeps two processes from
   indexing the same root at the same time.
 
@@ -70,7 +73,7 @@ graph LR
 
 | File | Covers |
 |------|--------|
-| `index_test.go` | The main suite, with a line-based fake analyzer and a hook embedder: full, incremental, delete, recreate, model and `Format` change, embed failure, parse failures and panics, cancel, `ErrHeadChanged`, relation resolution, `Skip`, `Walk`, `.gitignore`, linked worktrees, symlinks in `Files`, byte-budgeted upsert batches, empty collection with stale state, a crash between a recreate's state save and its drop, moved targets, vanished referrers, a file that changed between the two passes, deleted paths counted only when they were indexed, relation target kinds (`TestResolutionTargetKinds`) and inherited members through the owner's bases (`TestResolutionThroughBases`), in full and files runs, Go bases limited to embeddings (`TestResolutionThroughBasesGoEmbeddingOnly`), and a run cancelled before it changed anything keeping the previous `done` status (`TestRunCancelledKeepsDoneStatus`). Its `TestMain` points `RAGCODE_HOME` at a temp dir. |
+| `index_test.go` | The main suite, with a line-based fake analyzer and a hook embedder: full, incremental, delete, recreate, model and `Format` change, embed failure, parse failures and panics, cancel, `ErrHeadChanged`, relation resolution, `Skip`, `Walk`, `.gitignore`, linked worktrees, symlinks in `Files`, byte-budgeted upsert batches, empty collection with stale state, a crash between a recreate's state save and its drop, moved targets, vanished referrers, a file that changed between the two passes, deleted paths counted only when they were indexed, relation target kinds (`TestResolutionTargetKinds`) and inherited members through the owner's bases (`TestResolutionThroughBases`), in full and files runs, Go bases limited to embeddings (`TestResolutionThroughBasesGoEmbeddingOnly`), a run cancelled before it changed anything keeping the previous `done` status (`TestRunCancelledKeepsDoneStatus`), and a run with nothing to do keeping the last run's counters on disk (`TestRunWithoutChangesKeepsLastCounters`). Its `TestMain` points `RAGCODE_HOME` at a temp dir. |
 | `budget_test.go` | The parse byte budget is respected, and batches still resolve forward references. |
 | `resolve_test.go` | A non-fresh run resolves more than 500 targets through the store; a JS `import { n }` of a default-exported declaration resolves by module and name, in a full run and from the store. |
 | `twins_test.go` | Twins in one file resolve to the widest (then first) by qualified name and by name, in a full run and from the store; a qualified name in two files stays ambiguous; a wider twin added later re-resolves the unchanged caller in a files run; `..delta` resolves by name (unique, then ambiguous), never exact. |
@@ -160,7 +163,7 @@ type State struct {
     Files  map[string]Entry `json:"files"`            // absolute path -> entry
 }
 
-const Format = 8
+const Format = 9
 ```
 
 `Format` is the version of what parsers and the indexer store. It is bumped
@@ -182,7 +185,10 @@ types; a qualified-suffix match is `exact` and a name fallback `unique`.
 Version 8: twins (one qualified name in one file) resolve as one target, and a
 qualified name that normalizes to a bare name resolves by name; a
 qualified-suffix match is `exact` only in Python and GDScript, `unique`
-elsewhere.
+elsewhere. Version 9: JS `await f<T>()` calls, top-level `const`/`let` type
+annotations as `uses_type`, one module per `.vue` with two scripts; GDScript
+calls in property `set`/`get` bodies; a Go local named like the receiver
+shadows it.
 
 ---
 

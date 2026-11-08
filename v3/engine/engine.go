@@ -378,7 +378,7 @@ func (e *Engine) runJobs(w *Workspace) {
 			return
 		}
 		e.mu.Lock()
-		w.active = true
+		w.active, w.lastErr = true, nil // a new run: the last one's error is history
 		e.mu.Unlock()
 		st, err := e.runOne(w, kind, files, deleted)
 		<-e.slot
@@ -388,6 +388,8 @@ func (e *Engine) runJobs(w *Workspace) {
 		w.lastErr = err
 		if errors.Is(err, index.ErrLocked) {
 			w.lastErr = ErrLocked // nothing ran: the status stays
+		} else if err == nil && st.Total == 0 && st.Deleted == 0 && st.Failed == 0 && !st.Recreated {
+			w.status = index.Status{} // nothing to do: Status reads the last real run index kept on disk
 		} else {
 			w.status = st
 		}

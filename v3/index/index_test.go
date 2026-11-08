@@ -720,6 +720,28 @@ func TestRunCancelledKeepsDoneStatus(t *testing.T) {
 	assert.Equal(t, "interrupted", disk.Phase)
 }
 
+// A run that finds nothing to do (the run queued behind a full one) keeps
+// the persisted counters of the last run that changed the index.
+func TestRunWithoutChangesKeepsLastCounters(t *testing.T) {
+	e := newEnv(t)
+	e.write(t, "a.go", "func A\n")
+	e.write(t, "b.go", "func B\n")
+	first, err := e.run(t, nil)
+	require.NoError(t, err)
+	require.Equal(t, 2, first.Done)
+	st, err := e.run(t, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 0, st.Total, "the caller gets this run's own counters")
+	disk, _ := ReadStatus(e.root)
+	assert.Equal(t, 2, disk.Done, "the persisted status keeps the last real run")
+
+	e.write(t, "a.go", "func A2\n")
+	_, err = e.run(t, nil)
+	require.NoError(t, err)
+	disk, _ = ReadStatus(e.root)
+	assert.Equal(t, 1, disk.Done, "a run that changed something persists its own counters")
+}
+
 func TestRunFilesSkipsSymlink(t *testing.T) {
 	e := newEnv(t)
 	e.write(t, "a.go", "func A\n")

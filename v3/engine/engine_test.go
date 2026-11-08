@@ -745,3 +745,24 @@ func TestRunFailingOnDeletedRootNotRetried(t *testing.T) {
 	require.NoError(t, err)
 	require.Eventually(t, func() bool { return len(rec.snapshot()) == 2 }, 2*time.Second, 5*time.Millisecond)
 }
+
+// A run with nothing to do (queued behind a full one) leaves the counters of
+// the last run that indexed something.
+func TestIdleRunKeepsLastCounters(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.AutoIndex = false
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a.go"), "func A\n")
+	writeFile(t, filepath.Join(root, "b.go"), "func B\n")
+	e := New(cfg, store.NewMemory(), &embed.Fake{}, nil)
+	defer e.Close()
+	w, err := e.Workspace(root)
+	require.NoError(t, err)
+	idle := func() bool { s := w.Status(); return s.Phase == "done" && !s.Running && !s.Queued }
+	w.Index(false)
+	require.Eventually(t, idle, 2*time.Second, 5*time.Millisecond)
+	require.Equal(t, 2, w.Status().Done)
+	w.Index(false)
+	require.Eventually(t, idle, 2*time.Second, 5*time.Millisecond)
+	assert.Equal(t, 2, w.Status().Done)
+}

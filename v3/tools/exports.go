@@ -54,7 +54,7 @@ func (t *tools) listExports(ctx context.Context, req *mcp.CallToolRequest, in Ex
 	if err != nil {
 		return storeErr(ctx, w, err)
 	}
-	hits = live(w, hits)
+	hits = mergeTwins(live(w, hits), func(h *store.Hit) *parser.Symbol { return &h.Symbol })
 	byKind := map[string][]Export{}
 	modules := map[string]bool{}
 	n := 0
@@ -125,6 +125,17 @@ func dirModules(ctx context.Context, w *engine.Workspace, dir string, ks []parse
 		return nil, false, "", nil
 	}
 	fi, err := os.Stat(abs)
+	if err != nil { // the module spelling of a file (src/index for src/index.ts): the indexed file with that stem
+		if st, lerr := index.LoadState(w.Root); lerr == nil {
+			for p := range st.Files {
+				if strings.TrimSuffix(p, filepath.Ext(p)) == abs {
+					abs = p
+					fi, err = os.Stat(abs)
+					break
+				}
+			}
+		}
+	}
 	if err == nil && fi.Mode().IsRegular() && parser.ForFile(abs) != nil {
 		file, _ = filepath.Rel(w.Root, abs)
 		hits, err = w.Scroll(ctx, store.Filter{FilePath: abs, Kinds: ks}, store.MaxScroll)

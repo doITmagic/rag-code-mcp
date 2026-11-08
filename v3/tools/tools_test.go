@@ -1073,3 +1073,100 @@ func TestReadFileBinaryUnknownExtension(t *testing.T) {
 	data(t, r, &out)
 	assert.Empty(t, out.Lines)
 }
+
+// Twins (overload signatures, a get/set pair: one qualified name in one
+// file) are one entry everywhere: one hierarchy node in both directions and
+// at every depth, one export, one search hit. A call naming another
+// symbol's twins is not "unresolved" for this one. The module spelling of a
+// file (src/index for src/index.fkm) is that file.
+func TestTwinsAreOneEntry(t *testing.T) {
+	v := newEnv(t, false, func(c *config.Config) { c.AutoIndex = false })
+	v.addFiles(t, map[string]string{
+		"t/types.fk":    "func IsPlain\n  call m/t.Deep\nfunc IsPlain\n  call m/t.Deep\nfunc Deep\nfunc Deep\n",
+		"x/testing.fk":  "func IsPlain\n",
+		"t/use.fk":      "func User\n  call m/t.IsPlain\nfunc Top\n  call m/t.User\nfunc Guess\n  call IsPlain\n  call m/t.User.IsPlain\n",
+		"src/index.fkm": "func internal\n",
+		"t/lk_a.fk":     "func Lk\n", "t/lk_b.fk": "func Lk\n", "x/lk.fk": "func Lk\n", "t/uselk.fk": "func UseLk\n  call m/t.Lk\n",
+	})
+	qns := func(ns []*Node) (out []string) {
+		for _, n := range ns {
+			out = append(out, n.QualifiedName)
+		}
+		return out
+	}
+	var h struct{ Incoming, Outgoing *Node }
+	r, _ := v.call(t, "rag_call_hierarchy", map[string]any{"workspace_root": v.root, "symbol": "Top", "direction": "outgoing", "depth": 4})
+	require.Equal(t, "ok", r.Status, r.Message)
+	data(t, r, &h)
+	require.Equal(t, []string{"m/t.User"}, qns(h.Outgoing.Children))
+	require.Equal(t, []string{"m/t.IsPlain"}, qns(h.Outgoing.Children[0].Children))
+	assert.Equal(t, []string{"m/t.Deep"}, qns(h.Outgoing.Children[0].Children[0].Children))
+	r, _ = v.call(t, "rag_call_hierarchy", map[string]any{"workspace_root": v.root, "symbol": "m/t.Deep", "depth": 3})
+	require.Equal(t, "ok", r.Status, r.Message)
+	data(t, r, &h)
+	require.Equal(t, []string{"m/t.IsPlain"}, qns(h.Incoming.Children), "both twins call Deep: one caller")
+	assert.Equal(t, []string{"m/t.User"}, qns(h.Incoming.Children[0].Children))
+
+	var u struct {
+		Total           int `json:"total"`
+		AmbiguousByName int `json:"ambiguous_by_name"`
+	}
+	r, _ = v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "m/x.IsPlain"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	data(t, r, &u)
+	assert.Equal(t, 0, u.Total)
+	assert.Equal(t, 2, u.AmbiguousByName, "Guess's calls by bare name and by a qualified name nothing has; User's names m/t.IsPlain")
+	r, _ = v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "m/t.IsPlain"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	data(t, r, &u)
+	assert.Equal(t, 1, u.Total)
+	assert.Equal(t, 2, u.AmbiguousByName)
+	r, _ = v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "m/x.Lk"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	data(t, r, &u)
+	assert.Zero(t, u.AmbiguousByName, "UseLk's call names m/t.Lk (two build variants), not this Lk")
+
+	var ex struct {
+		Exports map[string][]Export `json:"exports"`
+	}
+	r, _ = v.call(t, "rag_list_package_exports", map[string]any{"workspace_root": v.root, "package": "m/t"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	data(t, r, &ex)
+	var names []string
+	for _, e := range ex.Exports["function"] {
+		names = append(names, fmt.Sprintf("%s:%d", e.Name, e.StartLine))
+	}
+	assert.Equal(t, []string{"Deep:5", "Guess:5", "IsPlain:1", "Lk:1", "Lk:1", "Top:3", "UseLk:1", "User:1"}, names, "two Lk in two files are not twins")
+	assert.Contains(t, r.Message, "8 exported symbols")
+	r, _ = v.call(t, "rag_list_package_exports", map[string]any{"workspace_root": v.root, "package": "src/index"})
+	assert.Contains(t, r.Message, "src/index.fkm has no exported symbols of its own")
+
+	var s struct{ Results []SearchHit }
+	r, _ = v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "IsPlain"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	data(t, r, &s)
+	var exact []string
+	for _, hit := range s.Results {
+		if hit.Name == "IsPlain" {
+			exact = append(exact, hit.QualifiedName)
+		}
+	}
+	assert.ElementsMatch(t, []string{"m/t.IsPlain", "m/x.IsPlain"}, exact)
+}
+
+// A query equal to one symbol's full qualified name picks it over symbols
+// whose qualified name only ends with it (components.zzalert against
+// zzprobe.card.components.zzalert).
+func TestExactQualifiedNameWins(t *testing.T) {
+	v := newEnv(t, false, func(c *config.Config) { c.AutoIndex = false })
+	v.addFiles(t, map[string]string{"a/x.fk": "func Hook\n", "b/m/a/y.fk": "func Hook\n"})
+	for _, tool := range []string{"rag_find_usages", "rag_call_hierarchy"} {
+		r, _ := v.call(t, tool, map[string]any{"workspace_root": v.root, "symbol": "m/a.Hook"})
+		require.Equal(t, "ok", r.Status, r.Message)
+		var out struct{ Symbol Candidate }
+		data(t, r, &out)
+		assert.Equal(t, "m/a.Hook", out.Symbol.QualifiedName, tool)
+	}
+	r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "a.Hook"})
+	assert.Equal(t, "ambiguous", r.Status, "neither equals a.Hook: both only end with it")
+}

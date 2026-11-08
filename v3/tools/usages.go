@@ -78,26 +78,18 @@ func resolveSymbol(ctx context.Context, w *engine.Workspace, query, filePath str
 		}
 		hits = kept
 	}
-	if len(hits) > 1 { // overload signatures or a get/set pair: one symbol per qualified name and file
-		type key struct{ qn, file string }
-		widest := map[key]int{} // index in kept
-		kept := hits[:0:0]
+	hits = mergeTwins(hits, func(h *store.Hit) *parser.Symbol { return &h.Symbol })
+	if len(hits) > 1 { // the one whose qualified name is the query beats those that only end with it
+		q := parser.Normalize(query)
+		var equal []store.Hit
 		for _, h := range hits {
-			k := key{h.Symbol.QualifiedName, h.Symbol.FilePath}
-			i, ok := widest[k]
-			if !ok {
-				widest[k] = len(kept)
-				kept = append(kept, h)
-				continue
+			if parser.Normalize(h.Symbol.QualifiedName) == q {
+				equal = append(equal, h)
 			}
-			s := &kept[i].Symbol
-			rels := append(s.Relations[:len(s.Relations):len(s.Relations)], h.Symbol.Relations...)
-			if h.Symbol.EndLine-h.Symbol.StartLine > s.EndLine-s.StartLine { // the implementation, with the body
-				kept[i] = h
-			}
-			kept[i].Symbol.Relations = rels // outgoing calls of every twin
 		}
-		hits = kept
+		if len(equal) == 1 {
+			hits = equal
+		}
 	}
 	if len(hits) > 1 {
 		cands := make([]Candidate, len(hits))
@@ -111,6 +103,44 @@ func resolveSymbol(ctx context.Context, w *engine.Workspace, query, filePath str
 	}
 	s := hits[0].Symbol
 	return &s, nil
+}
+
+// twinKey groups twins: overload signatures, a get/set pair or a merged
+// declaration share a qualified name and a file. Doc chunks (two sections
+// with one heading) are never twins.
+type twinKey struct{ qn, file string }
+
+func twinOf(s *parser.Symbol) twinKey {
+	if s.Kind == parser.KindChunk {
+		return twinKey{s.ID, ""}
+	}
+	return twinKey{s.QualifiedName, s.FilePath}
+}
+
+// mergeTwins keeps one item per twin group, in first-seen order: the widest
+// (the implementation, with the body), then the first line, then the lowest
+// id, as the index picks a call's target. It carries the relations of every
+// twin (outgoing calls of a getter and a setter).
+func mergeTwins[T any](items []T, sym func(*T) *parser.Symbol) []T {
+	at := map[twinKey]int{} // index in kept
+	kept := items[:0:0]
+	for _, it := range items {
+		s := sym(&it)
+		i, ok := at[twinOf(s)]
+		if !ok {
+			at[twinOf(s)] = len(kept)
+			kept = append(kept, it)
+			continue
+		}
+		r := sym(&kept[i])
+		rels := append(r.Relations[:len(r.Relations):len(r.Relations)], s.Relations...)
+		if w, rw := s.EndLine-s.StartLine, r.EndLine-r.StartLine; w > rw || w == rw && (s.StartLine < r.StartLine || s.StartLine == r.StartLine && s.ID < r.ID) {
+			kept[i] = it
+			r = sym(&kept[i])
+		}
+		r.Relations = rels
+	}
+	return kept
 }
 
 // byName lists the symbols whose qualified name ends with query and, for a
@@ -261,16 +291,30 @@ func referrers(ctx context.Context, w *engine.Workspace, sym *parser.Symbol, lim
 
 // ambiguousByName counts the relations that name the symbol but were left
 // unresolved because several symbols share the name; 0 on a store error.
-// Those naming its qualified name are already listed as usages.
+// Those naming its qualified name (its twins too) are already listed as
+// usages; those naming another indexed symbol's qualified name are that
+// symbol's.
 func ambiguousByName(ctx context.Context, w *engine.Workspace, sym *parser.Symbol) int {
 	hits, err := w.Scroll(ctx, store.Filter{TargetNames: []string{sym.Name}}, store.MaxScroll)
 	if err != nil {
 		return 0
 	}
+	known := map[string]bool{} // qualified name -> some indexed symbol has it
 	n := 0
 	for _, h := range hits {
 		for _, r := range h.Symbol.Relations {
-			if r.TargetName == sym.Name && r.Resolution == parser.ResolutionAmbiguous && r.TargetQualifiedName != sym.QualifiedName {
+			qn := r.TargetQualifiedName
+			if r.TargetName != sym.Name || r.Resolution != parser.ResolutionAmbiguous || qn == sym.QualifiedName {
+				continue
+			}
+			if _, ok := known[qn]; !ok && qn != "" {
+				some, err := w.Scroll(ctx, store.Filter{QualifiedName: qn}, 1)
+				if err != nil {
+					return 0
+				}
+				known[qn] = len(live(w, some)) > 0
+			}
+			if !known[qn] {
 				n++
 			}
 		}
@@ -397,7 +441,7 @@ func (wk *walker) walk(ctx context.Context, root *Node, sym parser.Symbol, incom
 			if wk.nodes >= maxNodes {
 				break
 			}
-			child := &Node{Candidate: toCandidate(s), ByName: !exact[s.ID]}
+			child := &Node{Candidate: toCandidate(s), ByName: !exact[twinOf(&s)]}
 			it.n.Children = append(it.n.Children, child)
 			wk.nodes++
 			if wk.visited[s.ID] {
@@ -409,12 +453,12 @@ func (wk *walker) walk(ctx context.Context, root *Node, sym parser.Symbol, incom
 	}
 }
 
-// next lists sym's neighbours, sorted: the symbols referring to it (incoming)
-// or the resolved targets of its own relations (outgoing), and which of them
-// are linked by a qualified name.
-func (wk *walker) next(ctx context.Context, sym parser.Symbol, incoming bool) ([]parser.Symbol, map[string]bool) {
+// next lists sym's neighbours, sorted, twins merged: the symbols referring
+// to it (incoming) or the resolved targets of its own relations (outgoing),
+// and which of them are linked by a qualified name.
+func (wk *walker) next(ctx context.Context, sym parser.Symbol, incoming bool) ([]parser.Symbol, map[twinKey]bool) {
 	var next []parser.Symbol
-	exact := map[string]bool{} // linked by at least one relation naming a qualified name
+	exact := map[twinKey]bool{} // linked by at least one relation naming a qualified name
 	if incoming {
 		callers, cut, err := referrers(ctx, wk.w, &sym, candidateLimit)
 		wk.cut = wk.cut || cut
@@ -426,7 +470,7 @@ func (wk *walker) next(ctx context.Context, sym parser.Symbol, incoming bool) ([
 		for _, c := range callers {
 			for _, r := range c.Relations {
 				if (r.TargetID == sym.ID || r.TargetQualifiedName == sym.QualifiedName) && exactRel(r, sym.QualifiedName) {
-					exact[c.ID] = true
+					exact[twinOf(&c)] = true
 				}
 			}
 		}
@@ -439,9 +483,10 @@ func (wk *walker) next(ctx context.Context, sym parser.Symbol, incoming bool) ([
 			}
 			return store.Filter{IDs: []string{r.TargetID}}, r.TargetID, 1
 		}
+		exactKey := map[string]bool{}
 		for _, r := range sym.Relations {
 			if _, key, _ := target(r); r.Kind == parser.RelCall && (r.Resolution == parser.ResolutionExact || strings.HasPrefix(key, "qn:")) {
-				exact[key] = true
+				exactKey[key] = true
 			}
 		}
 		seen := map[string]bool{}
@@ -460,13 +505,14 @@ func (wk *walker) next(ctx context.Context, sym parser.Symbol, incoming bool) ([
 				// As the index resolves: code never calls across languages.
 				if r.TargetID != "" || h.Symbol.Language == sym.Language || sym.Language == "docs" || sym.Language == "html" {
 					next = append(next, h.Symbol)
-					if exact[key] {
-						exact[h.Symbol.ID] = true
+					if exactKey[key] {
+						exact[twinOf(&h.Symbol)] = true
 					}
 				}
 			}
 		}
 	}
+	next = mergeTwins(next, func(s *parser.Symbol) *parser.Symbol { return s })
 	sort.Slice(next, func(i, j int) bool { return next[i].QualifiedName < next[j].QualifiedName })
 	return next, exact
 }

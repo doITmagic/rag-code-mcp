@@ -87,14 +87,17 @@ func (t *tools) search(ctx context.Context, req *mcp.CallToolRequest, in SearchI
 		f.PathPrefix = p
 	}
 	var hits []SearchHit
-	seen := map[string]bool{}
+	seen := map[twinKey]bool{}
+	merge := func(hs []store.Hit) []store.Hit {
+		return mergeTwins(live(w, hs), func(h *store.Hit) *parser.Symbol { return &h.Symbol })
+	}
 	if isIdentifier(in.Query) {
 		exact, err := byName(ctx, w, f, in.Query, exactLimit)
 		if err != nil {
 			return t.searchErr(ctx, w, in, f, err)
 		}
-		for _, h := range live(w, exact) {
-			seen[h.Symbol.ID] = true
+		for _, h := range merge(exact) {
+			seen[twinOf(&h.Symbol)] = true
 			hits = append(hits, toHit(h.Symbol, 1, "exact"))
 		}
 	}
@@ -102,9 +105,9 @@ func (t *tools) search(ctx context.Context, req *mcp.CallToolRequest, in SearchI
 	if err != nil {
 		return t.searchErr(ctx, w, in, f, err)
 	}
-	for _, h := range live(w, sem) {
-		if h.Score >= minScore && !seen[h.Symbol.ID] {
-			seen[h.Symbol.ID] = true
+	for _, h := range merge(sem) {
+		if k := twinOf(&h.Symbol); h.Score >= minScore && !seen[k] {
+			seen[k] = true
 			hits = append(hits, toHit(h.Symbol, h.Score, "semantic"))
 		}
 	}

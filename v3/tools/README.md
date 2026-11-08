@@ -46,7 +46,7 @@ graph LR
 |---|---|
 | [`tools.go`](tools.go) | package doc, `Response`, `IndexInfo`, `Register` and the tool table; shared helpers: `reply` (an `ok` answer during a run is `indexing`), `answer`, `fail`, `indexInfo`, `resolveRoot`, `open`, `notIndexed`, `storeErr`, `insideRoot`, `live`, `readLines`, `capLines`, `isTestFile` |
 | [`search.go`](search.go) | `rag_search`: `SearchInput`, `SearchHit`, exact plus semantic search, the bounded not-indexed fallback, `nameScore`, `rank`, `isIdentifier`, `kinds` (validates the kinds filter) |
-| [`usages.go`](usages.go) | `rag_find_usages` and `rag_call_hierarchy`: `resolveSymbol` (one symbol, overload twins merged, or an `ambiguous` answer), `referrers`, `exactRel` (by_name or not), `ambiguousByName`, the hierarchy `walker` (`walk` level by level, `next`), `writeTree` |
+| [`usages.go`](usages.go) | `rag_find_usages` and `rag_call_hierarchy`: `twinKey`/`twinOf`/`mergeTwins` (one entry per qualified name and file, used by every tool), `resolveSymbol` (one symbol, twins merged, an equal qualified name before suffix matches, or an `ambiguous` answer), `referrers`, `exactRel` (by_name or not), `ambiguousByName`, the hierarchy `walker` (`walk` level by level, `next`), `writeTree` |
 | [`exports.go`](exports.go) | `rag_list_package_exports`: `ExportsInput`, `Export`, `moduleSymbols`, `shortModule` for short package names, `dirModules` for a directory or a source file of the workspace |
 | [`readfile.go`](readfile.go) | `rag_read_file_context`: `ReadInput`, `Outline`, line ranges (`lineRange` streams a file over 8 MiB), outline, one symbol; line and signature clipping |
 | [`index.go`](index.go) | `rag_index_workspace` and `rag_server_info`: `IndexInput`, `Service`, `Update`, `KnownRoot`, the Ollama probe, the release check with its cache, `semverLess`, `knownRoots` |
@@ -55,7 +55,7 @@ Tests:
 
 | File | What it covers |
 |---|---|
-| [`tools_test.go`](tools_test.go) | an MCP client and server over in-memory transports with a real engine on `store.NewMemory()`, `embed.Fake` and a fake `.fk` analyzer. Missing and bad roots, the root taken from client roots, every tool, the not-indexed and during-recreate fallbacks, dependency down, tool schemas, helpers, fallback skip rules, edits and deletes keeping results right, no Qdrant left in `rag_server_info`, same-name variants, lookup by declared name with `file_path` as a hard filter, `by_name` usages and hierarchy nodes, the live state of a root being indexed in `rag_server_info`, the last run's error kept after a restart, a deleted root reported as `missing`, overloads and get/set pairs resolved as one symbol, a qualified call bound by name only marked `by_name`, short directory names and file paths in `rag_list_package_exports` with one module per file (`.fkm` analyzer), the export-less file message, the zero-usage note not claiming imports, `indexing` (not `ok`, not the fallback) while a run goes over an existing index, `kinds` validation and the no-such-kinds message, `limit` respected exactly with `truncated` in usages and the hierarchy, a binary file with an unknown extension not dumped, also for a line range |
+| [`tools_test.go`](tools_test.go) | an MCP client and server over in-memory transports with a real engine on `store.NewMemory()`, `embed.Fake` and a fake `.fk` analyzer. Missing and bad roots, the root taken from client roots, every tool, the not-indexed and during-recreate fallbacks, dependency down, tool schemas, helpers, fallback skip rules, edits and deletes keeping results right, no Qdrant left in `rag_server_info`, same-name variants, lookup by declared name with `file_path` as a hard filter, `by_name` usages and hierarchy nodes, the live state of a root being indexed in `rag_server_info`, the last run's error kept after a restart, a deleted root reported as `missing`, overloads and get/set pairs resolved as one symbol, twins as one hierarchy node (both directions, every depth), one export (and count) and one search hit, `ambiguous_by_name` not counting calls that name another symbol's qualified name, the module spelling of a barrel file in `rag_list_package_exports`, an equal qualified name winning over suffix matches, a qualified call bound by name only marked `by_name`, short directory names and file paths in `rag_list_package_exports` with one module per file (`.fkm` analyzer), the export-less file message, the zero-usage note not claiming imports, `indexing` (not `ok`, not the fallback) while a run goes over an existing index, `kinds` validation and the no-such-kinds message, `limit` respected exactly with `truncated` in usages and the hierarchy, a binary file with an unknown extension not dumped, also for a line range |
 | [`zz_verify_test.go`](zz_verify_test.go) | verification tests: short package names past the scroll cap, call-hierarchy cycles and the node cap, cancelled contexts, stalled `rag_server_info` endpoints, read-file edge cases (degenerate files, symlink out of the root, ranges, minified files, long lines, secrets), the 200-file fallback cap, multi-byte usage line cut, compact/full output and path boost, the 24 h update cache, a second index confirm while running, huge limits, `total_lines` and negative line numbers, the breadth-first node cap, a line range of a file over 8 MiB, exports of a workspace directory and `res://` paths, a Godot scene node not making its class ambiguous, the note on zero usages of a constant |
 | [`fifo_unix_test.go`](fifo_unix_test.go) | the not-indexed fallback keeps the index skip rules: no symlink out of the root, no fifo, no secret file (Unix only) |
 | [`index_unix_test.go`](index_unix_test.go) | (`//go:build unix`) a known root with no `ended_at` is `interrupted` only when nobody holds its lock |
@@ -181,7 +181,8 @@ How it works:
    normalized qualified name equals the query or ends with `.query`, plus,
    for a plain name, up to 20 named the query (a JS default export is named
    after its declaration but qualified `<module>.default`). They get score 1
-   and `match: "exact"`.
+   and `match: "exact"`. Twins (same qualified name and file, as in
+   `rag_find_usages`) are one hit, here and in the semantic step.
 2. **Semantic.** The query is embedded and the `2 × limit` nearest symbols
    are fetched; those scoring at least 0.55 and not already found are added
    with `match: "semantic"`.
@@ -233,10 +234,15 @@ the query. None gives `ok` with a "try rag_search" message. `file_path` keeps
 only the symbols defined in that file; none there gives `ok` with a message
 naming the file, never a symbol from elsewhere. Symbols sharing both the
 qualified name and the file (TypeScript overload signatures and their
-implementation, a getter/setter pair) are one symbol: the one with the widest
-line span (the implementation) is kept, carrying the relations of all, so the
-outgoing hierarchy covers every twin and usages (matched by qualified name)
-cover them all. Several left give `ambiguous`
+implementation, a getter/setter pair, a merged declaration) are twins, one
+symbol (`mergeTwins`): the one with the widest line span (the
+implementation) is kept, then the first line, then the lowest id, the rule
+the index uses to pick a call's target, carrying the relations of all, so
+the outgoing hierarchy covers every twin and usages (matched by qualified
+name) cover them all. Doc chunks are never twins. When several are left and
+exactly one has a normalized qualified name equal to the query, it is taken
+over those that only end with it (`components.zzalert` against
+`zzprobe.card.components.zzalert`). Several left give `ambiguous`
 with `data.candidates` (`id, qualified_name, kind, file_path, start_line`).
 
 The references are the symbols with a relation whose resolved `target_id` is
@@ -258,9 +264,12 @@ qualified name of its script's class, the class is taken. Zero usages of a
 constant or variable add a note: reads of values are not tracked, only calls,
 type uses and inheritance (an import is not a usage).
 `ambiguous_by_name` counts relations that name the symbol but were left
-unresolved because several symbols share the name; the message mentions them.
-Calls to symbols sharing one qualified name (build-tagged variants such as
-`lock_unix.go` / `lock_windows.go`) are listed as usages, not counted here.
+unresolved because several symbols share the name, and that cannot be
+attributed elsewhere: they name no qualified name, or one no indexed symbol
+has; the message mentions them. Calls naming the symbol's own qualified name
+(its twins, build-tagged variants such as `lock_unix.go` / `lock_windows.go`)
+are listed as usages, and calls naming another indexed symbol's qualified
+name are that symbol's; neither is counted here.
 
 ```json
 {"name": "rag_find_usages", "arguments": {
@@ -286,6 +295,9 @@ Callers (incoming) and callees (outgoing) of a function as a tree.
 - Incoming uses the same reference lookup as `rag_find_usages` (up to 50 per
   node). Outgoing follows `call` relations that have a resolved target id; an
   ambiguous call naming a qualified name lists every symbol with that name.
+- Twins (as in `rag_find_usages`) are one node in both directions and at
+  every depth, whether calls target one representative id or name the twins'
+  qualified name; the node carries the relations of all twins.
 - The tree is filled level by level and capped at 100 nodes per direction,
   so the cap drops the deepest levels first (incoming lists at most 50
   direct callers, so never one of them);
@@ -332,7 +344,9 @@ The exported symbols of a package or module, grouped by kind.
   directory called `name` contributes the files directly in it whatever
   their module (a JS module such as `components/ui/button` is a file of
   `ui`).
-- Only `exported` symbols are kept, at most 300.
+- Only `exported` symbols are kept, at most 300; twins (overload
+  signatures, a get/set pair, a merged `interface`) are one export, as in
+  `rag_find_usages`, and count once.
 
 Output `data`: `{package, modules, exports: {<kind>: [{name, qualified_name,
 signature, file_path, start_line}]}, truncated}`. `truncated` is true when a
@@ -341,7 +355,9 @@ with `no indexed module or directory matches "X"; pass the full module path or
 a directory of the workspace`. When no module matches, a directory inside the
 workspace (relative, `./x`, or Godot `res://x`) lists the exports of the files
 directly in it, since a JS, Vue or GDScript module is one file. A source file
-of the workspace (one a parser handles) lists its own exports; with none the
+of the workspace (one a parser handles), also spelled as a module (the
+root-relative path without its extension, `src/index` for `src/index.ts`,
+matched against the indexed files), lists its own exports; with none the
 message is `<file> has no exported symbols of its own (it may only re-export
 others)`, as for a barrel file. When `kinds` leaves nothing but the module,
 directory or file has exported symbols of other kinds, the message is `"X" has

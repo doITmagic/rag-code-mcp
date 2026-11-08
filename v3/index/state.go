@@ -31,7 +31,10 @@ type Entry struct {
 // calls in top-level initializers and export default defineX(...); Go
 // goimports-style import names; Python guarded imports; PHP signature types;
 // GDScript super calls; Blade end line; relation target kinds and bases.
-const Format = 6
+// 7: JS barrel re-exports followed and script-setup top-level calls owned by
+// default; GDScript class_name bases; Go bases are embeddings only; a
+// qualified-suffix match is exact and a name fallback unique.
+const Format = 7
 
 // State is the per-root snapshot stored at Dir(root)/state.json. Only
 // the run goroutine touches it; nothing here locks.

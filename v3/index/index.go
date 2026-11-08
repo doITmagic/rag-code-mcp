@@ -4,6 +4,7 @@
 package index
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -101,6 +102,8 @@ type run struct {
 	state        *State
 	fresh        bool                // the collection was (re)created this run: nothing to look up
 	named        map[string][]string // ids of the name pass, which callers are resolved against
+	prev         Status              // the status of the last run, before this one wrote its own
+	touched      bool                // the run deleted or upserted points
 	lastProgress time.Time
 	lastSave     time.Time
 }
@@ -125,8 +128,9 @@ func Run(ctx context.Context, o Options) (Status, error) {
 		return r.fail(err)
 	}
 	defer unlock()
-	if prev, ok := ReadStatus(root); ok && prev.Phase != "done" {
-		r.Files = nil // the last run failed, was cut short or crashed: the index is partial
+	r.prev, _ = ReadStatus(root)
+	if r.prev.Phase != "done" {
+		r.Files = nil // the last run failed, was cut short or crashed (or none ran): the index is partial
 	}
 	defer func() {
 		if r.Files == nil {
@@ -154,6 +158,7 @@ func Run(ctx context.Context, o Options) (Status, error) {
 	}
 	r.state.Model, r.state.Format = model, Format
 	if o.Recreate {
+		r.touched = true
 		// Saved before the drop: after a crash in between, a stale state.json
 		// would match every file and incremental runs would never re-embed them.
 		r.state = newState(root)
@@ -224,6 +229,7 @@ func Run(ctx context.Context, o Options) (Status, error) {
 	purge := func(f string) error {
 		// A files run after a branch switch lists paths already purged or never
 		// indexed: count only those that had state or points.
+		r.touched = true
 		_, ok := r.state.Files[f]
 		if !ok {
 			hits, err := o.Store.Scroll(ctx, o.Collection, store.Filter{FilePath: f}, 1)
@@ -309,6 +315,7 @@ func Run(ctx context.Context, o Options) (Status, error) {
 			}
 		}
 		r.resolve(ctx, idx, batch)
+		r.touched = true
 		if err := r.embedUpsert(ctx, batch); err != nil {
 			return r.finish(ctx, err)
 		}
@@ -338,6 +345,14 @@ func (r *run) finish(ctx context.Context, err error) (Status, error) {
 		}
 	}
 	r.tick(true)
+	if r.status.Phase == "interrupted" && r.prev.Phase == "done" && !r.touched && !r.fresh && !r.status.Recreated {
+		// Cancelled before it changed the index (a catch-up cut short by the
+		// session's end): the index is still the one the last run finished.
+		data, _ := json.Marshal(r.prev)
+		if err := WriteAtomic(statusPath(r.root), data); err != nil {
+			r.Log.Warn("index: cannot write status", "root", r.root, "err", err)
+		}
+	}
 	return r.status, err
 }
 
@@ -686,9 +701,20 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 				nameList = append(nameList, s.Name)
 			}
 		}
-		guessed := func(h parser.Symbol) bool { // a relation resolved by name, or not at all
+		// a relation resolved by name, or not at all, or by a qualified suffix
+		// one of the added symbols also has
+		guessed := func(h parser.Symbol) bool {
 			return slices.ContainsFunc(h.Relations, func(rel parser.Relation) bool {
-				return names[rel.TargetName] && rel.Resolution != parser.ResolutionExact && rel.Resolution != parser.ResolutionAmbiguous
+				if !names[rel.TargetName] || rel.Resolution == parser.ResolutionAmbiguous {
+					return false
+				}
+				if rel.Resolution != parser.ResolutionExact {
+					return true
+				}
+				key := parser.Normalize(rel.TargetQualifiedName)
+				return key != "" && slices.ContainsFunc(syms, func(s parser.Symbol) bool {
+					return parser.Normalize(s.QualifiedName) != key && parser.MatchQualified(s.QualifiedName, key)
+				})
 			})
 		}
 		ok = query(qns, func(v []string) store.Filter { return store.Filter{TargetQualifiedNames: v} }, add(all)) &&
@@ -699,7 +725,7 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 }
 
 // names drops everything but the names (and kind, module, owner) of each
-// symbol, plus a class's qualified bases: what staleReferrers and
+// symbol, plus a class's bases: what staleReferrers and
 // newNameIndex read.
 func names(files []parsed) []parsed {
 	for i := range files {
@@ -707,8 +733,8 @@ func names(files []parsed) []parsed {
 			n := parser.Symbol{ID: s.ID, QualifiedName: s.QualifiedName, Name: s.Name, Language: s.Language, Kind: s.Kind, Module: s.Module, Owner: s.Owner}
 			if s.Kind == parser.KindClass || s.Kind == parser.KindInterface {
 				for _, r := range s.Relations {
-					if r.TargetQualifiedName != "" && (r.Kind == parser.RelExtends || r.Kind == parser.RelImplements || r.Kind == parser.RelUsesType) {
-						n.Relations = append(n.Relations, parser.Relation{Kind: r.Kind, TargetQualifiedName: r.TargetQualifiedName})
+					if (r.TargetQualifiedName != "" || r.TargetName != "") && (r.Kind == parser.RelExtends || r.Kind == parser.RelImplements || r.Kind == parser.RelUsesType) {
+						n.Relations = append(n.Relations, parser.Relation{Kind: r.Kind, TargetName: r.TargetName, TargetQualifiedName: r.TargetQualifiedName})
 					}
 				}
 			}
@@ -727,7 +753,7 @@ type nameIndex struct {
 	byModName map[[2]string][]string // module, name of top-level symbols
 	lang      map[string]string      // symbol id -> language
 	kind      map[string]parser.Kind // symbol id -> kind, for fit
-	bases     map[string][]string    // normalized class QN -> qualified names it extends, implements or uses (traits)
+	bases     map[string][]string    // class id -> what it extends, implements or uses (traits): qualified name, else bare name
 	changed   map[string]bool        // files of the run: their stored points are stale
 }
 
@@ -742,8 +768,9 @@ func newNameIndex(files []parsed) nameIndex {
 			idx.kind[s.ID] = s.Kind
 			if s.Kind == parser.KindClass || s.Kind == parser.KindInterface {
 				for _, r := range s.Relations {
-					if r.TargetQualifiedName != "" && (r.Kind == parser.RelExtends || r.Kind == parser.RelImplements || r.Kind == parser.RelUsesType) {
-						idx.bases[qn] = append(idx.bases[qn], r.TargetQualifiedName)
+					// Go promotes only an embedded type's methods (extends), not a named field's.
+					if b := cmp.Or(r.TargetQualifiedName, r.TargetName); b != "" && (r.Kind == parser.RelExtends || s.Language != "go" && (r.Kind == parser.RelImplements || r.Kind == parser.RelUsesType)) {
+						idx.bases[s.ID] = append(idx.bases[s.ID], b)
 					}
 				}
 			}
@@ -825,6 +852,20 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 			return parser.Normalize(s.QualifiedName) == key
 		})
 	}
+	suffix := func(lang, tqn string) []string {
+		key := parser.Normalize(tqn)
+		return lookup(lang, bySuffix[key], "s:"+key, store.Filter{QualifiedSuffix: tqn}, func(s parser.Symbol) bool {
+			return parser.MatchQualified(s.QualifiedName, key)
+		})
+	}
+	// qualified also takes a short name, such as GDScript's BaseTrigger.run
+	// for res://trigger.BaseTrigger.run.
+	qualified := func(lang, tqn string) []string {
+		if ids := exact(lang, tqn); len(ids) > 0 {
+			return ids
+		}
+		return suffix(lang, tqn)
+	}
 	named := func(lang, name string) []string {
 		ids := byName[[2]string{lang, name}]
 		if len(ids) < 2 {
@@ -866,16 +907,12 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 				resolution := parser.ResolutionUnique
 				if tqn := rel.TargetQualifiedName; tqn != "" {
 					resolution = parser.ResolutionExact
-					key := parser.Normalize(tqn)
 					ids = exact(lang, tqn)
 					// A TQN written relative to a source root other than the
 					// workspace root (Python src/ layouts, monorepo subprojects)
 					// names a qualified suffix; only a unique match is taken.
 					if len(ids) == 0 {
-						resolution = parser.ResolutionUnique
-						ids = lookup(lang, bySuffix[key], "s:"+key, store.Filter{QualifiedSuffix: tqn}, func(s parser.Symbol) bool {
-							return parser.MatchQualified(s.QualifiedName, key)
-						})
+						ids = suffix(lang, tqn)
 					}
 					// extends "res://x.gd" (GDScript) names a whole script: its
 					// one top-level class, whatever that class is called.
@@ -897,23 +934,25 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 					// inherits name the owner, which exists but does not
 					// define it: first the owner's declared bases (parent
 					// class, trait, embedded type), one level, when the owner
-					// is in this run (a method's class is in its file).
+					// is in this run (a method's class is in its file). Owner
+					// and base may be short names (GDScript class_name).
 					if dot := strings.LastIndex(tqn, "."); len(ids) == 0 && dot > 0 && rel.TargetName != "" {
 						seen := map[string]bool{}
-						for _, b := range idx.bases[parser.Normalize(tqn[:dot])] {
-							for _, id := range exact(lang, b+"."+rel.TargetName) {
-								if !seen[id] {
-									seen[id] = true
-									ids = append(ids, id)
-									resolution = parser.ResolutionExact
+						for _, o := range qualified(lang, tqn[:dot]) {
+							for _, b := range idx.bases[o] {
+								for _, id := range qualified(lang, b+"."+rel.TargetName) {
+									if !seen[id] {
+										seen[id] = true
+										ids = append(ids, id)
+									}
 								}
 							}
 						}
 					}
 					// Otherwise fall back to the name. An unknown owner is
 					// external (vendor, stdlib).
-					if dot := strings.LastIndex(tqn, "."); len(ids) == 0 && dot > 0 && rel.TargetName != "" && len(exact(lang, tqn[:dot])) > 0 {
-						ids, nameOnly = named(lang, rel.TargetName), true
+					if dot := strings.LastIndex(tqn, "."); len(ids) == 0 && dot > 0 && rel.TargetName != "" && len(qualified(lang, tqn[:dot])) > 0 {
+						ids, nameOnly, resolution = named(lang, rel.TargetName), true, parser.ResolutionUnique
 					}
 				} else if name := rel.TargetName; name != "" {
 					ids, nameOnly = named(lang, name), true

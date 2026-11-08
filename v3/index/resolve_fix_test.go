@@ -180,3 +180,23 @@ func TestReadIndexFilesRefuseDevices(t *testing.T) {
 		t.Fatal("reading a /dev/zero symlink did not stop")
 	}
 }
+
+// A qualified-suffix match is exact, yet a second symbol with that suffix
+// makes it ambiguous: the unchanged caller is re-resolved.
+func TestResolveSuffixMatchTurnsAmbiguous(t *testing.T) {
+	e := newEnv(t)
+	e.write(t, "a.go", "func Caller -> pkg.Svc\n")
+	e.write(t, "src.pkg.go", "func Svc\n")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	r, svc := e.rel(t, "Caller", "Svc")
+	assert.Equal(t, svc, r.TargetID)
+	assert.Equal(t, parser.ResolutionExact, r.Resolution)
+
+	e.write(t, "lib.pkg.go", "func Svc\n")
+	_, err = e.run(t, func(o *Options) { o.Files = []string{"lib.pkg.go"} })
+	require.NoError(t, err)
+	r, _ = e.rel(t, "Caller", "")
+	assert.Empty(t, r.TargetID)
+	assert.Equal(t, parser.ResolutionAmbiguous, r.Resolution)
+}

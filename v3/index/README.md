@@ -70,12 +70,12 @@ graph LR
 
 | File | Covers |
 |------|--------|
-| `index_test.go` | The main suite, with a line-based fake analyzer and a hook embedder: full, incremental, delete, recreate, model and `Format` change, embed failure, parse failures and panics, cancel, `ErrHeadChanged`, relation resolution, `Skip`, `Walk`, `.gitignore`, linked worktrees, symlinks in `Files`, byte-budgeted upsert batches, empty collection with stale state, a crash between a recreate's state save and its drop, moved targets, vanished referrers, a file that changed between the two passes, deleted paths counted only when they were indexed, relation target kinds (`TestResolutionTargetKinds`) and inherited members through the owner's bases (`TestResolutionThroughBases`), in full and files runs. Its `TestMain` points `RAGCODE_HOME` at a temp dir. |
+| `index_test.go` | The main suite, with a line-based fake analyzer and a hook embedder: full, incremental, delete, recreate, model and `Format` change, embed failure, parse failures and panics, cancel, `ErrHeadChanged`, relation resolution, `Skip`, `Walk`, `.gitignore`, linked worktrees, symlinks in `Files`, byte-budgeted upsert batches, empty collection with stale state, a crash between a recreate's state save and its drop, moved targets, vanished referrers, a file that changed between the two passes, deleted paths counted only when they were indexed, relation target kinds (`TestResolutionTargetKinds`) and inherited members through the owner's bases (`TestResolutionThroughBases`), in full and files runs, Go bases limited to embeddings (`TestResolutionThroughBasesGoEmbeddingOnly`), and a run cancelled before it changed anything keeping the previous `done` status (`TestRunCancelledKeepsDoneStatus`). Its `TestMain` points `RAGCODE_HOME` at a temp dir. |
 | `budget_test.go` | The parse byte budget is respected, and batches still resolve forward references. |
 | `resolve_test.go` | A non-fresh run resolves more than 500 targets through the store; a JS `import { n }` of a default-exported declaration resolves by module and name, in a full run and from the store. |
 | `resolve_files_test.go` | A files run sees the stored candidates too: a target ambiguous in a full run stays ambiguous by exact and suffix match; removing one of two candidates (file deleted or symbol edited away) makes the unchanged caller unique. |
-| `resolve_fix_test.go` | Name and qualified resolution stay within one language (html may cross), targets defined later, inherited-member fallback, a files run after a failed run widens to a full walk, symlinked `.ragcode` directories and device files are refused. |
-| `gdscript_test.go` | `extends "res://x.gd"` resolves to the script's class, named by `class_name` or after the file, in full and files runs. |
+| `resolve_fix_test.go` | Name and qualified resolution stay within one language (html may cross), targets defined later, inherited-member fallback, a files run after a failed run widens to a full walk, symlinked `.ragcode` directories and device files are refused, an exact suffix match turned ambiguous by a new symbol with that suffix. |
+| `gdscript_test.go` | `extends "res://x.gd"` resolves to the script's class, named by `class_name` or after the file, in full and files runs; `super.run()` in a `class_name` hierarchy (`BaseTrigger.run`, defined in the base's base `Cutscene`) resolves exactly through the bases, and by name when the owner is only in the store. |
 | `prefix_test.go` | `Run` adds the model's document prefix before embedding. |
 | `lock_unix_test.go` | A second run on a locked root gets `ErrLocked`. Build tag `unix`. |
 | `lock_test.go` | Two holders of `index.lock` exclude each other, on every platform. |
@@ -159,7 +159,7 @@ type State struct {
     Files  map[string]Entry `json:"files"`            // absolute path -> entry
 }
 
-const Format = 6
+const Format = 7
 ```
 
 `Format` is the version of what parsers and the indexer store. It is bumped
@@ -175,6 +175,9 @@ const. Version 6: JS aliased imports (tsconfig/jsconfig `paths`, Nuxt/Vite
 `export default defineX(...)`; Go goimports-style import names; Python imports
 under `if` / `try` / `with`; PHP parameter and return types; GDScript `super`
 calls; the Blade end line; relation target kinds and inherited members.
+Version 7: JS barrel re-exports followed and `<script setup>` top-level calls
+owned by `default`; GDScript `class_name` bases; Go bases limited to embedded
+types; a qualified-suffix match is `exact` and a name fallback `unique`.
 
 ---
 
@@ -296,7 +299,8 @@ re-parsed and re-resolved in the same run:
 3. Query the store for points whose `TargetIDs` contain a vanished ID.
 4. For each language, query for points targeting the new symbols'
    `TargetQualifiedNames`, and for points with a matching `TargetName` whose
-   relation was resolved by name or not at all.
+   relation was resolved by name or not at all, or by a qualified suffix that
+   a new symbol also has (`pkg.Svc` with a new `lib.pkg.Svc`: no longer unique).
 5. Read the names of the vanished IDs; for a `(language, name)` no symbol of
    the run still has, query for points with that `TargetName` whose relation
    is ambiguous: one candidate fewer may make it unique. The points of gone
@@ -317,13 +321,19 @@ each relation:
 - With a `TargetQualifiedName`: an exact match (run and store candidates
   together, so a files run sees what a full run sees) is
   `ResolutionExact`. Otherwise a unique qualified-suffix match is taken
-  (`ResolutionUnique`), which covers Python `src/` layouts and monorepo
-  subprojects. If the owner (`a.b` of `a.b.m`) does not define the member
-  (inherited through a parent class, trait or embedded type), the bases the
-  owner declares in this run (`extends`, `implements`, `uses_type`; one level)
-  are tried as `<base>.m` (`ResolutionExact`); if none has it and the owner
-  exists, it falls back to the bare name. Bases of bases, and an owner whose class is
-  only in the store (not in this run), are not followed. An `extends` whose target is a whole module (GDScript
+  (also `ResolutionExact`), which covers Python `src/` layouts, monorepo
+  subprojects and GDScript's short `<Class>.m`. If the owner (`a.b` of `a.b.m`,
+  matched exactly or by suffix) does not define the member (inherited through
+  a parent class, trait or embedded type), the bases the owner declares in
+  this run (one level) are tried as `<base>.m`, exactly or by suffix
+  (`ResolutionExact`). A base is the qualified name of an `extends`,
+  `implements` or `uses_type` relation, or its bare name when it has none
+  (GDScript `class_name Pickup extends BaseTrigger`). In Go only `extends` (an
+  embedded type) counts: a named field's methods are not promoted. If no base
+  has it and the owner exists, it falls back to the bare name
+  (`ResolutionUnique`: only `unique` means matched by name). Bases of bases,
+  and an owner whose class is only in the store (not in this run), are not
+  followed: their call resolves by name, when the name is unique. An `extends` whose target is a whole module (GDScript
   `extends "res://x/y.gd"`) takes that module's one top-level class
   (`ResolutionUnique`). In JavaScript, `m.n` with no match takes module `m`'s
   top-level symbol named `n`: a declaration both named and default-exported
@@ -369,7 +379,11 @@ parsing starts and when the run ends (the status alone is also written at
 the start, in phase `scanning`). After the last batch, `Run` reads HEAD again; if it
 moved, the run ends with `ErrHeadChanged` (the engine queues a full run). A
 cancelled context ends with phase `interrupted`; any other error with
-`failed`.
+`failed`. A run cancelled before it changed the index (no file purged or
+upserted, no recreate, not a fresh collection; typically the catch-up run of
+a session that ends right away) returns `interrupted` to its caller but writes
+the previous status back when that one was `done`, so the next session does
+not report a complete index as interrupted.
 
 ---
 

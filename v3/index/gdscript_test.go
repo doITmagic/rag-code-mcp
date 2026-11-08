@@ -41,3 +41,37 @@ func TestResolveGDScriptPathExtends(t *testing.T) {
 	require.NoError(t, err)
 	t.Run("incremental run", check)
 }
+
+// super.run() in a class_name hierarchy names <Base>.run with the short class
+// name; run is defined two levels up, in the base's own base, which is
+// declared by name only (extends Cutscene).
+func TestResolveGDScriptSuperThroughClassNameBases(t *testing.T) {
+	e := newEnv(t)
+	e.write(t, "project.godot", "")
+	cut := e.write(t, "cutscene.gd", "class_name Cutscene extends Node\n\nfunc run():\n\tpass\n")
+	e.write(t, "trigger.gd", "class_name BaseTrigger extends Cutscene\n\nfunc _ready():\n\tpass\n")
+	src := "class_name Pickup extends BaseTrigger\n\nfunc _go():\n\tsuper.run()\n"
+	pick := e.write(t, "pickup.gd", src)
+	check := func(t *testing.T) {
+		t.Helper()
+		rels := e.symbols(t, pick)["_go"].Relations
+		require.Len(t, rels, 1)
+		require.Equal(t, "BaseTrigger.run", rels[0].TargetQualifiedName)
+		assert.Equal(t, e.symbols(t, cut)["run"].ID, rels[0].TargetID)
+		assert.Equal(t, parser.ResolutionExact, rels[0].Resolution)
+	}
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	t.Run("full run", check)
+
+	// Only pickup.gd is re-parsed: BaseTrigger is in the store, whose bases
+	// are not followed, so run is matched by name.
+	e.write(t, "pickup.gd", src+"\n")
+	_, err = e.run(t, func(o *Options) { o.Files = []string{pick} })
+	require.NoError(t, err)
+	t.Run("files run", func(t *testing.T) {
+		r := e.symbols(t, pick)["_go"].Relations[0]
+		assert.Equal(t, e.symbols(t, cut)["run"].ID, r.TargetID)
+		assert.Equal(t, parser.ResolutionUnique, r.Resolution)
+	})
+}

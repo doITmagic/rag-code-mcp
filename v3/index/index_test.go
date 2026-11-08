@@ -40,11 +40,15 @@ func (a lineAnalyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 			panic("bad file")
 		case line == "error":
 			return nil, errors.New("bad file")
-		case strings.HasPrefix(line, "class "): // class C : base.QN ...
+		case strings.HasPrefix(line, "class "): // class C : base.QN ~used.QN ...
 			name, bases, _ := strings.Cut(strings.TrimPrefix(line, "class "), " : ")
 			s := parser.Symbol{Name: name, Kind: parser.KindClass, Module: module, Content: line, StartLine: i + 1}
 			for _, b := range strings.Fields(bases) {
-				s.Relations = append(s.Relations, parser.Relation{Kind: parser.RelExtends, TargetName: b[strings.LastIndex(b, ".")+1:], TargetQualifiedName: b, Line: i + 1})
+				kind := parser.RelExtends
+				if u, ok := strings.CutPrefix(b, "~"); ok { // ~base.QN: uses_type (a named field)
+					b, kind = u, parser.RelUsesType
+				}
+				s.Relations = append(s.Relations, parser.Relation{Kind: kind, TargetName: b[strings.LastIndex(b, ".")+1:], TargetQualifiedName: b, Line: i + 1})
 			}
 			syms = append(syms, s)
 		case strings.HasPrefix(line, "tpl "), strings.HasPrefix(line, "var "), strings.HasPrefix(line, "scene "):
@@ -389,7 +393,7 @@ func TestResolution(t *testing.T) {
 		"func Nope -> zzz.Nope", // unresolved
 		"func Nope2 -> Nope3",   // unresolved
 		"func Many -> b.Dup",    // exact even though the name is ambiguous
-		"func Sfx -> pkg.Svc",   // unique by qualified suffix: src.pkg.Svc
+		"func Sfx -> pkg.Svc",   // exact by qualified suffix: src.pkg.Svc
 	}, "\n"))
 	b := e.write(t, "b.go", "func Bar\nfunc Dup\n")
 	e.write(t, "c.go", "func Dup\n")
@@ -410,7 +414,7 @@ func TestResolution(t *testing.T) {
 		assert.Empty(t, rel("Nope2").Resolution)
 		assert.Equal(t, parser.ResolutionExact, rel("Many").Resolution)
 		assert.Equal(t, dup.ID, rel("Many").TargetID)
-		assert.Equal(t, parser.ResolutionUnique, rel("Sfx").Resolution)
+		assert.Equal(t, parser.ResolutionExact, rel("Sfx").Resolution)
 		assert.Equal(t, e.symbols(t, svc)["Svc"].ID, rel("Sfx").TargetID)
 	}
 	_, err := e.run(t, nil)
@@ -492,6 +496,20 @@ func TestResolutionThroughBases(t *testing.T) {
 	_, err = e.run(t, func(o *Options) { o.Files = []string{a} })
 	require.NoError(t, err)
 	t.Run("incremental run", check)
+}
+
+// A Go named field (uses_type) does not promote its methods: only the
+// embedded type (extends) is a base.
+func TestResolutionThroughBasesGoEmbeddingOnly(t *testing.T) {
+	e := newEnv(t)
+	a := e.write(t, "a.go", "class C : t.T ~u.U\nfunc C.go -> a.C.acum\n")
+	tf := e.write(t, "t.go", "func T.acum\n")
+	e.write(t, "u.go", "func U.acum\n")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	r := e.symbols(t, a)["C.go"].Relations[0]
+	assert.Equal(t, e.symbols(t, tf)["T.acum"].ID, r.TargetID)
+	assert.Equal(t, parser.ResolutionExact, r.Resolution)
 }
 
 func TestSkip(t *testing.T) {
@@ -664,6 +682,35 @@ func TestRunStoreErrorAfterCancelIsInterrupted(t *testing.T) {
 	st, err := Run(ctx, o)
 	assert.ErrorIs(t, err, context.Canceled)
 	assert.Equal(t, "interrupted", st.Phase)
+}
+
+// A run cancelled before it changed anything (the catch-up of a session
+// that ends at once) keeps the previous done status; one cancelled after
+// the store changed reports interrupted.
+func TestRunCancelledKeepsDoneStatus(t *testing.T) {
+	e := newEnv(t)
+	e.write(t, "a.go", "func A\n")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	st, err := Run(ctx, e.opts)
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, "interrupted", st.Phase, "the caller still sees the cancel")
+	disk, ok := ReadStatus(e.root)
+	require.True(t, ok)
+	assert.Equal(t, "done", disk.Phase)
+	assert.Empty(t, disk.Error)
+
+	e.write(t, "a.go", "func A2\n")
+	ctx, cancel = context.WithCancel(context.Background())
+	o := e.opts
+	o.Store = cancelStore{e.store, cancel}
+	_, err = Run(ctx, o)
+	assert.ErrorIs(t, err, context.Canceled)
+	disk, _ = ReadStatus(e.root)
+	assert.Equal(t, "interrupted", disk.Phase)
 }
 
 func TestRunFilesSkipsSymlink(t *testing.T) {

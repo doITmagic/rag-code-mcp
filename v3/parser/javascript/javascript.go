@@ -449,7 +449,7 @@ func (c *fileCtx) resolveSpec(spec string) string {
 	if strings.HasPrefix(spec, "/") && !strings.HasPrefix(spec, "//") {
 		return c.rootAbsolute(spec)
 	}
-	if !strings.HasPrefix(spec, "./") && !strings.HasPrefix(spec, "../") {
+	if spec != "." && spec != ".." && !strings.HasPrefix(spec, "./") && !strings.HasPrefix(spec, "../") {
 		if m := c.aliasSpec(spec); m != "" {
 			return m
 		}

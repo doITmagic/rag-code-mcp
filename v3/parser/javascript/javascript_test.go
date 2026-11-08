@@ -737,3 +737,27 @@ func TestBarrelSkipsPackageSpecifiers(t *testing.T) {
 	assert.Equal(t, "react.useMemo", rel(t, run, parser.RelCall, "useMemo").TargetQualifiedName)
 	assert.Equal(t, "lib/re.useState", rel(t, run, parser.RelCall, "s2").TargetQualifiedName) // export * from a package: not followed
 }
+
+// '.' and '..' are the current and parent directory, not package names: they
+// resolve to that directory's index module and through its re-exports.
+func TestDotSpecifiers(t *testing.T) {
+	ws := t.TempDir()
+	for rel, body := range map[string]string{
+		"pkg/index.ts": "export { Solo as SoloT } from './t1'\nexport const delta = 1\n",
+		"pkg/t1.ts":    "export type Solo = {}\n",
+	} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(ws, rel)), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(ws, rel), []byte(body), 0o644))
+	}
+	src := "import type { SoloT } from '.'\nimport { delta as d2 } from '.'\nexport function u1(a: SoloT) { d2() }\n"
+	syms, err := analyzer{}.Analyze(parser.File{Path: filepath.Join(ws, "pkg", "u.ts"), Root: ws, Source: []byte(src)})
+	require.NoError(t, err)
+	u1 := find(t, syms, "pkg/u.u1")
+	assert.Equal(t, "pkg/index.delta", rel(t, u1, parser.RelCall, "d2").TargetQualifiedName)
+	assert.Equal(t, "pkg/t1.Solo", rel(t, u1, parser.RelUsesType, "SoloT").TargetQualifiedName)
+
+	src = "import { delta as d5 } from '..'\nexport function w() { d5() }\n"
+	syms, err = analyzer{}.Analyze(parser.File{Path: filepath.Join(ws, "pkg", "sub", "w.ts"), Root: ws, Source: []byte(src)})
+	require.NoError(t, err)
+	assert.Equal(t, "pkg/index.delta", rel(t, find(t, syms, "pkg/sub/w.w"), parser.RelCall, "d5").TargetQualifiedName)
+}

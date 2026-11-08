@@ -117,7 +117,6 @@ func TestController(t *testing.T) {
 		doc, signature string
 	}{
 		{"constant " + ns + ".TOP", "", true, 14, 14, "", "TOP = 1"},
-		{"constant " + ns + ".OTHER", "", true, 15, 15, "", "define('OTHER', 2)"},
 		{"class " + ns + ".UserController", "", true, 21, 53, "User controller.\nHandles users.",
 			`final class UserController extends Controller implements Countable, \JsonSerializable`},
 		{"constant " + ns + ".UserController.VERSION", "UserController", true, 26, 26, "", "VERSION = '1.0'"},
@@ -156,6 +155,12 @@ func TestController(t *testing.T) {
 			assert.Equal(t, tt.signature, s.Signature)
 		})
 	}
+
+	other, ok := syms["constant OTHER"]
+	require.True(t, ok, "define() creates a global constant")
+	assert.Equal(t, "", other.Module)
+	assert.Equal(t, 15, other.StartLine)
+	assert.Equal(t, "define('OTHER', 2)", other.Signature)
 
 	// Route "/users" is declared twice (get, post); the last one wins in the map
 	// but both are produced.
@@ -366,4 +371,24 @@ function make(Webpage $w): static {}
 	}
 	assert.ElementsMatch(t, []string{"App.Webpage", "App.User", "App\\Core.A", "App\\Core.B", "App.Webpage"}, got(m["method App\\Core.Cache.addModal"]))
 	assert.Equal(t, []string{"App.Webpage"}, got(m["function App\\Core.make"]))
+}
+
+// Hook and route names come only from a plain string literal in the name
+// position; otherwise the callback string must not become the name.
+func TestFrameworkNameIsFirstLiteral(t *testing.T) {
+	syms := analyze(t, "/root/p.php", `<?php
+add_action( $tag, 'zz_callback' );
+add_filter( 'zz_prefix_' . $tag, 'zz_callback', 10 );
+add_action( "x_{$tag}", 'zz_callback' );
+add_action( "ok_hook", 'zz_callback' );
+Route::get($uri, 'Ctrl@m');
+Route::match(['get', 'post'], '/mixed', 'Ctrl@m');
+`)
+	var names []string
+	for _, s := range syms {
+		if s.Kind == parser.KindHook || s.Kind == parser.KindRoute {
+			names = append(names, s.QualifiedName)
+		}
+	}
+	assert.ElementsMatch(t, []string{"ok_hook", "/mixed"}, names)
 }

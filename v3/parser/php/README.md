@@ -84,7 +84,7 @@ current namespace. `self` / `static` resolve to the enclosing class;
 | Enum `case` | `constant` | enum name | yes |
 | Top-level `function` | `function` | | yes |
 | Top-level `const X = ...` | `constant` | | yes |
-| Top-level `define('NAME', ...)` | `constant` | | yes |
+| Top-level `define('NAME', ...)` | `constant` (module `""`: `define()` always creates a global constant, even inside a namespace) | | yes |
 | `Route::get('/users', ...)` | `route` | enclosing symbol name | yes |
 | `add_action('init', ...)` / `add_filter(...)` | `hook` | enclosing symbol name | yes |
 
@@ -149,9 +149,11 @@ or method. Dynamic calls (`$fn()`) are skipped.
 ## Framework handling
 
 Framework symbols are derived from the calls collected while walking; the
-call shape is the only evidence, there is no project detection. A call
-produces a symbol only when it has a string-literal argument; the first such
-argument becomes the symbol name.
+call shape is the only evidence, there is no project detection. The symbol
+name is the first argument (the second for `Route::match`, after the method
+list), and only when it is a plain string literal: `add_action($tag, 'cb')`,
+`add_filter('p_' . $tag, 'cb')`, `"x_{$tag}"` and `Route::get($uri, 'C@m')`
+produce no symbol, so the callback string never becomes a hook or route name.
 
 | Framework | Call shape | Kind | Metadata |
 |-----------|-----------|------|----------|
@@ -171,7 +173,7 @@ by line with one regular expression.
 | Output | Details |
 |--------|---------|
 | One `template` symbol for the file | Name = file name without `.blade.php`; module = the dotted directory below the last `views` folder in the path (`resources/views/users/show.blade.php` -> module `users`, qualified name `users.show`). Content is the whole file. It ends on the last line; a final newline does not add an empty line. |
-| One `template` symbol per `@section('x')`, `@component('x')`, `@livewire('x')` | Owner = the view name. `@section` without a second argument and `@component` extend to the next closing directive (`@endsection`, `@endcomponent`, `@stop`, `@show`, `@append`, `@overwrite`); the others are one line. |
+| One `template` symbol per `@section('x')`, `@component('x')`, `@livewire('x')` | Owner = the view name. `@section` without a second argument and `@component` stay open until a closing directive (`@endsection`, `@endcomponent`, `@stop`, `@show`, `@append`, `@overwrite`); open blocks form a stack, so a closing directive ends the innermost one and a `@component` nested in a `@section` does not take the section's end. The inline `@section('x', 'v')` form and `@livewire` are one line. |
 | `imports` relation on the file symbol | For `@extends`, `@include`, `@includeIf`, `@each`; the target qualified name is the view name as written (`layouts.app`), which matches the qualified name of `resources/views/layouts/app.blade.php`. |
 
 A view outside any `views` folder has module `""`.
@@ -190,8 +192,19 @@ A view outside any `views` folder has module `""`.
 - `do_action` / `apply_filters` and chained route calls (`->name(...)`,
   `->middleware(...)`) are not turned into symbols.
 - `Route::group([...], fn)` has no string argument and produces no symbol.
-- The Blade scanner does not skip `{{-- --}}` comments, and an opening block
-  is closed by whichever closing directive comes next.
+- The Blade scanner does not skip `{{-- --}}` comments, and a closing
+  directive ends the innermost open block whatever its kind.
+- File-level code is never a usage, because a relation needs an owning
+  symbol: calls and `new X()` at the bottom of a class file, template or page
+  files, and top-level closures (`add_action('plugins_loaded', function () {
+  new Health_Check(); })`).
+- WordPress callbacks given as `array($this, 'm')`, `array('Cls', 'm')` or a
+  `'fn'` string are not usages of the method or function.
+- PHP function and method names are case-insensitive, but they are matched
+  case-sensitively.
+- When an interface and a trait used by the class both declare `m`,
+  `$this->m()` stays unresolved, although the trait body is the
+  implementation.
 
 ## Files
 
@@ -205,8 +218,8 @@ A view outside any `views` folder has module `""`.
 
 | File | Covers |
 |------|--------|
-| `php_test.go` | Registration of both extensions; a controller fixture with group/function/const `use`, attributes, traits, enums, promoted properties, closures, anonymous classes, routes and hooks (kinds, owners, lines, docs, signatures, metadata, relation targets); a plugin with braced namespaces and parse-error recovery; malformed input; global-namespace function calls; concurrency; parameter and return type uses. |
-| `blade_test.go` | A Blade view with sections, components and includes; a view outside a `views` folder; the file symbol's end line with a trailing newline. |
+| `php_test.go` | Registration of both extensions; a controller fixture with group/function/const `use`, attributes, traits, enums, promoted properties, closures, anonymous classes, routes and hooks (kinds, owners, lines, docs, signatures, metadata, relation targets); `define()` inside a namespace is global; hook and route names only from a plain string literal in the name position; a plugin with braced namespaces and parse-error recovery; malformed input; global-namespace function calls; concurrency; parameter and return type uses. |
+| `blade_test.go` | A Blade view with sections, components and includes; a view outside a `views` folder; the file symbol's end line with a trailing newline; a `@component` nested in a `@section`. |
 | `zz_verify_test.go` | Verification tests: name resolution, global-namespace WordPress code, robustness, a routes file, multiple namespaces in one file, Blade layouts, no shared state between calls. |
 
 ## Testing

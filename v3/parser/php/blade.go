@@ -26,7 +26,7 @@ func blade(f parser.File) []parser.Symbol {
 		Name: stem, Kind: parser.KindTemplate, Module: viewModule(f.Path), Signature: "@" + stem,
 		Content: string(f.Source), StartLine: 1, EndLine: max(1, strings.Count(strings.TrimSuffix(string(f.Source), "\n"), "\n")+1), Exported: true,
 	}}
-	open := -1 // index of the block symbol waiting for its closing directive
+	var open []int // indexes of the block symbols waiting for their closing directive, innermost last
 	for i, line := range lines {
 		ln := i + 1
 		for _, m := range bladeDirective.FindAllStringSubmatch(line, -1) {
@@ -46,13 +46,13 @@ func blade(f parser.File) []parser.Symbol {
 					Signature: strings.TrimSpace(m[0]), Content: line, StartLine: ln, EndLine: ln, Exported: true,
 				})
 				if m[1] == "component" || (m[1] == "section" && m[3] == "") {
-					open = len(syms) - 1
+					open = append(open, len(syms)-1)
 				}
 			default: // a closing directive
-				if open >= 0 {
-					syms[open].EndLine = ln
-					syms[open].Content = strings.Join(lines[syms[open].StartLine-1:ln], "\n")
-					open = -1
+				if k := len(open) - 1; k >= 0 {
+					s := &syms[open[k]]
+					s.EndLine, s.Content = ln, strings.Join(lines[s.StartLine-1:ln], "\n")
+					open = open[:k]
 				}
 			}
 		}

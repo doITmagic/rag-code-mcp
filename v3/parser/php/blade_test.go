@@ -99,3 +99,16 @@ func TestBladeEndLine(t *testing.T) {
 	require.NotEmpty(t, syms)
 	assert.Equal(t, 2, syms[0].EndLine)
 }
+
+// A block nested inside a section does not take the section's end.
+func TestBladeNestedBlocks(t *testing.T) {
+	src := "a\nb\nc\nd\n@section('content')\n@component('alert')\n@slot('title')\nT\n@endslot\nbody\n@endcomponent\nx\ny\nz\n@endsection\n"
+	syms, err := parser.Analyze(parser.File{Path: "/root/resources/views/p.blade.php", Root: "/root", Source: []byte(src)})
+	require.NoError(t, err)
+	lines := map[string][2]int{}
+	for _, s := range syms {
+		lines[s.QualifiedName] = [2]int{s.StartLine, s.EndLine}
+	}
+	assert.Equal(t, [2]int{5, 15}, lines["p.content"])
+	assert.Equal(t, [2]int{6, 11}, lines["p.alert"])
+}

@@ -54,7 +54,7 @@ type rawCall struct {
 	recv       string // scope text for Foo::bar(), "" for a plain call
 	recvFQN    string // recv resolved through the import table
 	name       string
-	arg        string // first string-literal argument, "" when none
+	arg        string // name argument when a plain string literal, "" otherwise
 	content    string
 	start, end int
 }
@@ -531,35 +531,45 @@ func (c *collector) call(n *gotreesitter.Node, sym *parser.Symbol, owner string)
 		if sym != nil {
 			ownerName = sym.Name
 		}
+		pos := 0
+		if name == "match" { // Route::match(methods, uri, action)
+			pos = 1
+		}
 		c.calls = append(c.calls, rawCall{
 			ns: c.ns, owner: ownerName, recv: recv, recvFQN: recvFQN, name: name,
-			arg: c.firstStringArg(n), content: c.text(n), start: start, end: end,
+			arg: c.stringArg(n, pos), content: c.text(n), start: start, end: end,
 		})
 	}
 }
 
 // define turns a top-level define('NAME', value) into a constant symbol.
+// define() always creates a global constant, whatever the namespace.
 func (c *collector) define(n *gotreesitter.Node) {
-	name := c.firstStringArg(n)
+	name := c.stringArg(n, 0)
 	if name == "" {
 		return
 	}
 	s := c.symbol(n, name, parser.KindConstant, "", true)
-	s.Signature = c.text(n)
+	s.Module, s.Signature = "", c.text(n)
 	c.syms = append(c.syms, s)
 }
 
-// firstStringArg returns the first string-literal argument without quotes,
-// "" when there is none.
-func (c *collector) firstStringArg(n *gotreesitter.Node) string {
-	args := c.field(n, "arguments")
-	for _, nc := range parser.NamedChildren(args) {
-		v := nc.NamedChild(0)
-		if t := c.typ(v); t == "string" || t == "encapsed_string" {
-			if s := c.text(v); len(s) >= 2 {
-				return s[1 : len(s)-1]
-			}
+// stringArg returns argument pos without quotes when it is a plain string
+// literal (no concatenation or interpolation), "" otherwise.
+func (c *collector) stringArg(n *gotreesitter.Node, pos int) string {
+	var args []*gotreesitter.Node
+	for _, nc := range parser.NamedChildren(c.field(n, "arguments")) {
+		if nc.Type(c.lang) == "argument" {
+			args = append(args, nc)
 		}
 	}
-	return ""
+	if pos >= len(args) {
+		return ""
+	}
+	v := args[pos].NamedChild(0)
+	s := c.text(v)
+	if t := c.typ(v); len(s) < 2 || t != "string" && (t != "encapsed_string" || strings.ContainsRune(s, '$')) {
+		return ""
+	}
+	return s[1 : len(s)-1]
 }

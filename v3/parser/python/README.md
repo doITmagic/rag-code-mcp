@@ -150,7 +150,8 @@ target:                  app.models.user.User.find   (not app.models.User.find)
 
 The package's `__init__.py` is looked up under the workspace root, then under
 each directory down to the analyzed file's directory (for `src/` layouts and
-monorepo subprojects). Only regular files up to 4 MiB are read; an
+monorepo subprojects), and last under `<root>/src`, so `tests/` and `examples/`
+find a `src/` layout package (flask's `import flask`). Only regular files up to 4 MiB are read; an
 `__init__.py` that is a symlink is treated as absent, so its re-exports are
 not followed. Re-exports are
 followed up to 8 levels deep. The parsed import table is cached process-wide,
@@ -181,7 +182,7 @@ keyed by root + path and invalidated by mtime and size.
 
 | File | Covers |
 |------|--------|
-| `python_test.go` | Symbols (kinds, owners, signatures, docstrings, decorators, overloads), call targets for every import form, base classes, module names, relative imports from `__init__.py`, malformed input, registration, concurrency, package re-exports (also under a `src/` root and with the cache), function-local imports and class-body calls, imports under `if TYPE_CHECKING:` and try/except. |
+| `python_test.go` | Symbols (kinds, owners, signatures, docstrings, decorators, overloads), call targets for every import form, base classes, module names, relative imports from `__init__.py`, malformed input, registration, concurrency, package re-exports (also under a `src/` root, from `tests/` outside it, and with the cache), function-local imports and class-body calls, imports under `if TYPE_CHECKING:` and try/except. |
 | `zz_verify_test.go` | Verification tests: a fresh fixture exercising every import form, symbols, `from` not importing the module itself, `.pyi` files and the root module, robustness. |
 
 ## Testing

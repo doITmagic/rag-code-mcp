@@ -347,6 +347,25 @@ def v():
 	assert.Equal(t, map[string]string{"find": "src.mypkg.user.User.find", "x": "mypkg.dev.x"}, targets(byQN(syms)["src.mypkg.api.v"], parser.RelCall))
 }
 
+// A caller outside src/ (tests/, examples/) still finds a src/ layout
+// package's __init__.py re-exports, as flask's tests do with `import flask`.
+func TestPackageReexportSrcLayoutFromTests(t *testing.T) {
+	root := t.TempDir()
+	pkg := filepath.Join(root, "src", "mypkg")
+	require.NoError(t, os.MkdirAll(pkg, 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "tests"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pkg, "__init__.py"), []byte("from .user import User\n"), 0o644))
+	syms := analyze(t, filepath.Join(root, "tests", "test_user.py"), root, `
+import mypkg
+from mypkg import User
+
+def test_v():
+    User.find()
+    mypkg.User()
+`)
+	assert.Equal(t, map[string]string{"find": "src.mypkg.user.User.find", "User": "src.mypkg.user.User"}, targets(byQN(syms)["tests.test_user.test_v"], parser.RelCall))
+}
+
 // The parsed __init__.py table is shared process-wide by mtime+size: a
 // rewrite with the same size and mtime is served from the cache (no
 // re-parse), a size change is re-parsed.

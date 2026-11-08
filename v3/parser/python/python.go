@@ -607,6 +607,8 @@ func (c *fileCtx) reexports(pkg string) map[string]string {
 			dirs = append(dirs, filepath.Join(dirs[len(dirs)-1], seg))
 		}
 	}
+	// src/ layout: tests/ and examples/ import the package from outside src/.
+	dirs = append(dirs, filepath.Join(c.root, "src"))
 	for _, d := range dirs {
 		path := filepath.Join(d, filepath.Join(strings.Split(pkg, ".")...), "__init__.py")
 		info, err := os.Lstat(path)

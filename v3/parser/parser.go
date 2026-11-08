@@ -45,8 +45,8 @@ const (
 
 // Resolution says how a relation's TargetID was found. Set by the indexer.
 const (
-	ResolutionExact     = "exact"     // TargetQualifiedName matched one symbol
-	ResolutionUnique    = "unique"    // only TargetName matched, and exactly one symbol has it
+	ResolutionExact     = "exact"     // TargetQualifiedName matched one symbol, exactly or as a qualified suffix
+	ResolutionUnique    = "unique"    // matched by name only (TargetName), and exactly one symbol has it
 	ResolutionAmbiguous = "ambiguous" // several symbols share the name, none matched by qualified name
 )
 

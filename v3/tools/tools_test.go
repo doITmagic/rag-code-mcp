@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode"
@@ -74,6 +76,23 @@ func (o otherLangAnalyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 	return syms, err
 }
 
+// fileModAnalyzer parses .fkm files like fakeAnalyzer, with one module per
+// file ("m/<dir>/<base>"), as JS and Vue modules are.
+type fileModAnalyzer struct{ fakeAnalyzer }
+
+func (fileModAnalyzer) Extensions() []string { return []string{".fkm"} }
+func (a fileModAnalyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
+	syms, err := a.fakeAnalyzer.Analyze(f)
+	rel, _ := filepath.Rel(f.Root, strings.TrimSuffix(f.Path, filepath.Ext(f.Path)))
+	for i := range syms {
+		s := &syms[i]
+		s.Module = "m/" + filepath.ToSlash(rel)
+		s.QualifiedName = parser.Qualify(s.Module, "", s.Name)
+		s.ID = parser.SymbolID(s.FilePath, s.QualifiedName, s.StartLine)
+	}
+	return syms, err
+}
+
 // downEmbedder is an embedder whose service is unreachable.
 type downEmbedder struct{ *embed.Fake }
 
@@ -89,6 +108,7 @@ func TestMain(m *testing.M) {
 	os.Setenv("RAGCODE_HOME", home)
 	parser.Register(fakeAnalyzer{})
 	parser.Register(otherLangAnalyzer{})
+	parser.Register(fileModAnalyzer{})
 	code := m.Run()
 	os.RemoveAll(home)
 	os.Exit(code)
@@ -817,4 +837,239 @@ func TestKnownRootsMissingRoot(t *testing.T) {
 	got := knownRoots(nil)
 	require.Equal(t, "missing", got[0].State)
 	require.Empty(t, got[0].Ended)
+}
+
+// Overload signatures and the implementation (or a get/set pair) share the
+// qualified name and the file: they are one symbol, never ambiguous; the
+// widest one (the implementation) is picked and the relations of all count.
+func TestOverloadsAreOneSymbol(t *testing.T) {
+	v := newEnv(t, false, func(c *config.Config) { c.AutoIndex = false })
+	v.addFiles(t, map[string]string{
+		"ts/h.fk": "func useRef\nfunc useRef\nfunc useRef\n  call m/ts.helper\nfunc helper\nfunc res\n  call m/ts.helper\nfunc res\n  call m/ts.other\nfunc other\n",
+		"ts/u.fk": "func caller\n  call m/ts.useRef\n  call m/ts.res\n",
+	})
+	var out struct {
+		Symbol Candidate `json:"symbol"`
+		Total  int       `json:"total"`
+	}
+	for _, args := range []map[string]any{{"symbol": "m/ts.useRef", "file_path": "ts/h.fk"}, {"symbol": "useRef"}} {
+		args["workspace_root"] = v.root
+		r, _ := v.call(t, "rag_find_usages", args)
+		require.Equal(t, "ok", r.Status, r.Message)
+		data(t, r, &out)
+		assert.Equal(t, 3, out.Symbol.StartLine, "the implementation")
+		assert.Equal(t, 1, out.Total)
+	}
+	var h struct{ Outgoing *Node }
+	r, _ := v.call(t, "rag_call_hierarchy", map[string]any{"workspace_root": v.root, "symbol": "useRef", "direction": "outgoing"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	data(t, r, &h)
+	require.Len(t, h.Outgoing.Children, 1)
+	assert.Equal(t, "m/ts.helper", h.Outgoing.Children[0].QualifiedName)
+	r, _ = v.call(t, "rag_call_hierarchy", map[string]any{"workspace_root": v.root, "symbol": "m/ts.res", "file_path": "ts/h.fk", "direction": "both"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	var hb struct{ Incoming, Outgoing *Node }
+	data(t, r, &hb)
+	assert.Len(t, hb.Outgoing.Children, 2, "getter and setter callees")
+	assert.Len(t, hb.Incoming.Children, 1)
+}
+
+// A short directory name lists the files directly in that directory even
+// when every file is its own module (JS); a file without exported symbols
+// says so instead of "no match"; zero usages of a constant do not claim
+// imports are tracked.
+func TestExportsShortDirOfFileModules(t *testing.T) {
+	v := newEnv(t, false, func(c *config.Config) { c.AutoIndex = false })
+	v.addFiles(t, map[string]string{"web/ui/button.fkm": "func Button\n", "web/ui/card.fkm": "func Card\n", "web/ui/deep/z.fkm": "func Deep\n",
+		"lib/ssg.fkm": "func Ssg\n", "lib/ssg/utils.fkm": "func Util\n", "src/index.fkm": "func internal\n", "src/empty.fkm": "\n"})
+	names := func(pkg string) []string {
+		var out struct {
+			Exports map[string][]Export `json:"exports"`
+		}
+		r, res := v.call(t, "rag_list_package_exports", map[string]any{"workspace_root": v.root, "package": pkg})
+		require.False(t, res.IsError, r.Message)
+		data(t, r, &out)
+		var n []string
+		for _, e := range out.Exports["function"] {
+			n = append(n, e.Name)
+		}
+		return n
+	}
+	assert.Equal(t, []string{"Button", "Card"}, names("ui"))
+	assert.Equal(t, []string{"Ssg", "Util"}, names("ssg"))
+	assert.Equal(t, []string{"Button"}, names("web/ui/button.fkm"), "a file lists its own exports")
+	for _, f := range []string{"src/index.fkm", "src/empty.fkm"} {
+		r, _ := v.call(t, "rag_list_package_exports", map[string]any{"workspace_root": v.root, "package": f})
+		assert.Contains(t, r.Message, f+" has no exported symbols of its own")
+	}
+	v.addFiles(t, map[string]string{"g/k.fk": "const Max\n"})
+	r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "m/g.Max"})
+	assert.NotContains(t, r.Message, "imports")
+}
+
+// A call that names a qualified name the index could not match, bound by
+// the name alone (User::backWithError on a class without that method), is a
+// guess: by_name in usages and in the hierarchy, both directions.
+func TestQualifiedCallBoundByNameIsByName(t *testing.T) {
+	v := newEnv(t, false, func(c *config.Config) { c.AutoIndex = false })
+	v.addFiles(t, map[string]string{"a/u.fk": "func Owner\nfunc Caller\n  call m/a.Owner.backWithError\n", "b/s.fk": "func backWithError\n"})
+	var out struct {
+		Files  []FileUsages `json:"files"`
+		ByName int          `json:"by_name"`
+	}
+	r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "m/b.backWithError"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	data(t, r, &out)
+	require.Len(t, out.Files, 1, r.Message)
+	assert.True(t, out.Files[0].Usages[0].ByName)
+	assert.Equal(t, 1, out.ByName)
+	var h struct{ Incoming, Outgoing *Node }
+	r, _ = v.call(t, "rag_call_hierarchy", map[string]any{"workspace_root": v.root, "symbol": "m/b.backWithError"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	data(t, r, &h)
+	require.Len(t, h.Incoming.Children, 1)
+	assert.True(t, h.Incoming.Children[0].ByName)
+	r, _ = v.call(t, "rag_call_hierarchy", map[string]any{"workspace_root": v.root, "symbol": "m/a.Caller", "direction": "outgoing"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	data(t, r, &h)
+	require.Len(t, h.Outgoing.Children, 1)
+	assert.True(t, h.Outgoing.Children[0].ByName)
+}
+
+// switchEmbedder blocks multi-text (indexing) batches while block is set,
+// until release is closed.
+type switchEmbedder struct {
+	*embed.Fake
+	block   *atomic.Bool
+	release chan struct{}
+}
+
+func (s switchEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	if len(texts) > 1 && s.block.Load() {
+		<-s.release
+	}
+	return s.Fake.Embed(ctx, texts)
+}
+
+// While a run is in progress on an existing index, the index tools answer
+// indexing (results may be incomplete), a search with no hits is not sent to
+// the not-indexed fallback, and rag_read_file_context stays ok.
+func TestStatusIndexingDuringRun(t *testing.T) {
+	sw := switchEmbedder{Fake: &embed.Fake{}, block: &atomic.Bool{}, release: make(chan struct{})}
+	v := newEnvWith(t, sw, true, func(c *config.Config) { c.AutoIndex = false })
+	w, err := v.e.Workspace(v.root)
+	require.NoError(t, err)
+	sw.block.Store(true)
+	require.NoError(t, os.WriteFile(filepath.Join(v.root, "pkg/n.fk"), []byte("func N1\nfunc N2\n"), 0o644))
+	w.Index(false)
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			close(sw.release)
+			require.Eventually(t, func() bool { s := w.Status(); return !s.Running && !s.Queued }, 10*time.Second, 20*time.Millisecond)
+		}
+	}
+	t.Cleanup(release)
+	require.Eventually(t, func() bool { return w.Status().Running }, 10*time.Second, 20*time.Millisecond)
+
+	for name, args := range map[string]map[string]any{
+		"rag_find_usages":          {"symbol": "Foo"},
+		"rag_call_hierarchy":       {"symbol": "Foo"},
+		"rag_list_package_exports": {"package": "m/pkg"},
+		"rag_search":               {"query": "zzzNoSuchThing", "kinds": []string{"route"}},
+	} {
+		args["workspace_root"] = v.root
+		r, _ := v.call(t, name, args)
+		assert.Equal(t, "indexing", r.Status, name+": "+r.Message)
+		assert.Contains(t, r.Message, "may be incomplete", name)
+		assert.NotContains(t, r.Message, "on-the-fly", name)
+	}
+	r, _ := v.call(t, "rag_read_file_context", map[string]any{"workspace_root": v.root, "file_path": "pkg/a.fk"})
+	assert.Equal(t, "ok", r.Status, r.Message)
+
+	release()
+	r, _ = v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "zzzNoSuchThing", "kinds": []string{"route"}})
+	assert.Equal(t, "ok", r.Status, r.Message)
+}
+
+// A kinds filter matching nothing in an existing module says so; an unknown
+// kind is an input error listing the valid ones.
+func TestKindsFilterAndValidation(t *testing.T) {
+	v := newEnv(t, true, nil)
+	for _, pkg := range []string{"m/pkg", "pkg"} {
+		r, res := v.call(t, "rag_list_package_exports", map[string]any{"workspace_root": v.root, "package": pkg, "kinds": []string{"interface"}})
+		require.False(t, res.IsError, r.Message)
+		assert.Contains(t, r.Message, "no exported symbols of kinds [interface]", pkg)
+	}
+	for name, args := range map[string]map[string]any{
+		"rag_list_package_exports": {"package": "pkg", "kinds": []string{"nope"}},
+		"rag_search":               {"query": "Foo", "kinds": []string{"function", "nope"}},
+	} {
+		args["workspace_root"] = v.root
+		r, res := v.call(t, name, args)
+		require.True(t, res.IsError, name)
+		assert.Contains(t, r.Message, `unknown kind "nope"`, name)
+		assert.Contains(t, r.Message, "function, method", name)
+	}
+}
+
+// limit caps the referencing symbols exactly and says when it cut; the
+// hierarchy flags a node whose callers were cut at 50.
+func TestUsagesLimitAndTruncated(t *testing.T) {
+	v := newEnv(t, false, func(c *config.Config) { c.AutoIndex = false })
+	var many strings.Builder
+	for i := range 52 { // half by name only (target id, no qualified name): the two lookups return different callers
+		target := map[bool]string{true: "T", false: "m/lim.T"}[i%2 == 0]
+		fmt.Fprintf(&many, "func C%d\n  call %s\n", i, target)
+	}
+	v.addFiles(t, map[string]string{"lim/t.fk": "func T\n", "lim/c.fk": many.String()})
+	var out struct {
+		Files     []FileUsages `json:"files"`
+		Total     int          `json:"total"`
+		Truncated bool         `json:"truncated"`
+	}
+	for _, c := range []struct {
+		limit int
+		cut   bool
+	}{{1, true}, {3, true}, {52, false}, {100, false}} {
+		r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "m/lim.T", "limit": c.limit})
+		require.Equal(t, "ok", r.Status, r.Message)
+		data(t, r, &out)
+		assert.Equal(t, min(c.limit, 52), out.Total, c.limit)
+		assert.Equal(t, c.cut, out.Truncated, c.limit)
+		assert.Equal(t, c.cut, strings.Contains(r.Message, "raise limit"), r.Message)
+	}
+	var h struct {
+		Incoming          *Node
+		IncomingTruncated bool `json:"incoming_truncated"`
+		Text              string
+	}
+	r, _ := v.call(t, "rag_call_hierarchy", map[string]any{"workspace_root": v.root, "symbol": "m/lim.T", "depth": 1})
+	require.Equal(t, "ok", r.Status, r.Message)
+	data(t, r, &h)
+	assert.Len(t, h.Incoming.Children, 50)
+	assert.True(t, h.IncomingTruncated)
+	assert.Contains(t, h.Text, "first 50 callers")
+}
+
+// A binary file with an extension no parser handles is not dumped.
+func TestReadFileBinaryUnknownExtension(t *testing.T) {
+	v := newEnv(t, false, nil)
+	require.NoError(t, os.MkdirAll(filepath.Join(v.root, "edge"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(v.root, "edge/bin.dat"), []byte("ab\x00\xff\xfe\ncd\x01\n"), 0o644))
+	var out struct{ Lines []string }
+	r, res := v.call(t, "rag_read_file_context", map[string]any{"workspace_root": v.root, "file_path": "edge/bin.dat"})
+	require.False(t, res.IsError, r.Message)
+	assert.Contains(t, r.Message, "not parsed (binary)")
+	data(t, r, &out)
+	assert.Empty(t, out.Lines)
+
+	// A line range of a binary file returns no raw bytes either.
+	out.Lines = nil
+	r, res = v.call(t, "rag_read_file_context", map[string]any{"workspace_root": v.root, "file_path": "edge/bin.dat", "start_line": 1, "end_line": 2})
+	require.False(t, res.IsError, r.Message)
+	assert.Contains(t, r.Message, "binary")
+	data(t, r, &out)
+	assert.Empty(t, out.Lines)
 }

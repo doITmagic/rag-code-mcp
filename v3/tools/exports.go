@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -41,27 +42,17 @@ func (t *tools) listExports(ctx context.Context, req *mcp.CallToolRequest, in Ex
 	if pkg == "" {
 		return fail("package is empty: pass a module path or a package name")
 	}
+	ks, err := kinds(in.Kinds)
+	if err != nil {
+		return fail(err.Error())
+	}
 	w, res := t.open(ctx, req, in.WorkspaceRoot)
 	if res != nil {
 		return res, nil, nil
 	}
-	f := store.Filter{Module: pkg, Kinds: kinds(in.Kinds)}
-	hits, err := w.Scroll(ctx, f, store.MaxScroll)
+	hits, capped, file, err := moduleSymbols(ctx, w, pkg, ks)
 	if err != nil {
 		return storeErr(ctx, w, err)
-	}
-	// The scroll caps before the Exported filter, so a full page means some
-	// exported symbols may be missing.
-	capped := len(hits) >= store.MaxScroll
-	if len(hits) == 0 && !strings.ContainsAny(pkg, "/\\.") {
-		if hits, capped, err = shortModule(ctx, w, pkg, f.Kinds); err != nil {
-			return storeErr(ctx, w, err)
-		}
-	}
-	if len(hits) == 0 { // a directory of the workspace: the files directly in it (a JS or GDScript module is one file)
-		if hits, capped, err = dirModules(ctx, w, pkg, f.Kinds); err != nil {
-			return storeErr(ctx, w, err)
-		}
 	}
 	hits = live(w, hits)
 	byKind := map[string][]Export{}
@@ -88,33 +79,70 @@ func (t *tools) listExports(ctx context.Context, req *mcp.CallToolRequest, in Ex
 	}
 	sort.Strings(mods)
 	msg := fmt.Sprintf("%d exported symbols in %d modules", min(n, exportsCap), len(mods))
-	if len(mods) == 0 {
+	if len(mods) == 0 && len(ks) > 0 {
+		all, _, _, err := moduleSymbols(ctx, w, pkg, nil)
+		if err != nil {
+			return storeErr(ctx, w, err)
+		}
+		if slices.ContainsFunc(live(w, all), func(h store.Hit) bool { return h.Symbol.Exported }) {
+			return reply("ok", fmt.Sprintf("%q has no exported symbols of kinds %v; drop kinds to list them all", pkg, ks), map[string]any{"package": pkg, "modules": mods, "exports": byKind, "truncated": capped}, w)
+		}
+	}
+	if len(mods) == 0 && file != "" {
+		msg = fmt.Sprintf("%s has no exported symbols of its own (it may only re-export others)", file)
+	} else if len(mods) == 0 {
 		msg = fmt.Sprintf("no indexed module or directory matches %q; pass the full module path or a directory of the workspace", pkg)
 	}
 	return reply("ok", msg, map[string]any{"package": pkg, "modules": mods, "exports": byKind, "truncated": capped || n > exportsCap}, w)
 }
 
+// moduleSymbols finds the symbols of pkg: a module path, a short package
+// name, a directory or a source file of the workspace (file is then set).
+func moduleSymbols(ctx context.Context, w *engine.Workspace, pkg string, ks []parser.Kind) (hits []store.Hit, capped bool, file string, err error) {
+	if hits, err = w.Scroll(ctx, store.Filter{Module: pkg, Kinds: ks}, store.MaxScroll); err != nil {
+		return nil, false, "", err
+	}
+	// The scroll caps before the Exported filter, so a full page means some
+	// exported symbols may be missing.
+	capped = len(hits) >= store.MaxScroll
+	if len(hits) == 0 && !strings.ContainsAny(pkg, "/\\.") {
+		if hits, capped, err = shortModule(ctx, w, pkg, ks); err != nil {
+			return nil, false, "", err
+		}
+	}
+	if len(hits) == 0 { // a directory of the workspace: the files directly in it (a JS or GDScript module is one file)
+		return dirModules(ctx, w, pkg, ks)
+	}
+	return hits, capped, "", nil
+}
+
 // dirModules returns the symbols of the files directly in dir, a directory
-// inside the workspace; none when it is not one.
-func dirModules(ctx context.Context, w *engine.Workspace, dir string, ks []parser.Kind) ([]store.Hit, bool, error) {
+// inside the workspace, or of dir itself when it is a source file; none when
+// it is neither. file is the file's path relative to the root.
+func dirModules(ctx context.Context, w *engine.Workspace, dir string, ks []parser.Kind) (hits []store.Hit, capped bool, file string, err error) {
 	abs, err := insideRoot(w.Root, strings.TrimRight(dir, "/\\"))
 	if err != nil {
-		return nil, false, nil
+		return nil, false, "", nil
 	}
-	if fi, err := os.Stat(abs); err != nil || !fi.IsDir() || abs == w.Root {
-		return nil, false, nil
+	fi, err := os.Stat(abs)
+	if err == nil && fi.Mode().IsRegular() && parser.ForFile(abs) != nil {
+		file, _ = filepath.Rel(w.Root, abs)
+		hits, err = w.Scroll(ctx, store.Filter{FilePath: abs, Kinds: ks}, store.MaxScroll)
+		return hits, len(hits) >= store.MaxScroll, filepath.ToSlash(file), err
+	}
+	if err != nil || !fi.IsDir() || abs == w.Root {
+		return nil, false, "", nil
 	}
 	part, err := w.Scroll(ctx, store.Filter{PathPrefix: abs, Kinds: ks}, store.MaxScroll)
 	if err != nil {
-		return nil, false, err
+		return nil, false, "", err
 	}
-	var hits []store.Hit
 	for _, h := range part {
 		if filepath.Dir(h.Symbol.FilePath) == abs {
 			hits = append(hits, h)
 		}
 	}
-	return hits, len(part) >= store.MaxScroll, nil
+	return hits, len(part) >= store.MaxScroll, "", nil
 }
 
 // shortModule finds the symbols of the modules ending in "/"+name, "."+name
@@ -123,7 +151,7 @@ func dirModules(ctx context.Context, w *engine.Workspace, dir string, ks []parse
 // each read with one filtered scroll. capped reports a scroll that hit
 // store.MaxScroll.
 func shortModule(ctx context.Context, w *engine.Workspace, name string, ks []parser.Kind) (hits []store.Hit, capped bool, err error) {
-	filters := []store.Filter{{QualifiedSuffix: name, Kinds: ks}}
+	filters := []store.Filter{{QualifiedSuffix: name, Kinds: ks}} // a PathPrefix filter is a directory called name
 	dirs := map[string]bool{}
 	var files []string
 	if st, err := index.LoadState(w.Root); err == nil {
@@ -158,7 +186,8 @@ func shortModule(ctx context.Context, w *engine.Workspace, name string, ks []par
 		capped = capped || len(part) >= store.MaxScroll
 		for _, h := range part {
 			m := h.Symbol.Module
-			if seen[h.Symbol.ID] || !(m == name || strings.HasSuffix(m, "/"+name) || strings.HasSuffix(m, "."+name) || strings.HasSuffix(m, "\\"+name)) {
+			inDir := f.PathPrefix != "" && filepath.Dir(h.Symbol.FilePath) == f.PathPrefix // a JS module is a file of the directory
+			if seen[h.Symbol.ID] || !(inDir || m == name || strings.HasSuffix(m, "/"+name) || strings.HasSuffix(m, "."+name) || strings.HasSuffix(m, "\\"+name)) {
 				continue
 			}
 			seen[h.Symbol.ID] = true

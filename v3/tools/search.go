@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -66,11 +67,15 @@ func (t *tools) search(ctx context.Context, req *mcp.CallToolRequest, in SearchI
 	if in.Limit <= 0 {
 		in.Limit = 10
 	}
+	ks, err := kinds(in.Kinds)
+	if err != nil {
+		return fail(err.Error())
+	}
 	w, res := t.open(ctx, req, in.WorkspaceRoot)
 	if res != nil {
 		return res, nil, nil
 	}
-	f := store.Filter{Language: in.Language, Kinds: kinds(in.Kinds)}
+	f := store.Filter{Language: in.Language, Kinds: ks}
 	if in.PathPrefix != "" {
 		p, err := insideRoot(w.Root, in.PathPrefix)
 		if err != nil {
@@ -105,9 +110,16 @@ func (t *tools) search(ctx context.Context, req *mcp.CallToolRequest, in SearchI
 	}
 	hits = rank(hits, w.Root, in.FilePath, in.Limit, in.Full)
 	// A recreate (or a model change) refills the collection from empty: no
-	// hit yet means "not indexed so far", not "does not exist".
+	// hit yet means "not indexed so far", not "does not exist". A run over an
+	// index that has symbols (the start-up catch-up) is not that case.
 	if s := w.Status(); len(hits) == 0 && (s.Running || s.Queued) {
-		return t.searchErr(ctx, w, in, f, engine.ErrNotIndexed)
+		some, err := w.Scroll(ctx, store.Filter{}, 1)
+		if err != nil {
+			return t.searchErr(ctx, w, in, f, err)
+		}
+		if len(some) == 0 {
+			return t.searchErr(ctx, w, in, f, engine.ErrNotIndexed)
+		}
 	}
 	return reply("ok", "", map[string]any{"query": in.Query, "results": hits, "count": len(hits)}, w)
 }
@@ -295,12 +307,24 @@ func isIdentifier(q string) bool {
 	return letter
 }
 
-func kinds(ss []string) []parser.Kind {
+var allKinds = []parser.Kind{parser.KindFunction, parser.KindMethod, parser.KindClass, parser.KindInterface, parser.KindType, parser.KindVariable,
+	parser.KindConstant, parser.KindRoute, parser.KindHook, parser.KindTemplate, parser.KindScene, parser.KindChunk}
+
+// kinds parses a kinds filter; an unknown kind is an input error.
+func kinds(ss []string) ([]parser.Kind, error) {
 	var out []parser.Kind
 	for _, s := range ss {
-		if s = strings.TrimSpace(s); s != "" {
-			out = append(out, parser.Kind(s))
+		if s = strings.TrimSpace(s); s == "" {
+			continue
 		}
+		if !slices.Contains(allKinds, parser.Kind(s)) {
+			valid := make([]string, len(allKinds))
+			for i, k := range allKinds {
+				valid[i] = string(k)
+			}
+			return nil, fmt.Errorf("unknown kind %q: use %s", s, strings.Join(valid, ", "))
+		}
+		out = append(out, parser.Kind(s))
 	}
-	return out
+	return out, nil
 }

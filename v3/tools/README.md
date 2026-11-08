@@ -44,10 +44,10 @@ graph LR
 
 | File | Contents |
 |---|---|
-| [`tools.go`](tools.go) | package doc, `Response`, `IndexInfo`, `Register` and the tool table; shared helpers: `reply`, `fail`, `indexInfo`, `resolveRoot`, `open`, `notIndexed`, `storeErr`, `insideRoot`, `live`, `readLines`, `capLines`, `isTestFile` |
-| [`search.go`](search.go) | `rag_search`: `SearchInput`, `SearchHit`, exact plus semantic search, the bounded not-indexed fallback, `nameScore`, `rank`, `isIdentifier` |
-| [`usages.go`](usages.go) | `rag_find_usages` and `rag_call_hierarchy`: `resolveSymbol` (one symbol or an `ambiguous` answer), `referrers`, `ambiguousByName`, the hierarchy `walker` (`walk` level by level, `next`), `writeTree` |
-| [`exports.go`](exports.go) | `rag_list_package_exports`: `ExportsInput`, `Export`, `shortModule` for short package names, `dirModules` for a directory of the workspace |
+| [`tools.go`](tools.go) | package doc, `Response`, `IndexInfo`, `Register` and the tool table; shared helpers: `reply` (an `ok` answer during a run is `indexing`), `answer`, `fail`, `indexInfo`, `resolveRoot`, `open`, `notIndexed`, `storeErr`, `insideRoot`, `live`, `readLines`, `capLines`, `isTestFile` |
+| [`search.go`](search.go) | `rag_search`: `SearchInput`, `SearchHit`, exact plus semantic search, the bounded not-indexed fallback, `nameScore`, `rank`, `isIdentifier`, `kinds` (validates the kinds filter) |
+| [`usages.go`](usages.go) | `rag_find_usages` and `rag_call_hierarchy`: `resolveSymbol` (one symbol, overload twins merged, or an `ambiguous` answer), `referrers`, `exactRel` (by_name or not), `ambiguousByName`, the hierarchy `walker` (`walk` level by level, `next`), `writeTree` |
+| [`exports.go`](exports.go) | `rag_list_package_exports`: `ExportsInput`, `Export`, `moduleSymbols`, `shortModule` for short package names, `dirModules` for a directory or a source file of the workspace |
 | [`readfile.go`](readfile.go) | `rag_read_file_context`: `ReadInput`, `Outline`, line ranges (`lineRange` streams a file over 8 MiB), outline, one symbol; line and signature clipping |
 | [`index.go`](index.go) | `rag_index_workspace` and `rag_server_info`: `IndexInput`, `Service`, `Update`, `KnownRoot`, the Ollama probe, the release check with its cache, `semverLess`, `knownRoots` |
 
@@ -55,7 +55,7 @@ Tests:
 
 | File | What it covers |
 |---|---|
-| [`tools_test.go`](tools_test.go) | an MCP client and server over in-memory transports with a real engine on `store.NewMemory()`, `embed.Fake` and a fake `.fk` analyzer. Missing and bad roots, the root taken from client roots, every tool, the not-indexed and during-recreate fallbacks, dependency down, tool schemas, helpers, fallback skip rules, edits and deletes keeping results right, no Qdrant left in `rag_server_info`, same-name variants, lookup by declared name with `file_path` as a hard filter, `by_name` usages and hierarchy nodes, the live state of a root being indexed in `rag_server_info`, the last run's error kept after a restart, a deleted root reported as `missing` |
+| [`tools_test.go`](tools_test.go) | an MCP client and server over in-memory transports with a real engine on `store.NewMemory()`, `embed.Fake` and a fake `.fk` analyzer. Missing and bad roots, the root taken from client roots, every tool, the not-indexed and during-recreate fallbacks, dependency down, tool schemas, helpers, fallback skip rules, edits and deletes keeping results right, no Qdrant left in `rag_server_info`, same-name variants, lookup by declared name with `file_path` as a hard filter, `by_name` usages and hierarchy nodes, the live state of a root being indexed in `rag_server_info`, the last run's error kept after a restart, a deleted root reported as `missing`, overloads and get/set pairs resolved as one symbol, a qualified call bound by name only marked `by_name`, short directory names and file paths in `rag_list_package_exports` with one module per file (`.fkm` analyzer), the export-less file message, the zero-usage note not claiming imports, `indexing` (not `ok`, not the fallback) while a run goes over an existing index, `kinds` validation and the no-such-kinds message, `limit` respected exactly with `truncated` in usages and the hierarchy, a binary file with an unknown extension not dumped, also for a line range |
 | [`zz_verify_test.go`](zz_verify_test.go) | verification tests: short package names past the scroll cap, call-hierarchy cycles and the node cap, cancelled contexts, stalled `rag_server_info` endpoints, read-file edge cases (degenerate files, symlink out of the root, ranges, minified files, long lines, secrets), the 200-file fallback cap, multi-byte usage line cut, compact/full output and path boost, the 24 h update cache, a second index confirm while running, huge limits, `total_lines` and negative line numbers, the breadth-first node cap, a line range of a file over 8 MiB, exports of a workspace directory and `res://` paths, a Godot scene node not making its class ambiguous, the note on zero usages of a constant |
 | [`fifo_unix_test.go`](fifo_unix_test.go) | the not-indexed fallback keeps the index skip rules: no symlink out of the root, no fifo, no secret file (Unix only) |
 | [`index_unix_test.go`](index_unix_test.go) | (`//go:build unix`) a known root with no `ended_at` is `interrupted` only when nobody holds its lock |
@@ -86,13 +86,13 @@ type IndexInfo struct {
 |---|---|---|
 | `ok` | every tool | the answer is in `data`. A lookup that finds nothing is still `ok`, with a message such as `no indexed symbol named "X"; try rag_search` |
 | `not_indexed` | search, usages, hierarchy, exports | the workspace has no index yet. `rag_search` still returns fallback results |
-| `indexing` | the same tools, and `rag_index_workspace` with `confirm=true` | an index run is running or queued; for `rag_index_workspace` it means "run queued" |
+| `indexing` | the same tools, and `rag_index_workspace` with `confirm=true` | an index run is running or queued; for `rag_index_workspace` it means "run queued". An answer that would be `ok` becomes `indexing`, keeps its `data` and adds `index run in progress: results may be incomplete until it ends` to the message (`rag_read_file_context` parses on the spot and stays `ok`) |
 | `dependency_down` | every tool except `rag_read_file_context` and `rag_server_info` | the embedder (Ollama) or the index store cannot be used; the message says what to do |
 | `ambiguous` | `rag_find_usages`, `rag_call_hierarchy` | several symbols match; `data.candidates` lists them |
 | `confirmation_required` | `rag_index_workspace` without `confirm=true` | nothing was started; `data` holds the plan |
 
-Input errors (empty query, bad mode, path outside the root, missing root,
-cancelled request) are **tool errors**: `IsError` is set and the content is a
+Input errors (empty query, bad mode, unknown `kinds` value, path outside the
+root, missing root, cancelled request) are **tool errors**: `IsError` is set and the content is a
 plain sentence, not JSON.
 
 ### The `index` block
@@ -171,7 +171,7 @@ looks like an identifier, semantic search otherwise.
 | `file_path` | string | the file being edited; results near it rank higher |
 | `language` | string | only this language (`go`, `python`, `php`, ...) |
 | `path_prefix` | string | only files under this directory; a file is an error (pass its directory) |
-| `kinds` | []string | only these kinds: `function`, `method`, `class`, `interface`, `type`, `variable`, `constant`, `route`, `hook`, `template`, `scene`, `chunk` |
+| `kinds` | []string | only these kinds: `function`, `method`, `class`, `interface`, `type`, `variable`, `constant`, `route`, `hook`, `template`, `scene`, `chunk`; any other value is an input error listing them |
 | `full` | bool | always include the symbol content |
 
 How it works:
@@ -194,8 +194,9 @@ How it works:
 
 **Not indexed yet.** When the collection is missing or was built with
 another embedding model, or the search finds
-nothing while an index run is in progress or queued (a first run, a recreate
-or a model change refilling it), the tool parses up to 200 files under the root (or
+nothing while an index run is in progress or queued and the collection is
+still empty (a first run, a recreate or a model change refilling it), the tool
+parses up to 200 files under the root (or
 `path_prefix`) within 5 seconds, applying the index skip rules, and scores
 symbols by name: exact name 1.0, qualified suffix 0.9, substring 0.7,
 otherwise 0.6 × the share of query words found in the name. These hits have
@@ -224,13 +225,18 @@ grouped by file, with the referencing symbol and the line.
 | `workspace_root` | string | absolute project path |
 | `symbol` | string, required | name or qualified name, e.g. `User.find` or `App\Models\User::find` |
 | `file_path` | string | the file that defines the symbol, to pick it when several share the name |
-| `limit` | int | maximum referencing symbols per lookup, default 100 |
+| `limit` | int | maximum referencing symbols, default 100; when it cut, `data.truncated` is `true` and the message says to raise it |
 
 The symbol is resolved first (`resolveSymbol`): up to 50 symbols whose
 qualified name ends with the query, plus, for a plain name, up to 50 named
 the query. None gives `ok` with a "try rag_search" message. `file_path` keeps
 only the symbols defined in that file; none there gives `ok` with a message
-naming the file, never a symbol from elsewhere. Several left give `ambiguous`
+naming the file, never a symbol from elsewhere. Symbols sharing both the
+qualified name and the file (TypeScript overload signatures and their
+implementation, a getter/setter pair) are one symbol: the one with the widest
+line span (the implementation) is kept, carrying the relations of all, so the
+outgoing hierarchy covers every twin and usages (matched by qualified name)
+cover them all. Several left give `ambiguous`
 with `data.candidates` (`id, qualified_name, kind, file_path, start_line`).
 
 The references are the symbols with a relation whose resolved `target_id` is
@@ -239,15 +245,18 @@ source line of each reference is read from disk and cut at 200 bytes.
 
 Output `data`: `{symbol, files: [{file_path, usages: [{caller, kind, line,
 text, caller_id, caller_start_line, by_name?}]}], total, ambiguous_by_name,
-by_name}`. A usage with `by_name: true` was matched by name only: the call's
-reference has no import, qualified name or known type linking it to the
-symbol (`x.Close()` on a local or parameter), and exactly one symbol in the
-workspace has that name, so it may be another symbol of that name (a stdlib
+by_name, truncated}`. A usage with `by_name: true` was matched by name only: the index
+did not resolve it by qualified name (its `resolution` is not `exact`) and it
+does not name the symbol's qualified name itself. Either the call has no
+import, qualified name or known type linking it (`x.Close()` on a local or
+parameter), or the qualified name it names does not exist and the index fell
+back to the one symbol with that name (`User::backWithError()` when `User`
+has no such method), so it may be another symbol of that name (a stdlib
 cursor, a file). `data.by_name` counts them and the message says so.
 When several symbols match and one is a Godot scene node sharing the
 qualified name of its script's class, the class is taken. Zero usages of a
 constant or variable add a note: reads of values are not tracked, only calls,
-type uses and imports.
+type uses and inheritance (an import is not a usage).
 `ambiguous_by_name` counts relations that name the symbol but were left
 unresolved because several symbols share the name; the message mentions them.
 Calls to symbols sharing one qualified name (build-tagged variants such as
@@ -272,20 +281,25 @@ Callers (incoming) and callees (outgoing) of a function as a tree.
 | `depth` | int | levels to expand, default 2, at most 4 |
 | `file_path` | string | the defining file, to pick the symbol when several share the name |
 
+- The symbol is resolved as in `rag_find_usages`, overloads and get/set
+  pairs included.
 - Incoming uses the same reference lookup as `rag_find_usages` (up to 50 per
   node). Outgoing follows `call` relations that have a resolved target id; an
   ambiguous call naming a qualified name lists every symbol with that name.
 - The tree is filled level by level and capped at 100 nodes per direction,
   so the cap drops the deepest levels first (incoming lists at most 50
   direct callers, so never one of them);
-  `data.<direction>_truncated` is then `true`. A symbol already expanded
+  `data.<direction>_truncated` is then `true`. It is also `true`, with the
+  text line `… some nodes list only their first 50 callers`, when a node had
+  more than 50 callers. A symbol already expanded
   elsewhere is listed again but not re-walked, so cycles end.
 - Resolution errors are the same `ok` / `ambiguous` answers as above.
 
 Output `data`: `{symbol, direction, depth, incoming?, outgoing?, text}`. Each
 tree node has `id, qualified_name, kind, file_path, start_line, by_name?,
 children`; `by_name` marks a node linked to its parent only by name, as in
-`rag_find_usages`. `text` is the same tree as lines: a
+`rag_find_usages` (outgoing: a call the index resolved by name only; a
+call naming a qualified name shared by several symbols is exact). `text` is the same tree as lines: a
 `<direction>:` header, then one `qualified_name (file_path:start_line)` line
 per node indented two spaces per level, with ` [by name only]` on those
 nodes, and `… capped at 100 nodes` when the cap was hit.
@@ -307,14 +321,17 @@ The exported symbols of a package or module, grouped by kind.
 |---|---|---|
 | `workspace_root` | string | absolute project path |
 | `package` | string, required | full module path (`github.com/x/y/pkg`, `App\Models`, `app.models`) or a short package name |
-| `kinds` | []string | only these kinds |
+| `kinds` | []string | only these kinds (same values as `rag_search`; any other is an input error) |
 
 - First it scrolls symbols whose `module` equals `package` (one page of
   `MaxScroll`).
 - When nothing matches and the name has no `/`, `\` or `.`, `shortModule`
   looks for modules ending in `/name`, `.name` or `\name`: symbols named
   `name`, plus the indexed directories and files called `name` (from the
-  index state), each read with one filtered scroll, at most 50 scrolls.
+  index state), each read with one filtered scroll, at most 50 scrolls. A
+  directory called `name` contributes the files directly in it whatever
+  their module (a JS module such as `components/ui/button` is a file of
+  `ui`).
 - Only `exported` symbols are kept, at most 300.
 
 Output `data`: `{package, modules, exports: {<kind>: [{name, qualified_name,
@@ -323,7 +340,12 @@ scroll hit `MaxScroll` or there were more than 300 exports. No match gives `ok`
 with `no indexed module or directory matches "X"; pass the full module path or
 a directory of the workspace`. When no module matches, a directory inside the
 workspace (relative, `./x`, or Godot `res://x`) lists the exports of the files
-directly in it, since a JS, Vue or GDScript module is one file.
+directly in it, since a JS, Vue or GDScript module is one file. A source file
+of the workspace (one a parser handles) lists its own exports; with none the
+message is `<file> has no exported symbols of its own (it may only re-export
+others)`, as for a barrel file. When `kinds` leaves nothing but the module,
+directory or file has exported symbols of other kinds, the message is `"X" has
+no exported symbols of kinds [..]; drop kinds to list them all`.
 
 ```json
 {"name": "rag_list_package_exports", "arguments": {
@@ -351,7 +373,7 @@ Modes:
 | Arguments | Returns |
 |---|---|
 | `start_line` and/or `end_line` | the numbered line range (end clamped to the file; start past the end, end before start, or a negative number is an error) |
-| `symbol` | every symbol in the file whose name equals it or whose qualified name matches it, with content and relations (`data.symbols`) |
+| `symbol` | every symbol in the file whose name equals it or whose qualified name matches it, with content and relations (`data.symbols`); overload signatures and get/set pairs are all returned |
 | neither | the outline (`name, qualified_name, kind, start_line, end_line, signature, exported`) plus the first 120 numbered lines |
 
 Refused with a tool error: paths outside the root, non-regular files, files
@@ -360,7 +382,11 @@ range is kept), and files the index treats as secrets (keys, tokens,
 credentials). A file the index would skip (minified, binary, over the index
 size cap) is not parsed: without `symbol` it returns the first 120 lines and
 the message `no outline: the file is not parsed (<reason>)`; with `symbol` it
-is a tool error that asks for `start_line` and `end_line`. A `symbol` not
+is a tool error that asks for `start_line` and `end_line`. A binary file (a NUL
+byte in the first 8 KiB), whatever its extension, returns no lines: the
+message is `no outline: the file is not parsed (binary); its content is not
+returned`; a line range of it returns none either (`the file is binary; its
+content is not returned`). A `symbol` not
 found in the file is a tool error too. Each returned
 line is cut at 2000 bytes (`… (+N more bytes)`), signatures at 200 bytes.
 

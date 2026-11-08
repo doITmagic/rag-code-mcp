@@ -72,10 +72,21 @@ func (t *tools) register(server *mcp.Server) {
 
 // ---- responses ----
 
+// reply answers from the index: an ok answer while a run is in progress or
+// queued is indexing, since the results may be incomplete.
 func reply(status, msg string, data any, w *engine.Workspace) (*mcp.CallToolResult, any, error) {
+	return answer(status, msg, data, w, true)
+}
+
+// answer is reply; partial says whether the answer depends on the index.
+func answer(status, msg string, data any, w *engine.Workspace, partial bool) (*mcp.CallToolResult, any, error) {
 	r := Response{Status: status, Message: msg, Data: data}
 	if w != nil {
 		r.Index = indexInfo(w)
+		if st := r.Index.State; partial && status == "ok" && (st == "indexing" || st == "queued") {
+			r.Status = "indexing"
+			r.Message = strings.TrimPrefix(r.Message+"; index run in progress: results may be incomplete until it ends", "; ")
+		}
 		if r.Message == "" && (r.Index.State == "failed" || r.Index.State == "interrupted") {
 			why := ""
 			if r.Index.Error != "" {

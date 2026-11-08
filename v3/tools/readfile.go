@@ -2,6 +2,7 @@ package tools
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -94,19 +95,30 @@ func (t *tools) readFile(ctx context.Context, req *mcp.CallToolRequest, in ReadI
 			return fail(fmt.Sprintf("start_line %d is past the end of the file (%d lines)", start, total))
 		}
 		data["start_line"], data["end_line"] = start, end
+		if bytes.IndexByte(src[:min(len(src), 8<<10)], 0) >= 0 || (big && strings.ContainsRune(strings.Join(lines, ""), 0)) {
+			return answer("ok", "the file is binary; its content is not returned", data, w, false)
+		}
 		data["lines"] = numbered(lines, first, start, end)
-		return reply("ok", "", data, w)
+		return answer("ok", "", data, w, false) // parsed on the spot: complete during a run
 	}
 	// A file the index skips (minified, over the size cap, binary) is not parsed
 	// either: parsing a 5 MB bundle took 42 s and 1.3 GB.
-	if why := index.Skip(path, info, src[:min(len(src), 8<<10)]); why != "" && why != "no analyzer" {
+	head := src[:min(len(src), 8<<10)]
+	why := index.Skip(path, info, head)
+	if why == "no analyzer" && bytes.IndexByte(head, 0) >= 0 {
+		why = "binary"
+	}
+	if why != "" && why != "no analyzer" {
 		if in.Symbol != "" {
 			return fail(fmt.Sprintf("%s is not parsed (%s); pass start_line and end_line", path, why))
+		}
+		if why == "binary" { // raw bytes are no use as lines
+			return answer("ok", "no outline: the file is not parsed (binary); its content is not returned", data, w, false)
 		}
 		end = min(defaultLines, len(lines))
 		data["start_line"], data["end_line"] = 1, end
 		data["lines"] = numbered(lines, 1, 1, end)
-		return reply("ok", "no outline: the file is not parsed ("+why+")", data, w)
+		return answer("ok", "no outline: the file is not parsed ("+why+")", data, w, false)
 	}
 	syms, err := parser.Analyze(parser.File{Path: path, Root: w.Root, Source: src})
 	if err != nil {
@@ -134,7 +146,7 @@ func (t *tools) readFile(ctx context.Context, req *mcp.CallToolRequest, in ReadI
 			found[i].Signature = clip(found[i].Signature, maxSigBytes)
 		}
 		data["symbols"] = found
-		return reply("ok", fmt.Sprintf("%d symbols named %q", len(found), in.Symbol), data, w)
+		return answer("ok", fmt.Sprintf("%d symbols named %q", len(found), in.Symbol), data, w, false)
 	}
 	outline := make([]Outline, len(syms))
 	for i, s := range syms {
@@ -145,7 +157,7 @@ func (t *tools) readFile(ctx context.Context, req *mcp.CallToolRequest, in ReadI
 	data["outline"] = outline
 	data["start_line"], data["end_line"] = 1, end
 	data["lines"] = numbered(lines, 1, 1, end)
-	return reply("ok", "", data, w)
+	return answer("ok", "", data, w, false)
 }
 
 // numbered formats lines start..end (1-based, inclusive) with line numbers,

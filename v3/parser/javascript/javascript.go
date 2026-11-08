@@ -336,7 +336,7 @@ func (c *fileCtx) scan(n *gotreesitter.Node) {
 		if s := parser.Field(n, c.lang, "source"); s != nil {
 			spec := unquote(parser.Text(s, c.src))
 			from = c.resolveSpec(spec)
-			if from == spec { // a package ('react'): never read as a workspace file
+			if isPackage(from, spec) { // a package ('react'): never read as a workspace file
 				c.bare[from] = true
 			}
 			if n.NamedChildCount() == 1 && !c.bare[from] { // export * from './x'; shortcut: export * as ns stays unresolved
@@ -398,7 +398,7 @@ func (c *fileCtx) addImport(n *gotreesitter.Node) {
 	spec := unquote(parser.Text(src, c.src))
 	m := c.resolveSpec(spec)
 	follow := c.follow
-	if m == spec { // a package ('react') or an unresolved path: never read as a workspace file
+	if isPackage(m, spec) { // a package ('react') or an unresolved path: never read as a workspace file
 		follow = func(m, name string) string { return m + "." + name }
 	}
 	parser.Walk(n, func(ch *gotreesitter.Node) bool {
@@ -489,7 +489,8 @@ func (c *fileCtx) scanExportsAssign(n *gotreesitter.Node) {
 // to this file's directory and stripped of their extension, and a directory
 // with no sibling file of that name becomes its index module; aliases
 // ('@/lib/x', '~/composables/y') resolve to the file they name; bare
-// specifiers ('react', '@scope/pkg') stay as they are.
+// specifiers ('react', '@scope/pkg') stay as they are, under node_modules/
+// when a root file has that name: its module must not be the package's.
 func (c *fileCtx) resolveSpec(spec string) string {
 	if strings.HasPrefix(spec, "/") && !strings.HasPrefix(spec, "//") {
 		return c.rootAbsolute(spec)
@@ -498,10 +499,20 @@ func (c *fileCtx) resolveSpec(spec string) string {
 		if m := c.aliasSpec(spec); m != "" {
 			return m
 		}
+		if c.root != "" && hasSource(filepath.Join(c.root, filepath.FromSlash(spec))) {
+			return pkgDir + spec
+		}
 		return spec
 	}
 	return c.modulePath(path.Join(c.dir, spec))
 }
+
+// pkgDir prefixes a package module that a root file's module would equal.
+const pkgDir = "node_modules/"
+
+// isPackage reports whether resolveSpec left spec as a package (or an
+// unresolved path) that must never be read from the workspace.
+func isPackage(m, spec string) bool { return m == spec || m == pkgDir+spec }
 
 // modulePath strips a source extension off a root-relative path and turns a
 // directory with no sibling file of that name into its index module.
@@ -909,7 +920,9 @@ func (c *fileCtx) relsUnder(root *gotreesitter.Node, locals map[string]bool, own
 				}
 				rels = append(rels, parser.Relation{Kind: parser.RelCall, TargetName: name, TargetQualifiedName: qn, Line: line})
 			case "member_expression":
-				obj, name := parser.Field(callee, c.lang, "object"), parser.Text(parser.Field(callee, c.lang, "property"), c.src)
+				prop := parser.Field(callee, c.lang, "property")
+				obj, name := parser.Field(callee, c.lang, "object"), parser.Text(prop, c.src)
+				line, _ := parser.Lines(prop) // a chain split over lines: the method name's line
 				qn := c.resolveMember(obj, name, owner)
 				if first, _, _ := strings.Cut(parser.Text(obj, c.src), "."); obj.Type(c.lang) != "this" && locals[first] {
 					qn = ""

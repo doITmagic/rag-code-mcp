@@ -733,9 +733,14 @@ func TestBarrelSkipsPackageSpecifiers(t *testing.T) {
 	syms, err := analyzer{}.Analyze(parser.File{Path: filepath.Join(ws, "app.ts"), Root: ws, Source: []byte(src)})
 	require.NoError(t, err)
 	run := find(t, syms, "app.run")
-	assert.Equal(t, "react.useState", rel(t, run, parser.RelCall, "useState").TargetQualifiedName)
-	assert.Equal(t, "react.useMemo", rel(t, run, parser.RelCall, "useMemo").TargetQualifiedName)
+	// Its module is not the root file's either, so the index cannot bind it exactly there.
+	assert.Equal(t, "node_modules/react.useState", rel(t, run, parser.RelCall, "useState").TargetQualifiedName)
+	assert.Equal(t, "node_modules/react.useMemo", rel(t, run, parser.RelCall, "useMemo").TargetQualifiedName)
 	assert.Equal(t, "lib/re.useState", rel(t, run, parser.RelCall, "s2").TargetQualifiedName) // export * from a package: not followed
+	// Without a root file of that name the package keeps its plain name.
+	syms, err = analyzer{}.Analyze(parser.File{Path: filepath.Join(ws, "app.ts"), Root: ws, Source: []byte("import { ref } from 'vue'\nexport function v() { ref() }\n")})
+	require.NoError(t, err)
+	assert.Equal(t, "vue.ref", rel(t, find(t, syms, "app.v"), parser.RelCall, "ref").TargetQualifiedName)
 }
 
 // '.' and '..' are the current and parent directory, not package names: they
@@ -812,4 +817,11 @@ const x = api()
 	assert.Equal(t, "src/Two.helper", rel(t, d, parser.RelCall, "helper").TargetQualifiedName)
 	assert.Equal(t, "src/api.api", rel(t, find(t, syms, "src/Two.x"), parser.RelCall, "api").TargetQualifiedName)
 	assert.Equal(t, "src/Two.fromSetup", rel(t, find(t, syms, "src/Two.helper"), parser.RelCall, "fromSetup").TargetQualifiedName)
+}
+
+// A chained call split over lines is on the line of its method name, not on
+// the line where the chain starts.
+func TestChainedCallLine(t *testing.T) {
+	syms := analyze(t, "src/chain.ts", "import { lib } from './lib'\nexport function chain() {\n  return lib\n    .useThing('x')\n}\n")
+	assert.Equal(t, 4, rel(t, find(t, syms, "src/chain.chain"), parser.RelCall, "useThing").Line)
 }

@@ -78,8 +78,8 @@ graph LR
 | `resolve_test.go` | A non-fresh run resolves more than 500 targets through the store; a JS `import { n }` of a default-exported declaration resolves by module and name, in a full run and from the store. |
 | `twins_test.go` | Twins in one file resolve to the widest (then first) by qualified name and by name, in a full run and from the store; a qualified name in two files stays ambiguous; a wider twin added later re-resolves the unchanged caller in a files run; `..delta` resolves by name (unique, then ambiguous), never exact. |
 | `resolve_files_test.go` | A files run sees the stored candidates too: a target ambiguous in a full run stays ambiguous by exact and suffix match; removing one of two candidates (file deleted or symbol edited away) makes the unchanged caller unique. |
-| `resolve_fix_test.go` | Name and qualified resolution stay within one language (html may cross), targets defined later, inherited-member fallback, a files run after a failed run widens to a full walk, symlinked `.ragcode` directories and device files are refused, an exact suffix match (Python) turned ambiguous by a new symbol with that suffix, a PHP suffix match only `unique`. |
-| `gdscript_test.go` | `extends "res://x.gd"` resolves to the script's class, named by `class_name` or after the file, in full and files runs; `super.run()` in a `class_name` hierarchy (`BaseTrigger.run`, defined in the base's base `Cutscene`) resolves exactly through the bases, and by name when the owner is only in the store. |
+| `resolve_fix_test.go` | Name and qualified resolution stay within one language (html may cross), targets defined later, inherited-member fallback, a files run after a failed run widens to a full walk, symlinked `.ragcode` directories and device files are refused, an exact suffix match (Python) turned ambiguous by a new symbol with that suffix, a PHP suffix match only `unique`, a Python suffix never cut inside a package (`json.dumps` vs `src.flask.json.dumps`). |
+| `gdscript_test.go` | `extends "res://x.gd"` resolves to the script's class, named by `class_name` or after the file, in full and files runs; `super.run()` in a `class_name` hierarchy (`BaseTrigger.run`, defined in the base's base `Cutscene`) resolves exactly through the bases, and by name when the owner is only in the store; a scene node's attached script resolves to the script's class. |
 | `prefix_test.go` | `Run` adds the model's document prefix before embedding. |
 | `lock_unix_test.go` | A second run on a locked root gets `ErrLocked`. Build tag `unix`. |
 | `lock_test.go` | Two holders of `index.lock` exclude each other, on every platform. |
@@ -163,7 +163,7 @@ type State struct {
     Files  map[string]Entry `json:"files"`            // absolute path -> entry
 }
 
-const Format = 10
+const Format = 11
 ```
 
 `Format` is the version of what parsers and the indexer store. It is bumped
@@ -192,7 +192,13 @@ shadows it. Version 10: a JS package specifier named like a root file is the
 module `node_modules/<specifier>`, never that file's module; a JS chained call
 split over lines is on the line of its method name; a PHP class named with a
 reserved word (`Object`) keeps its name; Python module-level assignments carry
-the calls of their right-hand side.
+the calls of their right-hand side. Version 11: a chained call split over
+lines is on the line of its method name in PHP, Go and Python too; a Go
+external test package (`p_test`) is its own module; an HTML void element
+(`<input>`) spans its own tag only; calls in a JS top-level destructuring
+declaration belong to the `<script setup>` component; a GDScript scene's
+attached script resolves to the script's class; a Python qualified suffix is
+never cut inside a package.
 
 ---
 
@@ -339,7 +345,10 @@ each relation:
   together, so a files run sees what a full run sees) is
   `ResolutionExact`. Otherwise a unique qualified-suffix match is taken:
   `ResolutionExact` in Python (`src/` layouts) and GDScript (the short
-  `<Class>.m`), whose qualified names are legitimately written relative;
+  `<Class>.m`), whose qualified names are legitimately written relative. In
+  Python the cut-off part must be a source root, not a package: a candidate
+  whose cut-off directory holds an `__init__.py` is dropped, so the stdlib
+  `json.dumps` never matches `src.flask.json.dumps`;
   `ResolutionUnique` in every other language, where it is a guess (a PHP file
   without a namespace calling `Status::run()` of a global `\Status` would
   otherwise bind as exact to `HealthCheck\WP_CLI\Status::run`). If the owner (`a.b` of `a.b.m`,
@@ -354,7 +363,8 @@ each relation:
   (`ResolutionUnique`: only `unique` means matched by name). Bases of bases,
   and an owner whose class is only in the store (not in this run), are not
   followed: their call resolves by name, when the name is unique. An `extends` whose target is a whole module (GDScript
-  `extends "res://x/y.gd"`) takes that module's one top-level class
+  `extends "res://x/y.gd"`), or a GDScript `uses_type` of one (a scene node's
+  attached script), takes that module's one top-level class
   (`ResolutionUnique`). In JavaScript, `m.n` with no match takes module `m`'s
   top-level symbol named `n`: a declaration both named and default-exported
   is qualified `m.default`, while `import { n }` names `m.n`.

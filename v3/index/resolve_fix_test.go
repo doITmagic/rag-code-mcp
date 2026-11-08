@@ -202,6 +202,23 @@ func TestResolveSuffixMatchTurnsAmbiguous(t *testing.T) {
 	assert.Equal(t, parser.ResolutionAmbiguous, r.Resolution)
 }
 
+// A Python suffix is exact only when what it cuts off is a source root, not
+// a package: the stdlib json.dumps is not src.flask.json.dumps, while
+// flask.json.dumps is.
+func TestResolvePythonSuffixNotInsidePackage(t *testing.T) {
+	e := newEnv(t)
+	e.write(t, "src/flask/__init__.py", "")
+	e.write(t, "src.flask.json.py", "func dumps\n")
+	e.write(t, "a.py", "func Std -> json.dumps\nfunc Own -> flask.json.dumps\n")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	r, _ := e.rel(t, "Std", "")
+	assert.NotEqual(t, parser.ResolutionExact, r.Resolution, "stdlib json is not the project's flask.json")
+	r, dumps := e.rel(t, "Own", "dumps")
+	assert.Equal(t, dumps, r.TargetID)
+	assert.Equal(t, parser.ResolutionExact, r.Resolution)
+}
+
 // Outside python and gdscript a qualified suffix is a guess: PHP Status::run()
 // of a global \\Status is not HealthCheck\\WP_CLI\\Status::run.
 func TestResolveSuffixMatchNotExactInPHP(t *testing.T) {

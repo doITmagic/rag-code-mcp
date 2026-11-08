@@ -44,7 +44,12 @@ type Entry struct {
 // node_modules/<spec>, never that file's module; a JS chained call split over
 // lines is on its method name's line; a PHP class named Object keeps its name;
 // Python module-level assignments carry their calls.
-const Format = 10
+// 11: a chained call split over lines is on its method name's line in PHP,
+// Go and Python too; a Go external test package (p_test) is its own module;
+// an HTML void element spans its own tag; JS top-level destructuring calls
+// belong to <script setup>'s default; a GDScript scene's attached script
+// resolves to its class; a Python suffix is never cut inside a package.
+const Format = 11
 
 // State is the per-root snapshot stored at Dir(root)/state.json. Only
 // the run goroutine touches it; nothing here locks.

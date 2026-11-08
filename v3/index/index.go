@@ -903,10 +903,32 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 			return parser.Normalize(s.QualifiedName) == key
 		})
 	}
+	// Python imports are relative to a source root (src/), never to a
+	// directory inside a package: json.dumps is not src.flask.json.dumps.
+	pkgDir := map[string]bool{} // root-relative dotted path -> it is a Python package
+	rootCut := func(lang, qn, key string) bool {
+		if lang != "python" || len(qn) <= len(key) {
+			return true
+		}
+		cut := qn[:len(qn)-len(key)-1]
+		is, ok := pkgDir[cut]
+		if !ok {
+			_, err := os.Stat(filepath.Join(r.root, filepath.FromSlash(strings.ReplaceAll(cut, ".", "/")), "__init__.py"))
+			is = err == nil
+			pkgDir[cut] = is
+		}
+		return !is
+	}
 	suffix := func(lang, tqn string) []string {
 		key := parser.Normalize(tqn)
-		return lookup(lang, bySuffix[key], "s:"+key, store.Filter{QualifiedSuffix: tqn}, func(s parser.Symbol) bool {
-			return parser.MatchQualified(s.QualifiedName, key)
+		var run []string
+		for _, id := range bySuffix[key] {
+			if rootCut(lang, idx.place[id].qn, key) {
+				run = append(run, id)
+			}
+		}
+		return lookup(lang, run, "s:"+key, store.Filter{QualifiedSuffix: tqn}, func(s parser.Symbol) bool {
+			return parser.MatchQualified(s.QualifiedName, key) && rootCut(s.Language, parser.Normalize(s.QualifiedName), key)
 		})
 	}
 	// qualified also takes a short name, such as GDScript's BaseTrigger.run
@@ -974,9 +996,10 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 							resolution = parser.ResolutionUnique
 						}
 					}
-					// extends "res://x.gd" (GDScript) names a whole script: its
-					// one top-level class, whatever that class is called.
-					if len(ids) == 0 && rel.Kind == parser.RelExtends {
+					// extends "res://x.gd" (GDScript) and a scene node's attached
+					// script name a whole script: its one top-level class,
+					// whatever that class is called.
+					if len(ids) == 0 && (rel.Kind == parser.RelExtends || rel.Kind == parser.RelUsesType && lang == "gdscript") {
 						ids = lookup(lang, byModule[tqn], "m:"+tqn, store.Filter{Module: tqn, Kinds: []parser.Kind{parser.KindClass}}, func(s parser.Symbol) bool {
 							return s.Module == tqn && s.Kind == parser.KindClass && s.Owner == ""
 						})

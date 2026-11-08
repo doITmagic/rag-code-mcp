@@ -75,3 +75,23 @@ func TestResolveGDScriptSuperThroughClassNameBases(t *testing.T) {
 		assert.Equal(t, parser.ResolutionUnique, r.Resolution)
 	})
 }
+
+// A scene node's attached script (script = ExtResource(...)) is a use of the
+// script's class, as extends "res://x.gd" is.
+func TestResolveGDScriptSceneScript(t *testing.T) {
+	e := newEnv(t)
+	e.write(t, "project.godot", "")
+	plain := e.write(t, "actors/plain.gd", "extends Node\n\nfunc a():\n\tpass\n")
+	scene := e.write(t, "main.tscn", "[gd_scene load_steps=2 format=3]\n\n[ext_resource type=\"Script\" path=\"res://actors/plain.gd\" id=\"1_a\"]\n\n[node name=\"Map\" type=\"Node2D\"]\nscript = ExtResource(\"1_a\")\n")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	var got []string
+	for _, s := range e.symbols(t, scene) {
+		for _, r := range s.Relations {
+			if r.Kind == parser.RelUsesType {
+				got = append(got, r.TargetID)
+			}
+		}
+	}
+	assert.Equal(t, []string{e.symbols(t, plain)["plain"].ID}, got)
+}

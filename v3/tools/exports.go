@@ -92,6 +92,11 @@ func (t *tools) listExports(ctx context.Context, req *mcp.CallToolRequest, in Ex
 		msg = fmt.Sprintf("%s has no exported symbols of its own (it may only re-export others)", file)
 	} else if len(mods) == 0 {
 		msg = fmt.Sprintf("no indexed module or directory matches %q; pass the full module path or a directory of the workspace", pkg)
+		if abs, err := insideRoot(w.Root, strings.TrimRight(pkg, "/\\")); err == nil && abs != w.Root {
+			if fi, err := os.Stat(abs); err == nil && fi.IsDir() {
+				msg = fmt.Sprintf("directory %s has no exported symbols in the files directly in it (subdirectories are listed on their own)", pkg)
+			}
+		}
 	}
 	return reply("ok", msg, map[string]any{"package": pkg, "modules": mods, "exports": byKind, "truncated": capped || n > exportsCap}, w)
 }

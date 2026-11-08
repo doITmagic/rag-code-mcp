@@ -365,7 +365,10 @@ matched against the indexed files), lists its own exports; with none the
 message is `<file> has no exported symbols of its own (it may only re-export
 others)`, as for a barrel file. When `kinds` leaves nothing but the module,
 directory or file has exported symbols of other kinds, the message is `"X" has
-no exported symbols of kinds [..]; drop kinds to list them all`.
+no exported symbols of kinds [..]; drop kinds to list them all`. A directory
+of the workspace whose files export nothing (Laravel `config/`) answers
+`directory X has no exported symbols in the files directly in it`, not the
+no-match message.
 
 ```json
 {"name": "rag_list_package_exports", "arguments": {
@@ -393,7 +396,7 @@ Modes:
 | Arguments | Returns |
 |---|---|
 | `start_line` and/or `end_line` | the numbered line range (end clamped to the file; start past the end, end before start, or a negative number is an error) |
-| `symbol` | every symbol in the file whose name equals it or whose qualified name matches it, with content and relations (`data.symbols`); overload signatures and get/set pairs are all returned |
+| `symbol` | every symbol in the file whose name equals it or whose qualified name matches it, with content and relations (`data.symbols`); function overload signatures and get/set pairs are all returned (class method overload signatures are not symbols, see the JavaScript parser README) |
 | neither | the outline (`name, qualified_name, kind, start_line, end_line, signature, exported`) plus the first 120 numbered lines |
 
 Refused with a tool error: paths outside the root, non-regular files, files

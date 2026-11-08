@@ -41,6 +41,9 @@ func (t *tools) indexWorkspace(ctx context.Context, req *mcp.CallToolRequest, in
 		return res, nil, nil
 	}
 	data := map[string]any{"root": w.Root, "collection": w.Collection, "mode": in.Mode}
+	if st, err := index.LoadState(w.Root); in.Mode == "incremental" && err == nil && len(st.Files) > 0 && st.Format != index.Format {
+		data["full_reindex"] = fmt.Sprintf("index format %d -> %d: every file is re-indexed", st.Format, index.Format)
+	}
 	if !in.Confirm {
 		files, err := index.Walk(w.Root, t.cfg.ExcludePatterns)
 		if err != nil {

@@ -168,7 +168,7 @@ func shortModule(ctx context.Context, w *engine.Workspace, name string, ks []par
 	if st, err := index.LoadState(w.Root); err == nil {
 		for p := range st.Files {
 			switch d := filepath.Dir(p); {
-			case strings.EqualFold(filepath.Base(d), name):
+			case d != w.Root && strings.EqualFold(filepath.Base(d), name): // the root itself is no package
 				dirs[d] = true
 			case strings.EqualFold(strings.TrimSuffix(filepath.Base(p), filepath.Ext(p)), name):
 				files = append(files, p)

@@ -506,6 +506,21 @@ func TestIndexWorkspace(t *testing.T) {
 	r, _ = v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "Foo"})
 	assert.Equal(t, "ok", r.Status)
 
+	// An incremental plan over an index of another Format says it re-indexes everything.
+	var plan struct {
+		Full string `json:"full_reindex"`
+	}
+	r, _ = v.call(t, "rag_index_workspace", map[string]any{"workspace_root": v.root})
+	data(t, r, &plan)
+	assert.Empty(t, plan.Full)
+	st, err := index.LoadState(v.root)
+	require.NoError(t, err)
+	st.Format = index.Format - 1
+	require.NoError(t, st.Save())
+	r, _ = v.call(t, "rag_index_workspace", map[string]any{"workspace_root": v.root})
+	data(t, r, &plan)
+	assert.Contains(t, plan.Full, "every file is re-indexed")
+
 	_, res := v.call(t, "rag_index_workspace", map[string]any{"workspace_root": v.root, "mode": "full"})
 	assert.True(t, res.IsError)
 	_, res = v.call(t, "rag_index_workspace", map[string]any{"workspace_root": filepath.Join(v.root, "nope")})
@@ -902,6 +917,9 @@ func TestExportsShortDirOfFileModules(t *testing.T) {
 		r, _ := v.call(t, "rag_list_package_exports", map[string]any{"workspace_root": v.root, "package": f})
 		assert.Contains(t, r.Message, f+" has no exported symbols of its own")
 	}
+	base := filepath.Base(v.root) // a package named like the root: its directory, never the root's own files
+	v.addFiles(t, map[string]string{"top.fkm": "func Top\n", base + "/in.fkm": "func Inner\n"})
+	assert.Equal(t, []string{"Inner"}, names(base))
 	v.addFiles(t, map[string]string{"g/k.fk": "const Max\n"})
 	r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "m/g.Max"})
 	assert.NotContains(t, r.Message, "imports")

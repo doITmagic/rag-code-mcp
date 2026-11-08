@@ -340,7 +340,9 @@ The exported symbols of a package or module, grouped by kind.
 - When nothing matches and the name has no `/`, `\` or `.`, `shortModule`
   looks for modules ending in `/name`, `.name` or `\name`: symbols named
   `name`, plus the indexed directories and files called `name` (from the
-  index state), each read with one filtered scroll, at most 50 scrolls. A
+  index state), each read with one filtered scroll, at most 50 scrolls. The
+  workspace root itself is never such a directory, even when it is called
+  `name`. A
   directory called `name` contributes the files directly in it whatever
   their module (a JS module such as `components/ui/button` is a file of
   `ui`).
@@ -432,14 +434,16 @@ Indexes the workspace.
 | `confirm` | bool | `true` starts the run; `false` only reports the plan |
 
 - Without `confirm`: walks the root with the configured exclude patterns and
-  answers `confirmation_required` with `data.estimated_files`.
+  answers `confirmation_required` with `data.estimated_files`. When the
+  existing index has another `Format`, an `incremental` request also carries
+  `data.full_reindex`: every file is re-indexed anyway.
 - With `confirm=true`: when `auto_create_ide_rules` is on, writes the IDE rules
   (`<root>/.ragcode/RAGCODE.md` and the pointers, see
   [engine](../engine/README.md)); a failure there is added to the message, not
   fatal. Then it queues the run and answers `indexing` right away. Progress is
   visible in the `index` block of any later call, or in `rag_server_info`.
 
-Output `data`: `{root, collection, mode, estimated_files?}`.
+Output `data`: `{root, collection, mode, full_reindex?, estimated_files?}`.
 
 ```json
 {"name": "rag_index_workspace", "arguments": {

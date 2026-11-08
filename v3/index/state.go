@@ -40,7 +40,11 @@ type Entry struct {
 // 9: JS await f<T>() calls, top-level const/let type uses, one module per
 // .vue; GDScript calls in property set/get bodies; a Go local named like the
 // receiver shadows it.
-const Format = 9
+// 10: a JS package specifier named like a root file is module
+// node_modules/<spec>, never that file's module; a JS chained call split over
+// lines is on its method name's line; a PHP class named Object keeps its name;
+// Python module-level assignments carry their calls.
+const Format = 10
 
 // State is the per-root snapshot stored at Dir(root)/state.json. Only
 // the run goroutine touches it; nothing here locks.

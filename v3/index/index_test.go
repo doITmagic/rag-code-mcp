@@ -734,6 +734,11 @@ func TestRunWithoutChangesKeepsLastCounters(t *testing.T) {
 	assert.Equal(t, 0, st.Total, "the caller gets this run's own counters")
 	disk, _ := ReadStatus(e.root)
 	assert.Equal(t, 2, disk.Done, "the persisted status keeps the last real run")
+	// Deleting a path that was never indexed (an editor's temp file) changes nothing either.
+	_, err = e.run(t, func(o *Options) { o.Files, o.Deleted = []string{}, []string{filepath.Join(e.root, "notes.tmp")} })
+	require.NoError(t, err)
+	disk, _ = ReadStatus(e.root)
+	assert.Equal(t, 2, disk.Done, "a purge of a never-indexed path keeps the last real run")
 
 	e.write(t, "a.go", "func A2\n")
 	_, err = e.run(t, nil)

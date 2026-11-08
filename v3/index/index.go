@@ -229,7 +229,6 @@ func Run(ctx context.Context, o Options) (Status, error) {
 	purge := func(f string) error {
 		// A files run after a branch switch lists paths already purged or never
 		// indexed: count only those that had state or points.
-		r.touched = true
 		_, ok := r.state.Files[f]
 		if !ok {
 			hits, err := o.Store.Scroll(ctx, o.Collection, store.Filter{FilePath: f}, 1)
@@ -244,6 +243,7 @@ func Run(ctx context.Context, o Options) (Status, error) {
 		delete(r.state.Files, f)
 		if ok {
 			r.status.Deleted++
+			r.touched = true
 		}
 		return nil
 	}

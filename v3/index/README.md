@@ -163,7 +163,7 @@ type State struct {
     Files  map[string]Entry `json:"files"`            // absolute path -> entry
 }
 
-const Format = 9
+const Format = 10
 ```
 
 `Format` is the version of what parsers and the indexer store. It is bumped
@@ -188,7 +188,11 @@ qualified-suffix match is `exact` only in Python and GDScript, `unique`
 elsewhere. Version 9: JS `await f<T>()` calls, top-level `const`/`let` type
 annotations as `uses_type`, one module per `.vue` with two scripts; GDScript
 calls in property `set`/`get` bodies; a Go local named like the receiver
-shadows it.
+shadows it. Version 10: a JS package specifier named like a root file is the
+module `node_modules/<specifier>`, never that file's module; a JS chained call
+split over lines is on the line of its method name; a PHP class named with a
+reserved word (`Object`) keeps its name; Python module-level assignments carry
+the calls of their right-hand side.
 
 ---
 

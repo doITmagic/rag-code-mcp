@@ -109,6 +109,10 @@ that leave the workspace root give an empty target.
 
 ## Known limitations visible in the code
 
+- Two sectional elements without an `id` and with the same tag under the same
+  owner in one file (two plain `<section>`s) get the same qualified name, so
+  they are one symbol (twins: the widest is the target).
+- Hugo `{{ partial "x.html" }}` is not tracked; only `{{ template }}` is.
 - Inline `<script>` blocks are not parsed: their functions are not symbols and
   their calls are not usages.
 - `{{template}}` calls to templates defined in other files are unresolved at

@@ -236,6 +236,10 @@ literal's values are not walked, its methods own their calls.
 ## Known limitations visible in the code
 
 - Decorators (`@sealed`, `@log`) are not usages of the function they name.
+- Overload signatures of a class method are not symbols; only its
+  implementation is (top-level function overloads are all symbols).
+- Calls in a class `static { }` block, and in a field initializer that is not
+  a function (`reg = Registry.create()`), belong to no symbol.
 - `module.exports = function f() {}` (a named function expression) produces
   no symbol; `module.exports = f` of a declared `f` does.
 - `super.m()` is not resolved to the base class's method; it counts among the

@@ -169,6 +169,12 @@ For `/ws/levels/main.tscn`: `res://levels/main.Main` (uses_type ->
 
 ## Known limitations visible in the code
 
+- Type annotations (`func f(hit: BattlerHit)`, `var x: Gamepiece`) and
+  `ClassName.new(...)` are not usages of the class.
+- `await sig` is not a usage of the signal, and `sig.connect(_h.bind(x))` is
+  not a usage of `_h`.
+- An instanced or inherited scene node (`[node ... instance=ExtResource(...)]`)
+  is metadata only, not a usage of the base scene.
 - A signal connected or emitted through another object (`Events.sig.connect`,
   `CombatEvents.done.emit()`) is not a usage of the signal.
 - Autoload singletons from `project.godot` are not symbols under their

@@ -160,7 +160,13 @@ keyed by root + path and invalidated by mtime and size.
 
 ## Known limitations visible in the code
 
-- Decorators (`@setupmethod`) are not usages of the function they name.
+- Decorators (`@setupmethod`) are not usages of the function they name, and
+  calls inside decorator arguments (`@pytest.mark.parametrize(..., f())`) are
+  not recorded.
+- A stdlib call (`json.dumps()`) can get a `by_name` edge to a project
+  function of that name when some project symbol ends in `.json`; such an
+  edge can appear after a full run and not after the incremental run that
+  added the symbol. It is always flagged `by_name`.
 - A call whose callee is a subscript (`ConfigAttribute[bool]("TESTING")`) is
   not recorded; only `name(...)` and `a.b(...)` callees are.
 - Module-level calls outside an assignment (`main()`, an

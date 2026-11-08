@@ -40,6 +40,18 @@ type fileCtx struct {
 	defs      map[string]parser.Kind // top-level declared names and what they are
 	exported  map[string]bool        // names exported by export {}, module.exports, exports.x
 	alias     *aliases               // tsconfig paths and project dir, loaded on the first bare specifier
+	noFollow  bool                   // a barrel being read: imports are not followed through re-exports
+	anonDef   bool                   // an `export default` with no local name (function, object, call)
+	exportAs  map[string]string      // export { local as name } without a source: name -> local
+	reexp     map[string]string      // export { a as b } from './x': b -> "x.a"
+	stars     []string               // export * from './x': the modules x
+	bare      map[string]bool        // export ... from 'pkg': package modules, not workspace files
+}
+
+func newCtx(src []byte, lang *gotreesitter.Language, wsRoot, module, dir, component string) *fileCtx {
+	return &fileCtx{src: src, lang: lang, module: module, dir: dir, root: wsRoot, component: component,
+		imports: map[string]string{}, defs: map[string]parser.Kind{}, exported: map[string]bool{},
+		exportAs: map[string]string{}, reexp: map[string]string{}, bare: map[string]bool{}}
 }
 
 func (analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
@@ -47,6 +59,7 @@ func (analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 	component := pascal(strings.TrimSuffix(filepath.Base(f.Path), filepath.Ext(f.Path)))
 	var syms []parser.Symbol
 	if strings.EqualFold(filepath.Ext(f.Path), ".vue") {
+		var setup *parser.Symbol // the component: top-level statements of <script setup>
 		for _, b := range vueBlocks(f.Source) {
 			if b.template {
 				start, end := lineSpan(f.Source, b.start, b.end)
@@ -58,11 +71,19 @@ func (analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 			}
 			// Leading newlines keep tree-sitter rows equal to .vue file rows.
 			src := append(bytes.Repeat([]byte{'\n'}, bytes.Count(f.Source[:b.start], []byte{'\n'})), f.Source[b.start:b.end]...)
-			out, err := analyzeScript(b.grammar, src, f.Root, module, dir, component)
+			out, rels, err := analyzeScript(b.grammar, src, f.Root, module, dir, component)
 			if err != nil {
 				return nil, err
 			}
 			syms = append(syms, out...)
+			if b.setup && len(rels) > 0 {
+				start, end := lineSpan(f.Source, b.start, b.end)
+				setup = &parser.Symbol{Name: "default", Kind: parser.KindFunction, Module: module, Exported: true,
+					Content: string(f.Source[b.start:b.end]), StartLine: start, EndLine: end, Relations: rels}
+			}
+		}
+		if setup != nil {
+			syms = appendDefault(syms, *setup)
 		}
 		return parser.Finalize(f, syms), nil
 	}
@@ -73,34 +94,53 @@ func (analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 	case ".tsx":
 		grammar = "tsx"
 	}
-	syms, err := analyzeScript(grammar, f.Source, f.Root, module, dir, component)
+	// shortcut: top-level expression statements of a plain script (describe/it in tests) stay unattributed.
+	syms, _, err := analyzeScript(grammar, f.Source, f.Root, module, dir, component)
 	if err != nil {
 		return nil, err
 	}
 	return parser.Finalize(f, syms), nil
 }
 
-func analyzeScript(grammar string, src []byte, wsRoot, module, dir, component string) ([]parser.Symbol, error) {
+// appendDefault adds the <script setup> component symbol, or its relations to
+// the file's existing "default" symbol.
+func appendDefault(syms []parser.Symbol, d parser.Symbol) []parser.Symbol {
+	for i := range syms {
+		if syms[i].Name == "default" && syms[i].Owner == "" {
+			syms[i].Relations = append(syms[i].Relations, d.Relations...)
+			return syms
+		}
+	}
+	return append(syms, d)
+}
+
+// analyzeScript returns the symbols of one script and the relations of its
+// top-level expression statements (watch(...), defineProps<T>()), which no
+// symbol owns.
+func analyzeScript(grammar string, src []byte, wsRoot, module, dir, component string) ([]parser.Symbol, []parser.Relation, error) {
 	if unbalanced(src) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	tree, lang, err := parser.ParseTree(grammar, src)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer tree.Release()
-	c := &fileCtx{src: src, lang: lang, module: module, dir: dir, root: wsRoot, component: component,
-		imports: map[string]string{}, defs: map[string]parser.Kind{}, exported: map[string]bool{}}
+	c := newCtx(src, lang, wsRoot, module, dir, component)
 	root := tree.RootNode()
 	// Pass 1: imports, top-level names and export lists, so calls resolve forward references.
 	for _, nc := range parser.NamedChildren(root) {
 		c.scan(nc)
 	}
 	var syms []parser.Symbol
+	var rels []parser.Relation
 	for _, nc := range parser.NamedChildren(root) {
 		c.topLevel(nc, &syms)
+		if nc.Type(c.lang) == "expression_statement" {
+			rels = append(rels, c.relsUnder(nc, c.locals(nc), "")...)
+		}
 	}
-	return syms, nil
+	return syms, rels, nil
 }
 
 // maxUnclosed is the most brackets a file may leave open before it is
@@ -180,6 +220,7 @@ type vueBlock struct {
 	start, end int
 	grammar    string
 	template   bool
+	setup      bool // <script setup>
 }
 
 // vueBlocks finds every top-level <script> body and the outermost <template>
@@ -208,7 +249,7 @@ func vueBlocks(src []byte) []vueBlock {
 		if strings.Contains(attrs, `lang="ts"`) || strings.Contains(attrs, "lang='ts'") || strings.Contains(attrs, `lang="tsx"`) {
 			grammar = "typescript"
 		}
-		out = append(out, vueBlock{start: body, end: body + end, grammar: grammar})
+		out = append(out, vueBlock{start: body, end: body + end, grammar: grammar, setup: strings.Contains(attrs, "setup")})
 		pos = body + end
 	}
 	if i := strings.Index(s, "<template"); i >= 0 {
@@ -233,19 +274,42 @@ func (c *fileCtx) scan(n *gotreesitter.Node) {
 		if d := parser.Field(n, c.lang, "declaration"); d != nil {
 			if c.isDefault(n) { // export default function Button() {}
 				c.def = parser.Text(parser.Field(d, c.lang, "name"), c.src)
+				c.anonDef = c.def == ""
 			}
 			c.scan(d)
 		}
-		if v := parser.Field(n, c.lang, "value"); v != nil && v.Type(c.lang) == "identifier" {
-			c.def = parser.Text(v, c.src) // export default App;
-			c.exported[c.def] = true
+		if v := parser.Field(n, c.lang, "value"); v != nil {
+			if v.Type(c.lang) == "identifier" {
+				c.def = parser.Text(v, c.src) // export default App;
+				c.exported[c.def] = true
+				c.exportAs["default"] = c.def
+			} else {
+				c.anonDef = true // export default {...} / defineX(...)
+			}
+		}
+		from := ""
+		if s := parser.Field(n, c.lang, "source"); s != nil {
+			spec := unquote(parser.Text(s, c.src))
+			from = c.resolveSpec(spec)
+			if from == spec { // a package ('react'): never read as a workspace file
+				c.bare[from] = true
+			}
+			if n.NamedChildCount() == 1 && !c.bare[from] { // export * from './x'; shortcut: export * as ns stays unresolved
+				c.stars = append(c.stars, from)
+			}
 		}
 		for _, nc := range parser.NamedChildren(n) {
 			if cl := nc; cl.Type(c.lang) == "export_clause" {
 				for _, nc := range parser.NamedChildren(cl) {
 					name := parser.Text(parser.Field(nc, c.lang, "name"), c.src)
+					alias := or(parser.Text(parser.Field(nc, c.lang, "alias"), c.src), name)
+					if from != "" { // export { a as b } from './x'
+						c.reexp[alias] = from + "." + name
+						continue
+					}
 					c.exported[name] = true
-					if parser.Text(parser.Field(nc, c.lang, "alias"), c.src) == "default" {
+					c.exportAs[alias] = name
+					if alias == "default" {
 						c.def = name // export { App as default }
 					}
 				}
@@ -286,12 +350,17 @@ func (c *fileCtx) addImport(n *gotreesitter.Node) {
 	if src == nil {
 		return
 	}
-	m := c.resolveSpec(unquote(parser.Text(src, c.src)))
+	spec := unquote(parser.Text(src, c.src))
+	m := c.resolveSpec(spec)
+	follow := c.follow
+	if m == spec { // a package ('react') or an unresolved path: never read as a workspace file
+		follow = func(m, name string) string { return m + "." + name }
+	}
 	parser.Walk(n, func(ch *gotreesitter.Node) bool {
 		switch ch.Type(c.lang) {
 		case "import_clause":
 			if ch.NamedChildCount() > 0 && ch.NamedChild(0).Type(c.lang) == "identifier" {
-				c.imports[parser.Text(ch.NamedChild(0), c.src)] = m + ".default"
+				c.imports[parser.Text(ch.NamedChild(0), c.src)] = follow(m, "default")
 			}
 		case "namespace_import":
 			c.imports[parser.Text(ch.NamedChild(0), c.src)] = m
@@ -303,7 +372,7 @@ func (c *fileCtx) addImport(n *gotreesitter.Node) {
 			} else if ch.NamedChildCount() > 1 { // older grammars: name, alias as plain children
 				local = parser.Text(ch.NamedChild(1), c.src)
 			}
-			c.imports[local] = m + "." + name
+			c.imports[local] = follow(m, name)
 		}
 		return true
 	})

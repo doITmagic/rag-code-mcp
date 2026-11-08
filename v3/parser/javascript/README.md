@@ -25,7 +25,9 @@ extension; call targets are resolved through the file's own ES module and
   specifier it reads the nearest `tsconfig.json` / `jsconfig.json` (and the
   configs it `extends`) and looks for the nearest `package.json`, once per
   script (each `<script>` block of a Vue file), on its first non-relative
-  specifier; nothing is cached across files.
+  specifier; nothing is cached across files. To follow re-exports it reads
+  the workspace module file an import names (see [Re-exports](#re-exports));
+  that parse is cached process-wide.
 
 | Property | Value |
 |----------|-------|
@@ -61,8 +63,10 @@ graph TD
    symbols, because tree-sitter error recovery is quadratic on it. Deep
    nesting that closes (300 nested arrays) is valid and parsed.
 2. **Pass 1** records the import table, top-level declared names and what
-   they are, `export { ... }` lists, the default export's local name, and
-   CommonJS `module.exports` / `exports.x` assignments.
+   they are, `export { ... }` lists and re-exports (`export ... from`), the
+   default export's local name, and CommonJS `module.exports` / `exports.x`
+   assignments. Named and default imports are followed through the target
+   module's re-exports ([Re-exports](#re-exports)).
 3. **Pass 2** emits the symbols of each top-level statement.
 4. **Vue files**: each `<script>` body is parsed separately with leading
    newlines added so line numbers match the `.vue` file; the outermost
@@ -108,6 +112,32 @@ With `"@/*": ["./*"]`, `components/form.tsx` importing `@/lib/utils` gets
 `lib/utils`. Bare specifiers (`react`, `@scope/pkg`) and aliases whose file
 does not exist are kept as written.
 
+### Re-exports
+
+A named or default import resolves through the target module's re-exports
+to the module that declares the name (`barrel.go`). With
+`src/helper/ssg/index.ts` doing `export * from './ssg'`,
+`import { toSSG } from './helper/ssg'` maps `toSSG` to
+`src/helper/ssg/ssg.toSSG`, not `src/helper/ssg/index.toSSG`.
+
+| In the target module | Name | Followed to |
+|----------------------|------|-------------|
+| A declaration of the name (`export const own`, `export default ...` for `default`) | `own` | the target module itself |
+| `export { a as b } from './x'`, `export { default as P } from './p'` | `b`, `P` | `x.a`, `p.default`, followed further |
+| `export { Hono as HonoBase }` | `HonoBase` | `<module>.Hono` |
+| `export { x }`, `export { x as y }`, `export default x` of an imported `x` | `x`, `y`, `default` | the import target of `x`, followed further |
+| `export * from './x'` | any | the first `export *` source whose chain reaches a declaration |
+
+Own names win, then named re-exports, then `export *` sources; chains are
+cycle-safe and capped. The target file is read only when the workspace root
+is known and the module is a regular `.ts .tsx .js .mjs .cjs .jsx` file under
+it within 4 MiB; its pass 1 is cached process-wide by root and path, checked
+against mtime and size, and does not itself follow imports. When nothing
+declares the name, the import stays `<module>.<name>`. A named re-export
+whose source cannot be read still maps to that source (`x.a`). A package specifier (`react`, `@scope/pkg`, or a path that resolved to
+nothing) is never read as a workspace file, as an import or as an
+`export ... from` source, even when the root holds a file of that name.
+
 ## Symbols extracted
 
 | Construct | Kind | Owner |
@@ -127,6 +157,7 @@ does not exist are kept as written.
 | `const model = { load() {...}, f: () => ... }` at top level, also with `let` / `var` (Alpine / Pinia store models): methods and function-valued pairs, exported only when the const is | `method` | the const name, e.g. `model` |
 | `const C = defineComponent({...})`: the same options as `export default` | `method` | the const name, e.g. `C` |
 | Vue `<template>` | `template` | |
+| Top-level expression statements of a Vue `<script setup>` (`watch(...)`, `defineProps<T>()`): their calls and type uses | `function` named `default`, exported, spanning the `<script setup>` block; when the file already has a `default` symbol the relations are added to it | |
 
 - **Default export.** Importers see the default export only as `default`, so
   a default-exported declaration is qualified as `<module>.default`. An
@@ -196,6 +227,15 @@ literal's values are not walked, its methods own their calls.
 
 ## Known limitations visible in the code
 
+- Top-level expression statements of a plain `.js`/`.ts` file (`describe()` /
+  `it()` in tests, side-effect calls) belong to no symbol, so their calls are
+  not usages.
+- Re-exports are read from the imported file when an importer is parsed:
+  editing a barrel (`index.ts`) does not re-parse the files that import
+  through it, so their targets stay stale until they change or are
+  re-indexed (as for Python `__init__.py`). `export * as ns from './x'` is
+  not followed, and CommonJS `exports.x` / `module.exports` re-exports are
+  not followed.
 - Vue `<template>` markup is not parsed: a component used as `<StatusCard/>` or a
   handler in `@click="f()"` is not a usage.
 - Nuxt auto-imports (no import statement) resolve by name only.
@@ -218,13 +258,14 @@ literal's values are not walked, its methods own their calls.
 | File | Contents |
 |------|----------|
 | `javascript.go` | The analyzer, grammar choice, the bracket guard, module and component naming, Vue block scanner, pass 1 (imports, `require`, export lists, CommonJS exports, specifier resolution), pass 2 (functions, classes, methods, interfaces, types, enums, variables, options-API objects, `exports.x`), doc and signature extraction, call/type relation collection and resolution. |
+| `barrel.go` | Re-export following: reads the imported module file (pass 1 only, cached by root+path, mtime and size) and maps an imported name to the module that declares it. |
 | `alias.go` | Aliased specifiers: nearest `tsconfig.json`/`jsconfig.json` `paths` (JSONC, relative `extends`), the Nuxt/Vite conventions, and the existence check. |
 
 ### Tests
 
 | File | Covers |
 |------|--------|
-| `javascript_test.go` | ESM and CommonJS imports and exports, classes and methods, TypeScript (interfaces, types, enums, abstract classes), TSX, Vue options API, Vue `<script setup lang="ts">`, malformed and unbalanced input, files outside the root, concurrency, registration, default exports and directory (`index`) imports, root-absolute imports, TypeScript type uses, methods of an object literal bound to a const, aliased imports (tsconfig paths, Nuxt conventions), calls in top-level initializers and `export default defineX(...)`, export of object-literal methods, `const C = defineComponent(...)`. |
+| `javascript_test.go` | ESM and CommonJS imports and exports, classes and methods, TypeScript (interfaces, types, enums, abstract classes), TSX, Vue options API, Vue `<script setup lang="ts">`, malformed and unbalanced input, files outside the root, concurrency, registration, default exports and directory (`index`) imports, root-absolute imports, TypeScript type uses, methods of an object literal bound to a const, aliased imports (tsconfig paths, Nuxt conventions), calls in top-level initializers and `export default defineX(...)`, export of object-literal methods, `const C = defineComponent(...)`, barrel re-exports (`export *`, `export { a as b } from`, local alias exports, cycles, cache invalidation, package specifiers never read from disk), top-level calls of `<script setup>` attributed to `default`. |
 | `zz_verify_test.go` | Verification tests: JSX and import forms, TS enums and generics, `defineComponent` and CRLF files, robustness, nested CommonJS, component objects in plain JS, template-first `<script setup>`, statelessness, private TS members and syntax-error recovery, two script blocks, deep nesting, concurrent analysis. |
 
 ## Testing

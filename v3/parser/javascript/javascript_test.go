@@ -619,3 +619,121 @@ const C = defineComponent({ methods: { go() { this.stop() } }, stop() {} });
 	find(t, syms, "m.C.stop")
 	assert.Empty(t, find(t, syms, "m.C").Relations, "the component's methods own their calls")
 }
+
+// An imported name resolves through the target module's re-exports to the
+// module that declares it: export * from, export { a as b } from, and local
+// alias exports (hono's `export { Hono as HonoBase }`).
+func TestBarrelReexports(t *testing.T) {
+	ws := t.TempDir()
+	write := func(rel, body string) {
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(ws, rel)), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(ws, rel), []byte(body), 0o644))
+	}
+	write("src/helper/ssg/index.ts", "export * from './utils'\nexport * from './ssg'\nexport { defaultPlugin as dp, redirectPlugin } from './plugins'\nexport { default as Page } from './page'\nexport * as ns from './ns'\nexport const own = 1\n")
+	write("src/helper/ssg/utils.ts", "export const other = 1\n")
+	write("src/helper/ssg/ssg.ts", "export const toSSG = () => {}\nexport * from './ssg'\n") // self-cycle
+	write("src/helper/ssg/plugins.ts", "export const defaultPlugin = {}\nexport const redirectPlugin = {}\n")
+	write("src/helper/ssg/page.tsx", "export default function Page() {}\n")
+	write("src/hono-base.ts", "import { Router } from './router'\nclass Hono {}\nexport { Hono as HonoBase, Router as R }\n")
+	write("src/router.ts", "export class Router {}\n")
+	write("src/def.ts", "import { Router } from './router'\nexport default Router\n")
+	src := `import { toSSG as baseToSSG, dp, redirectPlugin, Page, own, missing } from './helper/ssg';
+import { HonoBase, R } from './hono-base';
+import fallback from './helper/ssg';
+import def from './def';
+export class Hono extends HonoBase {}
+export function run() { baseToSSG(); dp(); redirectPlugin(); Page(); own(); missing(); R(); fallback(); def(); }
+`
+	syms, err := analyzer{}.Analyze(parser.File{Path: filepath.Join(ws, "src", "app.ts"), Root: ws, Source: []byte(src)})
+	require.NoError(t, err)
+	run := find(t, syms, "src/app.run")
+	for name, want := range map[string]string{
+		"baseToSSG":      "src/helper/ssg/ssg.toSSG",
+		"dp":             "src/helper/ssg/plugins.defaultPlugin",
+		"redirectPlugin": "src/helper/ssg/plugins.redirectPlugin",
+		"Page":           "src/helper/ssg/page.default",
+		"own":            "src/helper/ssg/index.own",
+		"missing":        "src/helper/ssg/index.missing", // nothing declares it: unchanged
+		"R":              "src/router.Router",
+		"fallback":       "src/helper/ssg/index.default",
+		"def":            "src/router.Router",
+	} {
+		assert.Equal(t, want, rel(t, run, parser.RelCall, name).TargetQualifiedName, name)
+	}
+	assert.Equal(t, "src/hono-base.Hono", rel(t, find(t, syms, "src/app.Hono"), parser.RelExtends, "HonoBase").TargetQualifiedName)
+
+	// An edited barrel is re-read (mtime + size).
+	write("src/helper/ssg/index.ts", "export { toSSG as missing } from './ssg'\n")
+	syms, err = analyzer{}.Analyze(parser.File{Path: filepath.Join(ws, "src", "app.ts"), Root: ws, Source: []byte(src)})
+	require.NoError(t, err)
+	assert.Equal(t, "src/helper/ssg/ssg.toSSG", rel(t, find(t, syms, "src/app.run"), parser.RelCall, "missing").TargetQualifiedName)
+}
+
+// Top-level expression statements of a Vue <script setup> belong to the
+// component, the file's default export, named "default".
+func TestVueScriptSetupTopLevelCalls(t *testing.T) {
+	src := `<template><div/></template>
+
+<script setup lang="ts">
+import { watch } from 'vue';
+import { fetchAccount } from './api';
+import type { SearchResult } from './types';
+defineProps<{ result: SearchResult }>()
+watch(() => 1, () => fetchAccount())
+</script>
+`
+	syms := analyze(t, "src/Account.vue", src)
+	d := find(t, syms, "src/Account.default")
+	assert.Equal(t, parser.KindFunction, d.Kind)
+	assert.True(t, d.Exported)
+	assert.Equal(t, "", d.Owner)
+	assert.Equal(t, 3, d.StartLine)
+	assert.Equal(t, 9, d.EndLine)
+	assert.Equal(t, "src/api.fetchAccount", rel(t, d, parser.RelCall, "fetchAccount").TargetQualifiedName)
+	assert.Equal(t, "vue.watch", rel(t, d, parser.RelCall, "watch").TargetQualifiedName)
+	assert.Equal(t, "src/types.SearchResult", rel(t, d, parser.RelUsesType, "SearchResult").TargetQualifiedName)
+
+	// An existing default symbol gets the calls instead of a second one.
+	src = `<script>
+export default defineNuxtComponent(() => {})
+</script>
+<script setup>
+import { go } from './go';
+go()
+</script>
+`
+	syms = analyze(t, "src/Two.vue", src)
+	n := 0
+	for _, s := range syms {
+		if s.Name == "default" {
+			n++
+			assert.Equal(t, "src/go.go", rel(t, s, parser.RelCall, "go").TargetQualifiedName)
+		}
+	}
+	assert.Equal(t, 1, n)
+
+	// Plain scripts keep top-level expression statements unattributed.
+	syms = analyze(t, "src/a.test.js", "import { it } from 'vitest';\nit('x', () => {});\n")
+	assert.Empty(t, syms)
+}
+
+// A package specifier is never read as a workspace file, even when the root
+// happens to hold a file of that name, directly or through a re-export.
+func TestBarrelSkipsPackageSpecifiers(t *testing.T) {
+	ws := t.TempDir()
+	for rel, body := range map[string]string{
+		"react.ts":  "export * from './local'\n",
+		"local.ts":  "export const useState = 1\n",
+		"lib/re.ts": "export * from 'react'\nexport { useMemo } from 'react'\n",
+	} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(ws, rel)), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(ws, rel), []byte(body), 0o644))
+	}
+	src := "import { useState } from 'react'\nimport { useMemo, useState as s2 } from './lib/re'\nexport function run() { useState(); useMemo(); s2() }\n"
+	syms, err := analyzer{}.Analyze(parser.File{Path: filepath.Join(ws, "app.ts"), Root: ws, Source: []byte(src)})
+	require.NoError(t, err)
+	run := find(t, syms, "app.run")
+	assert.Equal(t, "react.useState", rel(t, run, parser.RelCall, "useState").TargetQualifiedName)
+	assert.Equal(t, "react.useMemo", rel(t, run, parser.RelCall, "useMemo").TargetQualifiedName)
+	assert.Equal(t, "lib/re.useState", rel(t, run, parser.RelCall, "s2").TargetQualifiedName) // export * from a package: not followed
+}

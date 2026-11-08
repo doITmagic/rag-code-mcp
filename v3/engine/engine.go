@@ -80,6 +80,21 @@ func New(cfg config.Config, st store.Store, em embed.Embedder, log *slog.Logger)
 		ctx: ctx, cancel: cancel, slot: make(chan struct{}, 1), ws: map[string]*Workspace{}}
 }
 
+// Loaded returns the workspace this process opened for a resolved root, or
+// nil; unlike Workspace it never validates, registers or starts anything.
+// A nil Engine has none.
+func (e *Engine) Loaded(root string) *Workspace {
+	if e == nil {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.closed {
+		return nil
+	}
+	return e.ws[root]
+}
+
 // Workspace validates root, registers it and returns its workspace. The
 // returned error is a *RootError when the path is not usable. One call per
 // root does the work; later calls return the same workspace.

@@ -77,7 +77,11 @@ func reply(status, msg string, data any, w *engine.Workspace) (*mcp.CallToolResu
 	if w != nil {
 		r.Index = indexInfo(w)
 		if r.Message == "" && (r.Index.State == "failed" || r.Index.State == "interrupted") {
-			r.Message = fmt.Sprintf("last index run %s (%s); run rag_index_workspace with confirm=true to retry", r.Index.State, r.Index.Error)
+			why := ""
+			if r.Index.Error != "" {
+				why = " (" + r.Index.Error + ")"
+			}
+			r.Message = fmt.Sprintf("last index run %s%s; run rag_index_workspace with confirm=true to retry", r.Index.State, why)
 		}
 	}
 	b, err := json.Marshal(r)
@@ -95,6 +99,9 @@ func fail(msg string) (*mcp.CallToolResult, any, error) {
 func indexInfo(w *engine.Workspace) *IndexInfo {
 	s := w.Status()
 	info := &IndexInfo{Done: s.Done, Total: s.Total, Branch: s.Branch, Error: s.LastError}
+	if info.Error == "" && !s.Running && !s.Queued {
+		info.Error = s.Error // after a restart: the error index_status.json kept
+	}
 	switch {
 	case s.Running:
 		info.State = "indexing"
@@ -187,6 +194,7 @@ func insideRoot(root, p string) (string, error) {
 	if p == "" {
 		return "", errors.New("file_path is empty")
 	}
+	p = strings.TrimPrefix(p, "res://") // Godot resource path: relative to the project root
 	if !filepath.IsAbs(p) {
 		p = filepath.Join(root, p)
 	}

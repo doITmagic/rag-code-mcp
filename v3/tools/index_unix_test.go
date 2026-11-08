@@ -32,11 +32,11 @@ func TestKnownRootsRunningIsNotInterrupted(t *testing.T) {
 	defer f.Close()
 	require.NoError(t, syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB))
 
-	got := knownRoots()
+	got := knownRoots(nil)
 	require.Len(t, got, 1)
 	require.Equal(t, "parsing", got[0].State)
 	require.Equal(t, 3, got[0].Files)
 
 	require.NoError(t, syscall.Flock(int(f.Fd()), syscall.LOCK_UN))
-	require.Equal(t, "interrupted", knownRoots()[0].State)
+	require.Equal(t, "interrupted", knownRoots(nil)[0].State)
 }

@@ -63,6 +63,21 @@ func resolveSymbol(ctx context.Context, w *engine.Workspace, query, filePath str
 		}
 		hits = same
 	}
+	if len(hits) > 1 { // a Godot scene node shares the qualified name of its script's class: the class wins
+		code := map[string]bool{}
+		for _, h := range hits {
+			if h.Symbol.Kind != parser.KindScene {
+				code[h.Symbol.QualifiedName] = true
+			}
+		}
+		kept := hits[:0:0]
+		for _, h := range hits {
+			if h.Symbol.Kind != parser.KindScene || !code[h.Symbol.QualifiedName] {
+				kept = append(kept, h)
+			}
+		}
+		hits = kept
+	}
 	if len(hits) > 1 {
 		cands := make([]Candidate, len(hits))
 		for i, h := range hits {
@@ -185,10 +200,13 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 	data := map[string]any{"symbol": toCandidate(*sym), "files": files, "total": total, "ambiguous_by_name": ambiguous, "by_name": guessed}
 	msg := fmt.Sprintf("%d usages in %d files", total, len(files))
 	if guessed > 0 {
-		msg += fmt.Sprintf("; %d matched by name only (receiver type unknown, may be another type's method), marked by_name", guessed)
+		msg += fmt.Sprintf("; %d matched by name only (no import, qualified name or known type links them; it may be another symbol of that name), marked by_name", guessed)
 	}
 	if ambiguous > 0 {
 		msg += fmt.Sprintf("; %d more relations name %q but could not be resolved to one symbol", ambiguous, sym.Name)
+	}
+	if total == 0 && (sym.Kind == parser.KindConstant || sym.Kind == parser.KindVariable) {
+		msg += "; reads of constants and variables are not tracked, only calls, type uses and imports: try rag_search"
 	}
 	return reply("ok", msg, data, w)
 }
@@ -305,7 +323,7 @@ func (t *tools) callHierarchy(ctx context.Context, req *mcp.CallToolRequest, in 
 		}
 		wk := &walker{w: w, visited: map[string]bool{sym.ID: true}, nodes: 1}
 		root := &Node{Candidate: toCandidate(*sym)}
-		wk.expand(ctx, root, *sym, dir == "incoming", in.Depth)
+		wk.walk(ctx, root, *sym, dir == "incoming", in.Depth)
 		if wk.err != nil {
 			return storeErr(ctx, w, wk.err)
 		}
@@ -321,19 +339,49 @@ func (t *tools) callHierarchy(ctx context.Context, req *mcp.CallToolRequest, in 
 	return reply("ok", "", data, w)
 }
 
-// expand fills n's children: the symbols referring to it (incoming) or the
-// resolved targets of its own relations (outgoing).
-func (wk *walker) expand(ctx context.Context, n *Node, sym parser.Symbol, incoming bool, depth int) {
-	if depth == 0 || wk.err != nil || wk.nodes >= maxNodes {
-		return
+// walk fills the tree level by level, so the node cap drops the deepest
+// levels first and never a direct caller.
+func (wk *walker) walk(ctx context.Context, root *Node, sym parser.Symbol, incoming bool, depth int) {
+	type item struct {
+		n     *Node
+		sym   parser.Symbol
+		depth int
 	}
+	queue := []item{{root, sym, depth}}
+	for len(queue) > 0 && wk.err == nil && wk.nodes < maxNodes {
+		it := queue[0]
+		queue = queue[1:]
+		if it.depth == 0 {
+			continue
+		}
+		next, exact := wk.next(ctx, it.sym, incoming)
+		for _, s := range next {
+			if wk.nodes >= maxNodes {
+				break
+			}
+			child := &Node{Candidate: toCandidate(s), ByName: !exact[s.ID]}
+			it.n.Children = append(it.n.Children, child)
+			wk.nodes++
+			if wk.visited[s.ID] {
+				continue // already expanded elsewhere: listed, not re-walked
+			}
+			wk.visited[s.ID] = true
+			queue = append(queue, item{child, s, it.depth - 1})
+		}
+	}
+}
+
+// next lists sym's neighbours, sorted: the symbols referring to it (incoming)
+// or the resolved targets of its own relations (outgoing), and which of them
+// are linked by a qualified name.
+func (wk *walker) next(ctx context.Context, sym parser.Symbol, incoming bool) ([]parser.Symbol, map[string]bool) {
 	var next []parser.Symbol
 	exact := map[string]bool{} // linked by at least one relation naming a qualified name
 	if incoming {
 		callers, err := referrers(ctx, wk.w, &sym, candidateLimit)
 		if err != nil {
 			wk.err = err
-			return
+			return nil, nil
 		}
 		next = callers
 		for _, c := range callers {
@@ -367,7 +415,7 @@ func (wk *walker) expand(ctx context.Context, n *Node, sym parser.Symbol, incomi
 			hits, err := wk.w.Scroll(ctx, f, n)
 			if err != nil {
 				wk.err = err
-				return
+				return nil, nil
 			}
 			for _, h := range live(wk.w, hits) {
 				// As the index resolves: code never calls across languages.
@@ -381,19 +429,7 @@ func (wk *walker) expand(ctx context.Context, n *Node, sym parser.Symbol, incomi
 		}
 	}
 	sort.Slice(next, func(i, j int) bool { return next[i].QualifiedName < next[j].QualifiedName })
-	for _, s := range next {
-		if wk.nodes >= maxNodes {
-			return
-		}
-		child := &Node{Candidate: toCandidate(s), ByName: !exact[s.ID]}
-		n.Children = append(n.Children, child)
-		wk.nodes++
-		if wk.visited[s.ID] {
-			continue // already expanded elsewhere: listed, not re-walked
-		}
-		wk.visited[s.ID] = true
-		wk.expand(ctx, child, s, incoming, depth-1)
-	}
+	return next, exact
 }
 
 func writeTree(b *strings.Builder, n *Node, indent int) {

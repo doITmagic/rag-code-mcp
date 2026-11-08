@@ -1,8 +1,10 @@
 package tools
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"unicode/utf8"
@@ -54,34 +56,45 @@ func (t *tools) readFile(ctx context.Context, req *mcp.CallToolRequest, in ReadI
 		return fail(fmt.Sprintf("cannot read %s: %v", path, err))
 	case !info.Mode().IsRegular():
 		return fail(path + " is not a regular file")
-	case info.Size() > maxReadSize:
+	case in.StartLine < 0 || in.EndLine < 0:
+		return fail(fmt.Sprintf("start_line and end_line are 1-based; got start_line %d, end_line %d", in.StartLine, in.EndLine))
+	case in.EndLine > 0 && in.EndLine < max(in.StartLine, 1):
+		return fail(fmt.Sprintf("end_line %d is before start_line %d", in.EndLine, max(in.StartLine, 1)))
+	}
+	ranged := in.StartLine > 0 || in.EndLine > 0
+	big := info.Size() > maxReadSize
+	if big && !ranged {
 		return fail(fmt.Sprintf("%s is %d bytes, over the 8 MiB limit; pass start_line and end_line", path, info.Size()))
 	}
 	if index.Secret(path) {
 		return fail(path + " looks like a secret file (keys, tokens, credentials); its content is not returned")
 	}
-	src, err := os.ReadFile(path)
+	start, end := max(in.StartLine, 1), in.EndLine
+	if end <= 0 {
+		end = start + defaultLines - 1
+	}
+	var src []byte
+	var lines []string // file lines first..first+len-1; the newline ending the last line starts no new one
+	first, total := 1, 0
+	if big {
+		// Only the requested lines are kept: the file is streamed, not loaded.
+		lines, total, err = lineRange(path, start, end)
+		first = start
+	} else if src, err = os.ReadFile(path); err == nil && len(src) > 0 {
+		lines = strings.Split(strings.TrimSuffix(string(src), "\n"), "\n")
+		total = len(lines)
+	}
 	if err != nil {
 		return fail(fmt.Sprintf("cannot read %s: %v", path, err))
 	}
-	lines := strings.Split(string(src), "\n")
-	data := map[string]any{"file_path": path, "total_lines": len(lines)}
-	if in.StartLine > 0 || in.EndLine > 0 {
-		start, end := max(in.StartLine, 1), in.EndLine
-		if end > 0 && end < start {
-			return fail(fmt.Sprintf("end_line %d is before start_line %d", end, start))
-		}
-		if end <= 0 {
-			end = start + defaultLines - 1
-		}
-		if end > len(lines) {
-			end = len(lines)
-		}
-		if start > end {
-			return fail(fmt.Sprintf("start_line %d is past the end of the file (%d lines)", start, len(lines)))
+	data := map[string]any{"file_path": path, "total_lines": total}
+	if ranged {
+		end = min(end, total)
+		if start > end && (total > 0 || start > 1) { // an empty file reads as nothing from line 1
+			return fail(fmt.Sprintf("start_line %d is past the end of the file (%d lines)", start, total))
 		}
 		data["start_line"], data["end_line"] = start, end
-		data["lines"] = numbered(lines, start, end)
+		data["lines"] = numbered(lines, first, start, end)
 		return reply("ok", "", data, w)
 	}
 	// A file the index skips (minified, over the size cap, binary) is not parsed
@@ -90,9 +103,9 @@ func (t *tools) readFile(ctx context.Context, req *mcp.CallToolRequest, in ReadI
 		if in.Symbol != "" {
 			return fail(fmt.Sprintf("%s is not parsed (%s); pass start_line and end_line", path, why))
 		}
-		end := min(defaultLines, len(lines))
+		end = min(defaultLines, len(lines))
 		data["start_line"], data["end_line"] = 1, end
-		data["lines"] = numbered(lines, 1, end)
+		data["lines"] = numbered(lines, 1, 1, end)
 		return reply("ok", "no outline: the file is not parsed ("+why+")", data, w)
 	}
 	syms, err := parser.Analyze(parser.File{Path: path, Root: w.Root, Source: src})
@@ -128,21 +141,51 @@ func (t *tools) readFile(ctx context.Context, req *mcp.CallToolRequest, in ReadI
 		outline[i] = Outline{Name: s.Name, QualifiedName: s.QualifiedName, Kind: string(s.Kind), StartLine: s.StartLine,
 			EndLine: s.EndLine, Signature: clip(s.Signature, maxSigBytes), Exported: s.Exported}
 	}
-	end := min(defaultLines, len(lines))
+	end = min(defaultLines, len(lines))
 	data["outline"] = outline
 	data["start_line"], data["end_line"] = 1, end
-	data["lines"] = numbered(lines, 1, end)
+	data["lines"] = numbered(lines, 1, 1, end)
 	return reply("ok", "", data, w)
 }
 
 // numbered formats lines start..end (1-based, inclusive) with line numbers,
-// each cut at maxLineBytes.
-func numbered(lines []string, start, end int) string {
+// each cut at maxLineBytes; lines[0] is line first.
+func numbered(lines []string, first, start, end int) string {
 	var b strings.Builder
 	for i := start; i <= end; i++ {
-		fmt.Fprintf(&b, "%5d | %s\n", i, capLine(lines[i-1]))
+		fmt.Fprintf(&b, "%5d | %s\n", i, capLine(lines[i-first]))
 	}
 	return b.String()
+}
+
+// lineRange streams path and returns its lines start..end (end clamped) and
+// its line count.
+// shortcut: one line is read whole before capLine cuts it; a multi-GB line
+// would be held in memory. Upgrade to a capped reader if that shows up.
+func lineRange(path string, start, end int) ([]string, int, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer f.Close()
+	r := bufio.NewReader(f)
+	var got []string
+	n := 0
+	for {
+		line, err := r.ReadString('\n')
+		if line != "" {
+			n++
+			if n >= start && n <= end {
+				got = append(got, strings.TrimSuffix(line, "\n"))
+			}
+		}
+		if err == io.EOF {
+			return got, n, nil
+		}
+		if err != nil {
+			return nil, 0, err
+		}
+	}
 }
 
 // capLine cuts l at maxLineBytes and says how much was left out.

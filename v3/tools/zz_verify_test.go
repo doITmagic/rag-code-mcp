@@ -333,8 +333,8 @@ func TestVerifyReadRangeAndExportKinds(t *testing.T) {
 	r, res := v.call(t, "rag_read_file_context", map[string]any{"workspace_root": v.root, "file_path": "pkg/a.fk", "start_line": 4, "end_line": 400})
 	require.False(t, res.IsError, r.Message)
 	data(t, r, &out)
-	assert.Equal(t, 5, out.EndLine)
-	assert.Equal(t, "    4 |   call m/pkg.Foo\n    5 | \n", out.Lines)
+	assert.Equal(t, 4, out.EndLine)
+	assert.Equal(t, "    4 |   call m/pkg.Foo\n", out.Lines)
 	_, res = v.call(t, "rag_read_file_context", map[string]any{"workspace_root": v.root, "file_path": "pkg/a.fk", "start_line": 4, "end_line": 2})
 	assert.True(t, res.IsError)
 	assert.Contains(t, res.Content[0].(*mcp.TextContent).Text, "end_line 2 is before start_line 4")
@@ -453,4 +453,114 @@ func TestReadFileRefusesSecrets(t *testing.T) {
 		assert.NotContains(t, string(raw), "TOP-SECRET", "%v", args)
 		assert.Contains(t, r.Message, "secret", "%v", args)
 	}
+}
+
+// The newline that ends the last line does not start another one, and a
+// negative line number is an error, not silently clamped.
+func TestVerifyReadTotalLinesAndNegative(t *testing.T) {
+	v := newEnv(t, true, nil)
+	require.NoError(t, os.WriteFile(filepath.Join(v.root, "two.txt"), []byte("a\nb\n"), 0o644))
+	var out struct {
+		TotalLines int `json:"total_lines"`
+	}
+	r, res := v.call(t, "rag_read_file_context", map[string]any{"workspace_root": v.root, "file_path": "two.txt", "start_line": 1})
+	require.False(t, res.IsError, r.Message)
+	data(t, r, &out)
+	assert.Equal(t, 2, out.TotalLines)
+	_, res = v.call(t, "rag_read_file_context", map[string]any{"workspace_root": v.root, "file_path": "two.txt", "start_line": 3})
+	assert.True(t, res.IsError, "line 3 is past the end")
+	_, res = v.call(t, "rag_read_file_context", map[string]any{"workspace_root": v.root, "file_path": "two.txt", "start_line": -3, "end_line": 2})
+	assert.True(t, res.IsError)
+	assert.Contains(t, res.Content[0].(*mcp.TextContent).Text, "1-based")
+}
+
+// The node cap fills level by level: every direct caller is listed before
+// any caller of a caller.
+func TestVerifyHierarchyCapIsBreadthFirst(t *testing.T) {
+	v := newEnv(t, false, func(c *config.Config) { c.AutoIndex = false })
+	var b strings.Builder
+	b.WriteString("func R\n")
+	for _, a := range []string{"A1", "A2", "A3"} {
+		fmt.Fprintf(&b, "func %s\n  call m/h.R\n", a)
+		for i := 0; i < 50; i++ {
+			fmt.Fprintf(&b, "func %sc%d\n  call m/h.%s\n", a, i, a)
+		}
+	}
+	b.WriteString("func Z\n  call m/h.R\n")
+	v.addFiles(t, map[string]string{"h/h.fk": b.String()})
+	var out struct {
+		Incoming Node `json:"incoming"`
+	}
+	r, res := v.call(t, "rag_call_hierarchy", map[string]any{"workspace_root": v.root, "symbol": "m/h.R", "depth": 2})
+	require.False(t, res.IsError, r.Message)
+	data(t, r, &out)
+	var direct []string
+	for _, c := range out.Incoming.Children {
+		direct = append(direct, strings.TrimPrefix(c.QualifiedName, "m/h."))
+	}
+	assert.Equal(t, []string{"A1", "A2", "A3", "Z"}, direct)
+}
+
+// A file over the 8 MiB cap is refused whole but read by line range,
+// streamed.
+func TestVerifyReadRangeOfLargeFile(t *testing.T) {
+	v := newEnv(t, true, nil)
+	line := strings.Repeat("x", 99) + "\n"
+	big := strings.Repeat(line, (maxReadSize/len(line))+10) + "last\n"
+	require.NoError(t, os.WriteFile(filepath.Join(v.root, "big.txt"), []byte(big), 0o644))
+	total := strings.Count(big, "\n")
+	_, res := v.call(t, "rag_read_file_context", map[string]any{"workspace_root": v.root, "file_path": "big.txt"})
+	assert.True(t, res.IsError, "whole file over the cap")
+	var out struct {
+		Lines      string `json:"lines"`
+		TotalLines int    `json:"total_lines"`
+		EndLine    int    `json:"end_line"`
+	}
+	r, res := v.call(t, "rag_read_file_context", map[string]any{"workspace_root": v.root, "file_path": "big.txt", "start_line": total - 1, "end_line": total + 5})
+	require.False(t, res.IsError, r.Message)
+	data(t, r, &out)
+	assert.Equal(t, total, out.TotalLines)
+	assert.Equal(t, total, out.EndLine)
+	assert.Equal(t, fmt.Sprintf("%5d | %s\n%5d | last\n", total-1, strings.TrimSuffix(line, "\n"), total), out.Lines)
+	_, res = v.call(t, "rag_read_file_context", map[string]any{"workspace_root": v.root, "file_path": "big.txt", "start_line": total + 1})
+	assert.True(t, res.IsError, "past the end")
+}
+
+// A directory of the workspace lists the exports of the files directly in
+// it, and a Godot res:// path names a file under the root.
+func TestVerifyExportsDirectoryAndResPath(t *testing.T) {
+	v := newEnv(t, false, func(c *config.Config) { c.AutoIndex = false })
+	v.addFiles(t, map[string]string{"web/ui/x.fk": "func Button\n", "web/ui/y.fk": "func Card\n", "web/ui/deep/z.fk": "func Deep\n"})
+	var out struct {
+		Modules []string            `json:"modules"`
+		Exports map[string][]Export `json:"exports"`
+	}
+	for _, pkg := range []string{"web/ui", "res://web/ui/", "./web/ui"} {
+		r, res := v.call(t, "rag_list_package_exports", map[string]any{"workspace_root": v.root, "package": pkg})
+		require.False(t, res.IsError, r.Message)
+		data(t, r, &out)
+		var names []string
+		for _, e := range out.Exports["function"] {
+			names = append(names, e.Name)
+		}
+		assert.Equal(t, []string{"Button", "Card"}, names, pkg)
+	}
+	r, res := v.call(t, "rag_list_package_exports", map[string]any{"workspace_root": v.root, "package": "../outside"})
+	require.False(t, res.IsError, r.Message)
+	assert.Contains(t, r.Message, "no indexed module or directory matches")
+	r, res = v.call(t, "rag_read_file_context", map[string]any{"workspace_root": v.root, "file_path": "res://web/ui/x.fk", "start_line": 1})
+	require.False(t, res.IsError, r.Message)
+}
+
+// A Godot scene node sharing its script class's qualified name does not make
+// the class ambiguous, and zero usages of a constant say why.
+func TestVerifyUsagesSceneTwinAndConstNote(t *testing.T) {
+	v := newEnv(t, false, func(c *config.Config) { c.AutoIndex = false })
+	v.addFiles(t, map[string]string{"g/g.fk": "func Gp\nscene Gp\nconst Max\nfunc User\n  call m/g.Gp\n"})
+	r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "m/g.Gp"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	assert.Contains(t, r.Message, "1 usages")
+	r, _ = v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "m/g.Max"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	assert.Contains(t, r.Message, "not tracked")
 }

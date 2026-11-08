@@ -16,6 +16,7 @@ import (
 
 	"github.com/doITmagic/rag-code-mcp/v3/embed"
 	"github.com/doITmagic/rag-code-mcp/v3/engine"
+	"github.com/doITmagic/rag-code-mcp/v3/index"
 	"github.com/doITmagic/rag-code-mcp/v3/internal/config"
 	"github.com/doITmagic/rag-code-mcp/v3/parser"
 	"github.com/doITmagic/rag-code-mcp/v3/store"
@@ -42,6 +43,9 @@ func (fakeAnalyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 			}
 			syms = append(syms, parser.Symbol{Name: name, QualifiedName: qn, Kind: parser.KindFunction, Module: mod, Content: line, StartLine: i + 1,
 				EndLine: i + 1, Exported: unicode.IsUpper(rune(name[0])), Signature: "func " + name + "()"})
+		} else if kind, name, ok := strings.Cut(line, " "); ok && (kind == "scene" || kind == "const") {
+			k := map[string]parser.Kind{"scene": parser.KindScene, "const": parser.KindConstant}[kind]
+			syms = append(syms, parser.Symbol{Name: name, Kind: k, Module: mod, Content: line, StartLine: i + 1, EndLine: i + 1, Exported: true})
 		} else if target, ok := strings.CutPrefix(strings.TrimSpace(line), "call "); ok && len(syms) > 0 {
 			s := &syms[len(syms)-1]
 			tqn := target // "call x" without a dot: a call by name only (receiver type unknown)
@@ -431,7 +435,7 @@ func TestReadFileContext(t *testing.T) {
 	assert.Len(t, out.Outline, 3)
 	assert.Equal(t, "fake", out.Language)
 	assert.Contains(t, out.Lines, "    1 | func Foo\n")
-	assert.Equal(t, 5, out.TotalLines)
+	assert.Equal(t, 4, out.TotalLines)
 
 	r, _ = v.call(t, "rag_read_file_context", map[string]any{"workspace_root": v.root, "file_path": filepath.Join(v.root, "pkg/a.fk"), "symbol": "pkg.Bar"})
 	require.Equal(t, "ok", r.Status, r.Message)
@@ -757,4 +761,40 @@ func TestResolveByNameAndFile(t *testing.T) {
 	data(t, r, &in)
 	require.Len(t, in.Incoming.Children, 1)
 	assert.True(t, in.Incoming.Children[0].ByName)
+}
+
+// rag_server_info shows a root this process is indexing or has queued with
+// its live state and progress, as the other tools' index block does, not the
+// persisted phase (or not_indexed before the first status is written).
+func TestServerInfoLiveState(t *testing.T) {
+	g := gateEmbedder{Fake: &embed.Fake{}, open: make(chan struct{})}
+	v := newEnvWith(t, g, false, func(c *config.Config) { c.AutoIndex = false })
+	w, err := v.e.Workspace(v.root)
+	require.NoError(t, err)
+	w.Index(true)
+	t.Cleanup(func() {
+		close(g.open)
+		require.Eventually(t, func() bool { s := w.Status(); return !s.Running && !s.Queued }, 10*time.Second, 20*time.Millisecond)
+	})
+	require.Eventually(t, func() bool { s := w.Status(); return s.Running && s.Total > 0 }, 10*time.Second, 20*time.Millisecond)
+	r, _ := v.call(t, "rag_server_info", map[string]any{})
+	var out struct {
+		Roots []KnownRoot `json:"roots"`
+	}
+	data(t, r, &out)
+	require.Len(t, out.Roots, 1)
+	assert.Equal(t, "indexing", out.Roots[0].State)
+	assert.Equal(t, 3, out.Roots[0].Total)
+}
+
+// After a restart the last run's error comes from index_status.json, so the
+// "last index run failed" message is not empty.
+func TestFailedRunErrorSurvivesRestart(t *testing.T) {
+	v := newEnv(t, false, func(c *config.Config) { c.AutoIndex = false })
+	require.NoError(t, os.MkdirAll(index.Dir(v.root), 0o755))
+	status, _ := json.Marshal(index.Status{Root: v.root, StartedAt: time.Now(), EndedAt: time.Now(), Phase: "failed", Error: "embed: connection refused"})
+	require.NoError(t, os.WriteFile(filepath.Join(index.Dir(v.root), "index_status.json"), status, 0o644))
+	r, _ := v.call(t, "rag_read_file_context", map[string]any{"workspace_root": v.root, "file_path": "pkg/a.fk", "start_line": 1})
+	assert.Equal(t, "embed: connection refused", r.Index.Error)
+	assert.Contains(t, r.Message, "(embed: connection refused)")
 }

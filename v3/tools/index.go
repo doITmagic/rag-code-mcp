@@ -83,8 +83,9 @@ type Update struct {
 // KnownRoot is one workspace from roots.json with its persisted index state.
 type KnownRoot struct {
 	Root  string `json:"root"`
-	State string `json:"state"` // not_indexed|done|failed|interrupted|<phase>
+	State string `json:"state"` // not_indexed|queued|indexing|done|failed|interrupted|<phase>
 	Files int    `json:"last_run_files"`
+	Total int    `json:"total,omitempty"` // files of the run in progress
 	Ended string `json:"ended_at,omitempty"`
 }
 
@@ -107,7 +108,7 @@ func (t *tools) serverInfo(ctx context.Context, _ *mcp.CallToolRequest, _ InfoIn
 		"ollama":    ollama,
 		"update":    update,
 		"languages": parser.Languages(),
-		"roots":     knownRoots(),
+		"roots":     knownRoots(t.e),
 	}
 	return reply("ok", "", data, nil)
 }
@@ -224,8 +225,9 @@ func semverLess(a, b string) bool {
 	return false
 }
 
-// knownRoots lists roots.json with the persisted status of each root.
-func knownRoots() []KnownRoot {
+// knownRoots lists roots.json with the persisted status of each root, or the
+// live one for a root this process is indexing or has queued.
+func knownRoots(e *engine.Engine) []KnownRoot {
 	var roots []string
 	if data, err := os.ReadFile(filepath.Join(config.HomeDir(), "roots.json")); err == nil {
 		_ = json.Unmarshal(data, &roots)
@@ -240,6 +242,12 @@ func knownRoots() []KnownRoot {
 				k.Ended = s.EndedAt.Format(time.RFC3339)
 			case s.Phase != "" && !index.Running(r):
 				k.State = "interrupted"
+			}
+		}
+		if w := e.Loaded(r); w != nil {
+			if s := w.Status(); s.Running || s.Queued {
+				info := indexInfo(w)
+				k.State, k.Files, k.Total, k.Ended = info.State, info.Done, info.Total, ""
 			}
 		}
 		out = append(out, k)

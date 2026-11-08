@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -57,6 +58,11 @@ func (t *tools) listExports(ctx context.Context, req *mcp.CallToolRequest, in Ex
 			return storeErr(ctx, w, err)
 		}
 	}
+	if len(hits) == 0 { // a directory of the workspace: the files directly in it (a JS or GDScript module is one file)
+		if hits, capped, err = dirModules(ctx, w, pkg, f.Kinds); err != nil {
+			return storeErr(ctx, w, err)
+		}
+	}
 	hits = live(w, hits)
 	byKind := map[string][]Export{}
 	modules := map[string]bool{}
@@ -83,9 +89,32 @@ func (t *tools) listExports(ctx context.Context, req *mcp.CallToolRequest, in Ex
 	sort.Strings(mods)
 	msg := fmt.Sprintf("%d exported symbols in %d modules", min(n, exportsCap), len(mods))
 	if len(mods) == 0 {
-		msg = fmt.Sprintf("no indexed module matches %q; pass the full module path", pkg)
+		msg = fmt.Sprintf("no indexed module or directory matches %q; pass the full module path or a directory of the workspace", pkg)
 	}
 	return reply("ok", msg, map[string]any{"package": pkg, "modules": mods, "exports": byKind, "truncated": capped || n > exportsCap}, w)
+}
+
+// dirModules returns the symbols of the files directly in dir, a directory
+// inside the workspace; none when it is not one.
+func dirModules(ctx context.Context, w *engine.Workspace, dir string, ks []parser.Kind) ([]store.Hit, bool, error) {
+	abs, err := insideRoot(w.Root, strings.TrimRight(dir, "/\\"))
+	if err != nil {
+		return nil, false, nil
+	}
+	if fi, err := os.Stat(abs); err != nil || !fi.IsDir() || abs == w.Root {
+		return nil, false, nil
+	}
+	part, err := w.Scroll(ctx, store.Filter{PathPrefix: abs, Kinds: ks}, store.MaxScroll)
+	if err != nil {
+		return nil, false, err
+	}
+	var hits []store.Hit
+	for _, h := range part {
+		if filepath.Dir(h.Symbol.FilePath) == abs {
+			hits = append(hits, h)
+		}
+	}
+	return hits, len(part) >= store.MaxScroll, nil
 }
 
 // shortModule finds the symbols of the modules ending in "/"+name, "."+name

@@ -39,6 +39,7 @@ type fileCtx struct {
 	imports   map[string]string      // local name -> qualified name ("m.default", "m.name", "m")
 	defs      map[string]parser.Kind // top-level declared names and what they are
 	exported  map[string]bool        // names exported by export {}, module.exports, exports.x
+	alias     *aliases               // tsconfig paths and project dir, loaded on the first bare specifier
 }
 
 func (analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
@@ -107,8 +108,9 @@ func analyzeScript(grammar string, src []byte, wsRoot, module, dir, component st
 // of lines with an unclosed "(", so a 100 KB file of them takes minutes.
 const maxUnclosed = 256
 
-// unbalanced reports whether src opens more than maxUnclosed brackets than it
-// closes, in one linear pass that skips strings and comments.
+// unbalanced reports whether src ends with more than maxUnclosed brackets
+// left open, in one linear pass that skips strings and comments. Deep but
+// closed nesting is valid code and parses fast.
 // shortcut: regex literals are not skipped; a "(" inside one counts as open.
 func unbalanced(src []byte) bool {
 	depth := 0
@@ -134,16 +136,14 @@ func unbalanced(src []byte) bool {
 				i += 2 + end + 1
 			}
 		case '(', '[', '{':
-			if depth++; depth > maxUnclosed {
-				return true
-			}
+			depth++
 		case ')', ']', '}':
 			if depth > 0 {
 				depth--
 			}
 		}
 	}
-	return false
+	return depth > maxUnclosed
 }
 
 // moduleName derives the module (root-relative path without extension) and
@@ -373,13 +373,17 @@ func (c *fileCtx) scanExportsAssign(n *gotreesitter.Node) {
 
 // resolveSpec maps an import specifier to a module: relative paths are joined
 // to this file's directory and stripped of their extension, and a directory
-// with no sibling file of that name becomes its index module; bare specifiers
-// ('react', '@scope/pkg') stay as they are.
+// with no sibling file of that name becomes its index module; aliases
+// ('@/lib/x', '~/composables/y') resolve to the file they name; bare
+// specifiers ('react', '@scope/pkg') stay as they are.
 func (c *fileCtx) resolveSpec(spec string) string {
 	if strings.HasPrefix(spec, "/") && !strings.HasPrefix(spec, "//") {
 		return c.rootAbsolute(spec)
 	}
 	if !strings.HasPrefix(spec, "./") && !strings.HasPrefix(spec, "../") {
+		if m := c.aliasSpec(spec); m != "" {
+			return m
+		}
 		return spec
 	}
 	return c.modulePath(path.Join(c.dir, spec))
@@ -506,8 +510,19 @@ func (c *fileCtx) topLevel(n *gotreesitter.Node, out *[]parser.Symbol) {
 		c.componentObject(n, out)
 	case "call_expression":
 		args := parser.Field(n, c.lang, "arguments")
-		if parser.Text(parser.Field(n, c.lang, "function"), c.src) == "defineComponent" && args != nil && args.NamedChildCount() > 0 && args.NamedChild(0).Type(c.lang) == "object" {
-			c.componentObject(args.NamedChild(0), out)
+		if obj := defineComponentArg(c, n); obj != nil {
+			c.componentObject(obj, out)
+		} else if decl != n && c.isDefault(decl) {
+			// export default defineNuxtRouteMiddleware(() => ...): the callback's calls.
+			kind := parser.KindConstant
+			for _, a := range parser.NamedChildren(args) {
+				if isFunc(a.Type(c.lang)) {
+					kind = parser.KindFunction
+				}
+			}
+			s := c.symbol(n, decl, "", "default", kind, true)
+			s.Relations = c.relsUnder(n, c.locals(n), "")
+			*out = append(*out, s)
 		}
 	case "expression_statement":
 		if n.NamedChildCount() > 0 {
@@ -582,24 +597,24 @@ func (c *fileCtx) method(m, fn *gotreesitter.Node, owner string, ownerExported b
 // options-API object (export default {...} / defineComponent({...})) as
 // methods owned by the component, which is named after the file.
 func (c *fileCtx) componentObject(obj *gotreesitter.Node, out *[]parser.Symbol) {
-	c.objectMethods(obj, c.component, true, out)
+	c.objectMethods(obj, c.component, true, true, out)
 }
 
 // objectMethods emits the methods and function-valued pairs of obj as methods
 // of owner; top descends into Vue's methods / computed / watch.
-func (c *fileCtx) objectMethods(obj *gotreesitter.Node, owner string, top bool, out *[]parser.Symbol) {
+func (c *fileCtx) objectMethods(obj *gotreesitter.Node, owner string, top, exported bool, out *[]parser.Symbol) {
 	for _, p := range parser.NamedChildren(obj) {
 		switch p.Type(c.lang) {
 		case "method_definition":
-			c.method(p, p, owner, true, out)
+			c.method(p, p, owner, exported, out)
 		case "pair":
 			key, v := parser.Text(parser.Field(p, c.lang, "key"), c.src), parser.Field(p, c.lang, "value")
 			switch {
 			case v == nil:
 			case isFunc(v.Type(c.lang)):
-				c.method(p, v, owner, true, out)
+				c.method(p, v, owner, exported, out)
 			case top && v.Type(c.lang) == "object" && (key == "methods" || key == "computed" || key == "watch"):
-				c.objectMethods(v, owner, false, out)
+				c.objectMethods(v, owner, false, exported, out)
 			}
 		}
 	}
@@ -622,12 +637,20 @@ func (c *fileCtx) variables(n, decl *gotreesitter.Node, exported bool, out *[]pa
 			kind = parser.KindConstant
 		}
 		s := c.symbol(v, decl, "", parser.Text(name, c.src), kind, exported)
-		if kind == parser.KindFunction {
+		switch {
+		case kind == parser.KindFunction:
 			s.Relations = c.calls(v, "")
+		case v != nil && v.Type(c.lang) != "object" && defineComponentArg(c, v) == nil:
+			// const x = useX(...): the initializer's calls are the const's.
+			// shortcut: an object literal's non-method values are not walked (its methods own their calls).
+			s.Relations = c.relsUnder(v, c.locals(v), "")
 		}
 		*out = append(*out, s)
 		if v != nil && v.Type(c.lang) == "object" { // const model = { load() {...} }: a store model
-			c.objectMethods(v, s.Name, false, out)
+			c.objectMethods(v, s.Name, false, s.Exported, out)
+		}
+		if obj := defineComponentArg(c, v); obj != nil { // const C = defineComponent({...})
+			c.objectMethods(obj, s.Name, true, s.Exported, out)
 		}
 	}
 }
@@ -654,6 +677,17 @@ func (c *fileCtx) exportsAssign(n, decl *gotreesitter.Node, out *[]parser.Symbol
 		s.Relations = c.calls(v, "")
 	}
 	*out = append(*out, s)
+}
+
+// defineComponentArg is the options object of a defineComponent({...}) call, or nil.
+func defineComponentArg(c *fileCtx, n *gotreesitter.Node) *gotreesitter.Node {
+	if n == nil || n.Type(c.lang) != "call_expression" || parser.Text(parser.Field(n, c.lang, "function"), c.src) != "defineComponent" {
+		return nil
+	}
+	if args := parser.Field(n, c.lang, "arguments"); args != nil && args.NamedChildCount() > 0 && args.NamedChild(0).Type(c.lang) == "object" {
+		return args.NamedChild(0)
+	}
+	return nil
 }
 
 func isFunc(t string) bool {
@@ -729,9 +763,16 @@ func blockLines(text string) []string {
 // including those in nested callbacks, attributed to the enclosing symbol.
 // A callee whose first segment is a parameter or local of fn is unresolved.
 func (c *fileCtx) calls(fn *gotreesitter.Node, owner string) []parser.Relation {
+	rels := c.relsUnder(parser.Field(fn, c.lang, "body"), c.locals(fn), owner)
+	rels = append(rels, c.typeUses(parser.Field(fn, c.lang, "parameters"))...)
+	return append(rels, c.typeUses(parser.Field(fn, c.lang, "return_type"))...)
+}
+
+// relsUnder collects the call, construction, type and JSX relations under
+// root; a callee whose first segment is in locals is unresolved.
+func (c *fileCtx) relsUnder(root *gotreesitter.Node, locals map[string]bool, owner string) []parser.Relation {
 	var rels []parser.Relation
-	locals := c.locals(fn)
-	parser.Walk(parser.Field(fn, c.lang, "body"), func(n *gotreesitter.Node) bool {
+	parser.Walk(root, func(n *gotreesitter.Node) bool {
 		line, _ := parser.Lines(n)
 		switch n.Type(c.lang) {
 		case "call_expression":
@@ -773,8 +814,7 @@ func (c *fileCtx) calls(fn *gotreesitter.Node, owner string) []parser.Relation {
 		}
 		return true
 	})
-	rels = append(rels, c.typeUses(parser.Field(fn, c.lang, "parameters"))...)
-	return append(rels, c.typeUses(parser.Field(fn, c.lang, "return_type"))...)
+	return rels
 }
 
 // typeUses lists the TypeScript types named under n (annotations, generic

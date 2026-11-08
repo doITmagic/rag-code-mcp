@@ -490,7 +490,7 @@ func TestProbe3DeepNestingValidFile(t *testing.T) {
 	// without at least returning cleanly.
 	src := "export const deep = " + strings.Repeat("[", 300) + strings.Repeat("]", 300) + ";\nexport function f() {}\n"
 	syms := analyze(t, "deep.js", src)
-	t.Logf("deep symbols: %v", qn(syms))
+	find(t, syms, "deep.f")
 }
 
 func TestProbe3Concurrent8(t *testing.T) {

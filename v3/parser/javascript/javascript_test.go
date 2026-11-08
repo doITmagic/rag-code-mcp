@@ -515,3 +515,107 @@ const model = {
 	find(t, syms, "src/store.model.render")
 	find(t, syms, "src/store.model")
 }
+
+// Aliased imports resolve through the nearest tsconfig/jsconfig "paths"
+// (comments and trailing commas allowed, relative "extends" followed) and,
+// without a mapping, through the Nuxt/Vite conventions. Only an existing
+// file counts; anything else stays as written.
+func TestAliasImports(t *testing.T) {
+	write := func(ws, rel, body string) {
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(ws, rel)), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(ws, rel), []byte(body), 0o644))
+	}
+	callee := func(t *testing.T, ws, file, src, fn string) map[string]string {
+		syms, err := analyzer{}.Analyze(parser.File{Path: filepath.Join(ws, file), Root: ws, Source: []byte(src)})
+		require.NoError(t, err)
+		out := map[string]string{}
+		for _, r := range find(t, syms, fn).Relations {
+			if r.Kind == parser.RelCall {
+				out[r.TargetName] = r.TargetQualifiedName
+			}
+		}
+		return out
+	}
+
+	t.Run("tsconfig paths", func(t *testing.T) {
+		ws := t.TempDir()
+		write(ws, "tsconfig.base.json", `{
+  // shared options
+  "compilerOptions": { "paths": { "@/*": ["./*"], "#ui": ["./components/ui/index.ts"], }, },
+}`)
+		write(ws, "tsconfig.json", `{ "extends": "./tsconfig.base.json" }`)
+		write(ws, "lib/utils.ts", "")
+		write(ws, "components/ui/index.ts", "")
+		write(ws, "pkg/web/tsconfig.json", `{ "compilerOptions": { "baseUrl": "src", "paths": { "lib/*": ["shared/*"] } } }`)
+		write(ws, "pkg/web/src/shared/fmt.ts", "")
+		got := callee(t, ws, "components/form.tsx", `import { cleanText } from "@/lib/utils";
+import { Button } from "#ui";
+import { gone } from "@/lib/missing";
+import { Slot } from "@radix-ui/react-slot";
+export function Form() { cleanText(); Button(); gone(); Slot(); }
+`, "components/form.Form")
+		assert.Equal(t, "lib/utils.cleanText", got["cleanText"])
+		assert.Equal(t, "components/ui/index.Button", got["Button"])
+		assert.Equal(t, "@/lib/missing.gone", got["gone"], "missing file: left as written")
+		assert.Equal(t, "@radix-ui/react-slot.Slot", got["Slot"])
+		got = callee(t, ws, "pkg/web/src/app.ts", `import { fmt } from "lib/fmt";
+export function run() { fmt(); }
+`, "pkg/web/src/app.run")
+		assert.Equal(t, "pkg/web/src/shared/fmt.fmt", got["fmt"], "nearest tsconfig, paths under baseUrl")
+	})
+
+	t.Run("nuxt conventions", func(t *testing.T) {
+		ws := t.TempDir()
+		write(ws, "package.json", "{}")
+		write(ws, "tsconfig.json", `{ "references": [{ "path": "./.nuxt/tsconfig.app.json" }], "files": [] }`)
+		write(ws, "app/composables/users.ts", "")
+		write(ws, "server/utils/db.ts", "")
+		write(ws, "shared/types.ts", "")
+		got := callee(t, ws, "app/pages/home.ts", `import { useUsers } from "~/composables/users";
+import { db } from "~~/server/utils/db";
+import { parse } from "#shared/types";
+import { nope } from "~/composables/nope";
+export function home() { useUsers(); db(); parse(); nope(); }
+`, "app/pages/home.home")
+		assert.Equal(t, "app/composables/users.useUsers", got["useUsers"])
+		assert.Equal(t, "server/utils/db.db", got["db"])
+		assert.Equal(t, "shared/types.parse", got["parse"])
+		assert.Equal(t, "~/composables/nope.nope", got["nope"])
+	})
+}
+
+// Calls in a top-level const initializer belong to the const, and
+// `export default defineX(() => ...)` (Nuxt middleware, plugins, server
+// routes) is a default symbol owning the calls of its callback. An object
+// literal's method calls stay with the methods.
+func TestTopLevelInitializerCalls(t *testing.T) {
+	syms := analyze(t, "app/m.ts", `import { useFormattedDateTime } from './time';
+function filterClasses(x) { return x }
+const sanitizer = sanitize({ class: filterClasses('a') });
+export const createdAt = useFormattedDateTime(1);
+const model = { load() { fetchIt() } };
+export default defineNuxtRouteMiddleware((to) => { handleAuth(to) });
+function handleAuth(t) {}
+`)
+	assert.Equal(t, "app/m.filterClasses", rel(t, find(t, syms, "app/m.sanitizer"), parser.RelCall, "filterClasses").TargetQualifiedName)
+	assert.Equal(t, "app/time.useFormattedDateTime", rel(t, find(t, syms, "app/m.createdAt"), parser.RelCall, "useFormattedDateTime").TargetQualifiedName)
+	assert.Empty(t, find(t, syms, "app/m.model").Relations, "methods own their calls")
+	rel(t, find(t, syms, "app/m.model.load"), parser.RelCall, "fetchIt")
+	d := find(t, syms, "app/m.default")
+	assert.Equal(t, parser.KindFunction, d.Kind)
+	assert.Equal(t, "app/m.handleAuth", rel(t, d, parser.RelCall, "handleAuth").TargetQualifiedName)
+}
+
+// Methods of a top-level object literal are exported only with their const,
+// and `const C = defineComponent({...})` yields C's component methods.
+func TestObjectMethodsExportAndDefineComponentConst(t *testing.T) {
+	syms := analyze(t, "m.ts", `const model = { load() {} };
+export const store = { save() {} };
+const C = defineComponent({ methods: { go() { this.stop() } }, stop() {} });
+`)
+	assert.False(t, find(t, syms, "m.model.load").Exported)
+	assert.True(t, find(t, syms, "m.store.save").Exported)
+	assert.Equal(t, parser.KindMethod, find(t, syms, "m.C.go").Kind)
+	find(t, syms, "m.C.stop")
+	assert.Empty(t, find(t, syms, "m.C").Relations, "the component's methods own their calls")
+}

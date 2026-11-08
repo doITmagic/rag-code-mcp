@@ -165,7 +165,7 @@ specifier is the module as written (`react.useState`).
 | `const model = { load() {...}, f: () => ... }` at top level, also with `let` / `var` (Alpine / Pinia store models): methods and function-valued pairs, exported only when the const is | `method` | the const name, e.g. `model` |
 | `const C = defineComponent({...})`: the same options as `export default` | `method` | the const name, e.g. `C` |
 | Vue `<template>` | `template` | |
-| Top-level expression statements of a Vue `<script setup>` (`watch(...)`, `defineProps<T>()`): their calls and type uses | `function` named `default`, exported, spanning the `<script setup>` block; when the file already has a `default` symbol the relations are added to it | |
+| Top-level expression statements of a Vue `<script setup>` (`watch(...)`, `defineProps<T>()`) and the initializers of its top-level destructuring declarations (`const { a } = useX()`): their calls and type uses | `function` named `default`, exported, spanning the `<script setup>` block; when the file already has a `default` symbol the relations are added to it | |
 
 - **Default export.** Importers see the default export only as `default`, so
   a default-exported declaration is qualified as `<module>.default`. An
@@ -235,6 +235,14 @@ literal's values are not walked, its methods own their calls.
 
 ## Known limitations visible in the code
 
+- Decorators (`@sealed`, `@log`) are not usages of the function they name.
+- `module.exports = function f() {}` (a named function expression) produces
+  no symbol; `module.exports = f` of a declared `f` does.
+- `super.m()` is not resolved to the base class's method; it counts among the
+  unresolved relations.
+- A method called through a `require`d CommonJS class
+  (`const C = require('./c'); C.m()`) keeps the target `<module>.m`, which
+  matches no symbol, and has no by-name fallback.
 - Top-level expression statements of a plain `.js`/`.ts` file (`describe()` /
   `it()` in tests, side-effect calls) belong to no symbol, so their calls are
   not usages.
@@ -273,7 +281,7 @@ literal's values are not walked, its methods own their calls.
 
 | File | Covers |
 |------|--------|
-| `javascript_test.go` | ESM and CommonJS imports and exports, classes and methods, TypeScript (interfaces, types, enums, abstract classes), TSX, Vue options API, Vue `<script setup lang="ts">`, malformed and unbalanced input, files outside the root, concurrency, registration, default exports and directory (`index`) imports, root-absolute imports, TypeScript type uses, methods of an object literal bound to a const, aliased imports (tsconfig paths, Nuxt conventions), calls in top-level initializers and `export default defineX(...)`, export of object-literal methods, `const C = defineComponent(...)`, barrel re-exports (`export *`, `export { a as b } from`, local alias exports, cycles, cache invalidation, package specifiers never read from disk nor named like a root file of that name, `.`/`..` specifiers), top-level calls of `<script setup>` attributed to `default`, `await f<T>()` calls, top-level variable type annotations, `<script>` and `<script setup>` sharing names, the line of a chained call split over lines. |
+| `javascript_test.go` | ESM and CommonJS imports and exports, classes and methods, TypeScript (interfaces, types, enums, abstract classes), TSX, Vue options API, Vue `<script setup lang="ts">`, malformed and unbalanced input, files outside the root, concurrency, registration, default exports and directory (`index`) imports, root-absolute imports, TypeScript type uses, methods of an object literal bound to a const, aliased imports (tsconfig paths, Nuxt conventions), calls in top-level initializers and `export default defineX(...)`, export of object-literal methods, `const C = defineComponent(...)`, barrel re-exports (`export *`, `export { a as b } from`, local alias exports, cycles, cache invalidation, package specifiers never read from disk nor named like a root file of that name, `.`/`..` specifiers), top-level calls of `<script setup>` attributed to `default`, `await f<T>()` calls, top-level variable type annotations, `<script>` and `<script setup>` sharing names, the line of a chained call split over lines, top-level destructuring calls of `<script setup>`. |
 | `zz_verify_test.go` | Verification tests: JSX and import forms, TS enums and generics, `defineComponent` and CRLF files, robustness, nested CommonJS, component objects in plain JS, template-first `<script setup>`, statelessness, private TS members and syntax-error recovery, two script blocks, deep nesting, concurrent analysis. |
 
 ## Testing

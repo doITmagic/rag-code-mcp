@@ -181,8 +181,16 @@ func (c *fileCtx) emit(tree *gotreesitter.Tree) ([]parser.Symbol, []parser.Relat
 	var rels []parser.Relation
 	for _, nc := range parser.NamedChildren(root) {
 		c.topLevel(nc, &syms)
-		if nc.Type(c.lang) == "expression_statement" {
+		switch nc.Type(c.lang) {
+		case "expression_statement":
 			rels = append(rels, c.relsUnder(nc, c.locals(nc), "")...)
+		case "lexical_declaration", "variable_declaration":
+			// const { a } = useX(): a pattern makes no symbol, so its calls are top-level ones.
+			for _, d := range parser.NamedChildren(nc) {
+				if nm, v := parser.Field(d, c.lang, "name"), parser.Field(d, c.lang, "value"); nm != nil && v != nil && nm.Type(c.lang) != "identifier" {
+					rels = append(rels, c.relsUnder(v, c.locals(v), "")...)
+				}
+			}
 		}
 	}
 	return syms, rels

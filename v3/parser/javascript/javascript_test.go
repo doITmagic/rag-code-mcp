@@ -825,3 +825,13 @@ func TestChainedCallLine(t *testing.T) {
 	syms := analyze(t, "src/chain.ts", "import { lib } from './lib'\nexport function chain() {\n  return lib\n    .useThing('x')\n}\n")
 	assert.Equal(t, 4, rel(t, find(t, syms, "src/chain.chain"), parser.RelCall, "useThing").Line)
 }
+
+// A top-level destructuring declaration makes no symbol: in <script setup>
+// its calls belong to the component like any top-level statement.
+func TestVueScriptSetupDestructuringCalls(t *testing.T) {
+	src := "<script setup lang=\"ts\">\nimport { useNotifications } from './n'\nconst { notifications } = useNotifications()\nconst [a, b] = usePair()\n</script>\n"
+	d := find(t, analyze(t, "src/Nav.vue", src), "src/Nav.default")
+	assert.Equal(t, "src/n.useNotifications", rel(t, d, parser.RelCall, "useNotifications").TargetQualifiedName)
+	assert.Equal(t, 3, rel(t, d, parser.RelCall, "useNotifications").Line)
+	rel(t, d, parser.RelCall, "usePair")
+}

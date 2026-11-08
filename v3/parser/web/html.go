@@ -98,11 +98,15 @@ func (c *htmlCtx) walk(n *gotreesitter.Node, owner string) {
 			}
 			childOwner := owner
 			if name != "" {
-				start, end := parser.Lines(ch)
+				span := ch
+				if voidTags[tag] && open != nil { // no end tag: the element node runs over the whitespace after it
+					span = open
+				}
+				start, end := parser.Lines(span)
 				c.syms = append(c.syms, parser.Symbol{
 					Name: name, Kind: parser.KindTemplate, Module: c.module, Owner: owner, Exported: true,
 					Signature: collapse(parser.Text(open, c.f.Source)), Doc: doc,
-					Content: capLines(parser.Text(ch, c.f.Source), maxContentLines), StartLine: start, EndLine: end,
+					Content: capLines(parser.Text(span, c.f.Source), maxContentLines), StartLine: start, EndLine: end,
 				})
 				if sectional[tag] {
 					childOwner = name
@@ -115,6 +119,10 @@ func (c *htmlCtx) walk(n *gotreesitter.Node, owner string) {
 		doc = ""
 	}
 }
+
+// voidTags are the HTML elements that never have an end tag.
+var voidTags = map[string]bool{"area": true, "base": true, "br": true, "col": true, "embed": true, "hr": true,
+	"img": true, "input": true, "link": true, "meta": true, "source": true, "track": true, "wbr": true}
 
 // openTag returns the lower-case tag name and attributes of an element's
 // start or self-closing tag.

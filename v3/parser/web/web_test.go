@@ -240,3 +240,19 @@ func TestConcurrent(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// A void element (<input>, no end tag) spans its own tag only, not the
+// whitespace up to the next element.
+func TestVoidElementLines(t *testing.T) {
+	syms := analyze(t, "/ws/f.html", "<form>\n  <input id=\"a\" name=\"a\">\n  <input id=\"b\">\n  <p id=\"c\">x</p>\n</form>\n")
+	got := map[string][2]int{}
+	content := map[string]string{}
+	for _, s := range syms {
+		got[s.Name] = [2]int{s.StartLine, s.EndLine}
+		content[s.Name] = s.Content
+	}
+	assert.Equal(t, [2]int{2, 2}, got["a"])
+	assert.Equal(t, [2]int{3, 3}, got["b"])
+	assert.Equal(t, [2]int{4, 4}, got["c"])
+	assert.Equal(t, `<input id="a" name="a">`, content["a"])
+}

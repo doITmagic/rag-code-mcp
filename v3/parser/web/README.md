@@ -130,7 +130,7 @@ that leave the workspace root give an empty target.
 
 | File | Covers |
 |------|--------|
-| `web_test.go` | An HTML page (title, imports, ids, sectional ownership, comments as doc), a Go template file (`define`, `block`, nested `range`, calls), splitting of long documents, module names and reference resolution, malformed input, the symbol cap, registration (and no analyzer for stylesheets), concurrency. |
+| `web_test.go` | An HTML page (title, imports, ids, sectional ownership, comments as doc), a Go template file (`define`, `block`, nested `range`, calls), splitting of long documents, module names and reference resolution, malformed input, the symbol cap, registration (and no analyzer for stylesheets), concurrency, a void element (`<input>`) spanning its own tag only. |
 | `zz_verify_test.go` | Verification tests: a fresh HTML + Go template fixture (ownership, imports, defined and missing templates, `<style>` not indexed), and malformed or binary input that must neither panic nor hang. |
 
 ## Testing

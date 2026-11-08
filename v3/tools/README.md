@@ -169,7 +169,7 @@ looks like an identifier, semantic search otherwise.
 | `query` | string, required | an identifier or qualified name, or a natural-language description |
 | `limit` | int | default 10, at most 100 |
 | `file_path` | string | the file being edited; results near it rank higher |
-| `language` | string | only this language (`go`, `python`, `php`, ...) |
+| `language` | string | only this language, as `rag_server_info` lists them (`go`, `python`, `php`, `javascript` for JS/TS/Vue, ...); any other is an input error |
 | `path_prefix` | string | only files under this directory; a file is an error (pass its directory) |
 | `kinds` | []string | only these kinds: `function`, `method`, `class`, `interface`, `type`, `variable`, `constant`, `route`, `hook`, `template`, `scene`, `chunk`; any other value is an input error listing them |
 | `full` | bool | always include the symbol content |
@@ -342,7 +342,9 @@ The exported symbols of a package or module, grouped by kind.
   `name`, plus the indexed directories and files called `name` (from the
   index state), each read with one filtered scroll, at most 50 scrolls. The
   workspace root itself is never such a directory, even when it is called
-  `name`. A
+  `name`. Each module found this way is then read whole (one `module`
+  scroll), so a package spread over files not named `name` (Go's root package
+  found through `cobra.go`) lists all its files. A
   directory called `name` contributes the files directly in it whatever
   their module (a JS module such as `components/ui/button` is a file of
   `ui`).

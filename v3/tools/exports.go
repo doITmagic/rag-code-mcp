@@ -188,8 +188,9 @@ func shortModule(ctx context.Context, w *engine.Workspace, name string, ks []par
 	if len(filters) > shortModuleScrolls {
 		filters = filters[:shortModuleScrolls]
 	}
-	seen := map[string]bool{}
-	for _, f := range filters {
+	seen, scrolled := map[string]bool{}, map[string]bool{}
+	for i := 0; i < len(filters); i++ {
+		f := filters[i]
 		part, err := w.Scroll(ctx, f, store.MaxScroll)
 		if err != nil {
 			return nil, false, err
@@ -203,6 +204,12 @@ func shortModule(ctx context.Context, w *engine.Workspace, name string, ks []par
 			}
 			seen[h.Symbol.ID] = true
 			hits = append(hits, h)
+			// A module spread over files the lookups did not name (Go's root
+			// package seen through cobra.go): read the whole module once.
+			if m != "" && !inDir && !scrolled[m] && len(filters) < 2*shortModuleScrolls {
+				scrolled[m] = true
+				filters = append(filters, store.Filter{Module: m, Kinds: ks})
+			}
 		}
 	}
 	return hits, capped, nil

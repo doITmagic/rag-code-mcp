@@ -37,7 +37,7 @@ type SearchInput struct {
 	Query         string   `json:"query" jsonschema:"An identifier or qualified name (exact match) or a natural-language description (semantic)."`
 	Limit         int      `json:"limit,omitempty" jsonschema:"Maximum results, default 10, at most 100."`
 	FilePath      string   `json:"file_path,omitempty" jsonschema:"File being edited; results near it rank higher."`
-	Language      string   `json:"language,omitempty" jsonschema:"Only this language, e.g. go, python, php."`
+	Language      string   `json:"language,omitempty" jsonschema:"Only this language, as rag_server_info lists them (go, python, php, javascript for JS/TS/Vue, ...); any other is an input error."`
 	PathPrefix    string   `json:"path_prefix,omitempty" jsonschema:"Only files under this directory (absolute or relative to the root)."`
 	Kinds         []string `json:"kinds,omitempty" jsonschema:"Only these symbol kinds: function, method, class, interface, type, variable, constant, route, hook, template, scene, chunk."`
 	Full          bool     `json:"full,omitempty" jsonschema:"Always include the symbol content."`
@@ -70,6 +70,9 @@ func (t *tools) search(ctx context.Context, req *mcp.CallToolRequest, in SearchI
 	ks, err := kinds(in.Kinds)
 	if err != nil {
 		return fail(err.Error())
+	}
+	if l := parser.Languages(); in.Language != "" && !slices.Contains(l, in.Language) {
+		return fail(fmt.Sprintf("unknown language %q: use %s (TypeScript and Vue files are javascript)", in.Language, strings.Join(l, ", ")))
 	}
 	w, res := t.open(ctx, req, in.WorkspaceRoot)
 	if res != nil {

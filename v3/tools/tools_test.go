@@ -28,7 +28,8 @@ import (
 )
 
 // fakeAnalyzer parses .fk files: "func NAME" starts a function in module
-// "m/<dir>", an indented "call m/dir.NAME" line adds a call relation to it.
+// "m/<dir>" (a "package X" line sets module X instead), an indented
+// "call m/dir.NAME" line adds a call relation to it.
 type fakeAnalyzer struct{}
 
 func (fakeAnalyzer) Language() string     { return "fake" }
@@ -38,7 +39,9 @@ func (fakeAnalyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 	mod := "m/" + filepath.ToSlash(rel)
 	var syms []parser.Symbol
 	for i, line := range strings.Split(string(f.Source), "\n") {
-		if name, ok := strings.CutPrefix(line, "func "); ok {
+		if p, ok := strings.CutPrefix(line, "package "); ok {
+			mod = p
+		} else if name, ok := strings.CutPrefix(line, "func "); ok {
 			var qn string // "func X as default": named X, qualified like a JS default export
 			if n, ok := strings.CutSuffix(name, " as default"); ok {
 				name, qn = n, mod+".default"
@@ -917,6 +920,9 @@ func TestExportsShortDirOfFileModules(t *testing.T) {
 		r, _ := v.call(t, "rag_list_package_exports", map[string]any{"workspace_root": v.root, "package": f})
 		assert.Contains(t, r.Message, f+" has no exported symbols of its own")
 	}
+	// A Go-like root package: the file named like it leads to its whole module.
+	v.addFiles(t, map[string]string{"pk.fk": "package ex.com/pk\nfunc RootA\n", "other.fk": "package ex.com/pk\nfunc RootB\n"})
+	assert.Equal(t, []string{"RootA", "RootB"}, names("pk"))
 	base := filepath.Base(v.root) // a package named like the root: its directory, never the root's own files
 	v.addFiles(t, map[string]string{"top.fkm": "func Top\n", base + "/in.fkm": "func Inner\n"})
 	assert.Equal(t, []string{"Inner"}, names(base))
@@ -1030,6 +1036,10 @@ func TestKindsFilterAndValidation(t *testing.T) {
 		assert.Contains(t, r.Message, `unknown kind "nope"`, name)
 		assert.Contains(t, r.Message, "function, method", name)
 	}
+	// An unknown language is an input error too, not a silent empty answer.
+	r, res := v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "Foo", "language": "typescript"})
+	require.True(t, res.IsError)
+	assert.Contains(t, r.Message, `unknown language "typescript"`)
 }
 
 // limit caps the referencing symbols exactly and says when it cut; the

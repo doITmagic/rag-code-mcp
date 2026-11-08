@@ -406,8 +406,9 @@ func (e *Engine) runJobs(w *Workspace) {
 			w.watch = nil
 			e.mu.Unlock()
 			if wt != nil {
+				// Not forget(): dirs belongs to the watch loop, which forgets on the
+				// root's own Remove event; inotify drops a deleted tree's watches.
 				wt.Stop()
-				wt.forget()
 			}
 			return
 		case err != nil && e.ctx.Err() == nil:

@@ -495,3 +495,13 @@ def load(u: "User"):
 	assert.Equal(t, "app.models.User.find", got["find"])
 	assert.Contains(t, []string{"ujson.loads", "json.loads"}, got["loads"])
 }
+
+// A module-level assignment carries the calls of its right-hand side
+// (app = Flask(__name__)), once, on its first target.
+func TestModuleAssignmentCalls(t *testing.T) {
+	src := "from flask import Flask\nfrom x import make\n\napp = Flask(__name__)\na, b = make(\n    1,\n)\n"
+	m := byQN(analyze(t, "/ws/app.py", "/ws", src))
+	assert.Equal(t, map[string]string{"Flask": "flask.Flask"}, targets(m["app.app"], parser.RelCall))
+	assert.Equal(t, map[string]string{"make": "x.make"}, targets(m["app.a"], parser.RelCall))
+	assert.Empty(t, m["app.b"].Relations)
+}

@@ -323,6 +323,10 @@ func (c *fileCtx) assignment(n *gotreesitter.Node) []parser.Symbol {
 			Exported: !strings.HasPrefix(name, "_"),
 		})
 	}
+	if len(out) > 0 { // the calls of the right-hand side, once: on the first target
+		right := parser.Field(n, c.lang, "right")
+		out[0].Relations = c.callsUnder(right, right, "", true)
+	}
 	return out
 }
 

@@ -135,6 +135,7 @@ Relations: `Base` extends `z` -> `x.y.z`; `_m` calls `n` ->
 | `self.m()` / `cls.m()` | `call` | `<module>.<Owner>.m` (empty outside a class). |
 | `mod.f()`, `a.b.f()` | `call` | First segment through the import table or a module-level name. |
 | `obj.m()` on an unknown name | `call` | `""` |
+| `NAME = f(...)` at module level | `call` | Every call of the right-hand side, resolved like `f()`, on the first target only (`a, b = f()`: on `a`). |
 | `class C(Base, pkg.Other, Generic[T])` | `extends` | Same resolution; `Generic[T]` is reduced to `Generic`; keyword arguments such as `metaclass=` are skipped. |
 
 ### `__init__.py` re-exports
@@ -182,7 +183,7 @@ keyed by root + path and invalidated by mtime and size.
 
 | File | Covers |
 |------|--------|
-| `python_test.go` | Symbols (kinds, owners, signatures, docstrings, decorators, overloads), call targets for every import form, base classes, module names, relative imports from `__init__.py`, malformed input, registration, concurrency, package re-exports (also under a `src/` root, from `tests/` outside it, and with the cache), function-local imports and class-body calls, imports under `if TYPE_CHECKING:` and try/except. |
+| `python_test.go` | Symbols (kinds, owners, signatures, docstrings, decorators, overloads), call targets for every import form, base classes, module names, relative imports from `__init__.py`, malformed input, registration, concurrency, package re-exports (also under a `src/` root, from `tests/` outside it, and with the cache), function-local imports and class-body calls, imports under `if TYPE_CHECKING:` and try/except, calls in module-level assignments. |
 | `zz_verify_test.go` | Verification tests: a fresh fixture exercising every import form, symbols, `from` not importing the module itself, `.pyi` files and the root module, robustness. |
 
 ## Testing

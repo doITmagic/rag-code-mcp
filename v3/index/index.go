@@ -699,11 +699,20 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 }
 
 // names drops everything but the names (and kind, module, owner) of each
-// symbol: what staleReferrers and newNameIndex read.
+// symbol, plus a class's qualified bases: what staleReferrers and
+// newNameIndex read.
 func names(files []parsed) []parsed {
 	for i := range files {
 		for j, s := range files[i].syms {
-			files[i].syms[j] = parser.Symbol{ID: s.ID, QualifiedName: s.QualifiedName, Name: s.Name, Language: s.Language, Kind: s.Kind, Module: s.Module, Owner: s.Owner}
+			n := parser.Symbol{ID: s.ID, QualifiedName: s.QualifiedName, Name: s.Name, Language: s.Language, Kind: s.Kind, Module: s.Module, Owner: s.Owner}
+			if s.Kind == parser.KindClass || s.Kind == parser.KindInterface {
+				for _, r := range s.Relations {
+					if r.TargetQualifiedName != "" && (r.Kind == parser.RelExtends || r.Kind == parser.RelImplements || r.Kind == parser.RelUsesType) {
+						n.Relations = append(n.Relations, parser.Relation{Kind: r.Kind, TargetQualifiedName: r.TargetQualifiedName})
+					}
+				}
+			}
+			files[i].syms[j] = n
 		}
 	}
 	return files
@@ -717,17 +726,27 @@ type nameIndex struct {
 	byModule  map[string][]string    // top-level classes per module
 	byModName map[[2]string][]string // module, name of top-level symbols
 	lang      map[string]string      // symbol id -> language
+	kind      map[string]parser.Kind // symbol id -> kind, for fit
+	bases     map[string][]string    // normalized class QN -> qualified names it extends, implements or uses (traits)
 	changed   map[string]bool        // files of the run: their stored points are stale
 }
 
 func newNameIndex(files []parsed) nameIndex {
 	idx := nameIndex{byQN: map[string][]string{}, bySuffix: map[string][]string{}, byName: map[[2]string][]string{}, byModule: map[string][]string{},
-		byModName: map[[2]string][]string{}, lang: map[string]string{}, changed: make(map[string]bool, len(files))}
+		byModName: map[[2]string][]string{}, lang: map[string]string{}, kind: map[string]parser.Kind{}, bases: map[string][]string{}, changed: make(map[string]bool, len(files))}
 	for i := range files {
 		idx.changed[files[i].path] = true
 		for _, s := range files[i].syms {
 			qn := parser.Normalize(s.QualifiedName)
 			idx.lang[s.ID] = s.Language
+			idx.kind[s.ID] = s.Kind
+			if s.Kind == parser.KindClass || s.Kind == parser.KindInterface {
+				for _, r := range s.Relations {
+					if r.TargetQualifiedName != "" && (r.Kind == parser.RelExtends || r.Kind == parser.RelImplements || r.Kind == parser.RelUsesType) {
+						idx.bases[qn] = append(idx.bases[qn], r.TargetQualifiedName)
+					}
+				}
+			}
 			idx.byQN[qn] = append(idx.byQN[qn], s.ID)
 			for j := 0; j < len(qn); j++ {
 				if j == 0 || qn[j-1] == '.' {
@@ -750,7 +769,7 @@ func newNameIndex(files []parsed) nameIndex {
 // when the store already holds the rest of the workspace, store lookups for
 // the targets the run does not define.
 func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
-	byQN, bySuffix, byName, byModule, langOf, changed := idx.byQN, idx.bySuffix, idx.byName, idx.byModule, idx.lang, idx.changed
+	byQN, bySuffix, byName, byModule, langOf, kindOf, changed := idx.byQN, idx.bySuffix, idx.byName, idx.byModule, idx.lang, idx.kind, idx.changed
 	// No lookup cap: a target left unresolved here stays so until its caller
 	// file changes. One store error stops the lookups for the run.
 	failed := false
@@ -774,6 +793,7 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 			if !changed[h.Symbol.FilePath] && match(h.Symbol) {
 				ids = append(ids, h.Symbol.ID)
 				langOf[h.Symbol.ID] = h.Symbol.Language
+				kindOf[h.Symbol.ID] = h.Symbol.Kind
 			}
 		}
 		cache[key] = ids
@@ -814,12 +834,35 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 		}
 		return ids
 	}
+	// fit drops the candidates a relation cannot point at: only imports reach
+	// templates, scene nodes, doc chunks, routes and hooks, and a call matched
+	// by name alone binds only to something callable (an exact match may
+	// name a variable holding a function).
+	fit := func(rk parser.RelationKind, nameOnly bool, ids []string) []string {
+		if rk == parser.RelImports {
+			return ids
+		}
+		out := ids[:0:0]
+		for _, id := range ids {
+			switch kindOf[id] {
+			case parser.KindTemplate, parser.KindScene, parser.KindChunk, parser.KindRoute, parser.KindHook:
+				continue
+			case parser.KindVariable, parser.KindConstant:
+				if nameOnly && rk == parser.RelCall {
+					continue
+				}
+			}
+			out = append(out, id)
+		}
+		return out
+	}
 	for i := range files {
 		for j := range files[i].syms {
 			lang := files[i].syms[j].Language
 			for k := range files[i].syms[j].Relations {
 				rel := &files[i].syms[j].Relations[k]
 				var ids []string
+				nameOnly := false
 				resolution := parser.ResolutionUnique
 				if tqn := rel.TargetQualifiedName; tqn != "" {
 					resolution = parser.ResolutionExact
@@ -851,15 +894,31 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 						})
 					}
 					// $this->m(), self.m(), this.m() on a member the owner
-					// inherits (parent class, trait, embedded type) name the
-					// owner, which exists but does not define it: fall back
-					// to the name. An unknown owner is external (vendor, stdlib).
+					// inherits name the owner, which exists but does not
+					// define it: first the owner's declared bases (parent
+					// class, trait, embedded type), one level, when the owner
+					// is in this run (a method's class is in its file).
+					if dot := strings.LastIndex(tqn, "."); len(ids) == 0 && dot > 0 && rel.TargetName != "" {
+						seen := map[string]bool{}
+						for _, b := range idx.bases[parser.Normalize(tqn[:dot])] {
+							for _, id := range exact(lang, b+"."+rel.TargetName) {
+								if !seen[id] {
+									seen[id] = true
+									ids = append(ids, id)
+									resolution = parser.ResolutionExact
+								}
+							}
+						}
+					}
+					// Otherwise fall back to the name. An unknown owner is
+					// external (vendor, stdlib).
 					if dot := strings.LastIndex(tqn, "."); len(ids) == 0 && dot > 0 && rel.TargetName != "" && len(exact(lang, tqn[:dot])) > 0 {
-						ids = named(lang, rel.TargetName)
+						ids, nameOnly = named(lang, rel.TargetName), true
 					}
 				} else if name := rel.TargetName; name != "" {
-					ids = named(lang, name)
+					ids, nameOnly = named(lang, name), true
 				}
+				ids = fit(rel.Kind, nameOnly, ids)
 				switch {
 				case len(ids) == 1:
 					rel.TargetID, rel.Resolution = ids[0], resolution

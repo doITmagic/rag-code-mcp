@@ -40,6 +40,17 @@ func (a lineAnalyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 			panic("bad file")
 		case line == "error":
 			return nil, errors.New("bad file")
+		case strings.HasPrefix(line, "class "): // class C : base.QN ...
+			name, bases, _ := strings.Cut(strings.TrimPrefix(line, "class "), " : ")
+			s := parser.Symbol{Name: name, Kind: parser.KindClass, Module: module, Content: line, StartLine: i + 1}
+			for _, b := range strings.Fields(bases) {
+				s.Relations = append(s.Relations, parser.Relation{Kind: parser.RelExtends, TargetName: b[strings.LastIndex(b, ".")+1:], TargetQualifiedName: b, Line: i + 1})
+			}
+			syms = append(syms, s)
+		case strings.HasPrefix(line, "tpl "), strings.HasPrefix(line, "var "), strings.HasPrefix(line, "scene "):
+			kind, name, _ := strings.Cut(line, " ")
+			k := map[string]parser.Kind{"tpl": parser.KindTemplate, "var": parser.KindVariable, "scene": parser.KindScene}[kind]
+			syms = append(syms, parser.Symbol{Name: name, Kind: k, Module: module, Content: line, StartLine: i + 1})
 		case strings.HasPrefix(line, "func "):
 			name, target, _ := strings.Cut(strings.TrimPrefix(line, "func "), " -> ")
 			s := parser.Symbol{Name: name, Kind: parser.KindFunction, Module: module, Content: line, StartLine: i + 1}
@@ -139,6 +150,18 @@ func (e *env) symbols(t *testing.T, path string) map[string]parser.Symbol {
 	out := map[string]parser.Symbol{}
 	for _, h := range hits {
 		out[h.Symbol.Name] = h.Symbol
+	}
+	return out
+}
+
+// all is every stored symbol of path, including those sharing a name.
+func (e *env) all(t *testing.T, path string) []parser.Symbol {
+	t.Helper()
+	hits, err := e.store.Scroll(context.Background(), "c", store.Filter{FilePath: path}, store.MaxScroll)
+	require.NoError(t, err)
+	out := make([]parser.Symbol, 0, len(hits))
+	for _, h := range hits {
+		out = append(out, h.Symbol)
 	}
 	return out
 }
@@ -401,6 +424,73 @@ func TestResolution(t *testing.T) {
 	st, err := e.run(t, func(o *Options) { o.Files = []string{a} })
 	require.NoError(t, err)
 	require.Equal(t, 1, st.Total)
+	t.Run("incremental run", check)
+}
+
+// A call never binds to a template, scene node or doc chunk, and by name
+// only to something callable; a scene node sharing a class's qualified name
+// does not make the class ambiguous.
+func TestResolutionTargetKinds(t *testing.T) {
+	e := newEnv(t)
+	src := strings.Join([]string{
+		"func Caller -> default", // only a template is named default
+		"func Mover -> size",     // only a variable is named size
+		"func Ext -> g.Gp",       // g.Gp: a function and a scene node
+		"func Reader -> g.cfg",   // exact: a variable may hold a function
+	}, "\n") + "\n"
+	a := e.write(t, "a.go", src)
+	e.write(t, "t.go", "tpl default\nvar size\n")
+	g := e.write(t, "g.go", "func Gp\nscene Gp\nvar cfg\n")
+	check := func(t *testing.T) {
+		t.Helper()
+		syms := e.symbols(t, a)
+		rel := func(name string) parser.Relation { return syms[name].Relations[0] }
+		assert.Empty(t, rel("Caller").TargetID, "call bound to a template")
+		assert.Empty(t, rel("Caller").Resolution)
+		assert.Empty(t, rel("Mover").TargetID, "call bound by name to a variable")
+		var fn, cfg string
+		for _, s := range e.all(t, g) {
+			switch {
+			case s.Name == "Gp" && s.Kind == parser.KindFunction:
+				fn = s.ID
+			case s.Name == "cfg":
+				cfg = s.ID
+			}
+		}
+		assert.Equal(t, fn, rel("Ext").TargetID)
+		assert.Equal(t, parser.ResolutionExact, rel("Ext").Resolution)
+		assert.Equal(t, cfg, rel("Reader").TargetID)
+	}
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	t.Run("full run", check)
+	e.write(t, "a.go", src+"\n")
+	_, err = e.run(t, func(o *Options) { o.Files = []string{a} })
+	require.NoError(t, err)
+	t.Run("incremental run", check)
+}
+
+// $this->m() / self.m() naming a member the owner class does not define
+// resolves through the owner's declared bases (parent class, trait) even
+// when the bare name is ambiguous.
+func TestResolutionThroughBases(t *testing.T) {
+	e := newEnv(t)
+	src := "class C : t.T\nfunc C.go -> a.C.search\n"
+	a := e.write(t, "a.go", src)
+	tf := e.write(t, "t.go", "func T.search\n")
+	e.write(t, "u.go", "func U.search\n")
+	check := func(t *testing.T) {
+		t.Helper()
+		r := e.symbols(t, a)["C.go"].Relations[0]
+		assert.Equal(t, e.symbols(t, tf)["T.search"].ID, r.TargetID)
+		assert.Equal(t, parser.ResolutionExact, r.Resolution)
+	}
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	t.Run("full run", check)
+	e.write(t, "a.go", src+"\n")
+	_, err = e.run(t, func(o *Options) { o.Files = []string{a} })
+	require.NoError(t, err)
 	t.Run("incremental run", check)
 }
 

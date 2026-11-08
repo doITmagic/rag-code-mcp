@@ -27,7 +27,11 @@ type Entry struct {
 // 4: JS root-absolute imports and TypeScript type uses; Go blank vars keep
 // their relations; Python signatures stop at the def's colon.
 // 5: JS methods of an object literal bound to a top-level const.
-const Format = 5
+// 6: JS aliased imports (tsconfig/jsconfig paths, Nuxt/Vite ~/ @/ conventions),
+// calls in top-level initializers and export default defineX(...); Go
+// goimports-style import names; Python guarded imports; PHP signature types;
+// GDScript super calls; Blade end line; relation target kinds and bases.
+const Format = 6
 
 // State is the per-root snapshot stored at Dir(root)/state.json. Only
 // the run goroutine touches it; nothing here locks.

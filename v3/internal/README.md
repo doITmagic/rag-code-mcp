@@ -77,8 +77,9 @@ go test ./internal/...
 
 Each package has `zz_verify_test.go` files with independent verification
 tests next to the regular `*_test.go` files. The installer and uninstaller
-tests use a temporary `HOME`, fake `docker` / `codex` shell scripts on `PATH`
-and an `httptest` Ollama; they skip on Windows.
+tests use a temporary `HOME`, a fake `docker` shell script on `PATH` and an
+`httptest` Ollama; they skip on Windows. A fake `codex` script is used only by
+the idepaths tests.
 
 ## See also
 

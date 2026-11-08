@@ -145,9 +145,11 @@ A `slog` text handler at `level`. An unknown level falls back to `info`
   that `path` is still the file it holds open (`os.SameFile`). If another
   server rotated it, this one reopens `path`, so it never keeps appending to
   an unlinked file.
-- **Windows:** renaming a file another process holds open fails. The rename
-  error is ignored there and writing continues to the oversized file; the
-  rotation is retried 1000 writes later.
+- **Windows:** renaming a file another process holds open fails. During
+  writes the rename error is ignored and writing continues to the oversized
+  file; the rotation is retried 1000 writes later. The rotation at open is
+  not forgiving: `OpenLogFile` returns the error, and the server then logs
+  to stderr (`logging to stderr: ...`).
 - Writes are serialised with a mutex, so the writer is safe for concurrent
   use within one process.
 

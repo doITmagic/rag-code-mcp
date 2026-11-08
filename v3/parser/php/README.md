@@ -137,8 +137,9 @@ Relations: `UserController` extends `Controller` ->
 | `implements I, \J` | `implements` | Same. |
 | `use TraitA, TraitB;` inside a class | `uses_type` | Same. |
 | `new Foo()` | `uses_type` | Same; `new $cls` and `new class {}` are skipped. |
+| Parameter and return type declarations (`Webpage $m`, `?\App\User`, `A\|B`, `): View`) of functions and methods | `uses_type` | Same; scalar types and `self` / `static` / `parent` are skipped. |
 | `Foo::bar()`, `self::bar()`, `static::bar()` | `call` | `<class FQN>.bar`; `parent::bar()` has an empty target. |
-| `$this->m()` / `$this?->m()` | `call` | `<namespace>.<Owner>.m` |
+| `$this->m()` / `$this?->m()` | `call` | `<namespace>.<Owner>.m`; when the class does not define `m`, the indexer looks in the classes and traits it declares (`extends`, `implements`, `use`), one level. |
 | `$obj->m()` | `call` | `""` (receiver type unknown) |
 | `fn()` | `call` | Through the function table. Inside a namespace, an unqualified function that is not imported gets an empty target: PHP falls back to the global function at runtime, so the namespace would only be a guess and the indexer resolves it by name instead. |
 
@@ -169,7 +170,7 @@ by line with one regular expression.
 
 | Output | Details |
 |--------|---------|
-| One `template` symbol for the file | Name = file name without `.blade.php`; module = the dotted directory below the last `views` folder in the path (`resources/views/users/show.blade.php` -> module `users`, qualified name `users.show`). Content is the whole file. |
+| One `template` symbol for the file | Name = file name without `.blade.php`; module = the dotted directory below the last `views` folder in the path (`resources/views/users/show.blade.php` -> module `users`, qualified name `users.show`). Content is the whole file. It ends on the last line; a final newline does not add an empty line. |
 | One `template` symbol per `@section('x')`, `@component('x')`, `@livewire('x')` | Owner = the view name. `@section` without a second argument and `@component` extend to the next closing directive (`@endsection`, `@endcomponent`, `@stop`, `@show`, `@append`, `@overwrite`); the others are one line. |
 | `imports` relation on the file symbol | For `@extends`, `@include`, `@includeIf`, `@each`; the target qualified name is the view name as written (`layouts.app`), which matches the qualified name of `resources/views/layouts/app.blade.php`. |
 
@@ -177,7 +178,13 @@ A view outside any `views` folder has module `""`.
 
 ## Known limitations visible in the code
 
+- Routes inside `Route::group(['prefix' => ...])` are stored without the
+  prefix, and a route is not linked to its `'uses' => 'Ctrl@m'` handler.
+- A static call to a member a class inherits from outside the workspace
+  (`Authority::all()` on an Eloquent model) is not a usage of the class.
 - Receiver types are not inferred, so `$obj->method()` stays unresolved.
+- A named function, class, interface, trait or enum declared inside a
+  function or method body is not emitted as a symbol.
 - Route and hook symbols inside a method take the method's name as owner,
   not the class.
 - `do_action` / `apply_filters` and chained route calls (`->name(...)`,
@@ -198,8 +205,8 @@ A view outside any `views` folder has module `""`.
 
 | File | Covers |
 |------|--------|
-| `php_test.go` | Registration of both extensions; a controller fixture with group/function/const `use`, attributes, traits, enums, promoted properties, closures, anonymous classes, routes and hooks (kinds, owners, lines, docs, signatures, metadata, relation targets); a plugin with braced namespaces and parse-error recovery; malformed input; global-namespace function calls; concurrency. |
-| `blade_test.go` | A Blade view with sections, components and includes; a view outside a `views` folder. |
+| `php_test.go` | Registration of both extensions; a controller fixture with group/function/const `use`, attributes, traits, enums, promoted properties, closures, anonymous classes, routes and hooks (kinds, owners, lines, docs, signatures, metadata, relation targets); a plugin with braced namespaces and parse-error recovery; malformed input; global-namespace function calls; concurrency; parameter and return type uses. |
+| `blade_test.go` | A Blade view with sections, components and includes; a view outside a `views` folder; the file symbol's end line with a trailing newline. |
 | `zz_verify_test.go` | Verification tests: name resolution, global-namespace WordPress code, robustness, a routes file, multiple namespaces in one file, Blade layouts, no shared state between calls. |
 
 ## Testing

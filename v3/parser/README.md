@@ -248,11 +248,11 @@ error recovery can be quadratic on garbage input.
 | File | Contents |
 |------|----------|
 | `parser.go` | `Kind`, `RelationKind`, resolution constants, `Symbol`, `Relation`, `File`, `Analyzer`; `Qualify`, `Normalize` (also turns a Go method expression `(*T).M` into `T.M`), `MatchQualified`, `SymbolID`, `Finalize`; the registry (`Register`, `ForFile`, `ForLanguage`, `Languages`, `Analyze`); `RelModule`. |
-| `normalize_test.go` | `Normalize` on Go method expressions and PHP separators. |
+| `normalize_test.go` | `TestNormalizeMethodExpression`: `Normalize` on Go method expressions and PHP separators. |
 | `ts.go` | Pooled tree-sitter parsers with a parse timeout, `ParseTree`, `Walk`, `NamedChildren`, `Field`, `Text`, `Lines`, `ReleaseParsers`. |
 
-There are no test files in this directory. The contract is exercised by every
-analyzer's tests (which check IDs, qualified names and line clamping on their
+The only test file here is `normalize_test.go`. The rest of the contract is
+exercised by every analyzer's tests (which check IDs, qualified names and line clamping on their
 output) and by the [index](../index/README.md) tests for relation resolution.
 
 ## Sub-packages

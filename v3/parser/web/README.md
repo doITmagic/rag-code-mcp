@@ -109,6 +109,8 @@ that leave the workspace root give an empty target.
 
 ## Known limitations visible in the code
 
+- Inline `<script>` blocks are not parsed: their functions are not symbols and
+  their calls are not usages.
 - `{{template}}` calls to templates defined in other files are unresolved at
   parse time (the target name is still recorded).
 - Go template actions are matched by regex on the whole file, also outside

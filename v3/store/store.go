@@ -37,7 +37,7 @@ type Filter struct {
 	IDs                  []string // the symbol id is one of these
 	Language             string
 	FilePath             string
-	PathPrefix           string // file_path starts with
+	PathPrefix           string // file_path is inside this directory (whole path segments, not a raw string prefix)
 	Name                 string
 	QualifiedName        string
 	QualifiedSuffix      string // qualified_name == x or ends with "."+x (normalized form)

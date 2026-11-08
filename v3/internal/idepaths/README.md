@@ -143,7 +143,8 @@ Returned by `Write` only. The installer treats it as "skip silently".
   `CODEX_HOME` set to the target's directory and a 30 s timeout. The `codex`
   binary is looked up on `PATH`, then inside the OpenAI ChatGPT extension of
   VS Code, VS Code Insiders, Cursor or Antigravity
-  (`~/<editor>/extensions/openai.chatgpt-*/bin/<os>-<arch>/codex[.exe]`). If
+  (`~/<editor>/extensions/openai.chatgpt-*/bin/<os>-<arch>/codex[.exe]`, where
+`<arch>` is `x86_64` or `aarch64`, not Go's `amd64`/`arm64`). If
   none is found, `Write`/`Remove` return `idepaths: codex CLI not found`.
 
 ## Testing

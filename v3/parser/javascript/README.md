@@ -21,7 +21,11 @@ extension; call targets are resolved through the file's own ES module and
   [`tools`](../../tools/README.md) through `parser.Analyze`.
 - **Calls** the tree-sitter helpers and `Finalize` from
   [parser](../README.md). It stats the file system to tell a directory import
-  (`./components` -> `components/index`) from a file import.
+  (`./components` -> `components/index`) from a file import. For an aliased
+  specifier it reads the nearest `tsconfig.json` / `jsconfig.json` (and the
+  configs it `extends`) and looks for the nearest `package.json`, once per
+  script (each `<script>` block of a Vue file), on its first non-relative
+  specifier; nothing is cached across files.
 
 | Property | Value |
 |----------|-------|
@@ -44,7 +48,7 @@ graph TD
     B --> T[template symbol named<br/>after the component]
     B --> S
     V -->|no| S[analyzeScript]
-    S --> U{more than 256<br/>unclosed brackets?}
+    S --> U{more than 256 brackets<br/>still open at the end?}
     U -->|yes| X[no symbols]
     U -->|no| P[ParseTree]
     P --> C[Pass 1 scan: imports, require,<br/>top-level names, export lists]
@@ -52,9 +56,10 @@ graph TD
     D --> F[parser.Finalize]
 ```
 
-1. **Bracket guard.** A file that leaves more than 256 brackets open (strings
-   and comments skipped) is treated as garbage and yields no symbols, because
-   tree-sitter error recovery is quadratic on it.
+1. **Bracket guard.** A file that ends with more than 256 brackets still open
+   (strings and comments skipped) is treated as garbage and yields no
+   symbols, because tree-sitter error recovery is quadratic on it. Deep
+   nesting that closes (300 nested arrays) is valid and parsed.
 2. **Pass 1** records the import table, top-level declared names and what
    they are, `export { ... }` lists, the default export's local name, and
    CommonJS `module.exports` / `exports.x` assignments.
@@ -81,8 +86,27 @@ Root-absolute specifiers (`/js/api.js`, as served from a web root the parser
 cannot know) resolve to the nearest ancestor of the importing file's
 directory that has that file: `webui/components/chat/store.js` importing
 `/js/api.js` gets `webui/js/api` when `webui/js/api.js` exists. Not found,
-they are kept as written. Bare specifiers (`react`, `@scope/pkg`) are kept as
-written.
+they are kept as written.
+
+Aliased specifiers resolve to the file they name, and only when that file
+exists:
+
+- through the `compilerOptions.paths` of the nearest `tsconfig.json` or
+  `jsconfig.json` above the importing file (comments and trailing commas
+  allowed; relative `extends` followed until one defines `paths`; targets
+  relative to that config's `baseUrl`, else its directory; at most 4
+  `extends` hops). The longest
+  matching prefix wins and, as in TypeScript, no other pattern is tried;
+- when no `paths` pattern matches, through the bundler conventions, relative
+  to the nearest `package.json` directory (the workspace root when there is
+  none): `~/` and `@/` to `app/`, `src/` or the project
+  directory (first that has the file), `~~/` and `@@/` to the project
+  directory, `#shared/` to `shared/`. Nuxt writes its own mapping into
+  `.nuxt/`, which is not in the repository.
+
+With `"@/*": ["./*"]`, `components/form.tsx` importing `@/lib/utils` gets
+`lib/utils`. Bare specifiers (`react`, `@scope/pkg`) and aliases whose file
+does not exist are kept as written.
 
 ## Symbols extracted
 
@@ -99,7 +123,9 @@ written.
 | TS `interface I` | `interface` | |
 | TS `type T = ...` | `type` | |
 | `export default {...}` / `defineComponent({...})`: methods, function-valued pairs, and the contents of `methods`, `computed`, `watch` | `method` | component name |
-| `const model = { load() {...}, f: () => ... }` at top level (Alpine / Pinia store models): methods and function-valued pairs | `method` | the const name, e.g. `model` |
+| `export default defineX(() => {...})` (Nuxt middleware, plugins, server routes): any call other than `defineComponent({...})` | `function` when an argument is a function, else `constant`; named `default` | |
+| `const model = { load() {...}, f: () => ... }` at top level, also with `let` / `var` (Alpine / Pinia store models): methods and function-valued pairs, exported only when the const is | `method` | the const name, e.g. `model` |
+| `const C = defineComponent({...})`: the same options as `export default` | `method` | the const name, e.g. `C` |
 | Vue `<template>` | `template` | |
 
 - **Default export.** Importers see the default export only as `default`, so
@@ -111,7 +137,9 @@ written.
 - **Exported** is true for `export` declarations and for names listed in
   `export { }`, `module.exports = ...` or `exports.x = name`. Class methods
   are exported when the class is, unless they are `#private` or have the
-  `private` modifier.
+  `private` modifier. Methods of a top-level object literal or of
+  `const C = defineComponent({...})` are exported when that variable is;
+  options-API methods of `export default {...}` always are.
 - **Signature** is the declaration up to the body, whitespace collapsed;
   without a body, its first line.
 - **Doc** is the JSDoc block or the run of line comments directly above.
@@ -162,10 +190,18 @@ call `fetch` -> `src/services/api.default.fetch`.
 | `interface I extends J` | `extends` | |
 
 Calls inside nested callbacks count toward the enclosing top-level function or
-method.
+method. Calls in a top-level `const` / `let` / `var` initializer (`const at =
+useFormattedDateTime(x)`) belong to that constant or variable; an object
+literal's values are not walked, its methods own their calls.
 
 ## Known limitations visible in the code
 
+- Vue `<template>` markup is not parsed: a component used as `<StatusCard/>` or a
+  handler in `@click="f()"` is not a usage.
+- Nuxt auto-imports (no import statement) resolve by name only.
+- tsconfig `paths` targets are relative to the `baseUrl` of the config that
+  defines `paths` (or its directory), not to a `baseUrl` inherited through
+  `extends`; package `extends` (`@tsconfig/node20`) are not followed.
 - The bracket guard does not skip regex literals, so a `(` inside one counts
   as open.
 - Vue blocks are found by plain string scanning (`<script`, `</script`,
@@ -182,12 +218,13 @@ method.
 | File | Contents |
 |------|----------|
 | `javascript.go` | The analyzer, grammar choice, the bracket guard, module and component naming, Vue block scanner, pass 1 (imports, `require`, export lists, CommonJS exports, specifier resolution), pass 2 (functions, classes, methods, interfaces, types, enums, variables, options-API objects, `exports.x`), doc and signature extraction, call/type relation collection and resolution. |
+| `alias.go` | Aliased specifiers: nearest `tsconfig.json`/`jsconfig.json` `paths` (JSONC, relative `extends`), the Nuxt/Vite conventions, and the existence check. |
 
 ### Tests
 
 | File | Covers |
 |------|--------|
-| `javascript_test.go` | ESM and CommonJS imports and exports, classes and methods, TypeScript (interfaces, types, enums, abstract classes), TSX, Vue options API, Vue `<script setup lang="ts">`, malformed and unbalanced input, files outside the root, concurrency, registration, default exports and directory (`index`) imports, root-absolute imports, TypeScript type uses, methods of an object literal bound to a const. |
+| `javascript_test.go` | ESM and CommonJS imports and exports, classes and methods, TypeScript (interfaces, types, enums, abstract classes), TSX, Vue options API, Vue `<script setup lang="ts">`, malformed and unbalanced input, files outside the root, concurrency, registration, default exports and directory (`index`) imports, root-absolute imports, TypeScript type uses, methods of an object literal bound to a const, aliased imports (tsconfig paths, Nuxt conventions), calls in top-level initializers and `export default defineX(...)`, export of object-literal methods, `const C = defineComponent(...)`. |
 | `zz_verify_test.go` | Verification tests: JSX and import forms, TS enums and generics, `defineComponent` and CRLF files, robustness, nested CommonJS, component objects in plain JS, template-first `<script setup>`, statelessness, private TS members and syntax-error recovery, two script blocks, deep nesting, concurrent analysis. |
 
 ## Testing

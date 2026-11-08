@@ -43,8 +43,11 @@ graph TD
 ```
 
 1. **Pass 1** reads every `import_spec` into a map `local name -> import path`
-   (an alias replaces the last path segment; dot and blank imports are
-   skipped) and records every type name declared in the file.
+   (an alias replaces the assumed name; dot and blank imports are skipped)
+   and records every type name declared in the file. The assumed name follows
+   goimports: the last path element, the one before a `/vN` major suffix,
+   without a `go-` prefix and cut at the first non-identifier character, so
+   `gopkg.in/yaml.v3` is `yaml` and `github.com/mattn/go-isatty` is `isatty`.
 2. **Pass 2** emits symbols for `function_declaration`, `method_declaration`,
    `type_declaration`, `var_declaration` and `const_declaration`.
 3. **Module** is the Go import path: the `module` line of the nearest `go.mod`
@@ -62,7 +65,7 @@ graph TD
 | `type I interface{...}` | `interface` | | `Metadata["methods"]` lists the interface's method names, comma separated. |
 | `type A = B`, `type N []string` | `type` | | Any other type spec, aliases included. |
 | `var x, y = ...` | `variable` | | One symbol per name; `_` is skipped unless the spec has relations (`var _ = Describe(...)` in Ginkgo tests, `var _ I = (*T)(nil)`): their calls and type uses would be lost otherwise. |
-| `const ...` | `constant` | | One symbol per name; `_` is skipped. |
+| `const ...` | `constant` | | One symbol per name; `_` is skipped unless the spec has relations, as for `var`. |
 
 - **Grouped declarations** (`type (...)`, `var (...)`, `const (...)`): each
   spec becomes its own symbol whose content is just that spec; a declaration
@@ -134,6 +137,10 @@ Relations of a `var` or `const` spec are shared by every name in that spec.
   `go.mod` changes (mtime) or disappears; a `go.mod` created later in a
   directory that had none needs a restart to show up.
 - Methods whose receiver type cannot be read produce no symbol.
+- An import without an alias is known by the goimports guess of its name
+  (`assumedName`), not by the imported package's `package` clause; a
+  package whose real name differs from that guess gets calls with an empty
+  target, because only the file being parsed is read.
 
 ## Files
 
@@ -145,7 +152,7 @@ Relations of a `var` or `const` spec are shared by every name in that spec.
 
 | File | Covers |
 |------|--------|
-| `golang_test.go` | A fixture with grouped declarations, generics, embedded types, aliased/dot/blank imports: symbol kinds, owners, lines, signatures, docs, IDs, metadata; every relation and its target; module path without `go.mod`, nested `go.mod` stopping at the root; malformed input; analyzing the real `parser.go` of this repo; registration; concurrency; generic calls; `Exported` for test files and unexported owners; calls through local function values; a parameter shadowing an import; a renamed module seen without a restart; same-package types declared in another file, type parameters (receiver ones too) and the receiver skipped; blank vars keeping their relations. |
+| `golang_test.go` | A fixture with grouped declarations, generics, embedded types, aliased/dot/blank imports: symbol kinds, owners, lines, signatures, docs, IDs, metadata; every relation and its target; module path without `go.mod`, nested `go.mod` stopping at the root; malformed input; analyzing the real `parser.go` of this repo; registration; concurrency; generic calls; `Exported` for test files and unexported owners; calls through local function values; a parameter shadowing an import; a renamed module seen without a restart; same-package types declared in another file, type parameters (receiver ones too) and the receiver skipped; blank vars keeping their relations; goimports-style assumed import names. |
 | `zz_verify_test.go` | Verification tests: resolution probes, an unclean (non-normalized) root path, robustness on garbage and edge input, a second round of edge cases, very large and deeply nested files. |
 
 ## Testing

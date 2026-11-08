@@ -33,7 +33,7 @@ line that tells AI agents to use the RagCode tools.
 graph TD
     Main[cmd/rag-code-mcp] -->|Resume| Engine
     App[internal/app] -->|engine.New| Engine
-    Tools[tools] -->|Workspace, Index, IndexFiles,<br/>Search, Scroll, Ready, Status,<br/>WriteIDERules| Engine
+    Tools[tools] -->|Workspace, Index, IndexFiles,<br/>Search, Scroll, Ready, Status,<br/>WriteIDERules, Loaded| Engine
     Uninstall[internal/uninstall] -->|PointerFiles, IDEPointer| Engine
     Engine -->|index.Run| Index[index]
     Engine -->|Embed query| Embed[embed]
@@ -48,7 +48,7 @@ graph TD
 | Called by | [cmd/rag-code-mcp](../cmd/rag-code-mcp/README.md) | `go a.Engine.Resume(ctx)` at start-up. |
 | Called by | [tools](../tools/README.md) | Every MCP tool opens a workspace with `Workspace(root)`; `rag_index_workspace` calls `WriteIDERules` and `Index`. |
 | Called by | [internal/uninstall](../internal/uninstall/README.md) | `PointerFiles` and `IDEPointer` to strip the pointer line. |
-| Calls | [index](../index/README.md) | `index.Run`, `ReadStatus`, `IsLinkedWorktree`, `WriteAtomic`, `ErrLocked`, `ErrHeadChanged`. |
+| Calls | [index](../index/README.md) | `index.Run`, `ReadStatus`, `IsLinkedWorktree`, `WriteAtomic`, `LockFile` (the `roots.json.lock`), `StateModel` (the model check in `Search`), `ErrLocked`, `ErrHeadChanged`. |
 | Calls | [embed](../embed/README.md) | Embeds search queries, with `embed.QueryText` for the model's prefix. |
 | Calls | [store](../store/README.md) | `Search`, `Scroll`, `CollectionExists`, `VectorSize`, `CollectionName`. |
 | Calls | [internal/config](../internal/config/README.md) | `config.Config` and `config.HomeDir()`. |
@@ -61,7 +61,7 @@ graph TD
 
 | File | Contents |
 |------|----------|
-| `engine.go` | Package doc, `Engine`, `New`, errors (`ErrNotIndexed`, `ErrLocked`, `ErrClosed`), `RootError`, `Workspace`, `validateRoot`, `roots.json` (`registerRoot`, `readRoots`), `Resume`, `Close`, and the job queue (`enqueue`, `merge`, `kick`, `runJobs`, `runOne`, `retryDelay`). |
+| `engine.go` | Package doc, `Engine`, `New`, errors (`ErrNotIndexed`, `ErrLocked`, `ErrClosed`), `RootError`, `Loaded`, `Workspace`, `validateRoot`, `roots.json` (`registerRoot`, `readRoots`), `Resume`, `Close`, and the job queue (`enqueue`, `merge`, `kick`, `runJobs`, `runOne`, `retryDelay`). |
 | `workspace.go` | `Workspace` and its job fields, `Status`, `Index`, `IndexFiles`, `Search`, `Scroll`, `mapErr`/`dimChanged` (the `ErrNotIndexed` mapping), `Ready`. |
 | `watch.go` | The per-root `watcher`: `startWatcher`, `addTree`, event `handle`, `dropDir`, debounce (`add`, `flush`), `full`, `Stop`. |
 | `iderules.go` | `WriteIDERules`, `IDEPointer`, `PointerFiles`, the list of agent instruction files, `tracked`, `within`, `appendPointer`. |
@@ -70,9 +70,9 @@ graph TD
 
 | File | Covers |
 |------|--------|
-| `engine_test.go` | Root validation, auto-index on first contact, request coalescing, `ErrHeadChanged` re-queue, retry of failed runs, a failed recreate that resumes without dropping again, no watcher without `auto_index`, recreate, embedding model change, concurrent root registration from several engines, a search refused on an index of another model with the same vector size, a lock held by another engine, `Resume`, no goroutines left after `Close`, `WriteIDERules` (tracked files, symlinks, symlinked parent directories, continuing after a refused file), backoff, a run waiting for the slot counts as queued. `TestMain` points `RAGCODE_HOME` at a temp dir. |
+| `engine_test.go` | Root validation, auto-index on first contact, request coalescing, `ErrHeadChanged` re-queue, retry of failed runs, a failed recreate that resumes without dropping again, no watcher without `auto_index`, recreate, embedding model change, concurrent root registration from several engines, a search refused on an index of another model with the same vector size, a lock held by another engine, `Resume`, no goroutines left after `Close`, `WriteIDERules` (tracked files, symlinks, symlinked parent directories, continuing after a refused file), backoff, a run waiting for the slot counts as queued, the end of a run logged with its counts and duration, the watcher's full run logged once while queued, a request queued while the runner exits is still picked up. `TestMain` points `RAGCODE_HOME` at a temp dir. |
 | `watch_test.go` | The watcher end to end, a `.gitignore` edit queues a full run, root removed, root that comes back, unreadable subdirectory, watcher restart retried. |
-| `watch_linux_test.go` | All roots share one inotify instance (nested roots both see an event, `Close` releases it); a watcher that cannot start is retried. |
+| `watch_linux_test.go` | All roots share one inotify instance (nested roots both see an event, `Close` releases it); a watcher that cannot start is retried; an event overflow re-walks the tree so new directories are watched again. |
 | `prefix_test.go` | `Search` adds the model's query prefix. |
 | `zz_verify_test.go` | Verification tests: concurrent `Workspace` calls, cancelled contexts, enqueue during a lock retry, recreate while locked, a directory moved out and the forced debounce flush, status read from disk before any run, home symlink guard, `Close` cancelling a blocked run, junk `roots.json`, a files run with only deletions, junk paths, `Ready` remediation text, a failed query embed does not enqueue, recreate absorbing queued files, catch-up with and without `auto_index`, double `Close`, `.git/refs` plus hidden and excluded directories, kernel file systems refused. |
 
@@ -85,6 +85,7 @@ graph TD
 ```go
 func New(cfg config.Config, st store.Store, em embed.Embedder, log *slog.Logger) *Engine
 func (e *Engine) Workspace(root string) (*Workspace, error)
+func (e *Engine) Loaded(root string) *Workspace
 func (e *Engine) Resume(ctx context.Context)
 func (e *Engine) Close()
 ```
@@ -92,7 +93,10 @@ func (e *Engine) Close()
 The `Engine` owns every `Workspace` of the process (keyed by the resolved
 root), the background context that every run uses, and `slot`, a channel of
 capacity 1 that lets only one workspace index at a time. `run` is
-`index.Run`; tests swap it.
+`index.Run`; tests swap it. `Loaded` returns the workspace this process
+already opened for a resolved root, or nil (also on a nil or closed
+`Engine`), without validating, registering or starting anything;
+`rag_server_info` uses it to show a running or queued root's live state.
 
 ### Workspace
 
@@ -143,7 +147,10 @@ refuses it with a `*RootError` when it:
 | is a system directory | `/proc`, `/sys`, `/dev` and below (not on Windows) |
 | is outside `allowed_workspace_paths` | only when that list is set; an entry matches itself and everything below it |
 
-Paths are compared case-insensitively on Windows.
+On Windows the home, temp and exact `allowed_workspace_paths` matches compare
+case-insensitively; the "everything below it" match of an
+`allowed_workspace_paths` entry is a plain prefix test and stays
+case-sensitive.
 
 The first call for a root creates the `Workspace`, adds the root to
 `roots.json` and, when both `watch_enabled` and `auto_index` are on, starts
@@ -157,7 +164,9 @@ and queues a full run to catch up.
 is rewritten with `index.WriteAtomic` under a mutex and, across server
 processes, the file lock `roots.json.lock` (`index.LockFile`, retried for up
 to 2 s), so two first contacts at once both keep their root. `Resume` reads it at
-start-up; an unreadable or invalid file counts as empty.
+start-up; an unreadable or invalid file counts as empty. The
+[tools](../tools/README.md) package also reads it to list known roots in
+`rag_server_info`.
 
 ---
 
@@ -249,7 +258,7 @@ that cannot be watched is logged and skipped.
 | remove/rename of a file | queued as deleted |
 | create of a directory | watched with its subtree, and every file already in it is queued as changed (a directory moved in emits no events for its contents) |
 | create/write of a file | queued as changed |
-| event overflow | full run ("event overflow") |
+| event overflow | the tree is re-walked so directories created meanwhile are watched (a failure logs `engine: cannot re-watch after overflow`), then a full run ("event overflow") |
 | remove/rename of the root itself | watcher stops; `LastError` says so; the next `Workspace` call restarts it |
 
 **Debounce.** Changed and deleted files collect in two sets behind one timer
@@ -340,7 +349,7 @@ Keys from [internal/config](../internal/config/README.md):
 
 | Path | Writer |
 |------|--------|
-| `~/.ragcode/roots.json` | `registerRoot` |
+| `~/.ragcode/roots.json`, `~/.ragcode/roots.json.lock` | `registerRoot` |
 | `<root>/.ragcode/RAGCODE.md`, `<root>/.ragcode/.gitignore` | `WriteIDERules` |
 | pointer line in the instruction files above | `WriteIDERules` |
 | `~/.ragcode/index/<collection>/…` | [index](../index/README.md) and [store](../store/README.md), through the runs the engine starts |

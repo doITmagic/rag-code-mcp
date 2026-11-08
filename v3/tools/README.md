@@ -46,17 +46,17 @@ graph LR
 |---|---|
 | [`tools.go`](tools.go) | package doc, `Response`, `IndexInfo`, `Register` and the tool table; shared helpers: `reply`, `fail`, `indexInfo`, `resolveRoot`, `open`, `notIndexed`, `storeErr`, `insideRoot`, `live`, `readLines`, `capLines`, `isTestFile` |
 | [`search.go`](search.go) | `rag_search`: `SearchInput`, `SearchHit`, exact plus semantic search, the bounded not-indexed fallback, `nameScore`, `rank`, `isIdentifier` |
-| [`usages.go`](usages.go) | `rag_find_usages` and `rag_call_hierarchy`: `resolveSymbol` (one symbol or an `ambiguous` answer), `referrers`, `ambiguousByName`, the hierarchy `walker` |
-| [`exports.go`](exports.go) | `rag_list_package_exports`: `ExportsInput`, `Export`, `shortModule` for short package names |
-| [`readfile.go`](readfile.go) | `rag_read_file_context`: `ReadInput`, `Outline`, line ranges, outline, one symbol; line and signature clipping |
+| [`usages.go`](usages.go) | `rag_find_usages` and `rag_call_hierarchy`: `resolveSymbol` (one symbol or an `ambiguous` answer), `referrers`, `ambiguousByName`, the hierarchy `walker` (`walk` level by level, `next`), `writeTree` |
+| [`exports.go`](exports.go) | `rag_list_package_exports`: `ExportsInput`, `Export`, `shortModule` for short package names, `dirModules` for a directory of the workspace |
+| [`readfile.go`](readfile.go) | `rag_read_file_context`: `ReadInput`, `Outline`, line ranges (`lineRange` streams a file over 8 MiB), outline, one symbol; line and signature clipping |
 | [`index.go`](index.go) | `rag_index_workspace` and `rag_server_info`: `IndexInput`, `Service`, `Update`, `KnownRoot`, the Ollama probe, the release check with its cache, `semverLess`, `knownRoots` |
 
 Tests:
 
 | File | What it covers |
 |---|---|
-| [`tools_test.go`](tools_test.go) | an MCP client and server over in-memory transports with a real engine on `store.NewMemory()`, `embed.Fake` and a fake `.fk` analyzer. Missing and bad roots, the root taken from client roots, every tool, the not-indexed and during-recreate fallbacks, dependency down, tool schemas, helpers, fallback skip rules, edits and deletes keeping results right, no Qdrant left in `rag_server_info`, same-name variants, lookup by declared name with `file_path` as a hard filter, `by_name` usages and hierarchy nodes |
-| [`zz_verify_test.go`](zz_verify_test.go) | verification tests: short package names past the scroll cap, call-hierarchy cycles and the node cap, cancelled contexts, stalled `rag_server_info` endpoints, read-file edge cases (degenerate files, symlink out of the root, ranges, minified files, long lines, secrets), the 200-file fallback cap, multi-byte usage line cut, compact/full output and path boost, the 24 h update cache, a second index confirm while running, huge limits |
+| [`tools_test.go`](tools_test.go) | an MCP client and server over in-memory transports with a real engine on `store.NewMemory()`, `embed.Fake` and a fake `.fk` analyzer. Missing and bad roots, the root taken from client roots, every tool, the not-indexed and during-recreate fallbacks, dependency down, tool schemas, helpers, fallback skip rules, edits and deletes keeping results right, no Qdrant left in `rag_server_info`, same-name variants, lookup by declared name with `file_path` as a hard filter, `by_name` usages and hierarchy nodes, the live state of a root being indexed in `rag_server_info`, the last run's error kept after a restart |
+| [`zz_verify_test.go`](zz_verify_test.go) | verification tests: short package names past the scroll cap, call-hierarchy cycles and the node cap, cancelled contexts, stalled `rag_server_info` endpoints, read-file edge cases (degenerate files, symlink out of the root, ranges, minified files, long lines, secrets), the 200-file fallback cap, multi-byte usage line cut, compact/full output and path boost, the 24 h update cache, a second index confirm while running, huge limits, `total_lines` and negative line numbers, the breadth-first node cap, a line range of a file over 8 MiB, exports of a workspace directory and `res://` paths, a Godot scene node not making its class ambiguous, the note on zero usages of a constant |
 | [`fifo_unix_test.go`](fifo_unix_test.go) | the not-indexed fallback keeps the index skip rules: no symlink out of the root, no fifo, no secret file (Unix only) |
 | [`index_unix_test.go`](index_unix_test.go) | (`//go:build unix`) a known root with no `ended_at` is `interrupted` only when nobody holds its lock |
 
@@ -108,7 +108,8 @@ Every answer tied to a workspace carries `index`:
 
 When the state is `failed` or `interrupted` and the tool set no message, the
 message becomes `last index run <state> (<error>); run rag_index_workspace
-with confirm=true to retry`.
+with confirm=true to retry`. After a restart the error comes from the saved
+index status; with none, the parentheses are left out.
 
 ## Workspace root resolution
 
@@ -132,14 +133,23 @@ flowchart TD
    filesystem root, the home directory, the temp directory, under `/proc`,
    `/sys` or `/dev`, or outside `allowed_workspace_paths` when that is set.
 
+Resolving a root through `engine.Workspace` also registers it: the first call
+for a root adds it to `~/.ragcode/roots.json` and, when `watch_enabled` and
+`auto_index` are both on, starts its file watcher. This happens for every
+tool that takes a root, `rag_read_file_context` included.
+
 After the root is resolved, every tool except `rag_read_file_context` and
 `rag_server_info` calls `open`, which also runs `Workspace.Ready`: when the
 embedder or the store is unavailable the answer is `dependency_down`; a
 missing index is let through so each tool can answer `not_indexed` (or fall
-back).
+back). With `auto_index` on (the default), a store call that finds the
+collection missing, or built with another embedding model, also queues an
+index run, so the next answers report `indexing` without an explicit
+`rag_index_workspace`.
 
-Paths inside the workspace (`file_path`, `path_prefix`) may be absolute or
-relative to the root. `insideRoot` cleans them, follows symlinks and refuses
+Paths inside the workspace (`file_path`, `path_prefix`, a directory passed
+as `package`) may be absolute, relative to the root, or start with Godot's
+`res://` (relative to the root). `insideRoot` cleans them, follows symlinks and refuses
 anything that ends up outside the root.
 
 **Deleted files.** `live` drops every hit whose file no longer exists on disk
@@ -182,8 +192,10 @@ How it works:
 4. **Trim.** With more than 4 results, `content` is dropped unless
    `full=true`; otherwise it is capped at 200 lines.
 
-**Not indexed yet.** When the collection is missing (or empty while a
-recreate refills it), the tool parses up to 200 files under the root (or
+**Not indexed yet.** When the collection is missing or was built with
+another embedding model, or the search finds
+nothing while an index run is in progress or queued (a first run, a recreate
+or a model change refilling it), the tool parses up to 200 files under the root (or
 `path_prefix`) within 5 seconds, applying the index skip rules, and scores
 symbols by name: exact name 1.0, qualified suffix 0.9, substring 0.7,
 otherwise 0.6 × the share of query words found in the name. These hits have
@@ -228,9 +240,14 @@ source line of each reference is read from disk and cut at 200 bytes.
 Output `data`: `{symbol, files: [{file_path, usages: [{caller, kind, line,
 text, caller_id, caller_start_line, by_name?}]}], total, ambiguous_by_name,
 by_name}`. A usage with `by_name: true` was matched by name only: the call's
-receiver has no known type (`x.Close()` on a local or parameter), and exactly
-one symbol in the workspace has that name, so it may be another type's method
-(a stdlib cursor, a file). `data.by_name` counts them and the message says so.
+reference has no import, qualified name or known type linking it to the
+symbol (`x.Close()` on a local or parameter), and exactly one symbol in the
+workspace has that name, so it may be another symbol of that name (a stdlib
+cursor, a file). `data.by_name` counts them and the message says so.
+When several symbols match and one is a Godot scene node sharing the
+qualified name of its script's class, the class is taken. Zero usages of a
+constant or variable add a note: reads of values are not tracked, only calls,
+type uses and imports.
 `ambiguous_by_name` counts relations that name the symbol but were left
 unresolved because several symbols share the name; the message mentions them.
 Calls to symbols sharing one qualified name (build-tagged variants such as
@@ -258,16 +275,20 @@ Callers (incoming) and callees (outgoing) of a function as a tree.
 - Incoming uses the same reference lookup as `rag_find_usages` (up to 50 per
   node). Outgoing follows `call` relations that have a resolved target id; an
   ambiguous call naming a qualified name lists every symbol with that name.
-- The tree is capped at 100 nodes per direction; `data.<direction>_truncated`
-  is then `true`. A symbol already expanded elsewhere is listed again but not
-  re-walked, so cycles end.
+- The tree is filled level by level and capped at 100 nodes per direction,
+  so the cap drops the deepest levels first (incoming lists at most 50
+  direct callers, so never one of them);
+  `data.<direction>_truncated` is then `true`. A symbol already expanded
+  elsewhere is listed again but not re-walked, so cycles end.
 - Resolution errors are the same `ok` / `ambiguous` answers as above.
 
 Output `data`: `{symbol, direction, depth, incoming?, outgoing?, text}`. Each
 tree node has `id, qualified_name, kind, file_path, start_line, by_name?,
 children`; `by_name` marks a node linked to its parent only by name, as in
-`rag_find_usages`. `text` is the same tree as indented lines
-`Name (file:line)`, with ` [by name only]` on those nodes.
+`rag_find_usages`. `text` is the same tree as lines: a
+`<direction>:` header, then one `qualified_name (file_path:start_line)` line
+per node indented two spaces per level, with ` [by name only]` on those
+nodes, and `… capped at 100 nodes` when the cap was hit.
 
 ```json
 {"name": "rag_call_hierarchy", "arguments": {
@@ -299,7 +320,10 @@ The exported symbols of a package or module, grouped by kind.
 Output `data`: `{package, modules, exports: {<kind>: [{name, qualified_name,
 signature, file_path, start_line}]}, truncated}`. `truncated` is true when a
 scroll hit `MaxScroll` or there were more than 300 exports. No match gives `ok`
-with `no indexed module matches "X"; pass the full module path`.
+with `no indexed module or directory matches "X"; pass the full module path or
+a directory of the workspace`. When no module matches, a directory inside the
+workspace (relative, `./x`, or Godot `res://x`) lists the exports of the files
+directly in it, since a JS, Vue or GDScript module is one file.
 
 ```json
 {"name": "rag_list_package_exports", "arguments": {
@@ -326,16 +350,22 @@ Modes:
 
 | Arguments | Returns |
 |---|---|
-| `start_line` and/or `end_line` | the numbered line range (end clamped to the file; start past the end, or end before start, is an error) |
+| `start_line` and/or `end_line` | the numbered line range (end clamped to the file; start past the end, end before start, or a negative number is an error) |
 | `symbol` | every symbol in the file whose name equals it or whose qualified name matches it, with content and relations (`data.symbols`) |
 | neither | the outline (`name, qualified_name, kind, start_line, end_line, signature, exported`) plus the first 120 numbered lines |
 
 Refused with a tool error: paths outside the root, non-regular files, files
-over 8 MiB, and files the index treats as secrets (keys, tokens,
+over 8 MiB without a line range (with one, the file is streamed and only the
+range is kept), and files the index treats as secrets (keys, tokens,
 credentials). A file the index would skip (minified, binary, over the index
 size cap) is not parsed: without `symbol` it returns the first 120 lines and
-the message `no outline: the file is not parsed (<reason>)`. Each returned
+the message `no outline: the file is not parsed (<reason>)`; with `symbol` it
+is a tool error that asks for `start_line` and `end_line`. A `symbol` not
+found in the file is a tool error too. Each returned
 line is cut at 2000 bytes (`… (+N more bytes)`), signatures at 200 bytes.
+
+`total_lines` does not count the newline that ends the last line, as `wc -l`.
+A `file_path` starting with Godot's `res://` is relative to the root.
 
 Output `data`: `{file_path, total_lines}` plus, depending on the mode,
 `start_line, end_line, lines` (range and outline modes), `outline`,
@@ -390,7 +420,7 @@ Output `data`:
 | `ollama` | `{url, model, reachable, error}`: `GET <ollama_base_url>/api/tags`; reachable but without the model (with or without `:latest`) sets `error` to `model X not pulled: run ollama pull X` |
 | `update` | `{current, latest, available}` (see below) |
 | `languages` | the languages of the registered parsers |
-| `roots` | every root in `~/.ragcode/roots.json` with `{root, state, last_run_files, ended_at}` from its saved index status. A status without `ended_at` whose lock nobody holds is reported as `interrupted` |
+| `roots` | every root in `~/.ragcode/roots.json` with `{root, state, last_run_files, total?, ended_at}` from its saved index status. A status without `ended_at` whose lock nobody holds is reported as `interrupted`. A root this process is indexing or has queued shows its live state instead, as the `index` block does: `queued` or `indexing`, with `last_run_files` the files done so far and `total` the files of the run |
 
 **Update check.** The latest release tag comes from
 `$RAGCODE_HOME/cache/update.json` when it was checked in the last 24 hours,

@@ -115,8 +115,8 @@ and reopens what a later call needs.
 | `Drop(ctx, coll)` | deletes the `dim` row, every field and every point in one transaction. The file stays (another process may hold it open, and Windows cannot delete it then); `Exists` is `false` afterwards. A missing collection, or one dropped meanwhile by another process, is `ErrNotFound` |
 | `Upsert(ctx, coll, pts)` | inserts or replaces points by id in one transaction; the fields of each replaced point are rewritten |
 | `Delete(ctx, coll, c)` | removes the points matching `c`. An empty `c` is refused: it would wipe the collection |
-| `Search(ctx, coll, vec, c, limit)` | the `limit` points matching `c` nearest to `vec`, best first, ties by id |
-| `Scan(ctx, coll, c, limit)` | up to `limit` points matching `c`, ordered by id, `Score` 0 |
+| `Search(ctx, coll, vec, c, limit)` | the `limit` points matching `c` nearest to `vec`, best first, ties by id. `limit <= 0` returns no hits and only `ctx.Err()`, without opening the collection, so a missing one is not `ErrNotFound` |
+| `Scan(ctx, coll, c, limit)` | up to `limit` points matching `c`, ordered by id, `Score` 0. `limit <= 0` behaves as for `Search` |
 | `Close()` | closes every open collection |
 
 ### `Point`, `Match`, `Cond`, `Hit`
@@ -215,8 +215,12 @@ even with `_txlock=immediate`, so readers do not block writers.
   `?`, `%` and spaces in the directory are escaped and the exact path is
   opened. On Windows a drive path gets a leading `/` so the drive is read as
   a path, not a host.
-- Errors are wrapped with the file path (`vecdb: <path>: ...`), except
-  context cancellation and deadline errors, which are returned as they are.
+- Database errors are wrapped with the file path (`vecdb: <path>: ...`),
+  except context cancellation and deadline errors, which are returned as they
+  are. Argument and state errors are not: an invalid collection name, an
+  invalid dimension, a vector size mismatch (`vecdb: vector size N,
+  collection "x" has M`), an empty `Cond` on `Delete`, and `ErrNotFound`
+  itself. A failed `MkdirAll` is `vecdb: <os error>`.
 
 ### Contexts
 

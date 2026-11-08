@@ -32,7 +32,7 @@ owns lives under `~/.ragcode/index/<collection>/`.
 ```mermaid
 graph LR
     Engine[engine] -->|index.Run per queued job| Index[index]
-    Tools[tools] -->|Walk, Skip, Secret, ReadStatus, LoadState, Running| Index
+    Tools[tools] -->|Walk, Skip, Secret, GitIgnored, IsLinkedWorktree, ReadStatus, LoadState, Running, WriteAtomic| Index
     Index --> Parser[parser]
     Index --> Embed[embed]
     Index --> Store[store]
@@ -42,8 +42,8 @@ graph LR
 
 | Direction | Package | What for |
 |-----------|---------|----------|
-| Called by | [engine](../engine/README.md) | Runs `index.Run` for each queued job; uses `ReadStatus`, `IsLinkedWorktree`, `WriteAtomic`, `ErrLocked`, `ErrHeadChanged`. |
-| Called by | [tools](../tools/README.md) | `Walk` for the file estimate of `rag_index_workspace`, `Skip`/`Secret` before reading a file, `ReadStatus`/`Running` for server info, `LoadState` for package exports. |
+| Called by | [engine](../engine/README.md) | Runs `index.Run` for each queued job; uses `ReadStatus`, `IsLinkedWorktree`, `WriteAtomic`, `LockFile` (for `roots.json.lock`), `StateModel` (model check before a search), `ErrLocked`, `ErrHeadChanged`. |
+| Called by | [tools](../tools/README.md) | `Walk` for the file estimate of `rag_index_workspace`, `Skip`/`Secret` before reading a file, `ReadStatus`/`Running` for server info, `WriteAtomic` for the update-check cache, `LoadState` for package exports; the fallback text search of `rag_search` walks with `IsLinkedWorktree`, `Skip` and `GitIgnored`. |
 | Calls | [parser](../parser/README.md) | `parser.ForFile`, `parser.Analyze`, `parser.Normalize`, `parser.MatchQualified`, `parser.ReleaseParsers`. |
 | Calls | [embed](../embed/README.md) | `Embedder.Embed`, `Dimension`, `Model`, and `embed.DocText` for the per-model document prefix. |
 | Calls | [store](../store/README.md) | Collection lifecycle, `Upsert`, `DeleteByFile`, `Scroll` (lookups), `CollectionName`. |
@@ -70,7 +70,7 @@ graph LR
 
 | File | Covers |
 |------|--------|
-| `index_test.go` | The main suite, with a line-based fake analyzer and a hook embedder: full, incremental, delete, recreate, model and `Format` change, embed failure, parse failures and panics, cancel, `ErrHeadChanged`, relation resolution, `Skip`, `Walk`, `.gitignore`, linked worktrees, symlinks in `Files`, byte-budgeted upsert batches, empty collection with stale state, a crash between a recreate's state save and its drop, moved targets, vanished referrers, a file that changed between the two passes. Its `TestMain` points `RAGCODE_HOME` at a temp dir. |
+| `index_test.go` | The main suite, with a line-based fake analyzer and a hook embedder: full, incremental, delete, recreate, model and `Format` change, embed failure, parse failures and panics, cancel, `ErrHeadChanged`, relation resolution, `Skip`, `Walk`, `.gitignore`, linked worktrees, symlinks in `Files`, byte-budgeted upsert batches, empty collection with stale state, a crash between a recreate's state save and its drop, moved targets, vanished referrers, a file that changed between the two passes, deleted paths counted only when they were indexed, relation target kinds (`TestResolutionTargetKinds`) and inherited members through the owner's bases (`TestResolutionThroughBases`), in full and files runs. Its `TestMain` points `RAGCODE_HOME` at a temp dir. |
 | `budget_test.go` | The parse byte budget is respected, and batches still resolve forward references. |
 | `resolve_test.go` | A non-fresh run resolves more than 500 targets through the store; a JS `import { n }` of a default-exported declaration resolves by module and name, in a full run and from the store. |
 | `resolve_files_test.go` | A files run sees the stored candidates too: a target ambiguous in a full run stays ambiguous by exact and suffix match; removing one of two candidates (file deleted or symbol edited away) makes the unchanged caller unique. |
@@ -81,7 +81,7 @@ graph LR
 | `lock_test.go` | Two holders of `index.lock` exclude each other, on every platform. |
 | `fifo_unix_test.go` | A binary file and a fifo in `Files` are skipped without blocking. Build tag `unix`. |
 | `walk_unix_test.go` | `IsLinkedWorktree` refuses a `.git` that is a FIFO, device or oversized file. Build tag `linux`. |
-| `zz_verify_test.go` | Verification tests: edge inputs, unreachable store, wrong vector count, pre-cancelled context, explicit files and directory rules, progress cadence, lock release, batch sizes and purge order, lookups stopping on a store error, repos without commits, binaries and FIFOs among explicit files. |
+| `zz_verify_test.go` | Verification tests: edge inputs, unreachable store, wrong vector count, pre-cancelled context, explicit files and directory rules, progress cadence, lock release, batch sizes and purge order, lookups stopping on a store error, repos without commits. |
 
 ---
 
@@ -137,6 +137,9 @@ to `index_status.json`:
 | `ReadStatus(root)` | The last persisted `Status`, `false` when missing or unreadable. |
 | `LoadState(root)` | The persisted `State`; a missing file is an empty state. |
 | `Running(root)` | Whether a run holds the lock right now. |
+| `LockFile(path)` | Takes the same cross-process lock as `index.lock` on any path; returns `unlock`, or `ErrLocked` when held. |
+| `StateModel(root)` | The embedding model recorded in `state.json`, `""` when there is none. |
+| `GitIgnored(root, files)` | The subset of `files` git ignores (tracked files never are; a nested repository follows its own rules). |
 | `WriteAtomic(path, data)` | Temp file plus rename; also used by the engine for `roots.json` and `RAGCODE.md`. |
 | `ErrLocked` | Another run holds `index.lock`. |
 | `ErrHeadChanged` | Git HEAD moved during the run; the caller should queue a full run. |
@@ -156,7 +159,7 @@ type State struct {
     Files  map[string]Entry `json:"files"`            // absolute path -> entry
 }
 
-const Format = 5
+const Format = 6
 ```
 
 `Format` is the version of what parsers and the indexer store. It is bumped
@@ -167,7 +170,11 @@ the same package declared in another file, Python function-local imports and
 class-body calls. Version 4: JS root-absolute imports and TypeScript type
 uses, Go blank vars keeping their relations, Python signatures stopping at the
 def's colon. Version 5: JS methods of an object literal bound to a top-level
-const.
+const. Version 6: JS aliased imports (tsconfig/jsconfig `paths`, Nuxt/Vite
+`~/` and `@/` conventions), calls in top-level initializers and
+`export default defineX(...)`; Go goimports-style import names; Python imports
+under `if` / `try` / `with`; PHP parameter and return types; GDScript `super`
+calls; the Blade end line; relation target kinds and inherited members.
 
 ---
 
@@ -265,8 +272,9 @@ disk than in the state and the next run picks it up again. A file that grew
 past 256 KiB since the walk is indexed as empty.
 
 - **Pass 1** parses every changed file but keeps only `ID`, `QualifiedName`,
-  `Name` and `Language` of each symbol: enough for `staleReferrers` and the
-  name index.
+  `Name`, `Language`, `Kind`, `Module` and `Owner` of each symbol, plus the
+  `extends` / `implements` / `uses_type` targets of a class or interface:
+  enough for `staleReferrers` and the name index.
 - **Pass 2** parses again, in batches of about 4 MiB of source, and each batch
   is resolved, embedded and upserted before the next is parsed. The memory of
   a run does not grow with the size of the workspace.
@@ -310,9 +318,12 @@ each relation:
   together, so a files run sees what a full run sees) is
   `ResolutionExact`. Otherwise a unique qualified-suffix match is taken
   (`ResolutionUnique`), which covers Python `src/` layouts and monorepo
-  subprojects. If the owner (`a.b` of `a.b.m`) exists but does not define the
-  member (inherited through a parent class, trait or embedded type), it falls
-  back to the bare name. An `extends` whose target is a whole module (GDScript
+  subprojects. If the owner (`a.b` of `a.b.m`) does not define the member
+  (inherited through a parent class, trait or embedded type), the bases the
+  owner declares in this run (`extends`, `implements`, `uses_type`; one level)
+  are tried as `<base>.m` (`ResolutionExact`); if none has it and the owner
+  exists, it falls back to the bare name. Bases of bases, and an owner whose class is
+  only in the store (not in this run), are not followed. An `extends` whose target is a whole module (GDScript
   `extends "res://x/y.gd"`) takes that module's one top-level class
   (`ResolutionUnique`). In JavaScript, `m.n` with no match takes module `m`'s
   top-level symbol named `n`: a declaration both named and default-exported
@@ -321,6 +332,12 @@ each relation:
 - Code never resolves into another language, by name or qualified name; only
   relations from `docs` and `html` (links, scripts, `onclick` handlers) cross
   into code on purpose.
+- Only `imports` relations may target a template, scene node, doc chunk,
+  route or hook; a `call` matched by name alone binds only to something
+  callable, never a variable or constant (an exact match may: a variable can
+  hold a function). So a Godot scene node sharing its class's qualified name
+  does not make an `extends` ambiguous, and `->default(0)` does not bind to a
+  Blade view named `default`.
 - One ID sets `TargetID`; several set `ResolutionAmbiguous`.
 
 Store lookups take up to 20 hits, are cached per key, ignore points of files

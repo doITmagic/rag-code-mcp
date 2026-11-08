@@ -9,6 +9,7 @@ v2 packages; v2 stays frozen and shippable until v3 replaces it.
 
 ## Requirements
 
+- **Go 1.26.0 or later** to build (`go.mod`).
 - **Ollama 0.40 or later** with the `embeddinggemma-2:270m` model. It is the
   only dependency. The installer can run it in Docker (`-ollama docker`, the
   default), use one already running (`-ollama local`), or leave it to you
@@ -40,18 +41,25 @@ remove the `ragcode-ollama` container.
 | Path | Content |
 |---|---|
 | `~/.ragcode/config.yaml` | settings (Ollama URL and model, exclude patterns, watch, log level) |
-| `~/.ragcode/index/<collection>/` | the workspace index: `index.db`, `state.json`, `index_status.json`, `index.lock` |
-| `~/.ragcode/roots.json` | the workspaces the server knows |
+| `~/.ragcode/bin/rag-code-mcp` | the server binary the installer copies |
+| `~/.ragcode/logs/ragcode.log` | the server log; rotated to `ragcode.log.1` |
+| `~/.ragcode/index/<collection>/` | the workspace index: `index.db` (plus SQLite's `index.db-wal` and `index.db-shm`), `state.json`, `index_status.json`, `index.lock` |
+| `~/.ragcode/roots.json` | the workspaces the server knows; `roots.json.lock` guards its updates |
+| `~/.ragcode/cache/update.json` | the cached result of the release check |
 | `<workspace>/.ragcode/RAGCODE.md` | the instructions the AI clients read |
+| `<workspace>/.ragcode/.gitignore` | `*`, so git ignores `.ragcode` |
+| `<workspace>/CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.github/copilot-instructions.md`, `.windsurfrules`, `.clinerules`, `.cursor/rules/ragcode.mdc` | one pointer line to `RAGCODE.md`, added only to files that already exist (`ragcode.mdc` is created when `.cursor/rules` exists) and that git does not track |
 
 `<collection>` is `ragcode-` plus the first 16 hex digits of the SHA-1 of the
-workspace path. Set `RAGCODE_HOME` to move `~/.ragcode`.
+cleaned, symlink-resolved workspace path. Set `RAGCODE_HOME` to move `~/.ragcode`.
 
 ## Tools
 
 `rag_search`, `rag_find_usages`, `rag_call_hierarchy`,
 `rag_list_package_exports`, `rag_read_file_context`, `rag_index_workspace`,
-`rag_server_info`. Each takes `workspace_root`; the client passes it.
+`rag_server_info`. `rag_server_info` takes no parameter. The others take
+`workspace_root`; when it is empty and the client lists exactly one root, that
+root is used, otherwise the call fails and asks for it.
 
 ## Code map
 

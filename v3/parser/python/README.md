@@ -52,7 +52,9 @@ graph TD
 1. **scan** reads the top-level statements: `import` / `from ... import`
    build the import table (`local name -> qualified module or symbol`), and
    every top-level `def` / `class` name is recorded so forward references
-   resolve.
+   resolve. Imports inside a module-level `if` (`if TYPE_CHECKING:`), `try` /
+   `except` or `with` block join the table too; a later one of the same name
+   wins.
 2. **collect** walks the module body and, recursively, every class body.
 3. Each function body is walked for calls, including calls inside nested
    functions, lambdas and comprehensions; they all count toward the enclosing
@@ -148,7 +150,9 @@ target:                  app.models.user.User.find   (not app.models.User.find)
 
 The package's `__init__.py` is looked up under the workspace root, then under
 each directory down to the analyzed file's directory (for `src/` layouts and
-monorepo subprojects). Only regular files up to 4 MiB are read. Re-exports are
+monorepo subprojects). Only regular files up to 4 MiB are read; an
+`__init__.py` that is a symlink is treated as absent, so its re-exports are
+not followed. Re-exports are
 followed up to 8 levels deep. The parsed import table is cached process-wide,
 keyed by root + path and invalidated by mtime and size.
 
@@ -162,6 +166,10 @@ keyed by root + path and invalidated by mtime and size.
   not scoped by position), so `remove()` and `os.remove()` through it have an
   empty target. `self` and `cls` are exempt.
 - Calls to `super()` methods are not resolved to the parent class.
+- Only direct statements of a module or class body become symbols: a `def`,
+  `class` or module-level assignment nested in an `if`, `try`, `with`, `for`
+  or `while` block (e.g. a fallback definition under `try:` / `except
+  ImportError:`) produces no symbol.
 
 ## Files
 
@@ -173,7 +181,7 @@ keyed by root + path and invalidated by mtime and size.
 
 | File | Covers |
 |------|--------|
-| `python_test.go` | Symbols (kinds, owners, signatures, docstrings, decorators, overloads), call targets for every import form, base classes, module names, relative imports from `__init__.py`, malformed input, registration, concurrency, package re-exports (also under a `src/` root and with the cache), function-local imports and class-body calls. |
+| `python_test.go` | Symbols (kinds, owners, signatures, docstrings, decorators, overloads), call targets for every import form, base classes, module names, relative imports from `__init__.py`, malformed input, registration, concurrency, package re-exports (also under a `src/` root and with the cache), function-local imports and class-body calls, imports under `if TYPE_CHECKING:` and try/except. |
 | `zz_verify_test.go` | Verification tests: a fresh fixture exercising every import form, symbols, `from` not importing the module itself, `.pyi` files and the root module, robustness. |
 
 ## Testing

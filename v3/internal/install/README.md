@@ -14,9 +14,11 @@ behind [`rag-code-install`](../../cmd/rag-code-install/README.md):
 7. put `~/.ragcode/bin` on `PATH`;
 8. print a summary with an `mcp.json` snippet for any other client.
 
-Only a few problems stop the run (bad `-ollama` value, missing server binary,
-the user declining to replace an install, a failed copy, an invalid config).
-Everything after the binary copy (Docker, Ollama, model, IDEs, PATH) is
+Only a few problems stop the run (the installer cannot locate its own
+executable, bad `-ollama` value, missing server binary,
+the user declining to replace an install, a failed copy, an invalid config,
+a `-models-dir` that cannot be created). Everything else after the binary
+copy (Docker, Ollama, model, IDEs, PATH) is
 reported as a warning and skipped, so a machine without Docker still gets a
 working install.
 
@@ -49,7 +51,7 @@ Tests:
 
 | File | Covers |
 |:---|:---|
-| `install_test.go` | Full run with a fake `docker` (GPU start fails, CPU retry) and an `httptest` Ollama: binary mode `0755`, config written, exact Docker commands, model pulled with progress, PATH line once, Cursor entry and summary snippet; a second run keeps the config and does no Docker or model work; `-ollama local` and `-models-dir`; errors (bad `-ollama`, binary missing, user answers no); `pullModel` errors and the 412 "Ollama too old" message; a failed container still pulls from an Ollama already on the port; no Qdrant is started. |
+| `install_test.go` | Full run with a fake `docker` (GPU start fails, CPU retry) and an `httptest` Ollama: binary mode `0755`, config written, exact Docker commands, model pulled with progress, PATH line once, Cursor entry and summary snippet; a second run with `-ollama skip` keeps the config and does no Docker or model work; `-ollama local` and `-models-dir`; errors (bad `-ollama`, binary missing, user answers no); `pullModel` errors and the 412 "Ollama too old" message; a failed container still pulls from an Ollama already on the port; no Qdrant is started. |
 | `v1_test.go` | A v1 install is removed (install dir, `~/.local/share/qdrant` when it holds only ragcode collections, PATH line, the `ragcode` entry in `~/.cursor/mcp.config.json`, Docker `rm -f`); answering no to "Replace?", a failed copy or an invalid config leaves v1 untouched; a collection RagCode did not create, or an unreadable collections directory, is kept; a running v1 server is stopped. |
 | `zz_verify_test.go` | Verification tests: `-ollama local` without Docker still waits and pulls; a cancelled context does not hang `Run`; `waitHTTP` on an unreachable URL returns an error; a reinstall replaces the binary, leaves no temp file and writes `.zshrc` when `SHELL` is zsh. |
 
@@ -130,7 +132,12 @@ newer Ollama, 0.40 or later". On any failure the installer prints
 `run manually: ollama pull <model>` and carries on.
 
 The volume is named `ragcode-ollama`; `-models-dir` mounts a host directory
-instead (created with `0755`).
+instead (created with `0755`; if it cannot be created the install stops with
+`install: models dir: ...`).
+
+Running the installer again with `-ollama docker` repeats these steps: the
+`ragcode-ollama` container is removed and recreated, and the model pull is
+sent again. Only `-ollama skip` avoids the Docker and model work.
 
 ### IDE configs
 
@@ -170,7 +177,8 @@ Most users upgrade from v1, whose indexes are not compatible with v3. When
    `~/.local/share/qdrant/collections` whose name starts with `ragcode`. The
    path is generic and a user's own Qdrant may keep collections there too, so
    `~/.local/share/qdrant` itself is deleted only when no other collection is
-   left (or when the collections directory cannot be read). Qdrant wrote the data as root, so if a plain delete fails it runs
+   left. A collections directory that cannot be read may hold anything, so
+   `~/.local/share/qdrant` is then kept, with a warning. Qdrant wrote the data as root, so if a plain delete fails it runs
    `rm -rf` inside a throwaway `qdrant/qdrant:v1.19.1` container; if that fails
    too it prints a `sudo rm -rf` hint.
 

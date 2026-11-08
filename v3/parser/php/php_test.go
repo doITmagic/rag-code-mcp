@@ -1,6 +1,8 @@
 package php
 
 import (
+	"maps"
+	"slices"
 	"sync"
 	"testing"
 
@@ -391,4 +393,20 @@ Route::match(['get', 'post'], '/mixed', 'Ctrl@m');
 		}
 	}
 	assert.ElementsMatch(t, []string{"ok_hook", "/mixed"}, names)
+}
+
+// A class named with a word the grammar reserves (Object) parses as an error
+// node followed by the base as "name": the class keeps its own name and the
+// base stays its base.
+func TestReservedClassName(t *testing.T) {
+	syms := analyze(t, "app/Object.php", "<?php\nnamespace ZZ;\nclass Object extends Base {\n  public $table = 'x';\n}\nclass Object2 extends Base {}\n")
+	o, ok := syms["class ZZ.Object"]
+	require.True(t, ok, "%v", slices.Collect(maps.Keys(syms)))
+	assert.Equal(t, "ZZ.Base", targets(o)["extends Base"])
+	_, ok = syms["class ZZ.Base"]
+	assert.False(t, ok)
+	_, ok = syms["variable ZZ.Object.table"]
+	assert.True(t, ok)
+	_, ok = syms["class ZZ.Object2"]
+	assert.True(t, ok)
 }

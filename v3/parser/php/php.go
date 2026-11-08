@@ -370,15 +370,33 @@ func (c *collector) signatureTypes(n *gotreesitter.Node, s *parser.Symbol) {
 }
 
 func (c *collector) classLike(n *gotreesitter.Node) {
-	name := c.text(c.field(n, "name"))
+	nameNode := c.field(n, "name")
+	name := c.text(nameNode)
 	if name == "" {
 		return
+	}
+	// "class Object extends Base": a name the grammar reserves parses as an
+	// ERROR node "Object extends" and the base as the class name.
+	var baseKind parser.RelationKind
+	for _, ch := range parser.NamedChildren(n) {
+		if ch.Type(c.lang) != "ERROR" || ch.StartByte() > nameNode.StartByte() {
+			continue
+		}
+		if f := strings.Fields(c.text(ch)); len(f) == 2 && (f[1] == "extends" || f[1] == "implements") {
+			name, baseKind = f[0], parser.RelExtends
+			if f[1] == "implements" {
+				baseKind = parser.RelImplements
+			}
+		}
 	}
 	kind := parser.KindClass
 	if n.Type(c.lang) == "interface_declaration" {
 		kind = parser.KindInterface
 	}
 	s := c.symbol(n, name, kind, "", true)
+	if baseKind != "" {
+		c.typeRefs(&s, n, baseKind) // the only name child of n is the misparsed base
+	}
 	for _, nc := range parser.NamedChildren(n) {
 		switch ch := nc; ch.Type(c.lang) {
 		case "base_clause":

@@ -480,7 +480,9 @@ func (c *fileCtx) callsUnder(scope, body *gotreesitter.Node, owner string, skipD
 			rels = append(rels, parser.Relation{Kind: parser.RelCall, TargetName: name, TargetQualifiedName: qn, Line: line})
 		case "attribute":
 			obj := parser.Field(fn, c.lang, "object")
-			name := parser.Text(parser.Field(fn, c.lang, "attribute"), c.src)
+			attr := parser.Field(fn, c.lang, "attribute")
+			name := parser.Text(attr, c.src)
+			line, _ := parser.Lines(attr) // a chain split over lines: the method name's line
 			qn := c.resolveMethod(obj, name, owner)
 			if first, _, _ := strings.Cut(parser.Text(obj, c.src), "."); locals[first] {
 				qn = ""

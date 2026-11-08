@@ -410,3 +410,13 @@ func TestReservedClassName(t *testing.T) {
 	_, ok = syms["class ZZ.Object2"]
 	assert.True(t, ok)
 }
+
+// A call in a -> chain split over lines is on the line of its method name.
+func TestChainedCallLine(t *testing.T) {
+	syms := analyze(t, "src/Impl.php", "<?php\nnamespace A;\nclass Impl {\n  function run() {\n    $y = $this\n      ->builder()\n      ->where('a', 1);\n  }\n}\n")
+	lines := map[string]int{}
+	for _, r := range syms["method A.Impl.run"].Relations {
+		lines[r.TargetName] = r.Line
+	}
+	assert.Equal(t, map[string]int{"builder": 6, "where": 7}, lines)
+}

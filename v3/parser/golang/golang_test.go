@@ -560,3 +560,40 @@ func F() { yaml.Unmarshal(nil, nil); isatty.IsTerminal(0); kit.Run() }
 	assert.Equal(t, "github.com/mattn/go-isatty.IsTerminal", got["IsTerminal"])
 	assert.Equal(t, "github.com/acme/kit/v2.Run", got["Run"])
 }
+
+// A call in a chain split over lines is on the line of its method name.
+func TestChainedCallLine(t *testing.T) {
+	root := t.TempDir()
+	syms := analyze(t, root, filepath.Join(root, "g.go"), "package g\n\nfunc F(b *B) {\n\tb.\n\t\tWhere().\n\t\tFirst()\n}\n")
+	lines := map[string]int{}
+	for _, r := range syms["F"].Relations {
+		if r.Kind == parser.RelCall {
+			lines[r.TargetName] = r.Line
+		}
+	}
+	assert.Equal(t, map[string]int{"Where": 5, "First": 6}, lines)
+}
+
+// An external test package (package p_test) is its own package: its
+// declarations do not share qualified names with package p.
+func TestExternalTestPackage(t *testing.T) {
+	root := t.TempDir()
+	in := analyze(t, root, filepath.Join(root, "p", "a_test.go"), "package p\n\nfunc helper() {}\n")
+	ext := analyze(t, root, filepath.Join(root, "p", "b_test.go"), "package p_test\n\nfunc helper() {}\n\nfunc TestB() { helper() }\n")
+	var inQN, extQN string
+	for q := range in {
+		inQN = q
+	}
+	for q, s := range ext {
+		if s.Name == "helper" {
+			extQN = q
+		}
+	}
+	assert.True(t, strings.HasSuffix(extQN, "p_test.helper"), extQN)
+	assert.NotEqual(t, inQN, extQN)
+	for _, s := range ext {
+		if s.Name == "TestB" {
+			assert.Equal(t, extQN, s.Relations[0].TargetQualifiedName)
+		}
+	}
+}

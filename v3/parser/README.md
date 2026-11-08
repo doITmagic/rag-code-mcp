@@ -159,7 +159,7 @@ type Relation struct {
 	TargetQualifiedName string // set by the analyzer, "" when it cannot tell
 	TargetID            string // set by the indexer
 	Resolution          string // set by the indexer
-	Line                int
+	Line                int    // 1-based; for a method call, the line of the method name (a chain split over lines)
 }
 ```
 

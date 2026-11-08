@@ -486,6 +486,7 @@ func (c *collector) method(n *gotreesitter.Node, owner string) {
 func (c *collector) call(n *gotreesitter.Node, sym *parser.Symbol, owner string) {
 	kind, track := parser.RelCall, false // track: plain and static calls feed the framework pass
 	var recv, recvFQN, name, target string
+	at := n // the node whose line the relation takes
 	switch n.Type(c.lang) {
 	case "function_call_expression":
 		track = true
@@ -522,7 +523,7 @@ func (c *collector) call(n *gotreesitter.Node, sym *parser.Symbol, owner string)
 		if c.typ(fn) != "name" {
 			return
 		}
-		name = c.text(fn)
+		name, at = c.text(fn), fn
 		if c.text(c.field(n, "object")) == "$this" && owner != "" {
 			target = parser.Qualify(c.ns, owner, name)
 		}
@@ -539,9 +540,10 @@ func (c *collector) call(n *gotreesitter.Node, sym *parser.Symbol, owner string)
 		return
 	}
 	start, end := parser.Lines(n)
+	line, _ := parser.Lines(at) // a -> chain split over lines: the method name's line
 	if sym != nil {
 		sym.Relations = append(sym.Relations, parser.Relation{
-			Kind: kind, TargetName: name, TargetQualifiedName: target, Line: start,
+			Kind: kind, TargetName: name, TargetQualifiedName: target, Line: line,
 		})
 	}
 	if track {

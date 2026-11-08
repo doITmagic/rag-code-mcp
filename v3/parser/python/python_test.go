@@ -505,3 +505,13 @@ func TestModuleAssignmentCalls(t *testing.T) {
 	assert.Equal(t, map[string]string{"make": "x.make"}, targets(m["app.a"], parser.RelCall))
 	assert.Empty(t, m["app.b"].Relations)
 }
+
+// A call in a chain split over lines is on the line of its method name.
+func TestChainedCallLine(t *testing.T) {
+	m := byQN(analyze(t, "/ws/m.py", "/ws", "def f(q):\n    return (q\n        .where(1)\n        .first())\n"))
+	lines := map[string]int{}
+	for _, r := range m["m.f"].Relations {
+		lines[r.TargetName] = r.Line
+	}
+	assert.Equal(t, map[string]int{"where": 3, "first": 4}, lines)
+}

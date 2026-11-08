@@ -160,6 +160,11 @@ keyed by root + path and invalidated by mtime and size.
 
 ## Known limitations visible in the code
 
+- Decorators (`@setupmethod`) are not usages of the function they name.
+- A call whose callee is a subscript (`ConfigAttribute[bool]("TESTING")`) is
+  not recorded; only `name(...)` and `a.b(...)` callees are.
+- Module-level calls outside an assignment (`main()`, an
+  `if __name__ == "__main__":` block) belong to no symbol.
 - `from m import *` is not recorded, so names it brings in stay unresolved,
   and a star re-export in an `__init__.py` is not followed.
 - No type inference: `obj.method()` on a local variable has an empty target.
@@ -183,7 +188,7 @@ keyed by root + path and invalidated by mtime and size.
 
 | File | Covers |
 |------|--------|
-| `python_test.go` | Symbols (kinds, owners, signatures, docstrings, decorators, overloads), call targets for every import form, base classes, module names, relative imports from `__init__.py`, malformed input, registration, concurrency, package re-exports (also under a `src/` root, from `tests/` outside it, and with the cache), function-local imports and class-body calls, imports under `if TYPE_CHECKING:` and try/except, calls in module-level assignments. |
+| `python_test.go` | Symbols (kinds, owners, signatures, docstrings, decorators, overloads), call targets for every import form, base classes, module names, relative imports from `__init__.py`, malformed input, registration, concurrency, package re-exports (also under a `src/` root, from `tests/` outside it, and with the cache), function-local imports and class-body calls, imports under `if TYPE_CHECKING:` and try/except, calls in module-level assignments, the line of a chained call split over lines. |
 | `zz_verify_test.go` | Verification tests: a fresh fixture exercising every import form, symbols, `from` not importing the module itself, `.pyi` files and the root module, robustness. |
 
 ## Testing

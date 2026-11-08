@@ -70,6 +70,12 @@ func (Analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 	// Pass 1: import table and locally declared type names.
 	for _, n := range parser.NamedChildren(root) {
 		switch n.Type(lang) {
+		case "package_clause":
+			// An external test package (package flux_test) is another package
+			// than flux, as go/types sees it.
+			if p := parser.NamedChildren(n); fc.test && len(p) == 1 && strings.HasSuffix(fc.text(p[0]), "_test") {
+				fc.module += "_test"
+			}
 		case "import_declaration":
 			parser.Walk(n, func(c *gotreesitter.Node) bool {
 				if c.Type(lang) == "import_spec" {
@@ -370,8 +376,10 @@ func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []pars
 					add(parser.RelCall, name, parser.Qualify(fc.module, "", name), c)
 				}
 			case "selector_expression":
-				name := fc.text(parser.Field(fn, fc.lang, "field"))
-				add(parser.RelCall, name, fc.callTarget(parser.Field(fn, fc.lang, "operand"), name, recv, owner, locals), c)
+				field := parser.Field(fn, fc.lang, "field")
+				name := fc.text(field)
+				// at the field: a chain split over lines is on the method name's line
+				add(parser.RelCall, name, fc.callTarget(parser.Field(fn, fc.lang, "operand"), name, recv, owner, locals), field)
 			}
 		case "composite_literal", "type_conversion_expression":
 			t := parser.Field(c, fc.lang, "type")

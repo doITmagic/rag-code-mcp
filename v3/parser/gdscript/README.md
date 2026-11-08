@@ -169,6 +169,7 @@ For `/ws/levels/main.tscn`: `res://levels/main.Main` (uses_type ->
 
 ## Known limitations visible in the code
 
+- A method passed as a value, also as `_m.call_deferred()`, is not a usage of it.
 - Type annotations (`func f(hit: BattlerHit)`, `var x: Gamepiece`) and
   `ClassName.new(...)` are not usages of the class.
 - `await sig` is not a usage of the signal, and `sig.connect(_h.bind(x))` is

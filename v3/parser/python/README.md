@@ -160,6 +160,10 @@ keyed by root + path and invalidated by mtime and size.
 
 ## Known limitations visible in the code
 
+- A class defined inside a function is not a symbol, so its `extends` is not
+  recorded.
+- Return-type and variable annotations (`-> NullSession`) and classes used as
+  values (`cls = NullSession`, `pytest.raises(E)`) are not usages.
 - Decorators (`@setupmethod`) are not usages of the function they name, and
   calls inside decorator arguments (`@pytest.mark.parametrize(..., f())`) are
   not recorded.

@@ -235,6 +235,11 @@ literal's values are not walked, its methods own their calls.
 
 ## Known limitations visible in the code
 
+- A function passed as a value (`computed(getDefault)`) is not a usage of it.
+- A class field holding a non-function (`match: typeof match = match`) is not
+  a symbol.
+- A call to a parameter has an empty qualified target, so the index may still
+  bind it by name (flagged `by_name`) to a symbol of the same name.
 - Decorators (`@sealed`, `@log`) are not usages of the function they name.
 - Overload signatures of a class method are not symbols; only its
   implementation is (top-level function overloads are all symbols).

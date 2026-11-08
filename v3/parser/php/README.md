@@ -180,6 +180,8 @@ A view outside any `views` folder has module `""`.
 
 ## Known limitations visible in the code
 
+- A class used only as a property type (`private ?Dispatcher $d`) or as
+  `X::class` is not a usage.
 - Blade `@component('x.y')` makes no `imports` relation to the component view,
   and `<x-alert />` tag components produce nothing.
 - `define('X', ...)` becomes a constant only at file level (also in a

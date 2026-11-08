@@ -235,6 +235,12 @@ func knownRoots(e *engine.Engine) []KnownRoot {
 	out := make([]KnownRoot, 0, len(roots))
 	for _, r := range roots {
 		k := KnownRoot{Root: r, State: "not_indexed"}
+		// The index status lives under ~/.ragcode, so it outlives a deleted root.
+		if fi, err := os.Stat(r); err != nil || !fi.IsDir() {
+			k.State = "missing"
+			out = append(out, k)
+			continue
+		}
 		if s, ok := index.ReadStatus(r); ok {
 			k.State, k.Files = s.Phase, s.Done
 			switch {

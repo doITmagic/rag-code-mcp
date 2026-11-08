@@ -798,3 +798,23 @@ func TestFailedRunErrorSurvivesRestart(t *testing.T) {
 	assert.Equal(t, "embed: connection refused", r.Index.Error)
 	assert.Contains(t, r.Message, "(embed: connection refused)")
 }
+
+// A registered root that no longer exists on disk keeps its index status under
+// ~/.ragcode, but it must not be reported as done.
+func TestKnownRootsMissingRoot(t *testing.T) {
+	t.Setenv("RAGCODE_HOME", t.TempDir())
+	root := filepath.Join(t.TempDir(), "gone")
+	require.NoError(t, os.MkdirAll(root, 0o755))
+	dir := index.Dir(root)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	roots, _ := json.Marshal([]string{root})
+	require.NoError(t, os.WriteFile(filepath.Join(config.HomeDir(), "roots.json"), roots, 0o644))
+	status, _ := json.Marshal(index.Status{Root: root, StartedAt: time.Now(), EndedAt: time.Now(), Phase: "done", Done: 3})
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "index_status.json"), status, 0o644))
+	require.Equal(t, "done", knownRoots(nil)[0].State)
+
+	require.NoError(t, os.RemoveAll(root))
+	got := knownRoots(nil)
+	require.Equal(t, "missing", got[0].State)
+	require.Empty(t, got[0].Ended)
+}

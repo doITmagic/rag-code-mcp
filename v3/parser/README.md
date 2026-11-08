@@ -180,7 +180,7 @@ The indexer then fills `TargetID` and `Resolution` in a workspace-wide pass
 
 | `Resolution` | Meaning |
 |--------------|---------|
-| `exact` | `TargetQualifiedName` matched one symbol, exactly or as a qualified suffix (`src/` layouts) |
+| `exact` | `TargetQualifiedName` matched one symbol, exactly or, in Python and GDScript, as a qualified suffix (`src/` layouts, bare `class_name`); elsewhere a suffix match is `unique` |
 | `unique` | Matched by name only (`TargetName`), and exactly one symbol has it; tools mark it `by_name` |
 | `ambiguous` | Several symbols share the name, none matched by qualified name |
 

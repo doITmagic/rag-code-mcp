@@ -34,7 +34,10 @@ type Entry struct {
 // 7: JS barrel re-exports followed and script-setup top-level calls owned by
 // default; GDScript class_name bases; Go bases are embeddings only; a
 // qualified-suffix match is exact and a name fallback unique.
-const Format = 7
+// 8: twins (same qualified name in one file) are one target; a qualified
+// name that normalizes to a bare name resolves by name; a qualified-suffix
+// match is exact only in python and gdscript, unique elsewhere.
+const Format = 8
 
 // State is the per-root snapshot stored at Dir(root)/state.json. Only
 // the run goroutine touches it; nothing here locks.

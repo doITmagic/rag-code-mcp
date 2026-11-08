@@ -23,7 +23,7 @@ import (
 // lineAnalyzer is a self-contained stand-in for a language analyzer. Each
 // "func NAME [-> TARGET]" line is a function in module <basename>; a TARGET
 // with a dot is a qualified name, without one a bare name. A line "panic"
-// panics, a line "error" fails.
+// panics, a line "error" fails. "func NAME +N" spans N more lines.
 type lineAnalyzer struct{ lang, ext string }
 
 func (a lineAnalyzer) Language() string     { return a.lang }
@@ -58,7 +58,12 @@ func (a lineAnalyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 		case strings.HasPrefix(line, "func "):
 			name, target, _ := strings.Cut(strings.TrimPrefix(line, "func "), " -> ")
 			s := parser.Symbol{Name: name, Kind: parser.KindFunction, Module: module, Content: line, StartLine: i + 1}
-			if n, ok := strings.CutSuffix(name, " as default"); ok { // a JS default export
+			if n, more, ok := strings.Cut(name, " +"); ok {
+				s.Name = n
+				fmt.Sscan(more, &s.EndLine)
+				s.EndLine += s.StartLine
+			}
+			if n, ok := strings.CutSuffix(s.Name, " as default"); ok { // a JS default export
 				s.Name, s.QualifiedName = n, module+".default"
 			}
 			if target != "" {
@@ -87,6 +92,8 @@ func TestMain(m *testing.M) {
 	os.Setenv("RAGCODE_HOME", home)
 	parser.Register(lineAnalyzer{"go", ".go"})
 	parser.Register(lineAnalyzer{"markdown", ".md"})
+	parser.Register(lineAnalyzer{"python", ".py"})
+	parser.Register(lineAnalyzer{"php", ".php"})
 	code := m.Run()
 	os.RemoveAll(home)
 	os.Exit(code)
@@ -393,7 +400,7 @@ func TestResolution(t *testing.T) {
 		"func Nope -> zzz.Nope", // unresolved
 		"func Nope2 -> Nope3",   // unresolved
 		"func Many -> b.Dup",    // exact even though the name is ambiguous
-		"func Sfx -> pkg.Svc",   // exact by qualified suffix: src.pkg.Svc
+		"func Sfx -> pkg.Svc",   // unique by qualified suffix: src.pkg.Svc (exact only in python, gdscript)
 	}, "\n"))
 	b := e.write(t, "b.go", "func Bar\nfunc Dup\n")
 	e.write(t, "c.go", "func Dup\n")
@@ -414,7 +421,7 @@ func TestResolution(t *testing.T) {
 		assert.Empty(t, rel("Nope2").Resolution)
 		assert.Equal(t, parser.ResolutionExact, rel("Many").Resolution)
 		assert.Equal(t, dup.ID, rel("Many").TargetID)
-		assert.Equal(t, parser.ResolutionExact, rel("Sfx").Resolution)
+		assert.Equal(t, parser.ResolutionUnique, rel("Sfx").Resolution)
 		assert.Equal(t, e.symbols(t, svc)["Svc"].ID, rel("Sfx").TargetID)
 	}
 	_, err := e.run(t, nil)

@@ -181,22 +181,36 @@ func TestReadIndexFilesRefuseDevices(t *testing.T) {
 	}
 }
 
-// A qualified-suffix match is exact, yet a second symbol with that suffix
-// makes it ambiguous: the unchanged caller is re-resolved.
+// A qualified-suffix match is exact (python: a src/ layout), yet a second
+// symbol with that suffix makes it ambiguous: the unchanged caller is
+// re-resolved.
 func TestResolveSuffixMatchTurnsAmbiguous(t *testing.T) {
 	e := newEnv(t)
-	e.write(t, "a.go", "func Caller -> pkg.Svc\n")
-	e.write(t, "src.pkg.go", "func Svc\n")
+	e.write(t, "a.py", "func Caller -> pkg.Svc\n")
+	e.write(t, "src.pkg.py", "func Svc\n")
 	_, err := e.run(t, nil)
 	require.NoError(t, err)
 	r, svc := e.rel(t, "Caller", "Svc")
 	assert.Equal(t, svc, r.TargetID)
 	assert.Equal(t, parser.ResolutionExact, r.Resolution)
 
-	e.write(t, "lib.pkg.go", "func Svc\n")
-	_, err = e.run(t, func(o *Options) { o.Files = []string{"lib.pkg.go"} })
+	e.write(t, "lib.pkg.py", "func Svc\n")
+	_, err = e.run(t, func(o *Options) { o.Files = []string{"lib.pkg.py"} })
 	require.NoError(t, err)
 	r, _ = e.rel(t, "Caller", "")
 	assert.Empty(t, r.TargetID)
 	assert.Equal(t, parser.ResolutionAmbiguous, r.Resolution)
+}
+
+// Outside python and gdscript a qualified suffix is a guess: PHP Status::run()
+// of a global \\Status is not HealthCheck\\WP_CLI\\Status::run.
+func TestResolveSuffixMatchNotExactInPHP(t *testing.T) {
+	e := newEnv(t)
+	e.write(t, "a.php", "func Caller -> Status.run\n")
+	e.write(t, "HealthCheck.WP_CLI.Status.php", "func run\n")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	r, run := e.rel(t, "Caller", "run")
+	assert.Equal(t, parser.ResolutionUnique, r.Resolution)
+	assert.Equal(t, run, r.TargetID)
 }

@@ -624,17 +624,27 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 			oldOfGained = append(oldOfGained, old...)
 		}
 	}
-	had := map[[2]string]bool{} // {file, qualified name} of the old points, not yet purged
+	had := map[[2]string]int{} // {file, qualified name} of the old points, not yet purged: how many
 	query(oldOfGained, func(v []string) store.Filter { return store.Filter{IDs: v} }, func(h store.Hit) {
-		had[[2]string{h.Symbol.FilePath, h.Symbol.QualifiedName}] = true
+		had[[2]string{h.Symbol.FilePath, h.Symbol.QualifiedName}]++
 	})
 	byLang := map[string][]parser.Symbol{} // the symbols the run adds
 	for _, p := range files {
 		old := r.state.Files[p.path].IDs
 		for _, s := range p.syms {
-			// a symbol that only moved keeps its name: not added
-			if !slices.Contains(old, s.ID) && !had[[2]string{p.path, s.QualifiedName}] {
-				byLang[s.Language] = append(byLang[s.Language], s)
+			if slices.Contains(old, s.ID) {
+				had[[2]string{p.path, s.QualifiedName}]--
+			}
+		}
+		for _, s := range p.syms {
+			// a symbol that only moved keeps its name: not added; one more
+			// twin than before (overload, accessor) is, it may become the target
+			if k := [2]string{p.path, s.QualifiedName}; !slices.Contains(old, s.ID) {
+				if had[k] > 0 {
+					had[k]--
+				} else {
+					byLang[s.Language] = append(byLang[s.Language], s)
+				}
 			}
 		}
 	}
@@ -725,12 +735,13 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 }
 
 // names drops everything but the names (and kind, module, owner) of each
-// symbol, plus a class's bases: what staleReferrers and
+// symbol, its place, plus a class's bases: what staleReferrers and
 // newNameIndex read.
 func names(files []parsed) []parsed {
 	for i := range files {
 		for j, s := range files[i].syms {
-			n := parser.Symbol{ID: s.ID, QualifiedName: s.QualifiedName, Name: s.Name, Language: s.Language, Kind: s.Kind, Module: s.Module, Owner: s.Owner}
+			n := parser.Symbol{ID: s.ID, QualifiedName: s.QualifiedName, Name: s.Name, Language: s.Language, Kind: s.Kind, Module: s.Module, Owner: s.Owner,
+				FilePath: s.FilePath, StartLine: s.StartLine, EndLine: s.EndLine}
 			if s.Kind == parser.KindClass || s.Kind == parser.KindInterface {
 				for _, r := range s.Relations {
 					if (r.TargetQualifiedName != "" || r.TargetName != "") && (r.Kind == parser.RelExtends || r.Kind == parser.RelImplements || r.Kind == parser.RelUsesType) {
@@ -753,19 +764,32 @@ type nameIndex struct {
 	byModName map[[2]string][]string // module, name of top-level symbols
 	lang      map[string]string      // symbol id -> language
 	kind      map[string]parser.Kind // symbol id -> kind, for fit
+	place     map[string]place       // symbol id -> where it is, for twins
 	bases     map[string][]string    // class id -> what it extends, implements or uses (traits): qualified name, else bare name
 	changed   map[string]bool        // files of the run: their stored points are stale
 }
 
+// place groups twins: symbols sharing file and qualified name (overloads,
+// getter/setter pairs, merged declarations) are one target.
+type place struct {
+	file, qn   string
+	start, end int
+}
+
+func placeOf(s parser.Symbol) place {
+	return place{s.FilePath, parser.Normalize(s.QualifiedName), s.StartLine, s.EndLine}
+}
+
 func newNameIndex(files []parsed) nameIndex {
 	idx := nameIndex{byQN: map[string][]string{}, bySuffix: map[string][]string{}, byName: map[[2]string][]string{}, byModule: map[string][]string{},
-		byModName: map[[2]string][]string{}, lang: map[string]string{}, kind: map[string]parser.Kind{}, bases: map[string][]string{}, changed: make(map[string]bool, len(files))}
+		byModName: map[[2]string][]string{}, lang: map[string]string{}, kind: map[string]parser.Kind{}, place: map[string]place{}, bases: map[string][]string{}, changed: make(map[string]bool, len(files))}
 	for i := range files {
 		idx.changed[files[i].path] = true
 		for _, s := range files[i].syms {
 			qn := parser.Normalize(s.QualifiedName)
 			idx.lang[s.ID] = s.Language
 			idx.kind[s.ID] = s.Kind
+			idx.place[s.ID] = placeOf(s)
 			if s.Kind == parser.KindClass || s.Kind == parser.KindInterface {
 				for _, r := range s.Relations {
 					// Go promotes only an embedded type's methods (extends), not a named field's.
@@ -821,6 +845,7 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 				ids = append(ids, h.Symbol.ID)
 				langOf[h.Symbol.ID] = h.Symbol.Language
 				kindOf[h.Symbol.ID] = h.Symbol.Kind
+				idx.place[h.Symbol.ID] = placeOf(h.Symbol)
 			}
 		}
 		cache[key] = ids
@@ -837,11 +862,33 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 		}
 		return out
 	}
+	// collapse keeps one id per twin group: the widest, then the first. A
+	// group lies in one file, so a full and a files run pick the same one.
+	collapse := func(ids []string) []string {
+		best := map[[2]string]string{}
+		out := ids[:0:0]
+		for _, id := range ids {
+			p := idx.place[id]
+			k := [2]string{p.file, p.qn}
+			b, ok := best[k]
+			if !ok {
+				out = append(out, id)
+			}
+			if q := idx.place[b]; !ok || p.end-p.start > q.end-q.start || p.end-p.start == q.end-q.start && (p.start < q.start || p.start == q.start && id < b) {
+				best[k] = id
+			}
+		}
+		for i, id := range out {
+			p := idx.place[id]
+			out[i] = best[[2]string{p.file, p.qn}]
+		}
+		return out
+	}
 	// lookup takes run and store candidates together, so a files run sees
 	// what a full run sees; two in the run already make it ambiguous.
 	lookup := func(lang string, run []string, key string, f store.Filter, match func(parser.Symbol) bool) []string {
 		ids := keep(lang, run)
-		if len(ids) < 2 {
+		if len(collapse(ids)) < 2 {
 			ids = append(ids, keep(lang, fromStore(key, f, match))...)
 		}
 		return ids
@@ -868,7 +915,7 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 	}
 	named := func(lang, name string) []string {
 		ids := byName[[2]string{lang, name}]
-		if len(ids) < 2 {
+		if len(collapse(ids)) < 2 {
 			ids = append(ids, fromStore("n:"+lang+"\x00"+name, store.Filter{Name: name, Language: lang}, func(s parser.Symbol) bool {
 				return s.Name == name && s.Language == lang
 			})...)
@@ -908,11 +955,20 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 				if tqn := rel.TargetQualifiedName; tqn != "" {
 					resolution = parser.ResolutionExact
 					ids = exact(lang, tqn)
+					// A TQN that normalizes to a bare name ("..delta") is
+					// only a name: matched by name, never exact.
+					if key := parser.Normalize(tqn); len(ids) == 0 && !strings.Contains(key, ".") {
+						ids, nameOnly, resolution = named(lang, cmp.Or(rel.TargetName, key)), true, parser.ResolutionUnique
+					}
 					// A TQN written relative to a source root other than the
-					// workspace root (Python src/ layouts, monorepo subprojects)
-					// names a qualified suffix; only a unique match is taken.
-					if len(ids) == 0 {
-						ids = suffix(lang, tqn)
+					// workspace root (Python src/ layouts, GDScript's short
+					// <Class>.m) names a qualified suffix: exact there. In other
+					// languages it is a guess (PHP Status::run of a global
+					// \Status), so unique.
+					if len(ids) == 0 && !nameOnly {
+						if ids = suffix(lang, tqn); len(ids) > 0 && lang != "python" && lang != "gdscript" {
+							resolution = parser.ResolutionUnique
+						}
 					}
 					// extends "res://x.gd" (GDScript) names a whole script: its
 					// one top-level class, whatever that class is called.
@@ -957,7 +1013,7 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 				} else if name := rel.TargetName; name != "" {
 					ids, nameOnly = named(lang, name), true
 				}
-				ids = fit(rel.Kind, nameOnly, ids)
+				ids = collapse(fit(rel.Kind, nameOnly, ids))
 				switch {
 				case len(ids) == 1:
 					rel.TargetID, rel.Resolution = ids[0], resolution

@@ -73,8 +73,9 @@ graph LR
 | `index_test.go` | The main suite, with a line-based fake analyzer and a hook embedder: full, incremental, delete, recreate, model and `Format` change, embed failure, parse failures and panics, cancel, `ErrHeadChanged`, relation resolution, `Skip`, `Walk`, `.gitignore`, linked worktrees, symlinks in `Files`, byte-budgeted upsert batches, empty collection with stale state, a crash between a recreate's state save and its drop, moved targets, vanished referrers, a file that changed between the two passes, deleted paths counted only when they were indexed, relation target kinds (`TestResolutionTargetKinds`) and inherited members through the owner's bases (`TestResolutionThroughBases`), in full and files runs, Go bases limited to embeddings (`TestResolutionThroughBasesGoEmbeddingOnly`), and a run cancelled before it changed anything keeping the previous `done` status (`TestRunCancelledKeepsDoneStatus`). Its `TestMain` points `RAGCODE_HOME` at a temp dir. |
 | `budget_test.go` | The parse byte budget is respected, and batches still resolve forward references. |
 | `resolve_test.go` | A non-fresh run resolves more than 500 targets through the store; a JS `import { n }` of a default-exported declaration resolves by module and name, in a full run and from the store. |
+| `twins_test.go` | Twins in one file resolve to the widest (then first) by qualified name and by name, in a full run and from the store; a qualified name in two files stays ambiguous; a wider twin added later re-resolves the unchanged caller in a files run; `..delta` resolves by name (unique, then ambiguous), never exact. |
 | `resolve_files_test.go` | A files run sees the stored candidates too: a target ambiguous in a full run stays ambiguous by exact and suffix match; removing one of two candidates (file deleted or symbol edited away) makes the unchanged caller unique. |
-| `resolve_fix_test.go` | Name and qualified resolution stay within one language (html may cross), targets defined later, inherited-member fallback, a files run after a failed run widens to a full walk, symlinked `.ragcode` directories and device files are refused, an exact suffix match turned ambiguous by a new symbol with that suffix. |
+| `resolve_fix_test.go` | Name and qualified resolution stay within one language (html may cross), targets defined later, inherited-member fallback, a files run after a failed run widens to a full walk, symlinked `.ragcode` directories and device files are refused, an exact suffix match (Python) turned ambiguous by a new symbol with that suffix, a PHP suffix match only `unique`. |
 | `gdscript_test.go` | `extends "res://x.gd"` resolves to the script's class, named by `class_name` or after the file, in full and files runs; `super.run()` in a `class_name` hierarchy (`BaseTrigger.run`, defined in the base's base `Cutscene`) resolves exactly through the bases, and by name when the owner is only in the store. |
 | `prefix_test.go` | `Run` adds the model's document prefix before embedding. |
 | `lock_unix_test.go` | A second run on a locked root gets `ErrLocked`. Build tag `unix`. |
@@ -159,7 +160,7 @@ type State struct {
     Files  map[string]Entry `json:"files"`            // absolute path -> entry
 }
 
-const Format = 7
+const Format = 8
 ```
 
 `Format` is the version of what parsers and the indexer store. It is bumped
@@ -178,6 +179,10 @@ calls; the Blade end line; relation target kinds and inherited members.
 Version 7: JS barrel re-exports followed and `<script setup>` top-level calls
 owned by `default`; GDScript `class_name` bases; Go bases limited to embedded
 types; a qualified-suffix match is `exact` and a name fallback `unique`.
+Version 8: twins (one qualified name in one file) resolve as one target, and a
+qualified name that normalizes to a bare name resolves by name; a
+qualified-suffix match is `exact` only in Python and GDScript, `unique`
+elsewhere.
 
 ---
 
@@ -295,7 +300,9 @@ re-parsed and re-resolved in the same run:
 1. Collect the IDs that vanish: those of gone files, plus old IDs of re-parsed
    files that are no longer produced.
 2. Look up the old points of files that gained an ID, to tell a symbol that
-   only moved (same file and qualified name) from a truly new one.
+   only moved (same file and qualified name) from a truly new one. They are
+   counted: one more symbol of a qualified name in a file than before (a new
+   overload or accessor, a twin) is new, since it may become the target.
 3. Query the store for points whose `TargetIDs` contain a vanished ID.
 4. For each language, query for points targeting the new symbols'
    `TargetQualifiedNames`, and for points with a matching `TargetName` whose
@@ -320,9 +327,12 @@ each relation:
 
 - With a `TargetQualifiedName`: an exact match (run and store candidates
   together, so a files run sees what a full run sees) is
-  `ResolutionExact`. Otherwise a unique qualified-suffix match is taken
-  (also `ResolutionExact`), which covers Python `src/` layouts, monorepo
-  subprojects and GDScript's short `<Class>.m`. If the owner (`a.b` of `a.b.m`,
+  `ResolutionExact`. Otherwise a unique qualified-suffix match is taken:
+  `ResolutionExact` in Python (`src/` layouts) and GDScript (the short
+  `<Class>.m`), whose qualified names are legitimately written relative;
+  `ResolutionUnique` in every other language, where it is a guess (a PHP file
+  without a namespace calling `Status::run()` of a global `\Status` would
+  otherwise bind as exact to `HealthCheck\WP_CLI\Status::run`). If the owner (`a.b` of `a.b.m`,
   matched exactly or by suffix) does not define the member (inherited through
   a parent class, trait or embedded type), the bases the owner declares in
   this run (one level) are tried as `<base>.m`, exactly or by suffix
@@ -338,6 +348,16 @@ each relation:
   (`ResolutionUnique`). In JavaScript, `m.n` with no match takes module `m`'s
   top-level symbol named `n`: a declaration both named and default-exported
   is qualified `m.default`, while `import { n }` names `m.n`.
+- A `TargetQualifiedName` that normalizes to a bare name (`..delta`) has no
+  qualifier: without an exact match it skips the suffix lookup and is matched
+  by name (`ResolutionUnique` or ambiguous), so a name-only guess is never
+  `exact`.
+- Twins, the symbols sharing a qualified name in one file (TypeScript overload
+  signatures and their implementation, getter/setter pairs, merged
+  declarations, Python redefinitions), are one candidate in every lookup: the
+  widest line span, then the lowest start line. The pick depends on that file
+  only, so a full and a files run agree. The same qualified name in two files
+  (Go build-tagged variants) stays ambiguous.
 - With only a `TargetName`: matched by `(language, name)`.
 - Code never resolves into another language, by name or qualified name; only
   relations from `docs` and `html` (links, scripts, `onclick` handlers) cross

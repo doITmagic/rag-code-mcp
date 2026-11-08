@@ -47,7 +47,7 @@ func TestBlade(t *testing.T) {
 	assert.Equal(t, "users", file.Module)
 	assert.Equal(t, "", file.Owner)
 	assert.Equal(t, 1, file.StartLine)
-	assert.Equal(t, 20, file.EndLine)
+	assert.Equal(t, 19, file.EndLine)
 	assert.Equal(t, viewSrc, file.Content)
 	assert.Equal(t, []parser.Relation{
 		{Kind: parser.RelImports, TargetName: "layouts.app", TargetQualifiedName: "layouts.app", Line: 1},
@@ -89,4 +89,13 @@ func TestBladeOutsideViews(t *testing.T) {
 	assert.Equal(t, "mail", syms[0].QualifiedName)
 	assert.Equal(t, "mail.x", syms[1].QualifiedName)
 	assert.Equal(t, 1, syms[1].EndLine, "unterminated block ends where it starts")
+}
+
+// The newline ending a view's last line does not add a line to the file
+// symbol.
+func TestBladeEndLine(t *testing.T) {
+	syms, err := parser.Analyze(parser.File{Path: "/root/resources/views/a.blade.php", Root: "/root", Source: []byte("<p>one</p>\n<p>two</p>\n")})
+	require.NoError(t, err)
+	require.NotEmpty(t, syms)
+	assert.Equal(t, 2, syms[0].EndLine)
 }

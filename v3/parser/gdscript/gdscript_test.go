@@ -352,3 +352,28 @@ func TestConcurrent(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// super.m() and super() target the base class's method when the base is a
+// class_name (a qualified suffix the index resolves); with a path base they
+// stay by name. A bare super() is not a call to "super".
+func TestSuperCalls(t *testing.T) {
+	src := "class_name Door\nextends AreaTransition\nfunc _ready():\n\tsuper._ready()\n\tsuper()\n\tawait super._on_area_entered(a)\n"
+	m := byQN(analyze(t, "/ws/door.gd", "/ws", src))
+	got := map[string]string{}
+	for _, r := range m["res://door.Door._ready"].Relations {
+		got[r.TargetName] = r.TargetQualifiedName
+	}
+	assert.Equal(t, map[string]string{"_ready": "AreaTransition._ready", "_on_area_entered": "AreaTransition._on_area_entered"}, got)
+
+	src = "extends \"res://base.gd\"\nfunc _ready():\n\tsuper._ready()\n"
+	m = byQN(analyze(t, "/ws/x.gd", "/ws", src))
+	var rels []parser.Relation
+	for _, s := range m {
+		if s.Name == "_ready" {
+			rels = s.Relations
+		}
+	}
+	require.Len(t, rels, 1)
+	assert.Equal(t, "_ready", rels[0].TargetName)
+	assert.Empty(t, rels[0].TargetQualifiedName)
+}

@@ -448,3 +448,31 @@ func TestSignatureStopsAtColon(t *testing.T) {
 	assert.Equal(t, "def get_variables(self, x: dict[str, int] = {}) -> dict[str, Any]", m["w.W.get_variables"].Signature)
 	assert.Equal(t, "class W", m["w.W"].Signature)
 }
+
+// Imports under a module-level `if TYPE_CHECKING:`, try/except or with block
+// enter the import table like top-level ones.
+func TestGuardedImports(t *testing.T) {
+	src := `from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from app.models import User
+try:
+    import ujson as json
+except ImportError:
+    import json
+
+def load(u: "User"):
+    User.find()
+    json.loads("x")
+`
+	syms := analyze(t, "/ws/app/svc.py", "/ws", src)
+	got := map[string]string{}
+	for _, s := range syms {
+		if s.Name == "load" {
+			for _, r := range s.Relations {
+				got[r.TargetName] = r.TargetQualifiedName
+			}
+		}
+	}
+	assert.Equal(t, "app.models.User.find", got["find"])
+	assert.Contains(t, []string{"ujson.loads", "json.loads"}, got["loads"])
+}

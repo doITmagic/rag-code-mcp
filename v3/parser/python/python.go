@@ -75,6 +75,19 @@ func (c *fileCtx) scan(root *gotreesitter.Node) {
 			}
 		case "function_definition", "class_definition":
 			c.defs[parser.Text(parser.Field(n, c.lang, "name"), c.src)] = true
+		case "if_statement", "try_statement", "with_statement":
+			// if TYPE_CHECKING: / try: import x except: import y
+			parser.Walk(n, func(m *gotreesitter.Node) bool {
+				switch m.Type(c.lang) {
+				case "import_statement":
+					c.addImport(m)
+				case "import_from_statement":
+					c.addImportFrom(m)
+				case "function_definition", "class_definition", "decorated_definition":
+					return false
+				}
+				return true
+			})
 		}
 	}
 }

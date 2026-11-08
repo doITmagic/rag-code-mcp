@@ -21,6 +21,8 @@ type scope struct {
 	owner string
 	inner bool
 	defs  map[string]bool // functions and signals the body declares
+	base  string          // the class_name this class extends, "" for a path or none
+	fn    string          // the function whose body is collected, for super()
 }
 
 func script(f parser.File) ([]parser.Symbol, error) {
@@ -49,7 +51,7 @@ func script(f parser.File) ([]parser.Symbol, error) {
 	if classNode != nil {
 		className = c.name(classNode)
 	}
-	sc := scope{owner: className, defs: c.declared(root)}
+	sc := scope{owner: className, defs: c.declared(root), base: c.baseName(extNode)}
 	var syms []parser.Symbol
 	c.collect(root, sc, classNode, extNode, &syms)
 	return syms, nil
@@ -141,7 +143,9 @@ func (c *scriptCtx) collect(body *gotreesitter.Node, sc scope, classNode, extNod
 			if sc.inner {
 				s.Kind = parser.KindMethod
 			}
-			s.Relations = c.calls(c.child(n, "body"), sc)
+			fsc := sc
+			fsc.fn = s.Name
+			s.Relations = c.calls(c.child(n, "body"), fsc)
 		case "signal_statement":
 			s.Name, s.Kind, s.Signature = c.name(n), parser.KindVariable, firstLine(s.Content)
 			s.Metadata = map[string]string{"gd": "signal"}
@@ -165,7 +169,7 @@ func (c *scriptCtx) collect(body *gotreesitter.Node, sc scope, classNode, extNod
 			s.Exported = !strings.HasPrefix(s.Name, "_")
 			*syms = append(*syms, s)
 			if b := c.child(n, "class_body"); b != nil && s.Name != "" {
-				c.collect(b, scope{owner: s.Name, inner: true, defs: c.declared(b)}, nil, nil, syms)
+				c.collect(b, scope{owner: s.Name, inner: true, defs: c.declared(b), base: c.baseName(c.child(n, "extends_statement"))}, nil, nil, syms)
 			}
 			annos = annos[:0]
 			continue
@@ -257,6 +261,18 @@ func (c *scriptCtx) extendsRel(e *gotreesitter.Node) parser.Relation {
 	return parser.Relation{Kind: parser.RelExtends, TargetName: c.text(e.NamedChild(0)), Line: line}
 }
 
+// baseName is the class name an extends statement names, "" for a res://
+// path (whose class name is not known here) or no statement.
+func (c *scriptCtx) baseName(e *gotreesitter.Node) string {
+	if e == nil {
+		return ""
+	}
+	if r := c.extendsRel(e); r.TargetQualifiedName == "" {
+		return r.TargetName
+	}
+	return ""
+}
+
 // calls collects the call relations under a function body. Bare and self
 // calls resolve to the enclosing class when it declares the callee; any
 // other receiver stays unresolved. connect() handlers and emitted signals
@@ -293,6 +309,21 @@ func (c *scriptCtx) calls(body *gotreesitter.Node, sc scope) []parser.Relation {
 			recv = c.receiver(n)
 		}
 		local := t == "call" || recv == "self"
+		if t == "call" && name == "super" { // super(): the base's method of the same name
+			name, recv, local = sc.fn, "super", false
+		}
+		if recv == "super" {
+			// The base's method: a qualified suffix the index resolves when one class has it.
+			r := parser.Relation{Kind: parser.RelCall, TargetName: name, Line: line}
+			if sc.base != "" && name != "" {
+				r.TargetQualifiedName = sc.base + "." + name
+			}
+			if name != "" && !seen[r] {
+				seen[r] = true
+				rels = append(rels, r)
+			}
+			return true
+		}
 		add(name, line, local)
 		switch name {
 		case "emit_signal":

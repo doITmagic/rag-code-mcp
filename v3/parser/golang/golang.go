@@ -118,7 +118,7 @@ func (fc *file) addImport(spec *gotreesitter.Node) {
 	if path == "" {
 		return
 	}
-	name := path[strings.LastIndex(path, "/")+1:]
+	name := assumedName(path)
 	if n := parser.Field(spec, fc.lang, "name"); n != nil {
 		switch n.Type(fc.lang) {
 		case "dot", "blank_identifier":
@@ -127,6 +127,23 @@ func (fc *file) addImport(spec *gotreesitter.Node) {
 		name = fc.text(n)
 	}
 	fc.imports[name] = path
+}
+
+// assumedName is goimports' guess of a package's name from its import path:
+// the last element (the one before a /vN major suffix), without a "go-"
+// prefix, cut at the first character an identifier cannot hold, so
+// gopkg.in/yaml.v3 is yaml and github.com/mattn/go-isatty is isatty.
+func assumedName(path string) string {
+	parts := strings.Split(path, "/")
+	name := parts[len(parts)-1]
+	if len(parts) > 1 && len(name) > 1 && name[0] == 'v' && strings.Trim(name[1:], "0123456789") == "" {
+		name = parts[len(parts)-2]
+	}
+	name = strings.TrimPrefix(name, "go-")
+	if i := strings.IndexFunc(name, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' }); i > 0 {
+		name = name[:i]
+	}
+	return name
 }
 
 // specs returns the spec nodes of a grouped or single declaration; grouped

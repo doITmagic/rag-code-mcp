@@ -496,3 +496,27 @@ var _ = 1
 	assert.Contains(t, blanks[1].Relations, rel(parser.RelUsesType, "Provider", "github.com/acme/app/pkg/llm.Provider", 9))
 	assert.False(t, blanks[0].Exported)
 }
+
+// An import's assumed package name follows goimports: no .vN or /vN major
+// suffix, no go- prefix (gopkg.in/yaml.v3 is yaml, .../go-isatty is isatty).
+func TestImportAssumedName(t *testing.T) {
+	root := t.TempDir()
+	src := `package p
+
+import (
+	"gopkg.in/yaml.v3"
+	"github.com/mattn/go-isatty"
+	"github.com/acme/kit/v2"
+)
+
+func F() { yaml.Unmarshal(nil, nil); isatty.IsTerminal(0); kit.Run() }
+`
+	f := analyze(t, root, filepath.Join(root, "p.go"), src)["F"]
+	got := map[string]string{}
+	for _, r := range f.Relations {
+		got[r.TargetName] = r.TargetQualifiedName
+	}
+	assert.Equal(t, "gopkg.in/yaml.v3.Unmarshal", got["Unmarshal"])
+	assert.Equal(t, "github.com/mattn/go-isatty.IsTerminal", got["IsTerminal"])
+	assert.Equal(t, "github.com/acme/kit/v2.Run", got["Run"])
+}

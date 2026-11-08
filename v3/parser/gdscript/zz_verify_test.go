@@ -254,7 +254,6 @@ func TestVerifyGodot4(t *testing.T) {
 	require.NotEmpty(t, ready.Name)
 	assert.Equal(t, "", ready.Owner, "no class_name: free function")
 	assert.Equal(t, map[string]string{
-		"super":       "",
 		"_ready":      "", // super._ready() belongs to the base class
 		"show":        "", // %Unique.show()
 		"helper":      mod + ".helper",

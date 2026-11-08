@@ -24,7 +24,7 @@ func blade(f parser.File) []parser.Symbol {
 	lines := strings.Split(string(f.Source), "\n")
 	syms := []parser.Symbol{{
 		Name: stem, Kind: parser.KindTemplate, Module: viewModule(f.Path), Signature: "@" + stem,
-		Content: string(f.Source), StartLine: 1, EndLine: len(lines), Exported: true,
+		Content: string(f.Source), StartLine: 1, EndLine: max(1, strings.Count(strings.TrimSuffix(string(f.Source), "\n"), "\n")+1), Exported: true,
 	}}
 	open := -1 // index of the block symbol waiting for its closing directive
 	for i, line := range lines {

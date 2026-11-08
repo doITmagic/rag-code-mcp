@@ -191,6 +191,8 @@ func TestController(t *testing.T) {
 	assert.Equal(t, map[string]string{
 		"call find":        `App\Models.User.find`,
 		"uses_type Mailer": `App\Services.Mailer`,
+		"uses_type Req":    `Illuminate\Http.Request`,
+		"uses_type View":   `Illuminate\View.View`,
 		"uses_type Log":    `App\Services.Logger`,
 		"call validate":    ns + ".UserController.validate",
 		"call helper":      ns + ".UserController.helper",
@@ -340,4 +342,28 @@ func TestConcurrentAnalyze(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// Parameter and return type declarations are type uses, resolved like
+// extends; scalar types and self/static/parent are not.
+func TestSignatureTypeUses(t *testing.T) {
+	m := analyze(t, "/ws/app/Core/Cache.php", `<?php
+namespace App\Core;
+use App\Webpage;
+class Cache {
+    public function addModal(Webpage $modal, ?\App\User $u, int $i, A|B $x, self $s): Webpage { return $modal; }
+}
+function make(Webpage $w): static {}
+`)
+	got := func(s parser.Symbol) []string {
+		var out []string
+		for _, r := range s.Relations {
+			if r.Kind == parser.RelUsesType {
+				out = append(out, r.TargetQualifiedName)
+			}
+		}
+		return out
+	}
+	assert.ElementsMatch(t, []string{"App.Webpage", "App.User", "App\\Core.A", "App\\Core.B", "App.Webpage"}, got(m["method App\\Core.Cache.addModal"]))
+	assert.Equal(t, []string{"App.Webpage"}, got(m["function App\\Core.make"]))
 }

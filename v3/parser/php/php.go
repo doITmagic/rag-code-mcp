@@ -338,7 +338,35 @@ func (c *collector) function(n *gotreesitter.Node) {
 	}
 	s := c.symbol(n, name, parser.KindFunction, "", true)
 	c.walkBody(c.field(n, "body"), &s, "")
+	c.signatureTypes(n, &s)
 	c.syms = append(c.syms, s)
+}
+
+// signatureTypes adds a uses_type relation per class named in the parameter
+// and return type declarations (nullable and union types included); scalar
+// types and self/static/parent are skipped.
+func (c *collector) signatureTypes(n *gotreesitter.Node, s *parser.Symbol) {
+	for _, part := range []*gotreesitter.Node{c.field(n, "parameters"), c.field(n, "return_type")} {
+		parser.Walk(part, func(t *gotreesitter.Node) bool {
+			if t.Type(c.lang) != "named_type" {
+				return true
+			}
+			for _, ch := range parser.NamedChildren(t) {
+				if k := ch.Type(c.lang); k != "name" && k != "qualified_name" {
+					continue
+				}
+				raw := c.text(ch)
+				switch strings.ToLower(raw) {
+				case "self", "static", "parent":
+					continue
+				}
+				line, _ := parser.Lines(ch)
+				s.Relations = append(s.Relations, parser.Relation{Kind: parser.RelUsesType, TargetName: short(raw),
+					TargetQualifiedName: qualified(c.resolve(raw, c.classes, "")), Line: line})
+			}
+			return false
+		})
+	}
 }
 
 func (c *collector) classLike(n *gotreesitter.Node) {
@@ -417,6 +445,7 @@ func (c *collector) method(n *gotreesitter.Node, owner string) {
 	}
 	s := c.symbol(n, name, parser.KindMethod, owner, c.visible(n))
 	c.walkBody(c.field(n, "body"), &s, owner)
+	c.signatureTypes(n, &s)
 	c.syms = append(c.syms, s)
 	params := c.field(n, "parameters")
 	for _, p := range parser.NamedChildren(params) {

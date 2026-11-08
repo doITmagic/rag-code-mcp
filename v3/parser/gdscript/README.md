@@ -115,13 +115,18 @@ unresolved `connect` and `emit` calls themselves.
 |------------------|----------|-----------------------|
 | `extends "res://x/y.gd"` / `extends "y.gd"` | `extends` | `res://x/y` (a module) |
 | `extends Node` / `extends ClassName` | `extends` | `""` |
-| `f()` or `self.f()` | `call` | `<module>.<Owner>.f` when the same class body declares `f` (function or signal), else `""`. |
+| `f()` or `self.f()` (in a function, or a property `set` / `get` body) | `call` | `<module>.<Owner>.f` when the same class body declares `f` (function or signal), else `""`. |
 | `super.f()`, `super()` (inside `f`) | `call` to `f` | `<Base>.f` when the class extends a class by name (`extends Base`, also an engine class such as `Node`; a qualified suffix the index resolves when one class has it); `""` for a `res://` path base. |
 | `obj.f()`, `$Node.f()`, `get_node(...).f()` | `call` | `""` |
 | `emit_signal("died")` | `call` to `died` | Same rule as a bare call. |
 | `died.emit()` | `call` to `died` | When `died` is declared in the same class body. |
 | Godot 4 `sig.connect(handler)` / `connect("sig", handler)` | `call` to `handler` | Resolved as a member of this class. |
 | Godot 3 `connect("sig", self, "handler")` | `call` to `handler` | Resolved only when the target argument is `self`. |
+
+Calls in the inline `set(value):` / `get:` bodies of a property
+(`var item_type: int: set(value): ...`) are relations of that variable,
+with the same rules as a function body. A named accessor
+(`set = _set_b, get = _get_b`) is not a call to that function.
 
 Identical relations (same name, target and line) are reported once. Inner
 classes resolve calls only against their own members.
@@ -168,7 +173,8 @@ For `/ws/levels/main.tscn`: `res://levels/main.Main` (uses_type ->
   `CombatEvents.done.emit()`) is not a usage of the signal.
 - Autoload singletons from `project.godot` are not symbols under their
   autoload name; the script's symbol keeps its own name.
-- A function passed as a value (`sort_custom(Battler.sort)`) is not a usage.
+- A function passed as a value (`sort_custom(Battler.sort)`) or named as a
+  property accessor (`set = _set_b`) is not a usage.
 - A scene emits at most 500 nodes; the last one then carries
   `truncated=true`.
 - Node content is capped at 8 KiB, because embedded resources can serialize
@@ -189,14 +195,14 @@ For `/ws/levels/main.tscn`: `res://levels/main.Main` (uses_type ->
 | File | Contents |
 |------|----------|
 | `gdscript.go` | Analyzer and registration, dispatch between scripts and scenes, `module` (resource path), `resModule` (map a `res://` or relative path to a module), `stem`. |
-| `script.go` | The `.gd` analyzer: header pass for `class_name` / `extends`, member collection with doc comments and annotations, inner classes, unnamed enum values, `@export` / `@onready` metadata, `extends` relations, call relations with signal `emit` / `emit_signal` and `connect` handling. |
+| `script.go` | The `.gd` analyzer: header pass for `class_name` / `extends`, member collection with doc comments and annotations, inner classes, unnamed enum values, `@export` / `@onready` metadata, `extends` relations, call relations with signal `emit` / `emit_signal` and `connect` handling, calls of inline property `set` / `get` bodies. |
 | `scene.go` | The `.tscn` scanner: section splitting, header attribute parsing, `ExtResource` id extraction (Godot 3 and 4), node symbols, attached-script and connection relations, node and content caps. |
 
 ### Tests
 
 | File | Covers |
 |------|--------|
-| `gdscript_test.go` | Script symbols (kinds, owners, lines, signatures, docs, metadata), call relations including signals and connections, `extends` with `res://`, relative and `uid://` paths, Godot 3 keywords, module names, a scene with instances, scripts and connections, the node and content caps, garbage scenes, malformed scripts, registration, concurrency, `super` calls. |
+| `gdscript_test.go` | Script symbols (kinds, owners, lines, signatures, docs, metadata), call relations including signals and connections, `extends` with `res://`, relative and `uid://` paths, Godot 3 keywords, module names, a scene with instances, scripts and connections, the node and content caps, garbage scenes, malformed scripts, registration, concurrency, `super` calls, calls in property `set` / `get` bodies. |
 | `zz_verify_test.go` | Verification tests: scripts, scenes, robustness, Godot 4 syntax, CRLF and upper-case scene files, large inputs, and two further rounds of script, scene and big-file probes. |
 
 ## Testing

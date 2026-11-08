@@ -377,3 +377,10 @@ func TestSuperCalls(t *testing.T) {
 	assert.Equal(t, "_ready", rels[0].TargetName)
 	assert.Empty(t, rels[0].TargetQualifiedName)
 }
+
+// Calls in the inline set/get bodies of a property belong to the variable.
+func TestPropertyAccessorCalls(t *testing.T) {
+	src := "class_name Pickup\nvar item_type: int:\n\tset(value):\n\t\titem_type = value\n\t\tInventory.get_item_icon(item_type)\n\t\thelp()\n\tget:\n\t\treturn calc()\nfunc help():\n\tpass\n"
+	m := byQN(analyze(t, "/ws/pickup.gd", "/ws", src))
+	assert.Equal(t, map[string]string{"get_item_icon": "", "help": "res://pickup.Pickup.help", "calc": ""}, targets(m["res://pickup.Pickup.item_type"], parser.RelCall))
+}

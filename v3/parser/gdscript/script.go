@@ -154,6 +154,9 @@ func (c *scriptCtx) collect(body *gotreesitter.Node, sc scope, classNode, extNod
 		case "variable_statement", "export_variable_statement", "onready_variable_statement":
 			s.Name, s.Kind, s.Signature = c.name(n), parser.KindVariable, firstLine(s.Content)
 			s.Metadata = c.varMeta(n, annos)
+			if sg := c.child(n, "setget"); sg != nil { // inline set(value): / get: bodies
+				s.Relations = c.calls(sg, sc)
+			}
 		case "enum_definition":
 			s.Name, s.Kind, s.Signature = c.name(n), parser.KindConstant, firstLine(s.Content)
 			s.Metadata = map[string]string{"gd": "enum"}

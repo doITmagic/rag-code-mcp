@@ -109,7 +109,9 @@ logs a `client connected` line naming the client per session. Size rotation
 environment variable is set (the Go runtime then applies that value itself).
 Without it, parallel tree-sitter parsing during indexing could leave
 1.3 to 5 GB of resident memory for minutes. This is a soft limit for the
-garbage collector, not a hard cap.
+garbage collector, not a hard cap. After the runs of a root the engine
+returns the freed heap to the OS (`debug.FreeOSMemory`, see
+[engine](../../engine/README.md), "Job queue").
 
 ### Catch-up indexing
 

@@ -203,7 +203,10 @@ request and no runner or retry timer. The runner takes the pending request,
 waits for the global slot, runs `index.Run` with the engine's context, then
 loops: a request made during the run starts right after it. Runs of
 different workspaces serialize on the slot. `Progress` updates the
-workspace's status as the run goes.
+workspace's status as the run goes. When the queue is empty the runner
+calls `debug.FreeOSMemory` before it exits: the runtime otherwise keeps a
+run's heap for minutes, and every client starts its own server (measured on
+a 1,800-file root: 384 MB resident while idle before, 70 MB after).
 
 ```mermaid
 flowchart TD

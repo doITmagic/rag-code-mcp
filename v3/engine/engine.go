@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -399,6 +400,10 @@ func (e *Engine) runJobs(w *Workspace) {
 			}
 			w.running = false
 			e.mu.Unlock()
+			if e.ctx.Err() == nil {
+				// The runtime keeps a run's heap for minutes; an idle server would hold it.
+				debug.FreeOSMemory()
+			}
 			return
 		}
 		e.mu.Lock()

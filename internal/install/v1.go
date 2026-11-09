@@ -15,20 +15,20 @@ import (
 	"github.com/doITmagic/rag-code-mcp/v2/internal/uninstall"
 )
 
-// qdrantImage is only used to delete v1's root-owned Qdrant data; v3 runs no
+// qdrantImage is only used to delete v1's root-owned Qdrant data; v2 runs no
 // Qdrant.
 const qdrantImage = "qdrant/qdrant:v1.19.1"
 
 // removeV1 deletes a RagCode v1 install (~/.local/share/ragcode): what v1's
 // own uninstaller removes, plus the PATH line and Qdrant data it leaves.
-// Nothing from v1 is reusable by v3. Failures are warned and skipped.
+// Nothing from v1 is reusable by v2. Failures are warned and skipped.
 func removeV1(ctx context.Context, home string, out io.Writer) {
 	share := filepath.Join(home, ".local", "share")
 	installDir := filepath.Join(share, "ragcode")
 	if _, err := os.Stat(installDir); err != nil {
 		return
 	}
-	step(out, "Removing RagCode v1 (its indexes are not compatible with v3; projects are indexed again)")
+	step(out, "Removing RagCode v1 (its indexes are not compatible with v2; projects are indexed again)")
 	_ = exec.CommandContext(ctx, "docker", "rm", "-f", "ragcode-qdrant", "ragcode-ollama").Run()
 
 	cfg := filepath.Join(home, ".config")

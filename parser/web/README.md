@@ -1,4 +1,4 @@
-[RagCode v3](../../README.md) › [parser](../README.md) › web
+[RagCode](../../README.md) › [parser](../README.md) › web
 
 # HTML and Go Template Analyzer
 
@@ -140,7 +140,6 @@ that leave the workspace root give an empty target.
 ## Testing
 
 ```bash
-cd v3
 go test ./parser/web/
 ```
 

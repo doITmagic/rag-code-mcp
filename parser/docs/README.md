@@ -1,4 +1,4 @@
-[RagCode v3](../../README.md) › [parser](../README.md) › docs
+[RagCode](../../README.md) › [parser](../README.md) › docs
 
 # Documentation and Data Analyzer
 
@@ -171,7 +171,6 @@ are named `stem (1/k)`, `stem (2/k)`, ...
 ## Testing
 
 ```bash
-cd v3
 go test ./parser/docs/
 ```
 

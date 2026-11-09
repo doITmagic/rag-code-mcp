@@ -6,9 +6,10 @@ First off, thank you for considering contributing to RagCode MCP! It's people li
 
 ### Prerequisites
 
-- **Go 1.25+**: Required for building the project.
-- **Docker**: Required for running the Qdrant vector database.
-- **Ollama**: Required for LLM and embedding models.
+- **Go 1.26+** (`go.mod`).
+- **Ollama 0.40+** with `embeddinggemma-2:270m`, only for the live tests and
+  for running the server; the unit tests use a fake embedder. No database
+  server is needed: the index is an embedded SQLite file.
 
 ### Setting up the environment
 
@@ -18,36 +19,25 @@ First off, thank you for considering contributing to RagCode MCP! It's people li
    cd rag-code-mcp
    ```
 
-2. **Install dependencies**
+2. **Pull the embedding model**
    ```bash
-   go mod download
+   ollama pull embeddinggemma-2:270m
    ```
 
-3. **Start required services**
-   Ensure Docker and Ollama are running.
-   ```bash
-   # Start Qdrant
-   docker run -d -p 6333:6333 qdrant/qdrant
-   
-   # Pull embedding models
-   ollama pull qwen3-embedding:0.6b
-   ```
-
-4. **Run the server locally**
+3. **Run the server locally**
    ```bash
    go run ./cmd/rag-code-mcp
    ```
+
+Every package directory has a README: start from [README.md](README.md),
+"Code map".
 
 ## 🧪 Testing
 
 We use the standard Go testing framework.
 
 ```bash
-# Run all tests
-go test ./...
-
-# Run tests with race detection
-go test -race ./...
+go build ./... && go vet ./... && go test -race -count=1 ./...
 ```
 
 Please ensure all tests pass before submitting a Pull Request.
@@ -56,6 +46,8 @@ Please ensure all tests pass before submitting a Pull Request.
 
 - **Formatting**: We use `gofmt`. Please run `go fmt ./...` before committing.
 - **Linting**: We recommend using `golangci-lint`.
+- **Docs**: a change in a package updates its README and, when it changes
+  what users see, the root README.
 - **Commits**: We follow [Conventional Commits](https://www.conventionalcommits.org/).
   - `feat: add new tool`
   - `fix: resolve indexing bug`
@@ -63,10 +55,10 @@ Please ensure all tests pass before submitting a Pull Request.
 
 ## 🚀 Submitting a Pull Request
 
-1. Create a new branch: `git checkout -b feat/my-new-feature`
+1. Create a new branch from `main`: `git checkout -b feat/my-new-feature`
 2. Make your changes and commit them: `git commit -m 'feat: add some feature'`
 3. Push to the branch: `git push origin feat/my-new-feature`
-4. Submit a pull request!
+4. Open a pull request against `main`.
 
 ## 🐛 Reporting Bugs
 
@@ -85,7 +77,7 @@ We welcome feature requests! Please use the Feature Request issue template and p
    
 One of the best ways to help us improve is to ask your AI assistant to evaluate its own performance! 
    
-If you have RagCode MCP installed, you can ask your AI to run the `rag_evaluate` tool. This tool asks the AI to provide qualitative feedback on its interaction with the codebase, which you can then share with us in an issue or discussion.
+If you have RagCode MCP installed, ask your AI assistant how well the `rag_*` tools answered its questions, and share its feedback with us in an issue or discussion.
    
 This helps us understand:
 - Which tools are being used most effectively.

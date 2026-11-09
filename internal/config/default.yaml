@@ -1,4 +1,4 @@
-# RagCode MCP v3 configuration. Written on first run; every key is optional
+# RagCode MCP configuration. Written on first run; every key is optional
 # and falls back to the value shown here.
 
 ollama_base_url: http://localhost:11434

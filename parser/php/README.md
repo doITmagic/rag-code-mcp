@@ -1,4 +1,4 @@
-[RagCode v3](../../README.md) › [parser](../README.md) › php
+[RagCode](../../README.md) › [parser](../README.md) › php
 
 # PHP and Blade Analyzer
 
@@ -232,7 +232,6 @@ A view outside any `views` folder has module `""`.
 ## Testing
 
 ```bash
-cd v3
 go test ./parser/php/
 ```
 

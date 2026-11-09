@@ -95,7 +95,7 @@ func Run(ctx context.Context, o Options) error {
 	} else {
 		ok(o.Out, "Wrote "+cfgPath)
 	}
-	// v1 goes only once v3 is in place, and before the ragcode-ollama
+	// v1 goes only once v2 is in place, and before the ragcode-ollama
 	// container (same name in v1) is started again.
 	if userHome, err := os.UserHomeDir(); err == nil {
 		removeV1(ctx, userHome, o.Out)

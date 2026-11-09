@@ -1,4 +1,4 @@
-[RagCode v3](../README.md) › tools
+[RagCode](../README.md) › tools
 
 # tools: the MCP tools
 
@@ -532,7 +532,6 @@ Follow the pattern of the existing handlers:
 ## Testing
 
 ```bash
-cd v3
 CGO_ENABLED=0 go test ./tools/
 CGO_ENABLED=0 go test -short ./tools/   # skips the ~9 s stalled-endpoint test
 ```
@@ -549,4 +548,4 @@ closed local port).
 - [parser](../parser/README.md): the symbol and relation contract
 - [index](../index/README.md): walk, skip rules and index status
 - [internal/app](../internal/app/README.md): where `Register` is called
-- [RagCode v3](../README.md)
+- [RagCode](../README.md)

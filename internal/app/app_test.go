@@ -25,7 +25,7 @@ func TestSmoke(t *testing.T) {
 	t.Setenv("RAGCODE_HOME", t.TempDir())
 	cfg := config.Default()
 	cfg.WatchEnabled = false
-	a, err := New(Options{Config: cfg, Version: "v3.0.0-test", Store: store.NewMemory(), Embedder: &embed.Fake{}})
+	a, err := New(Options{Config: cfg, Version: "v2.0.0-test", Store: store.NewMemory(), Embedder: &embed.Fake{}})
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -41,7 +41,7 @@ func TestSmoke(t *testing.T) {
 	ir := cs.InitializeResult()
 	require.NotNil(t, ir)
 	assert.Equal(t, "ragcode", ir.ServerInfo.Name)
-	assert.Equal(t, "v3.0.0-test", ir.ServerInfo.Version)
+	assert.Equal(t, "v2.0.0-test", ir.ServerInfo.Version)
 
 	res, err := cs.ListTools(ctx, nil)
 	require.NoError(t, err)
@@ -74,7 +74,7 @@ func TestShutdownLogsNoError(t *testing.T) {
 	cfg.WatchEnabled = false
 	var buf bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	a, err := New(Options{Config: cfg, Version: "v3", Log: log, Store: store.NewMemory(), Embedder: &embed.Fake{}})
+	a, err := New(Options{Config: cfg, Version: "v2", Log: log, Store: store.NewMemory(), Embedder: &embed.Fake{}})
 	require.NoError(t, err)
 	t.Cleanup(func() { a.Close(context.Background()) })
 
@@ -121,7 +121,7 @@ func TestLogsConnectedClient(t *testing.T) {
 			cfg.WatchEnabled = false
 			var buf syncBuf
 			log := slog.New(slog.NewTextHandler(&buf, nil))
-			a, err := New(Options{Config: cfg, Version: "v3", Log: log, Store: store.NewMemory(), Embedder: &embed.Fake{}})
+			a, err := New(Options{Config: cfg, Version: "v2", Log: log, Store: store.NewMemory(), Embedder: &embed.Fake{}})
 			require.NoError(t, err)
 			t.Cleanup(func() { a.Close(context.Background()) })
 
@@ -150,7 +150,7 @@ func TestLogsConnectedClientOnceOverStatelessHTTP(t *testing.T) {
 	cfg := config.Default()
 	cfg.WatchEnabled = false
 	var buf syncBuf
-	a, err := New(Options{Config: cfg, Version: "v3", Log: slog.New(slog.NewTextHandler(&buf, nil)), Store: store.NewMemory(), Embedder: &embed.Fake{}})
+	a, err := New(Options{Config: cfg, Version: "v2", Log: slog.New(slog.NewTextHandler(&buf, nil)), Store: store.NewMemory(), Embedder: &embed.Fake{}})
 	require.NoError(t, err)
 	t.Cleanup(func() { a.Close(context.Background()) })
 	srv := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return a.Server }, &mcp.StreamableHTTPOptions{Stateless: true}))

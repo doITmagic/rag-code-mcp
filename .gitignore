@@ -13,6 +13,7 @@ relations/
 bin/
 tests/e2e/bin/
 /rag-code-install
+dist/
 index-all
 
 # Test programs

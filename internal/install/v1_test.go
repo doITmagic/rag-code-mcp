@@ -49,7 +49,7 @@ func TestRunCancelKeepsV1(t *testing.T) {
 	require.NoError(t, os.MkdirAll(v1Dir, 0o755))
 	good := src(t)
 	require.NoError(t, os.MkdirAll(filepath.Join(home, ".ragcode", "bin"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(home, ".ragcode", "bin", "rag-code-mcp"), []byte("v3"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".ragcode", "bin", "rag-code-mcp"), []byte("v2"), 0o755))
 	err := Run(context.Background(), Options{Ollama: "skip", SkipIDE: true, In: strings.NewReader("n\n"), Out: &bytes.Buffer{}, srcDir: good})
 	require.ErrorContains(t, err, "cancelled")
 	assert.DirExists(t, v1Dir)
@@ -90,7 +90,7 @@ func TestRunRemovesV1KeepsUnreadableQdrant(t *testing.T) {
 	assert.NotContains(t, string(log), "/p/qdrant")
 }
 
-// v1 goes only once v3 is in place: a failed copy or a broken config leaves
+// v1 goes only once v2 is in place: a failed copy or a broken config leaves
 // the working v1 untouched.
 func TestRunFailureKeepsV1(t *testing.T) {
 	for name, breakIt := range map[string]func(t *testing.T, home string){

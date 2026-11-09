@@ -189,7 +189,7 @@ func TestOpenLogFileKeepsWritingWhenRotationFails(t *testing.T) {
 	assert.Equal(t, int64(1001), st.Size(), "no line lost when rotation fails")
 }
 
-// A v1 or early v3 config.yaml still carries the Qdrant keys; they are
+// A v1 config.yaml still carries the Qdrant keys; they are
 // ignored, not an error.
 func TestLoadIgnoresOldQdrantKeys(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")

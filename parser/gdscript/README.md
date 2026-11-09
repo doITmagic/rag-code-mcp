@@ -1,4 +1,4 @@
-[RagCode v3](../../README.md) › [parser](../README.md) › gdscript
+[RagCode](../../README.md) › [parser](../README.md) › gdscript
 
 # GDScript and Godot Scene Analyzer
 
@@ -215,7 +215,6 @@ For `/ws/levels/main.tscn`: `res://levels/main.Main` (uses_type ->
 ## Testing
 
 ```bash
-cd v3
 go test ./parser/gdscript/
 ```
 

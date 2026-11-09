@@ -25,7 +25,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// Version is set at build time: -ldflags "-X main.Version=v3.x.y".
+// Version is set at build time: -ldflags "-X main.Version=v2.x.y".
 var Version = "dev"
 
 const closeTimeout = 10 * time.Second

@@ -1,4 +1,4 @@
-[RagCode v3](../../README.md) › [internal](../README.md) › install
+[RagCode](../../README.md) › [internal](../README.md) › install
 
 # install
 
@@ -160,7 +160,7 @@ Prints the binary, config, Ollama URL and model, the index directory
 
 ## Removing RagCode v1 (`v1.go`)
 
-Most users upgrade from v1, whose indexes are not compatible with v3. When
+Most users upgrade from v1, whose indexes are not compatible with v2. When
 `~/.local/share/ragcode` exists, `removeV1`:
 
 1. runs `docker rm -f ragcode-qdrant ragcode-ollama`;
@@ -183,14 +183,13 @@ Most users upgrade from v1, whose indexes are not compatible with v3. When
    too it prints a `sudo rm -rf` hint.
 
 Each failure is a warning; v1 removal never stops the install. It runs only
-after the v3 binary is copied and its config loads, so answering no to
+after the v2 binary is copied and its config loads, so answering no to
 "Replace?", a failed copy or a broken config leaves v1 in place. Projects are
-indexed again by v3 on first use.
+indexed again by v2 on first use.
 
 ## Testing
 
 ```bash
-cd v3
 go test ./internal/install/
 ```
 

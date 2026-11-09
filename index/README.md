@@ -1,4 +1,4 @@
-[RagCode v3](../README.md) › index
+[RagCode](../README.md) › index
 
 # Index Package
 
@@ -548,7 +548,6 @@ these keys from [internal/config](../internal/config/README.md) into `Options`:
 ## Testing
 
 ```bash
-cd v3
 go test ./index/
 go test -race ./index/
 ```

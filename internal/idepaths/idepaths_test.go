@@ -149,7 +149,7 @@ func TestWriteDropsV1Env(t *testing.T) {
 	}{
 		{"v1 only", `{"OLLAMA_BASE_URL":"http://localhost:11434","OLLAMA_MODEL":"phi3:medium","OLLAMA_EMBED":"mxbai-embed-large","QDRANT_URL":"http://localhost:6333"}`, nil},
 		{"v1 plus user key", `{"OLLAMA_EMBED":"mxbai-embed-large","QDRANT_URL":"x","HTTPS_PROXY":"p"}`, map[string]any{"HTTPS_PROXY": "p"}},
-		{"v3 override kept", `{"OLLAMA_EMBED":"my-model"}`, map[string]any{"OLLAMA_EMBED": "my-model"}},
+		{"v2 override kept", `{"OLLAMA_EMBED":"my-model"}`, map[string]any{"OLLAMA_EMBED": "my-model"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tg := byKey(t, "cursor")

@@ -1,82 +1,58 @@
-  name: Test
+name: Test
 
-  on:
-    push:
-      branches: [ main, dev ]
-    pull_request:
-      branches: [ main, dev, 'feat/**', 'fix/**' ]
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
-  jobs:
-    test:
-      name: Test
-      runs-on: ubuntu-latest
-      
-      steps:
-        - name: Checkout code
-          uses: actions/checkout@v4
-        
-        - name: Set up Go
-          uses: actions/setup-go@v5
-          with:
-            go-version: '1.25'
-            cache: true
-        
-        - name: Download dependencies
-          run: go mod download
-        
-        - name: Verify dependencies
-          run: go mod verify
-        
-        - name: Run go vet
-          run: go vet ./...
-        
-        - name: Run tests
-          run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
-        
-        - name: Upload coverage to Codecov
-          uses: codecov/codecov-action@v4
-          with:
-            files: ./coverage.txt
-            flags: unittests
-            fail_ci_if_error: false
-        
-        - name: Build
-          run: go build -v ./cmd/rag-code-mcp
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest, macos-latest ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
 
-    lint:
-      name: Lint
-      runs-on: ubuntu-latest
-      
-      steps:
-        - name: Checkout code
-          uses: actions/checkout@v4
-        
-        - name: Set up Go
-          uses: actions/setup-go@v5
-          with:
-            go-version: '1.25'
-            cache: true
-        
-        - name: golangci-lint
-          uses: golangci/golangci-lint-action@v7
-          with:
-            version: v2.4
-            args: --timeout=5m
-            verify: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
 
-    windows-test:
-      name: Test (Windows)
-      runs-on: windows-latest
+      - name: Verify dependencies
+        run: go mod verify
 
-      steps:
-        - name: Checkout code
-          uses: actions/checkout@v4
+      - name: Vet
+        run: go vet ./...
 
-        - name: Set up Go
-          uses: actions/setup-go@v5
-          with:
-            go-version: '1.25'
-            cache: true
+      - name: Test
+        run: go test -race -count=1 ./...
 
-        - name: Run Windows-critical tests
-          run: go test ./pkg/workspace/... ./pkg/parser/... ./cmd/rag-code-install/...
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+        run: go build ./cmd/...
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          # shortcut: latest, because the release must be built with Go >= the go.mod version; pin once a run passes.
+          version: latest
+          args: --timeout=5m

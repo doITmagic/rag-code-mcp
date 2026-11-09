@@ -1,8 +1,8 @@
-[RagCode v3](../README.md) › parser
+[RagCode](../README.md) › parser
 
 # Parser
 
-The `parser` package defines what a "symbol" is in RagCode v3 and how a source
+The `parser` package defines what a "symbol" is in RagCode and how a source
 file becomes a list of them. It holds:
 
 - the **symbol contract** (`Symbol`, `Relation`, `Kind`, `RelationKind`) that
@@ -269,7 +269,7 @@ output) and by the [index](../index/README.md) tests for relation resolution.
 
 ## Adding a language
 
-1. Create `v3/parser/<lang>/` with a type implementing `Analyzer`.
+1. Create `parser/<lang>/` with a type implementing `Analyzer`.
 2. Call `parser.Register(analyzer{})` from `init()`.
 3. Fill `Name`, `Kind`, `Module`, `Owner`, lines, `Content`; resolve
    `TargetQualifiedName` only from evidence in the file.
@@ -279,7 +279,6 @@ output) and by the [index](../index/README.md) tests for relation resolution.
 ## Testing
 
 ```bash
-cd v3
 go test ./parser/...
 ```
 
@@ -290,4 +289,4 @@ No build tags or external services are needed.
 - [index](../index/README.md): walks the workspace, calls `parser.Analyze`, resolves relations
 - [store](../store/README.md): persists symbols
 - [tools](../tools/README.md): MCP tools that query symbols
-- [RagCode v3 overview](../README.md)
+- [RagCode overview](../README.md)

@@ -1,4 +1,4 @@
-[RagCode v3](../../README.md) › [internal](../README.md) › config
+[RagCode](../../README.md) › [internal](../README.md) › config
 
 # config
 
@@ -156,7 +156,6 @@ A `slog` text handler at `level`. An unknown level falls back to `info`
 ## Testing
 
 ```bash
-cd v3
 go test ./internal/config/
 ```
 

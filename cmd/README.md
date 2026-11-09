@@ -1,8 +1,8 @@
-[RagCode v3](../README.md) › cmd
+[RagCode](../README.md) › cmd
 
 # Commands
 
-This directory holds the two programs RagCode v3 ships. Each sub-directory is
+This directory holds the two programs RagCode ships. Each sub-directory is
 a `package main` that builds into one binary. They are deliberately thin: they
 parse flags, set up signals and hand over to the packages in
 [`internal/`](../internal/README.md), which hold the real logic and are easy to
@@ -32,24 +32,22 @@ to sit in the same directory as `rag-code-install` and copies it from there.
 Build both together:
 
 ```bash
-cd v3
 CGO_ENABLED=0 go build -o dist/ ./cmd/...
 dist/rag-code-install -y
 ```
 
-`CGO_ENABLED=0` works because the whole v3 tree is pure Go (the SQLite store
+`CGO_ENABLED=0` works because the whole tree is pure Go (the SQLite store
 uses a CGO-free driver).
 
 To stamp a version into the server:
 
 ```bash
-go build -ldflags "-X main.Version=v3.0.0" -o dist/ ./cmd/rag-code-mcp
+go build -ldflags "-X main.Version=v2.0.0" -o dist/ ./cmd/rag-code-mcp
 ```
 
 ## Testing
 
 ```bash
-cd v3
 go test ./cmd/...
 ```
 
@@ -59,6 +57,6 @@ is tested in [`internal/install`](../internal/install/README.md) and
 
 ## See also
 
-- [RagCode v3 overview](../README.md)
+- [RagCode overview](../README.md)
 - [internal packages](../internal/README.md)
 - [internal/app](../internal/app/README.md): what the server binary builds

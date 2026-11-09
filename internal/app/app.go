@@ -16,7 +16,7 @@ import (
 	"github.com/doITmagic/rag-code-mcp/v2/tools"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	// parser packages: keep in sync with v3/parser/*
+	// parser packages: keep in sync with parser/*
 	_ "github.com/doITmagic/rag-code-mcp/v2/parser/docs"
 	_ "github.com/doITmagic/rag-code-mcp/v2/parser/gdscript"
 	_ "github.com/doITmagic/rag-code-mcp/v2/parser/golang"

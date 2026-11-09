@@ -117,7 +117,7 @@ func (t Target) Write(binary, configPath string) error {
 }
 
 // v1Env returns env without the keys v1's installer wrote, when env is v1's
-// (it has QDRANT_URL, which v3 never reads); nil when it is not. Left in
+// (it has QDRANT_URL, which v2 never reads); nil when it is not. Left in
 // place, v1's OLLAMA_EMBED would override the model of config.yaml.
 func v1Env(v any) map[string]any {
 	env, ok := v.(map[string]any)

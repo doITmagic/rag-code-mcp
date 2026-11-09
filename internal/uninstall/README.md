@@ -1,4 +1,4 @@
-[RagCode v3](../../README.md) › [internal](../README.md) › uninstall
+[RagCode](../../README.md) › [internal](../README.md) › uninstall
 
 # uninstall
 
@@ -162,7 +162,6 @@ rag-code-install -uninstall -y -docker
 ## Testing
 
 ```bash
-cd v3
 go test ./internal/uninstall/
 ```
 

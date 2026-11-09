@@ -1,4 +1,4 @@
-[RagCode v3](../README.md) › vecdb
+[RagCode](../README.md) › vecdb
 
 # vecdb: the embedded vector database
 
@@ -260,7 +260,6 @@ err = d.Delete(ctx, "c", vecdb.Cond{{Field: "kind", Values: []string{"method"}}}
 ## Testing
 
 ```bash
-cd v3
 CGO_ENABLED=0 go test ./vecdb/
 CGO_ENABLED=0 go test -run '^$' -bench BenchmarkSearch15k ./vecdb/
 ```
@@ -272,4 +271,4 @@ root. Tests use `t.TempDir()`; nothing else is needed.
 
 - [store](../store/README.md): the `Store` interface built on `vecdb`
 - [index](../index/README.md): owns the other files in each collection directory
-- [RagCode v3](../README.md): where data lives
+- [RagCode](../README.md): where data lives

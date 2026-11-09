@@ -1,4 +1,4 @@
-// Package parser defines the symbol contract every language analyzer in v3
+// Package parser defines the symbol contract every language analyzer
 // produces. Tools never re-derive identity: a symbol's QualifiedName and a
 // relation's TargetQualifiedName are computed here, at parse time, through the
 // file's own import table.

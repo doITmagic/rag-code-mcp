@@ -1,12 +1,12 @@
-[RagCode v3](../README.md) › internal
+[RagCode](../README.md) › internal
 
 # Internal Packages
 
 Application-level packages that only the two RagCode binaries need. Go's
-`internal/` rule means nothing outside the `github.com/doITmagic/rag-code-mcp/v3`
+`internal/` rule means nothing outside the `github.com/doITmagic/rag-code-mcp/v2`
 module can import them.
 
-The split in v3 is simple:
+The split is simple:
 
 - **Top-level packages** (`parser`, `index`, `engine`, `embed`, `store`,
   `vecdb`, `tools`) are the indexing and search machinery.
@@ -71,7 +71,6 @@ uninstaller deletes them with the rest of `~/.ragcode`.
 ## Testing
 
 ```bash
-cd v3
 go test ./internal/...
 ```
 
@@ -83,6 +82,6 @@ the idepaths tests.
 
 ## See also
 
-- [RagCode v3 overview](../README.md)
+- [RagCode overview](../README.md)
 - [cmd](../cmd/README.md): the binaries built on these packages
 - [engine](../engine/README.md), [tools](../tools/README.md): what `app` wires together

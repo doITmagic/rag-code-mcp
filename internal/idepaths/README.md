@@ -1,4 +1,4 @@
-[RagCode v3](../../README.md) › [internal](../README.md) › idepaths
+[RagCode](../../README.md) › [internal](../README.md) › idepaths
 
 # idepaths
 
@@ -50,7 +50,7 @@ Tests:
 
 | File | Covers |
 |:---|:---|
-| `idepaths_test.go` | Linux paths of all 14 targets and `CODEX_HOME`; write/merge/remove for each JSON shape, keeping other keys; v1's env keys dropped, user keys and v3 overrides kept (`TestWriteDropsV1Env`); `ErrNotInstalled` creates no file; invalid JSON and a non-object servers key are refused and the file left untouched; Codex through a fake `codex` script (add, remove, missing CLI). |
+| `idepaths_test.go` | Linux paths of all 14 targets and `CODEX_HOME`; write/merge/remove for each JSON shape, keeping other keys; v1's env keys dropped, user keys and v2 overrides kept (`TestWriteDropsV1Env`); `ErrNotInstalled` creates no file; invalid JSON and a non-object servers key are refused and the file left untouched; Codex through a fake `codex` script (add, remove, missing CLI). |
 | `zz_verify_test.go` | Verification tests: odd files on `Write` (truncated, binary, top-level array or `null` are refused and left untouched; whitespace-only and BOM-only files load as empty); `Remove` on a file without the servers key leaves it byte-for-byte unchanged; Zed path on macOS; table sanity (14 targets, unique keys, all fields set, `Dir` that is a plain file counts as not installed, IDE-side flags such as `disabled` survive a rewrite); a symlinked config stays a symlink and keeps its mode. |
 
 ## The targets
@@ -107,7 +107,7 @@ type Target struct {
 3. If a `ragcode` entry already existed, its keys other than the transport
    fields (`command`, `args`, `url`, `type`) are kept, so IDE-side settings
    such as `"disabled": true` survive a reinstall.
-   One exception: an `env` written by v1 (it holds `QDRANT_URL`, which v3
+   One exception: an `env` written by v1 (it holds `QDRANT_URL`, which v2
    never reads) loses the keys v1 wrote (`OLLAMA_BASE_URL`, `OLLAMA_MODEL`,
    `OLLAMA_EMBED`, `QDRANT_URL`), and is dropped when nothing else is left;
    otherwise v1's `OLLAMA_EMBED` would override the model of `config.yaml`.
@@ -154,7 +154,6 @@ Returned by `Write` only. The installer treats it as "skip silently".
 ## Testing
 
 ```bash
-cd v3
 go test ./internal/idepaths/
 ```
 

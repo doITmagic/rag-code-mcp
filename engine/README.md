@@ -1,4 +1,4 @@
-[RagCode v3](../README.md) › engine
+[RagCode](../README.md) › engine
 
 # Engine Package
 
@@ -420,7 +420,7 @@ Keys from [internal/config](../internal/config/README.md):
 
 ## Known limitations
 
-Found in the v3 test rounds; none gives a wrong symbol, they delay or blur a
+Found in the test rounds; none gives a wrong symbol, they delay or blur a
 status.
 
 - The watcher follows `.git/HEAD` and `.git/refs/**` of the root only. A HEAD
@@ -442,7 +442,6 @@ status.
 ## Testing
 
 ```bash
-cd v3
 go test ./engine/
 go test -race ./engine/
 ```

@@ -1,4 +1,4 @@
-[RagCode v3](../../README.md) › [internal](../README.md) › app
+[RagCode](../../README.md) › [internal](../README.md) › app
 
 # app
 
@@ -98,7 +98,7 @@ error is logged, not returned.
 
 ```go
 cfg, _ := config.Load(config.DefaultPath())
-a, err := app.New(app.Options{Config: cfg, Version: "v3.0.0", Log: log})
+a, err := app.New(app.Options{Config: cfg, Version: "v2.0.0", Log: log})
 if err != nil {
     return err
 }
@@ -123,7 +123,7 @@ cs, _ := mcp.NewClient(&mcp.Implementation{Name: "c", Version: "0"}, nil).Connec
 The language parsers register themselves in `init`. `app.go` blank-imports
 `parser/docs`, `parser/gdscript`, `parser/golang`, `parser/javascript`,
 `parser/php`, `parser/python` and `parser/web`. A new parser package under
-`v3/parser/` is not active until it is added to this import list.
+`parser/` is not active until it is added to this import list.
 
 ### Client logging (`logClient`)
 
@@ -145,7 +145,6 @@ into INFO, so a normal shutdown does not look like a failure in
 ## Testing
 
 ```bash
-cd v3
 go test ./internal/app/
 ```
 

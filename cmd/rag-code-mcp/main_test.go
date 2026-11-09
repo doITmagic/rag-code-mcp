@@ -15,7 +15,7 @@ import (
 func TestVersionLine(t *testing.T) {
 	old := Version
 	t.Cleanup(func() { Version = old })
-	for _, v := range []string{"dev", "v3.1.0"} {
+	for _, v := range []string{"dev", "v2.1.0"} {
 		Version = v
 		assert.Equal(t, "rag-code-mcp "+v, versionLine())
 	}

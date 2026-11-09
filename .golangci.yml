@@ -11,7 +11,6 @@ linters:
         - (*net.TCPListener).Close
         - (*compress/gzip.Reader).Close
         - (*github.com/fsnotify/fsnotify.Watcher).Close
-        - (*github.com/doITmagic/rag-code-mcp/internal/logger.FileLogger).Close
         - fmt.Fprintf
         - fmt.Fprintln
         - fmt.Fprint

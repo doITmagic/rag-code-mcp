@@ -1,11 +1,16 @@
-# RagCode MCP v3
+<p align="center">
+  <img src="./docs/assets/ragcode-banner.png" alt="RagCode MCP - Semantic Code Navigation with AI" width="100%">
+</p>
+
+# RagCode MCP
 
 An MCP server that indexes a code workspace and answers code questions for AI
 clients: semantic search, usages, call hierarchy, package exports and file
-context. Clean rewrite of v2 with the same features and about half the code.
+context. Everything runs on your machine: an embedded SQLite index per
+workspace and a local Ollama model for embeddings.
 
-Separate Go module (`github.com/doITmagic/rag-code-mcp/v3`). It does not import
-v2 packages; v2 stays frozen and shippable until v3 replaces it.
+This is RagCode v2 (Go module `github.com/doITmagic/rag-code-mcp/v2`), a
+rewrite of v1 that needs no database server. v1 lives on the `v1` branch.
 
 ## Requirements
 
@@ -22,10 +27,20 @@ workspace.
 
 ## Install
 
+Download the archive for your platform from the
+[releases page](https://github.com/doITmagic/rag-code-mcp/releases) and run
+the installer from it:
+
 ```bash
-cd v3
+curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz
+./rag-code-install -y               # add -ollama local|skip, -skip-ide, -gpu=false
+```
+
+Or build from source:
+
+```bash
 CGO_ENABLED=0 go build -o dist/ ./cmd/...
-dist/rag-code-install -y            # add -ollama local|skip, -skip-ide, -gpu=false
+dist/rag-code-install -y
 ```
 
 The installer copies `rag-code-mcp` to `~/.ragcode/bin`, writes
@@ -43,7 +58,7 @@ remove the `ragcode-ollama` container.
 | `~/.ragcode/config.yaml` | settings (Ollama URL and model, exclude patterns, watch, log level) |
 | `~/.ragcode/bin/rag-code-mcp` | the server binary the installer copies |
 | `~/.ragcode/logs/ragcode.log` | the server log; rotated to `ragcode.log.1` |
-| `~/.ragcode/index/<collection>/` | the workspace index: `index.db` (plus SQLite's `index.db-wal` and `index.db-shm`), `state.json`, `index_status.json`, `index.lock` |
+| `~/.ragcode/index/<collection>/` | the workspace index: `index.db` (plus SQLite's `index.db-wal` and `index.db-shm`), `state.json`, `index_status.json`, `index.lock`, `watch.lock` |
 | `~/.ragcode/roots.json` | the workspaces the server knows; `roots.json.lock` guards its updates |
 | `~/.ragcode/cache/update.json` | the cached result of the release check |
 | `<workspace>/.ragcode/RAGCODE.md` | the instructions the AI clients read |

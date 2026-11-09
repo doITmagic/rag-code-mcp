@@ -1,4 +1,4 @@
-[RagCode v3](../README.md) › store
+[RagCode](../README.md) › store
 
 # store: the symbol store
 
@@ -240,7 +240,6 @@ near, err := st.Search(ctx, col, queryVec, store.Filter{
 ## Testing
 
 ```bash
-cd v3
 CGO_ENABLED=0 go test ./store/
 go test -race ./store/        # the race detector needs CGO on most platforms
 ```

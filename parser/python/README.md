@@ -1,4 +1,4 @@
-[RagCode v3](../../README.md) › [parser](../README.md) › python
+[RagCode](../../README.md) › [parser](../README.md) › python
 
 # Python Analyzer
 
@@ -204,7 +204,6 @@ keyed by root + path and invalidated by mtime and size.
 ## Testing
 
 ```bash
-cd v3
 go test ./parser/python/
 ```
 

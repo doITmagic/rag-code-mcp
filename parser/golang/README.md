@@ -1,4 +1,4 @@
-[RagCode v3](../../README.md) › [parser](../README.md) › golang
+[RagCode](../../README.md) › [parser](../README.md) › golang
 
 # Go Analyzer
 
@@ -161,7 +161,6 @@ Relations of a `var` or `const` spec are shared by every name in that spec.
 ## Testing
 
 ```bash
-cd v3
 go test ./parser/golang/
 ```
 

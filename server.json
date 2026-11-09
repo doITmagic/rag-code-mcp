@@ -1,105 +1,80 @@
 {
   "name": "ragcode",
-  "version": "2.1.110",
-  "description": "Semantic code intelligence using RAG (Retrieval-Augmented Generation). Supports Go (and Go Templates), PHP (Laravel, Blade, WordPress, WooCommerce, Oxygen Builder), Python, JavaScript/TypeScript (React/JSX/TSX, Vue SFC), HTML/CSS/SCSS, and Markdown/JSON/YAML docs. Provides semantic search, call hierarchies, usage finding, and automatic IDE configuration. Compatible with Windsurf, Cursor, Antigravity, Claude Desktop, Gemini CLI, Zed, and VS Code + GitHub Copilot.",
+  "version": "2.0.0",
+  "description": "Local semantic code intelligence over MCP: semantic and exact search, usages, call hierarchy, package exports and file context. Indexes Go, PHP (and Blade), Python, JavaScript/TypeScript (and Vue), GDScript, HTML with Go templates, and Markdown/JSON/YAML/TOML docs into an embedded SQLite index per workspace; embeddings through a local Ollama model.",
   "homepage": "https://github.com/doITmagic/rag-code-mcp",
   "license": "MIT",
   "runtime": "binary",
   "command": "rag-code-mcp",
   "transports": {
     "stdio": {
-      "description": "Standard input/output (default, used by IDEs with command: config)"
+      "description": "Standard input/output (default)"
     },
     "http": {
       "endpoint": "POST /mcp",
-      "description": "Streamable HTTP stateless transport. Start with --http-port 3000. Configure IDEs with url: http://localhost:3000/mcp"
+      "description": "Streamable HTTP. Start with -http 127.0.0.1:39000 and configure the IDE with url: http://127.0.0.1:39000/mcp"
     }
   },
   "capabilities": {
     "tools": true,
-    "resources": true,
-    "prompts": true,
+    "resources": false,
+    "prompts": false,
     "sampling": false
   },
   "dependencies": {
     "ollama": {
       "required": true,
-      "url": "https://ollama.ai",
-      "description": "Local LLM for embeddings. Required model: qwen3-embedding:0.6b (or any mxbai-embed-large compatible)"
-    },
-    "qdrant": {
-      "required": true,
-      "url": "https://qdrant.tech",
-      "description": "Vector database for code indexing"
+      "url": "https://ollama.com",
+      "description": "Ollama 0.40 or later with the embeddinggemma-2:270m embedding model"
     }
   },
   "tools": [
     {
       "name": "rag_search",
-      "description": "Intelligent code search that automatically determines the best strategy (semantic + exact). Returns full source code for high-confidence matches, compact summaries for exploratory results."
+      "description": "Search the indexed code: exact match by (qualified) name when the query is an identifier, semantic search otherwise. Results carry file, lines, kind and score; compact when there are more than 4 unless full=true."
     },
     {
       "name": "rag_find_usages",
-      "description": "Find where a specific class, function, or type is used across the codebase using the Code Graph (AST relations). Returns exact code chunks, files, and line numbers."
+      "description": "Every indexed reference to a symbol (calls, extends, implements, uses), grouped by file with the calling symbol and the call line."
     },
     {
       "name": "rag_call_hierarchy",
-      "description": "Explore recursive call relationships for a symbol. Supports 'incoming' (who calls this) and 'outgoing' (what this calls) directions, up to a configurable depth."
+      "description": "Callers (incoming) and callees (outgoing) of a function as a tree, up to depth 4."
     },
     {
       "name": "rag_list_package_exports",
-      "description": "List all public functions, classes, and types in a package/module. Returns structured list with symbol names, types, and signatures. Works for Go packages, PHP namespaces, Python modules, and JS/TS/Vue modules."
+      "description": "The exported symbols of a package or module, grouped by kind."
     },
     {
       "name": "rag_read_file_context",
-      "description": "Read specific lines from a file with surrounding smart AST context. Requires an exact file path and line number."
+      "description": "Read a file of the workspace: a symbol with its relations, a line range, or the outline plus the first 120 lines."
     },
     {
       "name": "rag_index_workspace",
-      "description": "Indexes or reindexes a workspace for semantic code search. Instead of abstract paths, you MUST explicitly provide the absolute 'workspace_root' directory. The tool first validates the root and returns a 'confirmation_token'. Then, you submit a second call with 'confirm': true and the returned 'confirmation_token' to lock-in the registry root and start background indexing."
+      "description": "Index the workspace. Without confirm=true it only reports what would be indexed. mode=incremental re-indexes changed files; mode=recreate drops the collection and re-embeds everything."
     },
     {
-      "name": "rag_list_skills",
-      "description": "Lists all available embedded AI skills and their installation status in the current workspace."
-    },
-    {
-      "name": "rag_install_skill",
-      "description": "Installs or uninstalls a specific AI skill into the current workspace. Action must be 'install' or 'uninstall'."
-    },
-    {
-      "name": "rag_evaluate",
-      "description": "Request a performance and quality evaluation of RagCode MCP from the AI assistant's perspective."
-    },
-    {
-      "name": "rag_check_update",
-      "description": "Checks for available ragcode-mcp updates on GitHub and reports if a newer version is available."
-    },
-    {
-      "name": "rag_apply_update",
-      "description": "Downloads and installs the latest version of ragcode-mcp. The server will need to be restarted after completion."
+      "name": "rag_server_info",
+      "description": "Server version, uptime, Ollama reachability, update availability, registered languages and known workspaces."
     }
   ],
   "configuration": {
     "flags": {
-      "--http-port": {
-        "description": "Port for Streamable HTTP server (POST /mcp). Set to -1 to disable.",
-        "default": "3000"
+      "-config": {
+        "description": "Configuration file",
+        "default": "~/.ragcode/config.yaml"
       },
-      "--config": {
-        "description": "Path to configuration YAML file",
-        "default": "config.yaml"
+      "-http": {
+        "description": "Serve Streamable HTTP on this address instead of stdio"
       },
-      "--ollama-base-url": {
-        "description": "Ollama base URL override"
+      "-log-level": {
+        "description": "debug, info, warn or error (overrides the config)"
       },
-      "--ollama-model": {
-        "description": "Ollama chat model override"
+      "-version": {
+        "description": "Print the version and exit"
       },
-      "--ollama-embed": {
-        "description": "Ollama embedding model override"
-      },
-      "--qdrant-url": {
-        "description": "Qdrant URL override"
+      "-uninstall": {
+        "description": "Remove RagCode MCP from this machine and exit"
       }
     },
     "env": {
@@ -109,15 +84,18 @@
       },
       "OLLAMA_EMBED": {
         "description": "Ollama embedding model",
-        "default": "qwen3-embedding:0.6b"
-      },
-      "QDRANT_URL": {
-        "description": "Qdrant server URL",
-        "default": "http://localhost:6333"
+        "default": "embeddinggemma-2:270m"
       },
       "MCP_LOG_LEVEL": {
         "description": "Logging level (debug, info, warn, error)",
         "default": "info"
+      },
+      "RAGCODE_ALLOWED_PATHS": {
+        "description": "Allowed workspace paths, as an OS path list"
+      },
+      "RAGCODE_HOME": {
+        "description": "Moves the global directory",
+        "default": "~/.ragcode"
       }
     }
   }

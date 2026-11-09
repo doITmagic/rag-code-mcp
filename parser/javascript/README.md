@@ -1,4 +1,4 @@
-[RagCode v3](../../README.md) › [parser](../README.md) › javascript
+[RagCode](../../README.md) › [parser](../README.md) › javascript
 
 # JavaScript / TypeScript / Vue Analyzer
 
@@ -296,7 +296,6 @@ literal's values are not walked, its methods own their calls.
 ## Testing
 
 ```bash
-cd v3
 go test ./parser/javascript/
 ```
 

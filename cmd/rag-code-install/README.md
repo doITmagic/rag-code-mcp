@@ -1,4 +1,4 @@
-[RagCode v3](../../README.md) › [cmd](../README.md) › rag-code-install
+[RagCode](../../README.md) › [cmd](../README.md) › rag-code-install
 
 # rag-code-install (the installer binary)
 
@@ -55,7 +55,6 @@ parser stops at it and would silently ignore every flag after it.
 ## Usage
 
 ```bash
-cd v3
 CGO_ENABLED=0 go build -o dist/ ./cmd/...
 
 dist/rag-code-install -y                      # Docker Ollama, GPU if available

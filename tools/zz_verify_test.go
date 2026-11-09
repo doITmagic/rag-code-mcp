@@ -294,7 +294,7 @@ func TestVerifyUpdateCacheExpiry(t *testing.T) {
 	var calls int32
 	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		_, _ = w.Write([]byte(`{"tag_name":"v3.0.0"}`))
+		_, _ = w.Write([]byte(`{"tag_name":"v2.0.0"}`))
 	}))
 	defer gh.Close()
 	v := newEnv(t, false, func(c *config.Config) { c.OllamaBaseURL = "http://127.0.0.1:1" })
@@ -308,12 +308,12 @@ func TestVerifyUpdateCacheExpiry(t *testing.T) {
 	}
 	r, _ := v.call(t, "rag_server_info", map[string]any{})
 	data(t, r, &out)
-	assert.Equal(t, "v3.0.0", out.Update.Latest, "stale cache refreshed")
+	assert.Equal(t, "v2.0.0", out.Update.Latest, "stale cache refreshed")
 	assert.True(t, out.Update.Available)
 	assert.EqualValues(t, 1, calls)
 	r, _ = v.call(t, "rag_server_info", map[string]any{})
 	data(t, r, &out)
-	assert.Equal(t, "v3.0.0", out.Update.Latest)
+	assert.Equal(t, "v2.0.0", out.Update.Latest)
 	assert.EqualValues(t, 1, calls, "fresh cache: no request")
 	// A current version equal to the latest is not an update.
 	v.t.version = "3.0.0"

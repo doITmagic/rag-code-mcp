@@ -194,7 +194,7 @@ func TestOllamaContainerFailStillPulls(t *testing.T) {
 	assert.Equal(t, []string{"embeddinggemma-2:270m"}, *pulled)
 }
 
-// v3 keeps its index in SQLite files: the installer starts no Qdrant.
+// v2 keeps its index in SQLite files: the installer starts no Qdrant.
 func TestInstallStartsNoQdrant(t *testing.T) {
 	_, dockerLog, _ := env(t)
 	var out bytes.Buffer

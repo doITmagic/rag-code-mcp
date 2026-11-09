@@ -1,4 +1,4 @@
-[RagCode v3](../../README.md) › [cmd](../README.md) › rag-code-mcp
+[RagCode](../../README.md) › [cmd](../README.md) › rag-code-mcp
 
 # rag-code-mcp (the MCP server binary)
 
@@ -144,7 +144,7 @@ serve error is logged and returned (exit status 1).
 ### Version
 
 `Version` defaults to `dev`. Release builds set it with
-`-ldflags "-X main.Version=v3.x.y"`. It is reported by `-version`,
+`-ldflags "-X main.Version=v2.x.y"`. It is reported by `-version`,
 `/health`, the MCP `initialize` result and `rag_server_info`.
 
 ## Usage
@@ -161,7 +161,6 @@ curl -s http://127.0.0.1:39000/health
 ## Testing
 
 ```bash
-cd v3
 go test ./cmd/rag-code-mcp/
 ```
 

@@ -1,4 +1,4 @@
-[RagCode v3](../README.md) › embed
+[RagCode](../README.md) › embed
 
 # Embed Package
 
@@ -213,7 +213,6 @@ The package writes no files.
 ## Testing
 
 ```bash
-cd v3
 go test ./embed/
 
 # also run against a live Ollama (pulls nothing; the model must exist)

@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -399,8 +400,8 @@ func TestLockedByOtherEngine(t *testing.T) {
 	s := wb.Status()
 	assert.Contains(t, s.LastError, "another process is indexing")
 	assert.True(t, s.Queued)
-	assert.False(t, s.Running)
-	b.Close() // stops the retry timer
+	assert.True(t, s.Running) // the other engine's run holds the lock
+	b.Close()                 // stops the retry timer
 
 	close(be.release)
 	require.Eventually(t, func() bool { return wa.Status().Phase == "done" }, 2*time.Second, 5*time.Millisecond)
@@ -765,4 +766,103 @@ func TestIdleRunKeepsLastCounters(t *testing.T) {
 	w.Index(false)
 	require.Eventually(t, idle, 2*time.Second, 5*time.Millisecond)
 	assert.Equal(t, 2, w.Status().Done)
+}
+
+// A run of another process (it holds index.lock) shows as running here; a
+// recorded in-progress phase with no lock holder is a run that died.
+func TestStatusOfAnotherProcessRun(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.AutoIndex = false
+	root := t.TempDir()
+	st, _ := json.Marshal(index.Status{Root: root, StartedAt: time.Now(), Phase: "embedding", Done: 39, Total: 260})
+	writeFile(t, filepath.Join(index.Dir(root), "index_status.json"), string(st))
+	e := New(cfg, store.NewMemory(), &embed.Fake{}, nil)
+	defer e.Close()
+	w, err := e.Workspace(root)
+	require.NoError(t, err)
+
+	s := w.Status()
+	assert.False(t, s.Running)
+	assert.Equal(t, "interrupted", s.Phase)
+
+	unlock, err := index.LockFile(filepath.Join(index.Dir(root), "index.lock"))
+	require.NoError(t, err)
+	defer unlock()
+	s = w.Status()
+	assert.True(t, s.Running)
+	assert.Equal(t, 39, s.Done)
+	assert.Equal(t, 260, s.Total)
+}
+
+// A parent of the home directory and the broad system directories are
+// refused; projects below a system directory are not.
+func TestValidateRootRefusesBroadDirs(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("unix paths")
+	}
+	cfg := testConfig(t)
+	home := filepath.Join(t.TempDir(), "users", "me")
+	require.NoError(t, os.MkdirAll(home, 0o755))
+	t.Setenv("HOME", home)
+	for root, reason := range map[string]string{filepath.Dir(home): "contains the home directory", "/etc": "system", "/usr": "system", "/usr/lib": "system"} {
+		_, err := validateRoot(cfg, root)
+		var re *RootError
+		require.ErrorAs(t, err, &re, root)
+		assert.Contains(t, re.Reason, reason, root)
+	}
+	proj := filepath.Join(home, "proj")
+	require.NoError(t, os.MkdirAll(proj, 0o755))
+	_, err := validateRoot(cfg, proj)
+	assert.NoError(t, err)
+	for _, l := range []string{"/bin", "/lib"} { // symlinks into /usr on merged-/usr systems
+		if _, err := os.Stat(l); err == nil {
+			_, err := validateRoot(cfg, l)
+			var re *RootError
+			require.ErrorAs(t, err, &re, l)
+		}
+	}
+	if _, err := os.Stat("/usr/share"); err == nil {
+		_, err := validateRoot(cfg, "/usr/share")
+		assert.NoError(t, err, "below a system directory is allowed")
+	}
+}
+
+// reopenStore reports reopens like store.SQLite does when index.db was
+// deleted or replaced on disk.
+type reopenStore struct {
+	store.Store
+	n atomic.Uint64
+}
+
+func (s *reopenStore) Reopens(string) uint64 { return s.n.Load() }
+
+// A collection file replaced on disk (an older copy restored by hand) is
+// reopened by the store; the next query queues an incremental run that diffs
+// state.json against the files, instead of answering from the copy forever.
+func TestQueryAfterReopenQueuesResync(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.AutoIndex = true
+	root := t.TempDir()
+	st := &reopenStore{Store: store.NewMemory()}
+	rec := &runRecorder{}
+	e := New(cfg, st, &embed.Fake{}, nil)
+	defer e.Close()
+	e.run = rec.run
+	w, err := e.Workspace(root)
+	require.NoError(t, err)
+	calls := func() int { rec.mu.Lock(); defer rec.mu.Unlock(); return len(rec.calls) }
+	require.Eventually(t, func() bool { s := w.Status(); return !s.Running && !s.Queued }, 2*time.Second, 10*time.Millisecond)
+	_, err = st.EnsureCollection(context.Background(), w.Collection, 8) // the run is faked: an existing index
+	require.NoError(t, err)
+	n := calls()
+	_, _ = w.Scroll(context.Background(), store.Filter{}, 1)
+	time.Sleep(100 * time.Millisecond)
+	require.Equal(t, n, calls(), "no reopen, no run")
+	st.n.Add(1)
+	_, _ = w.Scroll(context.Background(), store.Filter{}, 1)
+	require.Eventually(t, func() bool { return calls() > n }, 2*time.Second, 10*time.Millisecond)
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	assert.Nil(t, rec.calls[n].Files, "a walk run, not a files run")
+	assert.False(t, rec.calls[n].Recreate)
 }

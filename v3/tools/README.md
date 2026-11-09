@@ -55,7 +55,7 @@ Tests:
 
 | File | What it covers |
 |---|---|
-| [`tools_test.go`](tools_test.go) | an MCP client and server over in-memory transports with a real engine on `store.NewMemory()`, `embed.Fake` and a fake `.fk` analyzer. Missing and bad roots, the root taken from client roots, every tool, the not-indexed and during-recreate fallbacks, dependency down, tool schemas, helpers, fallback skip rules, edits and deletes keeping results right, no Qdrant left in `rag_server_info`, same-name variants, lookup by declared name with `file_path` as a hard filter, `by_name` usages and hierarchy nodes, the live state of a root being indexed in `rag_server_info`, the last run's error kept after a restart, a deleted root reported as `missing`, overloads and get/set pairs resolved as one symbol, twins as one hierarchy node (both directions, every depth), one export (and count) and one search hit, `ambiguous_by_name` not counting calls that name another symbol's qualified name, the module spelling of a barrel file in `rag_list_package_exports`, an equal qualified name winning over suffix matches, a qualified call bound by name only marked `by_name`, short directory names and file paths in `rag_list_package_exports` with one module per file (`.fkm` analyzer), the export-less file message, the zero-usage note not claiming imports, `indexing` (not `ok`, not the fallback) while a run goes over an existing index, `kinds` validation and the no-such-kinds message, `limit` respected exactly with `truncated` in usages and the hierarchy, a binary file with an unknown extension not dumped, also for a line range |
+| [`tools_test.go`](tools_test.go) | an MCP client and server over in-memory transports with a real engine on `store.NewMemory()`, `embed.Fake` and a fake `.fk` analyzer. Missing and bad roots, the root taken from client roots, every tool, the not-indexed and during-recreate fallbacks, dependency down, tool schemas, helpers, fallback skip rules, edits and deletes keeping results right, no Qdrant left in `rag_server_info`, same-name variants, lookup by declared name with `file_path` as a hard filter, `by_name` usages and hierarchy nodes, the live state of a root being indexed in `rag_server_info`, the last run's error kept after a restart, a deleted root reported as `missing`, overloads and get/set pairs resolved as one symbol, twins as one hierarchy node (both directions, every depth), one export (and count) and one search hit, `ambiguous_by_name` not counting calls that name another symbol's qualified name, the module spelling of a barrel file in `rag_list_package_exports`, an equal qualified name winning over suffix matches, a qualified call bound by name only marked `by_name`, short directory names and file paths in `rag_list_package_exports` with one module per file (`.fkm` analyzer), the export-less file message, an unreadable directory reported as such, an excluded directory and file reported as not indexed, the zero-usage note not claiming imports, `indexing` (not `ok`, not the fallback) while a run goes over an existing index, `kinds` validation and the no-such-kinds message, `limit` respected exactly with `truncated` in usages and the hierarchy, a binary file with an unknown extension not dumped, also for a line range |
 | [`zz_verify_test.go`](zz_verify_test.go) | verification tests: short package names past the scroll cap, call-hierarchy cycles and the node cap, cancelled contexts, stalled `rag_server_info` endpoints, read-file edge cases (degenerate files, symlink out of the root, ranges, minified files, long lines, secrets), the 200-file fallback cap, multi-byte usage line cut, compact/full output and path boost, the 24 h update cache, a second index confirm while running, huge limits, `total_lines` and negative line numbers, the breadth-first node cap, a line range of a file over 8 MiB, exports of a workspace directory and `res://` paths, a Godot scene node not making its class ambiguous, the note on zero usages of a constant |
 | [`fifo_unix_test.go`](fifo_unix_test.go) | the not-indexed fallback keeps the index skip rules: no symlink out of the root, no fifo, no secret file (Unix only) |
 | [`index_unix_test.go`](index_unix_test.go) | (`//go:build unix`) a known root with no `ended_at` is `interrupted` only when nobody holds its lock |
@@ -101,7 +101,7 @@ Every answer tied to a workspace carries `index`:
 
 | `index.state` | When |
 |---|---|
-| `indexing` | a run is in progress |
+| `indexing` | a run is in progress, in this server or in another process on the same root |
 | `queued` | a run is waiting |
 | `not_indexed` | no run has ever recorded a phase |
 | otherwise | the last recorded phase from the engine status, e.g. `done`, `failed` or `interrupted` |
@@ -130,8 +130,10 @@ flowchart TD
    `/c:/x` becomes `c:/x`).
 3. [engine](../engine/README.md) then validates it and resolves symlinks. It
    rejects a root that is empty, not absolute, missing, not a directory, a
-   filesystem root, the home directory, the temp directory, under `/proc`,
-   `/sys` or `/dev`, or outside `allowed_workspace_paths` when that is set.
+   filesystem root, the home directory or a parent of it, the temp directory,
+   under `/proc`, `/sys` or `/dev`, exactly one of the broad system directories
+   (`/etc`, `/usr`, `/var`, ...; list in the engine README), or outside
+   `allowed_workspace_paths` when that is set.
 
 Resolving a root through `engine.Workspace` also registers it: the first call
 for a root adds it to `~/.ragcode/roots.json` and, when `watch_enabled` and
@@ -368,7 +370,12 @@ directory or file has exported symbols of other kinds, the message is `"X" has
 no exported symbols of kinds [..]; drop kinds to list them all`. A directory
 of the workspace whose files export nothing (Laravel `config/`) answers
 `directory X has no exported symbols in the files directly in it`, not the
-no-match message.
+no-match message. A directory the server cannot read answers `directory X is
+unreadable (<error>), so its files are not indexed`. When the index has files (state.json is
+not empty) but none of them is that file, or none lies directly in that
+directory although source files lie directly in it, because `.gitignore`,
+`exclude_patterns` or the skip rules leave them out, the answer is `<file> is not indexed (...)` or `directory X has no
+indexed files directly in it (...)` instead of the no-exports messages.
 
 ```json
 {"name": "rag_list_package_exports", "arguments": {

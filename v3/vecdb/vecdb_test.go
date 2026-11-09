@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"testing"
@@ -338,4 +339,30 @@ func BenchmarkSearch15k(b *testing.B) {
 			require.NoError(b, err)
 		}
 	})
+}
+
+// A collection directory deleted (or its file replaced) by someone else while
+// a handle is open: the handle must not keep writing into the unlinked file.
+// Reads see the collection gone and the next write lands in a new file on disk.
+func TestReopensDeletedFile(t *testing.T) {
+	dir := t.TempDir()
+	a := New(dir)
+	defer a.Close()
+	_, err := a.Ensure(ctx, "c", 2)
+	require.NoError(t, err)
+	require.NoError(t, a.Upsert(ctx, "c", []Point{pt("x", []float32{1, 0}, nil)}))
+	require.NoError(t, os.RemoveAll(filepath.Join(dir, "c")))
+
+	ok, err := a.Exists(ctx, "c")
+	require.NoError(t, err)
+	assert.False(t, ok, "deleted collection still seen through the cached handle")
+	assert.Equal(t, uint64(1), a.Reopens("c"), "the reopen is reported so the caller resyncs")
+	_, err = a.Ensure(ctx, "c", 2)
+	require.NoError(t, err)
+	require.NoError(t, a.Upsert(ctx, "c", []Point{pt("y", []float32{0, 1}, nil)}))
+	b := New(dir) // a fresh process reads what is on disk
+	defer b.Close()
+	hs, err := b.Search(ctx, "c", []float32{0, 1}, nil, 5)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"y"}, ids(hs))
 }

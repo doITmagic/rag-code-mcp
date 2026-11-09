@@ -1,9 +1,11 @@
 package index
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -762,6 +764,29 @@ func TestRunFilesSkipsSymlink(t *testing.T) {
 	assert.Equal(t, 0, e.count(t, store.Filter{FilePath: link}))
 }
 
+// An unreadable directory is skipped with a WARN: its files leave the index
+// and nothing else would say why.
+func TestWalkWarnsUnreadableDir(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a 000 directory")
+	}
+	root := t.TempDir()
+	dir := filepath.Join(root, "locked")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n"), 0o644))
+	require.NoError(t, os.Chmod(dir, 0o000))
+	defer os.Chmod(dir, 0o755)
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+	files, err := Walk(root, nil)
+	require.NoError(t, err)
+	assert.Empty(t, files)
+	assert.Contains(t, buf.String(), "level=WARN")
+	assert.Contains(t, buf.String(), "unreadable directory skipped")
+}
+
 func TestWalkPrunesLinkedWorktree(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
@@ -956,6 +981,54 @@ func TestRunModelChangeRecreates(t *testing.T) {
 	assert.Equal(t, 0, again.Total, "same model: nothing to do")
 }
 
+// A model the embedder cannot serve (a typo, not pulled) fails the run
+// before anything is dropped: the index and state of the old model stay.
+type deadEmbedder struct{ namedEmbedder }
+
+func (deadEmbedder) Dimension(context.Context) (int, error) { return 0, embed.ErrUnavailable }
+
+func TestRunModelChangeUnavailableKeepsIndex(t *testing.T) {
+	e := newEnv(t)
+	e.write(t, "a.go", "func A\n")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	before, err := LoadState(e.root)
+	require.NoError(t, err)
+	_, err = e.run(t, func(o *Options) { o.Embedder = deadEmbedder{namedEmbedder{o.Embedder, "nosuchmodel"}} })
+	require.ErrorIs(t, err, embed.ErrUnavailable)
+	after, err := LoadState(e.root)
+	require.NoError(t, err)
+	assert.Equal(t, before.Model, after.Model)
+	assert.Equal(t, before.Files, after.Files)
+	hits, err := e.store.Scroll(context.Background(), "c", store.Filter{}, 10)
+	require.NoError(t, err)
+	assert.Len(t, hits, 1, "points of the old model kept")
+}
+
+// A run that fails before it changes the index (Ollama down at catch-up)
+// records its error over the last real counters, and the next run with
+// nothing to do keeps them instead of showing 0/0.
+func TestRunFailedUnchangedKeepsCounters(t *testing.T) {
+	e := newEnv(t)
+	e.write(t, "a.go", "func A\n")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	_, err = e.run(t, func(o *Options) { o.Embedder = deadEmbedder{namedEmbedder{o.Embedder, o.Embedder.Model()}} })
+	require.Error(t, err)
+	disk, ok := ReadStatus(e.root)
+	require.True(t, ok)
+	assert.Equal(t, "failed", disk.Phase)
+	assert.NotEmpty(t, disk.Error)
+	assert.Equal(t, 1, disk.Done)
+	_, err = e.run(t, nil)
+	require.NoError(t, err)
+	disk, _ = ReadStatus(e.root)
+	assert.Equal(t, "done", disk.Phase)
+	assert.Empty(t, disk.Error)
+	assert.Equal(t, 1, disk.Done)
+	assert.Equal(t, 1, disk.Total)
+}
+
 // A state written by an older parser format re-indexes everything once, so a
 // parser fix reaches files that did not change.
 func TestRunFormatChangeRecreates(t *testing.T) {
@@ -1098,4 +1171,125 @@ func TestDeletedCountsOnlyIndexedFiles(t *testing.T) {
 	st, err = e.run(t, func(o *Options) { o.Files = []string{}; o.Deleted = []string{a} })
 	require.NoError(t, err)
 	assert.Equal(t, 1, st.Deleted)
+}
+
+func gitIn(t *testing.T, root string) func(args ...string) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	return func(args ...string) {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", root, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...).CombinedOutput()
+		require.NoError(t, err, string(out))
+	}
+}
+
+// A files run never indexes a file inside a linked worktree: the watcher
+// queues a new worktree's files before git writes its .git.
+func TestRunFilesSkipsLinkedWorktree(t *testing.T) {
+	e := newEnv(t)
+	git := gitIn(t, e.root)
+	e.write(t, "a.go", "func A\n")
+	git("init", "-q")
+	git("add", "a.go")
+	git("commit", "-qm", "init")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	git("worktree", "add", "-q", "wt/feature")
+	in := filepath.Join(e.root, "wt", "feature", "a.go")
+	st, err := e.run(t, func(o *Options) { o.Files = []string{in} })
+	require.NoError(t, err)
+	assert.Equal(t, 0, st.Total)
+	assert.Equal(t, 0, e.count(t, store.Filter{FilePath: in}))
+}
+
+// A run with nothing to do after a branch switch that changed no file keeps
+// the last counters but records the branch it ran on.
+func TestRunWithoutChangesRecordsBranch(t *testing.T) {
+	e := newEnv(t)
+	git := gitIn(t, e.root)
+	git("init", "-q", "-b", "main")
+	e.write(t, "a.go", "func A\n")
+	git("add", ".")
+	git("commit", "-qm", "one")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	git("checkout", "-qb", "samecontent")
+	_, err = e.run(t, nil)
+	require.NoError(t, err)
+	disk, _ := ReadStatus(e.root)
+	assert.Equal(t, "samecontent", disk.Branch)
+	assert.Equal(t, 1, disk.Done, "the counters stay those of the last real run")
+}
+
+// A run stopped by ErrHeadChanged changed the index: a following run with
+// nothing to do keeps its counters, as done, instead of writing zeros.
+func TestRunAfterHeadChangedKeepsCounters(t *testing.T) {
+	e := newEnv(t)
+	git := gitIn(t, e.root)
+	git("init", "-q", "-b", "main")
+	e.write(t, "a.go", "func A\n")
+	git("add", ".")
+	git("commit", "-qm", "one")
+	e.emb.before = func(context.Context, int32) error {
+		git("commit", "-q", "--allow-empty", "-m", "two")
+		return nil
+	}
+	_, err := e.run(t, nil)
+	require.ErrorIs(t, err, ErrHeadChanged)
+	e.emb.before = func(context.Context, int32) error { return nil }
+	st, err := e.run(t, nil)
+	require.NoError(t, err)
+	require.Equal(t, 0, st.Total, "nothing left to do")
+	disk, _ := ReadStatus(e.root)
+	assert.Equal(t, "done", disk.Phase)
+	assert.Empty(t, disk.Error)
+	assert.Equal(t, 1, disk.Done)
+	assert.Equal(t, 1, disk.Total)
+}
+
+// A file git deletes between the scan and the parse is purged as deleted,
+// not counted or logged as a parse failure.
+func TestRunFileVanishedDuringRun(t *testing.T) {
+	e := newEnv(t)
+	e.write(t, "a.go", "func A\n")
+	b := e.write(t, "b.go", "func B\n")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	e.write(t, "b.go", "func B2\n")
+	var logs bytes.Buffer
+	st, err := e.run(t, func(o *Options) {
+		o.Log = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+		o.Progress = func(s Status) {
+			if s.Phase == "parsing" {
+				_ = os.Remove(b) // after the scan listed it as changed
+			}
+		}
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 0, st.Failed)
+	assert.Equal(t, 1, st.Deleted)
+	assert.Equal(t, 0, st.Total)
+	assert.Empty(t, logs.String())
+	assert.Equal(t, 0, e.count(t, store.Filter{FilePath: b}))
+	state, _ := LoadState(e.root)
+	assert.NotContains(t, state.Files, b)
+}
+
+// A RAGCODE_HOME inside the root is pruned by Walk and refused for an
+// explicit file: indexing it would index RagCode's own state files.
+func TestWalkSkipsOwnHome(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("RAGCODE_HOME", filepath.Join(root, "rch"))
+	for _, f := range []string{"a.go", "rch/index/x/s.go"} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, f)), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(root, f), []byte("package a\n"), 0o644))
+	}
+	files, err := Walk(root, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{filepath.Join(root, "a.go")}, files)
+	f := filepath.Join(root, "rch/index/x/s.go")
+	info, err := os.Lstat(f)
+	require.NoError(t, err)
+	assert.True(t, skipExplicit(root, nil, map[string]bool{}, f, info))
 }

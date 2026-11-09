@@ -50,7 +50,7 @@ What it calls:
 | File | Contents |
 |---|---|
 | [`store.go`](store.go) | package doc, the `Store` interface, `Item`, `Hit`, `Filter`, `MaxScroll`, `ErrNotFound` |
-| [`sqlite.go`](sqlite.go) | `SQLite`, the on-disk implementation on top of `vecdb`; `CollectionName`; the mapping from `Filter` to `vecdb.Cond` and from `Symbol` to indexed fields (`qn_suffixes`, `dir_parts`) |
+| [`sqlite.go`](sqlite.go) | `SQLite`, the on-disk implementation on top of `vecdb`; `Reopens` (outside the interface: how often a deleted or replaced `index.db` was reopened, read by the engine to queue a resync); `CollectionName`; the mapping from `Filter` to `vecdb.Cond` and from `Symbol` to indexed fields (`qn_suffixes`, `dir_parts`) |
 | [`memory.go`](memory.go) | `Memory`, the in-memory implementation: maps, a brute-force cosine scan and `Filter.matches` |
 
 Tests:

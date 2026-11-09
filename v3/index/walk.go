@@ -2,8 +2,10 @@ package index
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,20 +36,26 @@ var lockfiles = map[string]bool{
 }
 
 // Walk lists the indexable files under root, sorted lexically. Hidden
-// directories, directories whose name is in exclude and linked git worktrees
-// are pruned at any depth; files go through Skip.
+// directories, directories whose name is in exclude, linked git worktrees and
+// RagCode's own home (OwnHome) are pruned at any depth; files go through Skip.
 func Walk(root string, exclude []string) ([]string, error) {
 	ex := set(exclude)
+	home := OwnHome()
 	var out []string
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if path == root {
 				return err
 			}
+			// A directory deleted mid-walk is not unreadable: its files leave the index silently.
+			if d != nil && d.IsDir() && !errors.Is(err, fs.ErrNotExist) {
+				// Its files leave the index on this run; say so, the tools cannot.
+				slog.Warn("index: unreadable directory skipped, its files are not indexed", "dir", path, "err", err)
+			}
 			return nil // unreadable entry: skip it, keep walking
 		}
 		if d.IsDir() {
-			if path != root && (strings.HasPrefix(d.Name(), ".") || ex[d.Name()] || IsLinkedWorktree(path)) {
+			if path != root && (strings.HasPrefix(d.Name(), ".") || ex[d.Name()] || IsLinkedWorktree(path) || InOwnHome(path, home)) {
 				return fs.SkipDir
 			}
 			return nil
@@ -146,6 +154,30 @@ func IsLinkedWorktree(dir string) bool {
 	}
 	_, err = os.Stat(filepath.Join(gitdir, "commondir"))
 	return err == nil
+}
+
+// LinkedWorktreeOf returns the linked git worktree below root that contains
+// path, or "". known caches IsLinkedWorktree per directory; nil caches nothing.
+func LinkedWorktreeOf(root, path string, known map[string]bool) string {
+	rel, err := filepath.Rel(root, filepath.Dir(path))
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return ""
+	}
+	dir := root
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		dir = filepath.Join(dir, part)
+		is, ok := known[dir]
+		if !ok {
+			is = IsLinkedWorktree(dir)
+			if known != nil {
+				known[dir] = is
+			}
+		}
+		if is {
+			return dir
+		}
+	}
+	return ""
 }
 
 func set(names []string) map[string]bool {

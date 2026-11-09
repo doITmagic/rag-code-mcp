@@ -112,7 +112,8 @@ func TestVerifyEnqueueDuringLockRetryWaits(t *testing.T) {
 		return rec.run(ctx, o)
 	}
 	wb.IndexFiles([]string{filepath.Join(root, "a.go")}, nil)
-	require.Eventually(t, func() bool { s := wb.Status(); return s.LastError != "" && !s.Running }, 2*time.Second, 5*time.Millisecond)
+	// a's run holds the lock, so b reports it as running.
+	require.Eventually(t, func() bool { s := wb.Status(); return s.LastError != "" && s.Running }, 2*time.Second, 5*time.Millisecond)
 	wb.e.mu.Lock()
 	hasTimer := wb.retry != nil
 	wb.e.mu.Unlock()
@@ -123,7 +124,7 @@ func TestVerifyEnqueueDuringLockRetryWaits(t *testing.T) {
 	assert.Empty(t, rec.snapshot(), "no run before the retry timer fires")
 	s := wb.Status()
 	assert.True(t, s.Queued)
-	assert.False(t, s.Running)
+	assert.True(t, s.Running) // the other engine's run holds the lock
 	close(be.release)
 	require.Eventually(t, func() bool { return wa.Status().Phase == "done" }, 2*time.Second, 5*time.Millisecond)
 }

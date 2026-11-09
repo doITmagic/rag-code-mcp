@@ -22,9 +22,10 @@ owns lives under `~/.ragcode/index/<collection>/`.
   symbols of the workspace are never all held at once.
 - **Crash safety**: a run that is killed, cancelled or fails is detected on the
   next run, which widens to a full walk so the index is completed. A run
-  cancelled before it changed the index, or one that found nothing to do,
-  leaves the previous `done` status (and its counters) in
-  `index_status.json`; the caller still gets the run's own status.
+  cancelled or failed before it changed the index, or one that found nothing
+  to do, leaves the previous status (and its counters) in
+  `index_status.json`, with the branch of the run that found nothing to do;
+  the caller still gets the run's own status.
 - **One writer per root**: an exclusive file lock keeps two processes from
   indexing the same root at the same time.
 
@@ -45,7 +46,7 @@ graph LR
 
 | Direction | Package | What for |
 |-----------|---------|----------|
-| Called by | [engine](../engine/README.md) | Runs `index.Run` for each queued job; uses `ReadStatus`, `IsLinkedWorktree`, `WriteAtomic`, `LockFile` (for `roots.json.lock`), `StateModel` (model check before a search), `ErrLocked`, `ErrHeadChanged`. |
+| Called by | [engine](../engine/README.md) | Runs `index.Run` for each queued job; uses `ReadStatus`, `IsLinkedWorktree`, `LinkedWorktreeOf`, `WriteAtomic`, `LockFile` (for `roots.json.lock`), `StateModel` (model check before a search), `ErrLocked`, `ErrHeadChanged`. |
 | Called by | [tools](../tools/README.md) | `Walk` for the file estimate of `rag_index_workspace`, `Skip`/`Secret` before reading a file, `ReadStatus`/`Running` for server info, `WriteAtomic` for the update-check cache, `LoadState` for package exports; the fallback text search of `rag_search` walks with `IsLinkedWorktree`, `Skip` and `GitIgnored`. |
 | Calls | [parser](../parser/README.md) | `parser.ForFile`, `parser.Analyze`, `parser.Normalize`, `parser.MatchQualified`, `parser.ReleaseParsers`. |
 | Calls | [embed](../embed/README.md) | `Embedder.Embed`, `Dimension`, `Model`, and `embed.DocText` for the per-model document prefix. |
@@ -62,7 +63,7 @@ graph LR
 |------|----------|
 | `index.go` | Package doc, `ErrLocked`, `ErrHeadChanged`, `Options`, `Status`, `ReadStatus`, `Run` and the whole run: scan, two-pass parse, `staleReferrers`, the name index and `resolve`, `embedUpsert`, `record`, progress ticks, `gitHead`, `embedText`. |
 | `state.go` | `Entry`, `Format`, `State`, `LoadState`, `StateModel`, `State.Save`, `WriteAtomic`, and `readIndexFile` (the guarded reader for index files). |
-| `walk.go` | Size and batch constants, `Walk`, `GitIgnored`, `IsLinkedWorktree`, `Skip`, `Secret`, the lockfile list and `readHead`. |
+| `walk.go` | Size and batch constants, `Walk`, `GitIgnored`, `IsLinkedWorktree`, `LinkedWorktreeOf`, `Skip`, `Secret`, the lockfile list and `readHead`. |
 | `dir.go` | `Dir(root)`: the per-root index directory under the global home. |
 | `running.go` | `Running(root)`: non-blocking probe of the run lock; `LockFile(path)`: the same cross-process lock on any path (the engine uses it for `roots.json`). |
 | `lock_unix.go` | `lock` on Unix: exclusive, non-blocking `flock`; returns `ErrLocked` when held. Build tag `unix`. |
@@ -73,7 +74,7 @@ graph LR
 
 | File | Covers |
 |------|--------|
-| `index_test.go` | The main suite, with a line-based fake analyzer and a hook embedder: full, incremental, delete, recreate, model and `Format` change, embed failure, parse failures and panics, cancel, `ErrHeadChanged`, relation resolution, `Skip`, `Walk`, `.gitignore`, linked worktrees, symlinks in `Files`, byte-budgeted upsert batches, empty collection with stale state, a crash between a recreate's state save and its drop, moved targets, vanished referrers, a file that changed between the two passes, deleted paths counted only when they were indexed, relation target kinds (`TestResolutionTargetKinds`) and inherited members through the owner's bases (`TestResolutionThroughBases`), in full and files runs, Go bases limited to embeddings (`TestResolutionThroughBasesGoEmbeddingOnly`), a run cancelled before it changed anything keeping the previous `done` status (`TestRunCancelledKeepsDoneStatus`), and a run with nothing to do keeping the last run's counters on disk (`TestRunWithoutChangesKeepsLastCounters`). Its `TestMain` points `RAGCODE_HOME` at a temp dir. |
+| `index_test.go` | The main suite, with a line-based fake analyzer and a hook embedder: full, incremental, delete, recreate, model and `Format` change, embed failure, parse failures and panics, cancel, `ErrHeadChanged`, relation resolution, `Skip`, `Walk`, `.gitignore`, linked worktrees, symlinks in `Files`, byte-budgeted upsert batches, empty collection with stale state, a crash between a recreate's state save and its drop, moved targets, vanished referrers, a file that changed between the two passes, deleted paths counted only when they were indexed, relation target kinds (`TestResolutionTargetKinds`) and inherited members through the owner's bases (`TestResolutionThroughBases`), in full and files runs, Go bases limited to embeddings (`TestResolutionThroughBasesGoEmbeddingOnly`), a run cancelled before it changed anything keeping the previous `done` status (`TestRunCancelledKeepsDoneStatus`), and a run with nothing to do keeping the last run's counters on disk (`TestRunWithoutChangesKeepsLastCounters`), and a model the embedder cannot serve leaving the old index and state untouched (`TestRunModelChangeUnavailableKeepsIndex`), the WARN for an unreadable directory (`TestWalkWarnsUnreadableDir`), RagCode's own home pruned (`TestWalkSkipsOwnHome`), a failed run that changed nothing keeping the last real counters under its error (`TestRunFailedUnchangedKeepsCounters`), a files run skipping a file inside a linked worktree (`TestRunFilesSkipsLinkedWorktree`), a run with nothing to do recording the current branch (`TestRunWithoutChangesRecordsBranch`), a run with nothing to do after one stopped by `ErrHeadChanged` keeping that run's counters (`TestRunAfterHeadChangedKeepsCounters`), and a file deleted between the scan and the parse purged, not counted as failed (`TestRunFileVanishedDuringRun`). Its `TestMain` points `RAGCODE_HOME` at a temp dir. |
 | `budget_test.go` | The parse byte budget is respected, and batches still resolve forward references. |
 | `resolve_test.go` | A non-fresh run resolves more than 500 targets through the store; a JS `import { n }` of a default-exported declaration resolves by module and name, in a full run and from the store. |
 | `twins_test.go` | Twins in one file resolve to the widest (then first) by qualified name and by name, in a full run and from the store; a qualified name in two files stays ambiguous; a wider twin added later re-resolves the unchanged caller in a files run; `..delta` resolves by name (unique, then ambiguous), never exact. |
@@ -137,6 +138,7 @@ to `index_status.json`:
 | `Skip(path, info, head)` | Why a file is left out, or `""` when indexed. |
 | `Secret(path)` | Whether a file name marks credentials. |
 | `IsLinkedWorktree(dir)` | Whether `dir` is a linked git worktree (pruned everywhere). |
+| `LinkedWorktreeOf(root, path, known)` | The linked worktree below `root` that contains `path`, or `""`; `known` caches `IsLinkedWorktree` per directory (nil: no cache). Used by files runs and the watcher. |
 | `Dir(root)` | `config.HomeDir()/index/<store.CollectionName(root)>`. |
 | `ReadStatus(root)` | The last persisted `Status`, `false` when missing or unreadable. |
 | `LoadState(root)` | The persisted `State`; a missing file is an empty state. |
@@ -213,7 +215,9 @@ flowchart TD
     C -->|no| D
     C1 --> D[git rev-parse: branch + HEAD<br/>write status 'scanning']
     D --> E[LoadState state.json]
-    E --> F{model changed or<br/>Format changed?}
+    E --> E1[probe Embedder.Dimension]
+    E1 -->|error| E2[fail: index and state untouched]
+    E1 --> F{model changed or<br/>Format changed?}
     F -->|yes| G[Recreate: save empty state,<br/>then DeleteCollection]
     F -->|no| H
     G --> H[EnsureCollection with embedder dimension]
@@ -248,6 +252,11 @@ re-does the files that were not recorded.
 
 ### 2. Model, Format and recreate
 
+First the embedder is probed for its dimension (`Embedder.Dimension`). A model
+it cannot serve (a typo in `ollama_embed`, a model not pulled) fails the run
+here, before the state or the collection change, so the index of the previous
+model survives.
+
 The state's `Model` is compared with `Embedder.Model()`. Vectors of two
 models must never share a collection, so a different model forces a
 recreate, whatever the vector dimension. A non-empty state with another
@@ -275,7 +284,8 @@ index nothing ever completes. A fresh run also skips every store lookup.
   seen on disk is **gone**.
 - Files run: each listed path is made absolute, checked with `os.Lstat`,
   filtered by `GitIgnored` and by `skipExplicit` (must lie under the root,
-  outside hidden or excluded directories, and pass `Skip`). A listed file that
+  outside hidden or excluded directories and linked worktrees, checked with
+  `LinkedWorktreeOf` and a per-directory cache, and pass `Skip`). A listed file that
   fails these checks but is in the state is gone. Every `Deleted` path not
   seen is gone, even one the state never recorded, because an interrupted run
   may have left its points.
@@ -293,7 +303,10 @@ times a file's size while it parses, and a laptop needs its CPU for Ollama.
 A panic in an analyzer is recovered and counted as a parse failure. The file
 is `stat`ed before it is read, so a write in between leaves a newer mtime on
 disk than in the state and the next run picks it up again. A file that grew
-past 256 KiB since the walk is indexed as empty.
+past 256 KiB since the walk is indexed as empty. A file that no longer exists
+when it is parsed (git deleted it during a checkout or rebase) is not a parse
+failure: it is logged at debug level, left out of `Total`, and purged as gone
+when that happens in pass 1 (see 7. for pass 2).
 
 - **Pass 1** parses every changed file but keeps only `ID`, `QualifiedName`,
   `Name`, `Language`, `Kind`, `Module` and `Owner` of each symbol, plus the
@@ -423,21 +436,38 @@ cancelled context ends with phase `interrupted`; any other error with
 upserted, no recreate, not a fresh collection; typically the catch-up run of
 a session that ends right away) returns `interrupted` to its caller but writes
 the previous status back when that one was `done`, so the next session does
-not report a complete index as interrupted.
+not report a complete index as interrupted. A run that found nothing to do
+writes the previous counters back too, as `done` and with its own branch (a
+`git checkout -b` that changes no file). A previous run stopped by
+`ErrHeadChanged` counts as a previous `done` here: it changed the index, so
+its counters are the last real ones. A run that fails before it changes the
+index (Ollama down at catch-up, an unknown model) writes the previous counters
+back under its own `failed` phase and error, and the next run with nothing to
+do turns them into `done` again instead of showing 0/0. A failed run that did
+change the index writes its own status.
 
 ---
 
 ## Walk and Skip rules
 
 `Walk(root, exclude)` uses `filepath.WalkDir`, keeps going past unreadable
-entries and returns a lexically sorted list.
+entries and returns a lexically sorted list. An unreadable directory is logged
+as a WARN (`index: unreadable directory skipped, its files are not indexed`)
+through the default logger, since its indexed files leave the index on that
+run. A directory deleted while the walk runs (`fs.ErrNotExist`) is not
+logged: it is gone, not unreadable, and its files leave the index silently.
 
 Pruned directories, at any depth below the root:
 - hidden directories (name starts with `.`), so `.git`, `.venv`, `.ragcode`;
 - directories whose **name** is in `exclude` (`exclude_patterns`);
 - linked git worktrees: a `.git` that is a small regular file (at most 4 KiB)
   of the form `gitdir: <path>`, where `<path>/commondir` exists. A submodule's
-  gitdir has no `commondir`, so submodules are kept.
+  gitdir has no `commondir`, so submodules are kept;
+- RagCode's own home (`OwnHome`: `RAGCODE_HOME` or `~/.ragcode`, absolute and
+  symlink-resolved), so a non-hidden `RAGCODE_HOME` inside a root never
+  indexes its own state files. The engine's watcher skips it too, since every
+  run writes there and would queue the next run. Files named in
+  `Options.Files` under it are skipped the same way.
 
 Files must have an analyzer (`parser.ForFile`) and pass `Skip`:
 

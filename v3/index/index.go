@@ -104,6 +104,7 @@ type run struct {
 	named        map[string][]string // ids of the name pass, which callers are resolved against
 	prev         Status              // the status of the last run, before this one wrote its own
 	touched      bool                // the run deleted or upserted points
+	vanished     []string            // files parse found deleted since the scan
 	lastProgress time.Time
 	lastSave     time.Time
 }
@@ -146,6 +147,12 @@ func Run(ctx context.Context, o Options) (Status, error) {
 	if err != nil {
 		o.Log.Warn("index: state.json unreadable, starting fresh", "root", root, "err", err)
 	}
+	// Probed before the state or collection change: a model the embedder
+	// cannot serve (a typo, not pulled) must not drop the index of the old one.
+	dim, err := o.Embedder.Dimension(ctx)
+	if err != nil {
+		return r.finish(ctx, err)
+	}
 	model := o.Embedder.Model()
 	if r.state.Model != "" && r.state.Model != model {
 		// Same dimension or not, vectors of two models must not share a collection.
@@ -172,10 +179,6 @@ func Run(ctx context.Context, o Options) (Status, error) {
 		r.status.Recreated = true
 	}
 	exists, err := o.Store.CollectionExists(ctx, o.Collection)
-	if err != nil {
-		return r.finish(ctx, err)
-	}
-	dim, err := o.Embedder.Dimension(ctx)
 	if err != nil {
 		return r.finish(ctx, err)
 	}
@@ -258,6 +261,11 @@ func Run(ctx context.Context, o Options) (Status, error) {
 	// and the resolve index need; pass 2 parses again batch by batch, so the
 	// memory of a run does not grow with the size of the workspace.
 	files := names(r.parse(ctx, changed))
+	for _, f := range r.vanished { // deleted since the scan (a checkout, a rebase): gone, not failed
+		gone = append(gone, f)
+		goneIDs = append(goneIDs, r.state.Files[f].IDs...)
+	}
+	r.vanished = nil
 	extra := r.staleReferrers(ctx, files, goneIDs, changed, gone)
 	for _, f := range gone {
 		if err := purge(f); err != nil {
@@ -284,7 +292,13 @@ func Run(ctx context.Context, o Options) (Status, error) {
 		}
 		r.status.Total += len(live)
 		files = append(files, names(r.parse(ctx, live))...)
+		for _, f := range r.vanished {
+			if err := purge(f); err != nil {
+				return r.finish(ctx, err)
+			}
+		}
 	}
+	r.vanished = nil // a file gone in pass 2 keeps its pass-1 ids: see record
 	if ctx.Err() != nil {
 		return r.finish(ctx, ctx.Err())
 	}
@@ -349,10 +363,21 @@ func (r *run) finish(ctx context.Context, err error) (Status, error) {
 	// session's end), or finished with nothing to do (a run queued behind a
 	// full one): the index is still the one the last run finished, so are
 	// its counters on disk. The caller still gets this run's own status.
-	unchanged := r.prev.Phase == "done" && !r.touched && !r.fresh && !r.status.Recreated
+	// A failed run that changed nothing (Ollama down) also keeps them, under
+	// its own error. A run stopped by a HEAD move changed the index like a
+	// finished one, so its counters are the last real ones.
+	last := r.prev.Phase == "done" || r.prev.Phase == "failed"
+	unchanged := last && !r.touched && !r.fresh && !r.status.Recreated
 	idle := r.status.Phase == "done" && r.status.Failed == 0
-	if unchanged && (r.status.Phase == "interrupted" || idle) {
-		data, _ := json.Marshal(r.prev)
+	failed := r.status.Phase == "failed"
+	if kept := r.prev; unchanged && (r.status.Phase == "interrupted" || idle || failed) {
+		switch {
+		case idle: // the index matches this run's HEAD: complete, on its branch
+			kept.Phase, kept.Error, kept.Branch = "done", "", r.status.Branch
+		case failed:
+			kept.Phase, kept.Error, kept.Branch = "failed", r.status.Error, r.status.Branch
+		}
+		data, _ := json.Marshal(kept)
 		if err := WriteAtomic(statusPath(r.root), data); err != nil {
 			r.Log.Warn("index: cannot write status", "root", r.root, "err", err)
 		}
@@ -417,7 +442,8 @@ func (r *run) scan(ctx context.Context) (changed, gone []string, err error) {
 		}
 	}
 	ex := set(r.Exclude)
-	var ign map[string]bool // Walk already dropped git-ignored files
+	known := map[string]bool{} // IsLinkedWorktree per directory
+	var ign map[string]bool    // Walk already dropped git-ignored files
 	if r.Files != nil {
 		ign = GitIgnored(r.root, files)
 	}
@@ -428,7 +454,7 @@ func (r *run) scan(ctx context.Context) (changed, gone []string, err error) {
 			return nil, nil, err
 		}
 		info, err := os.Lstat(f) // a symlink fails Skip, as in Walk
-		if err != nil || ign[f] || (r.Files != nil && skipExplicit(r.root, ex, f, info)) {
+		if err != nil || ign[f] || (r.Files != nil && skipExplicit(r.root, ex, known, f, info)) {
 			if _, ok := r.state.Files[f]; ok {
 				goneSet[f] = true
 			}
@@ -462,10 +488,11 @@ func (r *run) scan(ctx context.Context) (changed, gone []string, err error) {
 }
 
 // skipExplicit applies the Walk rules to a file named in Options.Files: it
-// must lie under root, outside hidden and excluded directories, and pass Skip.
-func skipExplicit(root string, ex map[string]bool, f string, info fs.FileInfo) bool {
+// must lie under root, outside hidden and excluded directories, linked
+// worktrees and RagCode's own home, and pass Skip.
+func skipExplicit(root string, ex, known map[string]bool, f string, info fs.FileInfo) bool {
 	rel, err := filepath.Rel(root, f)
-	if err != nil || strings.HasPrefix(rel, "..") {
+	if err != nil || strings.HasPrefix(rel, "..") || LinkedWorktreeOf(root, f, known) != "" || InOwnHome(f, OwnHome()) {
 		return true
 	}
 	for _, d := range strings.Split(filepath.Dir(rel), string(filepath.Separator)) {
@@ -518,7 +545,12 @@ func (r *run) parse(ctx context.Context, files []string) []parsed {
 	}()
 	byPath := make(map[string]parsed, len(files))
 	for p := range results {
-		if p.err != nil {
+		if errors.Is(p.err, fs.ErrNotExist) {
+			// Deleted by git mid-run: the caller purges it, it is not a failure.
+			r.Log.Debug("index: file vanished during the run", "file", p.path)
+			r.vanished = append(r.vanished, p.path)
+			r.status.Total--
+		} else if p.err != nil {
 			r.status.Failed++
 			r.Log.Warn("index: parse failed", "file", p.path, "err", p.err)
 		} else {

@@ -100,8 +100,9 @@ func Run(ctx context.Context, o Options) error {
 		}
 		return filepath.Clean(p)
 	}
-	if abs, err := filepath.Abs(home); err != nil || resolve(abs) == resolve(userHome) || filepath.Dir(abs) == abs {
-		warn(o.Out, "not removing "+home+": it is the home directory or a filesystem root; check RAGCODE_HOME")
+	if abs, err := filepath.Abs(home); err != nil || resolve(abs) == resolve(userHome) || filepath.Dir(abs) == abs ||
+		strings.HasPrefix(resolve(userHome), resolve(abs)+string(filepath.Separator)) {
+		warn(o.Out, "not removing "+home+": it is the home directory, one of its parents or a filesystem root; check RAGCODE_HOME")
 	} else if err := os.RemoveAll(home); err != nil {
 		warn(o.Out, err.Error())
 	}

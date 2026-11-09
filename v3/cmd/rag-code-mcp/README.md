@@ -58,7 +58,8 @@ Tests:
 | `-uninstall` | `false` | Run the uninstaller (interactive: it asks before deleting each workspace's `.ragcode`) and exit. |
 
 Go's `flag` package accepts both `-flag` and `--flag`; IDE configs use
-`--config`.
+`--config`. A positional argument is refused with exit code 2 (the flag parser
+would otherwise stop at it and ignore every flag after it).
 
 ## Startup sequence
 

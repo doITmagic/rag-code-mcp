@@ -48,6 +48,10 @@ There are no tests in this package; the behaviour is tested in
 `-ollama`, `-gpu`, `-models-dir` and `-skip-ide` are ignored with
 `-uninstall`; `-docker` is ignored without it.
 
+The installer takes flags only: a positional argument (for example a stray glob
+match) is refused with exit code 2 before anything is done, because Go's flag
+parser stops at it and would silently ignore every flag after it.
+
 ## Usage
 
 ```bash

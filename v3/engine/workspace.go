@@ -32,7 +32,8 @@ type Workspace struct {
 	watch   *watcher
 	gone    bool // the root was removed or renamed; the next Workspace call re-watches it
 
-	modelOK atomic.Bool // the index was made with the embedder's model (fixed for the process)
+	modelOK atomic.Bool   // the index was made with the embedder's model (fixed for the process)
+	reopens atomic.Uint64 // store.SQLite.Reopens last seen; a change queues a resync
 }
 
 // Status is the index progress plus the queue state of the workspace.
@@ -43,8 +44,10 @@ type Status struct {
 	LastError string // error of the last run, "" when it succeeded
 }
 
-// Status returns the current status; before any run in this process it comes
-// from index.Dir(root)/index_status.json.
+// Status returns the current status. While another process's run holds the
+// index lock, and before any run in this process, it comes from
+// index.Dir(root)/index_status.json; a recorded phase of a run that never
+// ended, with no lock holder, reads as "interrupted".
 func (w *Workspace) Status() Status {
 	w.e.mu.Lock()
 	s := Status{Status: w.status, Queued: w.queued != kindNone || (w.running && !w.active), Running: w.active}
@@ -52,9 +55,19 @@ func (w *Workspace) Status() Status {
 		s.LastError = w.lastErr.Error()
 	}
 	w.e.mu.Unlock()
-	if s.StartedAt.IsZero() {
+	switch {
+	case s.Running:
+	case index.Running(w.Root): // another process's run holds the lock
 		if disk, ok := index.ReadStatus(w.Root); ok {
 			s.Status = disk
+		}
+		s.Running = true
+	case s.StartedAt.IsZero():
+		if disk, ok := index.ReadStatus(w.Root); ok {
+			s.Status = disk
+			if s.EndedAt.IsZero() && s.Phase != "" {
+				s.Phase = "interrupted" // no lock holder: that run died
+			}
 		}
 	}
 	return s
@@ -102,13 +115,29 @@ func (w *Workspace) Search(ctx context.Context, query string, f store.Filter, li
 		return nil, fmt.Errorf("engine: embedder returned %d vectors for one query", len(vecs))
 	}
 	hits, err := w.e.store.Search(ctx, w.Collection, vecs[0], f, limit)
+	w.resyncIfReopened()
 	return hits, w.mapErr(ctx, err)
 }
 
 // Scroll lists symbols matching f without a vector.
 func (w *Workspace) Scroll(ctx context.Context, f store.Filter, limit int) ([]store.Hit, error) {
 	hits, err := w.e.store.Scroll(ctx, w.Collection, f, limit)
+	w.resyncIfReopened()
 	return hits, w.mapErr(ctx, err)
+}
+
+// resyncIfReopened queues an incremental run when the store reopened the
+// collection's file because it was deleted or replaced on disk (an older
+// copy restored by hand): the state on disk is then unknown, and the run
+// diffs state.json against the files.
+func (w *Workspace) resyncIfReopened() {
+	r, ok := w.e.store.(interface{ Reopens(string) uint64 })
+	if !ok {
+		return
+	}
+	if n := r.Reopens(w.Collection); w.reopens.Swap(n) != n && w.e.cfg.AutoIndex {
+		w.Index(false)
+	}
 }
 
 // mapErr turns a missing collection, or one built with another embedding

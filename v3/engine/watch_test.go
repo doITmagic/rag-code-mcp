@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -243,4 +244,113 @@ func TestCloseDuringResumeWatchSetup(t *testing.T) {
 	assert.Empty(t, rec.snapshot())
 	assert.NotContains(t, logBuf.String(), "level=WARN")
 	assert.NotContains(t, logBuf.String(), "catch-up index")
+}
+
+func fullRuns(rec *runRecorder) int {
+	n := 0
+	for _, c := range rec.snapshot() {
+		if c.Files == nil {
+			n++
+		}
+	}
+	return n
+}
+
+func watching(e *Engine, dir string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return slices.Contains(e.fsw.WatchList(), dir)
+}
+
+// git worktree add creates the directory before its .git: the watcher has
+// already watched it, so the first event that shows a linked worktree drops
+// its watches and queues a full run, whose walk prunes it.
+func TestWatcherLinkedWorktreeAdded(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.WatchEnabled = true
+	root := t.TempDir()
+	rec := &runRecorder{}
+	e := New(cfg, store.NewMemory(), &embed.Fake{}, nil)
+	defer e.Close()
+	e.run = rec.run
+	_, err := e.Workspace(root)
+	require.NoError(t, err)
+
+	wt := filepath.Join(root, "wt2")
+	require.NoError(t, os.Mkdir(wt, 0o755))
+	require.Eventually(t, func() bool { return watching(e, wt) }, 2*time.Second, 10*time.Millisecond)
+	admin := filepath.Join(t.TempDir(), "worktrees", "wt2")
+	writeFile(t, filepath.Join(admin, "commondir"), "../..\n")
+	writeFile(t, filepath.Join(wt, ".git"), "gitdir: "+admin+"\n")
+	require.Eventually(t, func() bool { return fullRuns(rec) > 0 && !watching(e, wt) }, 2*time.Second, 10*time.Millisecond)
+}
+
+// git init in a root watched without a repository queues a full run (files
+// it now ignores are purged) and starts watching HEAD and refs.
+func TestWatcherGitInitAfterStart(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.WatchEnabled = true
+	root := t.TempDir()
+	rec := &runRecorder{}
+	e := New(cfg, store.NewMemory(), &embed.Fake{}, nil)
+	defer e.Close()
+	e.run = rec.run
+	_, err := e.Workspace(root)
+	require.NoError(t, err)
+
+	require.NoError(t, os.Mkdir(filepath.Join(root, ".git"), 0o755))
+	require.Eventually(t, func() bool { return fullRuns(rec) > 0 }, 2*time.Second, 10*time.Millisecond, "repository created")
+	require.Eventually(t, func() bool { return watching(e, filepath.Join(root, ".git")) }, 2*time.Second, 10*time.Millisecond)
+	n := fullRuns(rec)
+	writeFile(t, filepath.Join(root, ".git", "HEAD"), "ref: refs/heads/main\n")
+	require.Eventually(t, func() bool { return fullRuns(rec) > n }, 2*time.Second, 10*time.Millisecond, "HEAD written")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".git", "refs", "heads"), 0o755))
+	require.Eventually(t, func() bool { return watching(e, filepath.Join(root, ".git", "refs", "heads")) }, 2*time.Second, 10*time.Millisecond)
+	n = fullRuns(rec)
+	writeFile(t, filepath.Join(root, ".git", "refs", "heads", "main"), "0123\n")
+	require.Eventually(t, func() bool { return fullRuns(rec) > n }, 2*time.Second, 10*time.Millisecond, "first commit")
+}
+
+// RagCode's own home inside a root (a non-hidden RAGCODE_HOME) is never
+// watched: its state and log writes would queue a run after every run. The
+// home itself is refused as a root.
+func TestWatcherIgnoresOwnHome(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.WatchEnabled = true
+	root := t.TempDir()
+	rch := filepath.Join(root, "rch")
+	t.Setenv("RAGCODE_HOME", rch)
+	require.NoError(t, os.Mkdir(rch, 0o755))
+	_, err := validateRoot(cfg, rch)
+	var re *RootError
+	require.ErrorAs(t, err, &re)
+	assert.Contains(t, re.Reason, "own data directory")
+
+	rec := &runRecorder{}
+	e := New(cfg, store.NewMemory(), &embed.Fake{}, nil)
+	defer e.Close()
+	e.run = rec.run
+	_, err = e.Workspace(root)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return watching(e, root) }, 2*time.Second, 10*time.Millisecond)
+	time.Sleep(300 * time.Millisecond) // let the start-up run settle
+	rec.mu.Lock()
+	n := len(rec.calls)
+	rec.mu.Unlock()
+	writeFile(t, filepath.Join(rch, "index", "c", "state.json"), "{}")
+	writeFile(t, filepath.Join(root, "seen.go"), "func Seen\n") // control: a real file is seen
+	require.Eventually(t, func() bool {
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		return len(rec.calls) > n
+	}, 3*time.Second, 10*time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
+	assert.False(t, watching(e, rch), "own home not watched")
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	for _, c := range rec.calls[n:] {
+		for _, f := range c.Files {
+			assert.False(t, strings.HasPrefix(f, rch), "own home file queued: %s", f)
+		}
+	}
 }

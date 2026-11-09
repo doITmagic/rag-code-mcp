@@ -48,7 +48,7 @@ Tests:
 |:---|:---|
 | `uninstall_test.go` | Full run with a fake `docker`: workspace `.ragcode` and `~/.ragcode` removed, other workspace files kept, the pointer line stripped from `CLAUDE.md` and `.cursor/rules/ragcode.mdc` deleted, only the installer's PATH pair removed from `.bashrc`, other Cursor servers kept, exact Docker commands; the prompt for each workspace's `.ragcode`; every file `WriteIDERules` touched gets the pointer stripped; the index under `RAGCODE_HOME/index` goes with the home and no Qdrant is called. |
 | `stop_unix_test.go` | Build tag `!windows`. `StopProcess` stops the server binary but not processes that only mention its path (a shell, `tail -f`, a launcher wrapper). |
-| `zz_verify_test.go` | Verification tests: garbage `roots.json` and a cancelled context neither panic nor hang, and the home is still removed; closed stdin when an answer is needed fails `Run`; a `RAGCODE_HOME` override is removed and its PATH line stripped while `~/.ragcode` stays; `RAGCODE_HOME` set to the user home is never deleted. |
+| `zz_verify_test.go` | Verification tests: garbage `roots.json` and a cancelled context neither panic nor hang, and the home is still removed; closed stdin when an answer is needed fails `Run`; a `RAGCODE_HOME` override is removed and its PATH line stripped while `~/.ragcode` stays; `RAGCODE_HOME` set to the user home or one of its parents is never deleted. |
 
 ## Key types and functions
 
@@ -119,8 +119,8 @@ invalid file means no workspaces. For each root:
 `config.HomeDir()` (`$RAGCODE_HOME` or `~/.ragcode`) is removed recursively:
 binary, `config.yaml`, logs, `roots.json` and every index under `index/`.
 Because `RAGCODE_HOME` is user input, the directory is **not** removed when it
-resolves (following symlinks) to the user's home directory or is a filesystem
-root; a warning tells the user to check `RAGCODE_HOME`.
+resolves (following symlinks) to the user's home directory or one of its
+parents (`/home`), or is a filesystem root; a warning tells the user to check `RAGCODE_HOME`.
 
 On Windows the running `rag-code-mcp.exe` cannot delete itself, so
 `rag-code-mcp -uninstall` there leaves a warning for that file.

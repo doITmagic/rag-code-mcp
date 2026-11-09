@@ -73,10 +73,7 @@ func (e *Engine) startWatcher(w *Workspace) error {
 		}
 		return err
 	}
-	if git := filepath.Join(w.Root, ".git"); fsw.Add(git) == nil {
-		wt.dirs[git] = true
-		_ = wt.addTree(filepath.Join(git, "refs"), false)
-	}
+	wt.watchGit()
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.closed {
@@ -135,6 +132,10 @@ func (e *Engine) watchLoop(fsw *fsnotify.Watcher) {
 // With collect, the files found are queued as changed: a populated directory
 // moved into the tree emits no events for its contents.
 func (wt *watcher) addTree(dir string, collect bool) error {
+	home := index.OwnHome()
+	if index.InOwnHome(dir, home) {
+		return nil
+	}
 	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		switch {
 		case err != nil:
@@ -145,7 +146,7 @@ func (wt *watcher) addTree(dir string, collect bool) error {
 			if collect {
 				wt.add(path, false)
 			}
-		case path != dir && (wt.skipDir(d.Name()) || index.IsLinkedWorktree(path)):
+		case path != dir && (wt.skipDir(d.Name()) || index.IsLinkedWorktree(path) || index.InOwnHome(path, home)):
 			return fs.SkipDir
 		default:
 			if err := wt.fsw.Add(path); err != nil && (path == dir || errors.Is(err, fsnotify.ErrClosed)) {
@@ -161,6 +162,14 @@ func (wt *watcher) addTree(dir string, collect bool) error {
 		}
 		return nil
 	})
+}
+
+// watchGit watches the root's .git and its refs tree, when they exist.
+func (wt *watcher) watchGit() {
+	if git := filepath.Join(wt.ws.Root, ".git"); wt.fsw.Add(git) == nil {
+		wt.dirs[git] = true
+		_ = wt.addTree(filepath.Join(git, "refs"), false)
+	}
 }
 
 func (wt *watcher) skipDir(name string) bool {
@@ -192,12 +201,27 @@ func (wt *watcher) handle(ev fsnotify.Event) {
 	}
 	parts := strings.Split(rel, string(filepath.Separator))
 	if parts[0] == ".git" {
-		if rel == filepath.Join(".git", "HEAD") || (len(parts) > 2 && parts[1] == "refs") {
+		refs := len(parts) > 1 && parts[1] == "refs"
+		switch {
+		case rel == ".git" && ev.Has(fsnotify.Create): // git init in a root watched without a repository
+			wt.watchGit()
+			wt.full("git repository created")
+		case refs && ev.Has(fsnotify.Create) && isDir(ev.Name): // refs, refs/heads made after .git was watched
+			_ = wt.addTree(ev.Name, false)
+			wt.full("git HEAD changed")
+		case rel == filepath.Join(".git", "HEAD") || (refs && len(parts) > 2):
 			wt.full("git HEAD changed")
 		}
 		return
 	}
-	if slices.ContainsFunc(parts[:len(parts)-1], wt.skipDir) {
+	if slices.ContainsFunc(parts[:len(parts)-1], wt.skipDir) || index.InOwnHome(ev.Name, index.OwnHome()) {
+		return
+	}
+	if dir := index.LinkedWorktreeOf(root, ev.Name, nil); dir != "" {
+		// git writes a new worktree's .git after its directory was created
+		// and watched; the walk purges whatever was indexed from it.
+		wt.dropDir(dir)
+		wt.full("linked worktree added")
 		return
 	}
 	if parts[len(parts)-1] == ".gitignore" { // only a walk applies ignore rules to indexed files

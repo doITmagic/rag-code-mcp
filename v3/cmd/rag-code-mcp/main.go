@@ -39,6 +39,11 @@ func main() {
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	doUninstall := flag.Bool("uninstall", false, "remove RagCode MCP from this machine and exit")
 	flag.Parse()
+	// Parsing stops at the first non-flag argument; flags after it would be ignored silently.
+	if flag.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "unexpected argument %q (flags only; see -h)\n", flag.Arg(0))
+		os.Exit(2)
+	}
 
 	if *showVersion {
 		fmt.Println(versionLine())

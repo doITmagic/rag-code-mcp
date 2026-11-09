@@ -930,6 +930,24 @@ func TestExportsShortDirOfFileModules(t *testing.T) {
 	v.addFiles(t, map[string]string{"config/app.fkm": "\n"})
 	r, _ := v.call(t, "rag_list_package_exports", map[string]any{"workspace_root": v.root, "package": "config"})
 	assert.Contains(t, r.Message, "directory config has no exported symbols")
+	if os.Geteuid() != 0 { // root reads a 000 directory
+		cfgDir := filepath.Join(v.root, "config")
+		require.NoError(t, os.Chmod(cfgDir, 0o000))
+		r, _ = v.call(t, "rag_list_package_exports", map[string]any{"workspace_root": v.root, "package": "config"})
+		require.NoError(t, os.Chmod(cfgDir, 0o755))
+		assert.Contains(t, r.Message, "directory config is unreadable")
+	}
+	// An excluded directory (build/ is in the default exclude_patterns) and its
+	// file are "not indexed", never "no exported symbols".
+	v.addFiles(t, map[string]string{"build/keep.fkm": "func Kept\n"})
+	for pkg, want := range map[string]string{"build": "directory build has no indexed files", "build/keep.fkm": "build/keep.fkm is not indexed"} {
+		r, _ = v.call(t, "rag_list_package_exports", map[string]any{"workspace_root": v.root, "package": pkg})
+		assert.Contains(t, r.Message, want, pkg)
+		assert.NotContains(t, r.Message, "no exported symbols", pkg)
+	}
+	// A directory holding only subdirectories is not "ignored".
+	r, _ = v.call(t, "rag_list_package_exports", map[string]any{"workspace_root": v.root, "package": "web"})
+	assert.Contains(t, r.Message, "directory web has no exported symbols", "web/ holds only ui/")
 	v.addFiles(t, map[string]string{"g/k.fk": "const Max\n"})
 	r, _ = v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "m/g.Max"})
 	assert.NotContains(t, r.Message, "imports")

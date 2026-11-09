@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -88,13 +89,31 @@ func (t *tools) listExports(ctx context.Context, req *mcp.CallToolRequest, in Ex
 			return reply("ok", fmt.Sprintf("%q has no exported symbols of kinds %v; drop kinds to list them all", pkg, ks), map[string]any{"package": pkg, "modules": mods, "exports": byKind, "truncated": capped}, w)
 		}
 	}
+	// An empty state (no run yet) says nothing about what is indexed.
+	st, stErr := index.LoadState(w.Root)
+	indexed := func(match func(p string) bool) bool {
+		return stErr != nil || len(st.Files) == 0 || slices.ContainsFunc(slices.Collect(maps.Keys(st.Files)), match)
+	}
+	const notIndexed = "ignored by .gitignore, excluded by exclude_patterns or skipped by the index rules"
 	if len(mods) == 0 && file != "" {
 		msg = fmt.Sprintf("%s has no exported symbols of its own (it may only re-export others)", file)
+		if abs := filepath.Join(w.Root, filepath.FromSlash(file)); !indexed(func(p string) bool { return p == abs }) {
+			msg = fmt.Sprintf("%s is not indexed (%s)", file, notIndexed)
+		}
 	} else if len(mods) == 0 {
 		msg = fmt.Sprintf("no indexed module or directory matches %q; pass the full module path or a directory of the workspace", pkg)
 		if abs, err := insideRoot(w.Root, strings.TrimRight(pkg, "/\\")); err == nil && abs != w.Root {
 			if fi, err := os.Stat(abs); err == nil && fi.IsDir() {
 				msg = fmt.Sprintf("directory %s has no exported symbols in the files directly in it (subdirectories are listed on their own)", pkg)
+				ents, err := os.ReadDir(abs)
+				hasSource := slices.ContainsFunc(ents, func(e os.DirEntry) bool { // only then can the rules have left files out
+					return e.Type().IsRegular() && parser.ForFile(filepath.Join(abs, e.Name())) != nil
+				})
+				if err != nil {
+					msg = fmt.Sprintf("directory %s is unreadable (%v), so its files are not indexed", pkg, err)
+				} else if hasSource && !indexed(func(p string) bool { return filepath.Dir(p) == abs }) {
+					msg = fmt.Sprintf("directory %s has no indexed files directly in it (%s; subdirectories are listed on their own)", pkg, notIndexed)
+				}
 			}
 		}
 	}

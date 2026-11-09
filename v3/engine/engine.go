@@ -152,6 +152,11 @@ func (e *Engine) Workspace(root string) (*Workspace, error) {
 	return w, nil
 }
 
+// broadDirs are refused only when given exactly: projects often live below
+// them (/var/www/site, /opt/app).
+// The /usr/* entries are where merged-/usr systems link /bin, /sbin, /lib.
+var broadDirs = []string{"/etc", "/usr", "/var", "/bin", "/sbin", "/lib", "/lib64", "/boot", "/opt", "/srv", "/usr/bin", "/usr/sbin", "/usr/lib", "/usr/lib64"}
+
 // validateRoot returns the cleaned, symlink-resolved root or a *RootError.
 func validateRoot(cfg config.Config, root string) (string, error) {
 	root = strings.TrimSpace(root)
@@ -176,6 +181,12 @@ func validateRoot(cfg config.Config, root string) (string, error) {
 		reason = "is the home directory"
 	case samePath(real, tmp):
 		reason = "is the temp directory"
+	case index.InOwnHome(real, index.OwnHome()):
+		reason = "is inside RagCode's own data directory (" + index.OwnHome() + ")"
+	case home != "" && strings.HasPrefix(home, real+string(filepath.Separator)):
+		reason = "contains the home directory"
+	case runtime.GOOS != "windows" && (slices.Contains(broadDirs, real) || slices.Contains(broadDirs, filepath.Clean(root))):
+		reason = "is a system directory (" + real + ")"
 	case runtime.GOOS != "windows" && slices.ContainsFunc([]string{"/proc", "/sys", "/dev"}, func(p string) bool {
 		return real == p || strings.HasPrefix(real, p+"/")
 	}):

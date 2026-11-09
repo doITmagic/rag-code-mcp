@@ -99,6 +99,14 @@ func (t Target) Write(binary, configPath string) error {
 			for k, v := range prev {
 				switch k {
 				case "command", "args", "url", "type": // transport fields are ours
+				case "env":
+					if env := v1Env(v); env != nil {
+						if len(env) > 0 {
+							entry[k] = env
+						}
+					} else {
+						entry[k] = v
+					}
 				default:
 					entry[k] = v
 				}
@@ -106,6 +114,28 @@ func (t Target) Write(binary, configPath string) error {
 		}
 		servers["ragcode"] = entry
 	})
+}
+
+// v1Env returns env without the keys v1's installer wrote, when env is v1's
+// (it has QDRANT_URL, which v3 never reads); nil when it is not. Left in
+// place, v1's OLLAMA_EMBED would override the model of config.yaml.
+func v1Env(v any) map[string]any {
+	env, ok := v.(map[string]any)
+	if !ok {
+		return nil
+	}
+	if _, v1 := env["QDRANT_URL"]; !v1 {
+		return nil
+	}
+	out := map[string]any{}
+	for k, val := range env {
+		switch k {
+		case "QDRANT_URL", "OLLAMA_BASE_URL", "OLLAMA_MODEL", "OLLAMA_EMBED":
+		default:
+			out[k] = val
+		}
+	}
+	return out
 }
 
 // Remove deletes the ragcode entry. A missing file or entry is not an error.

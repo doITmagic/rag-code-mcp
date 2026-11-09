@@ -50,7 +50,7 @@ graph TD
 | Called by | [cmd/rag-code-mcp](../cmd/rag-code-mcp/README.md) | `go a.Engine.Resume(ctx)` at start-up. |
 | Called by | [tools](../tools/README.md) | Every MCP tool opens a workspace with `Workspace(root)`; `rag_index_workspace` calls `WriteIDERules` and `Index`. |
 | Called by | [internal/uninstall](../internal/uninstall/README.md) | `PointerFiles` and `IDEPointer` to strip the pointer line. |
-| Calls | [index](../index/README.md) | `index.Run`, `ReadStatus`, `IsLinkedWorktree`, `WriteAtomic`, `LockFile` (the `roots.json.lock`), `StateModel` (the model check in `Search`), `ErrLocked`, `ErrHeadChanged`. |
+| Calls | [index](../index/README.md) | `index.Run`, `ReadStatus`, `IsLinkedWorktree`, `LinkedWorktreeOf`, `WriteAtomic`, `LockFile` (the `roots.json.lock`), `StateModel` (the model check in `Search`), `ErrLocked`, `ErrHeadChanged`. |
 | Calls | [embed](../embed/README.md) | Embeds search queries, with `embed.QueryText` for the model's prefix. |
 | Calls | [store](../store/README.md) | `Search`, `Scroll`, `CollectionExists`, `VectorSize`, `CollectionName`. |
 | Calls | [internal/config](../internal/config/README.md) | `config.Config` and `config.HomeDir()`. |
@@ -64,16 +64,16 @@ graph TD
 | File | Contents |
 |------|----------|
 | `engine.go` | Package doc, `Engine`, `New`, errors (`ErrNotIndexed`, `ErrLocked`, `ErrClosed`), `RootError`, `Loaded`, `Workspace`, `validateRoot`, `roots.json` (`registerRoot`, `readRoots`), `Resume`, `Close`, and the job queue (`enqueue`, `merge`, `kick`, `runJobs`, `runOne`, `retryDelay`). |
-| `workspace.go` | `Workspace` and its job fields, `Status`, `Index`, `IndexFiles`, `Search`, `Scroll`, `mapErr`/`dimChanged` (the `ErrNotIndexed` mapping), `Ready`. |
-| `watch.go` | The per-root `watcher`: `startWatcher`, `addTree`, event `handle`, `dropDir`, debounce (`add`, `flush`), `full`, `Stop`. |
+| `workspace.go` | `Workspace` and its job fields, `Status`, `Index`, `IndexFiles`, `Search`, `Scroll`, `mapErr`/`dimChanged` (the `ErrNotIndexed` mapping), `resyncIfReopened`, `Ready`. |
+| `watch.go` | The per-root `watcher`: `startWatcher`, `addTree`, `watchGit`, event `handle`, `dropDir`, debounce (`add`, `flush`), `full`, `Stop`. |
 | `iderules.go` | `WriteIDERules`, `IDEPointer`, `PointerFiles`, the list of agent instruction files, `tracked`, `within`, `appendPointer`. |
 
 ### Tests
 
 | File | Covers |
 |------|--------|
-| `engine_test.go` | Root validation, auto-index on first contact, request coalescing, `ErrHeadChanged` re-queue, retry of failed runs, a failed recreate that resumes without dropping again, no watcher without `auto_index`, recreate, embedding model change, concurrent root registration from several engines, a search refused on an index of another model with the same vector size, a lock held by another engine, `Resume`, no goroutines left after `Close`, `WriteIDERules` (tracked files, symlinks, symlinked parent directories, continuing after a refused file), backoff, a run waiting for the slot counts as queued, the end of a run logged with its counts and duration, the watcher's full run logged once while queued, a request queued while the runner exits is still picked up, a run failing because the root was deleted is not retried and the root is caught up when it is back. `TestMain` points `RAGCODE_HOME` at a temp dir. |
-| `watch_test.go` | The watcher end to end, a `.gitignore` edit queues a full run, root removed, root that comes back, unreadable subdirectory, watcher restart retried, `Close` beginning during `Resume`'s watcher setup (no catch-up, no warning). |
+| `engine_test.go` | Root validation, auto-index on first contact, request coalescing, `ErrHeadChanged` re-queue, retry of failed runs, a failed recreate that resumes without dropping again, no watcher without `auto_index`, recreate, embedding model change, concurrent root registration from several engines, a search refused on an index of another model with the same vector size, a lock held by another engine, `Resume`, no goroutines left after `Close`, `WriteIDERules` (tracked files, symlinks, symlinked parent directories, continuing after a refused file), backoff, a run waiting for the slot counts as queued, the end of a run logged with its counts and duration, another process's run shown as running and a dead run's phase shown as `interrupted` (`TestStatusOfAnotherProcessRun`), parents of home and broad system directories refused as roots (`TestValidateRootRefusesBroadDirs`), the watcher's full run logged once while queued, a request queued while the runner exits is still picked up, a run failing because the root was deleted is not retried and the root is caught up when it is back, a query after the store reopened a replaced collection file queues an incremental run (`TestQueryAfterReopenQueuesResync`). `TestMain` points `RAGCODE_HOME` at a temp dir. |
+| `watch_test.go` | The watcher end to end, a `.gitignore` edit queues a full run, a directory that becomes a linked worktree after it was watched is dropped with a full run (`TestWatcherLinkedWorktreeAdded`), a `.git` created after start queues a full run and is watched with its refs (`TestWatcherGitInitAfterStart`), RagCode's own home inside a root neither watched nor accepted as a root (`TestWatcherIgnoresOwnHome`), root removed, root that comes back, unreadable subdirectory, watcher restart retried, `Close` beginning during `Resume`'s watcher setup (no catch-up, no warning). |
 | `watch_linux_test.go` | All roots share one inotify instance (nested roots both see an event, `Close` releases it); a watcher that cannot start is retried; an event overflow re-walks the tree so new directories are watched again. |
 | `prefix_test.go` | `Search` adds the model's query prefix. |
 | `zz_verify_test.go` | Verification tests: concurrent `Workspace` calls, cancelled contexts, enqueue during a lock retry, recreate while locked, a directory moved out and the forced debounce flush, status read from disk before any run, home symlink guard, `Close` cancelling a blocked run, junk `roots.json`, a files run with only deletions, junk paths, `Ready` remediation text, a failed query embed does not enqueue, recreate absorbing queued files, catch-up with and without `auto_index`, double `Close`, `.git/refs` plus hidden and excluded directories, kernel file systems refused. |
@@ -122,7 +122,11 @@ a runner waiting for the slot), `Running` (a run holds the slot) and
 `LastError`. Before any run in this process, and after a run that found
 nothing to do (no file indexed, failed or deleted), the index part comes from
 `index_status.json` on disk, so the counters stay those of the last run that
-changed the index. `LastError` is cleared when a new run starts.
+changed the index (the branch is still the current run's). While another process's run holds `index.lock`, `Running`
+is true and the index part is that run's live status from disk, so every
+server on the root reports the run. A phase on disk with no `ended_at` and
+no lock holder is a run that died; it reads as `interrupted`. `LastError` is
+cleared when a new run starts.
 
 ### Errors
 
@@ -148,7 +152,9 @@ refuses it with a `*RootError` when it:
 | is a filesystem root | `/`, `C:\` |
 | is the home directory | compared after resolving symlinks |
 | is the temp directory | `os.TempDir()`, resolved |
-| is a system directory | `/proc`, `/sys`, `/dev` and below (not on Windows) |
+| is inside RagCode's own data directory | the root is `index.OwnHome()` (`RAGCODE_HOME`, resolved) or below it |
+| contains the home directory | a parent of `os.UserHomeDir()` (`/home`, `/Users`) |
+| is a system directory | `/proc`, `/sys`, `/dev` and below; exactly `/etc`, `/usr`, `/var`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/boot`, `/opt`, `/srv` and the `/usr/bin`, `/usr/sbin`, `/usr/lib`, `/usr/lib64` that merged-`/usr` systems link the first ones to, checked before and after resolving symlinks (projects below them, such as `/var/www/site`, are accepted). Not on Windows |
 | is outside `allowed_workspace_paths` | only when that list is set; an entry matches itself and everything below it |
 
 On Windows the home, temp and exact `allowed_workspace_paths` matches compare
@@ -259,15 +265,19 @@ instance limit is small (128 by default on Linux) and every client starts its
 own server. A watcher that cannot start is logged and retried, with a
 catch-up run, on the next call for that root. It watches the root and every directory below it, except
 hidden directories, directories named in `exclude_patterns` and linked git
-worktrees; it also watches `.git` and the `.git/refs` tree. A subdirectory
+worktrees; it also watches `.git` and the `.git/refs` tree, from start or from
+the moment they are created (`git init` after start). A subdirectory
 that cannot be watched is logged and skipped.
 
 | Event | Action |
 |-------|--------|
 | `Chmod` only, or a path outside the root | ignored |
+| `.git` created at the root | `.git` and its refs are watched, full run ("git repository created"): files the new repository ignores are purged |
+| a directory created under `.git/refs` | watched with its subtree, full run ("git HEAD changed") |
 | `.git/HEAD` or anything under `.git/refs/` | full run ("git HEAD changed") |
 | anything else under `.git` | ignored |
 | a path inside a hidden or excluded directory | ignored |
+| a path inside a linked worktree (`index.LinkedWorktreeOf`) | its watches are dropped, full run ("linked worktree added"): `git worktree add` writes the `.git` after the directory was created and watched, and the walk purges what was indexed from it |
 | a `.gitignore` at any depth | full run (".gitignore changed"): only the walk applies ignore rules to files already indexed or newly eligible |
 | remove/rename of a watched directory | its watches are dropped, full run ("directory removed"); the walk reconciles its files |
 | remove/rename of a file | queued as deleted |
@@ -301,6 +311,12 @@ embedder's (the embedding model changed), the error becomes `ErrNotIndexed`
 and, with `auto_index`, a full run is queued; `index.Run` then creates or
 recreates the collection. A cancelled context returns its own error. A
 failed query embed returns the embed error and queues nothing.
+
+After each query both also check whether the store reopened the collection's
+file because it was deleted or replaced on disk (`resyncIfReopened`, through
+an optional `Reopens(collection) uint64` method that `store.SQLite` has). A
+changed count queues an incremental run with `auto_index`: the file now open
+may be an older copy, and the run diffs `state.json` against the files.
 
 Before embedding, `Search` compares the model recorded in the root's
 `state.json` (`index.StateModel`) with the embedder's: an index made with

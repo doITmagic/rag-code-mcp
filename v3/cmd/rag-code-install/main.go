@@ -22,6 +22,11 @@ func main() {
 	un := flag.Bool("uninstall", false, "remove RagCode MCP instead of installing it")
 	docker := flag.Bool("docker", false, "with -uninstall: also remove the ragcode-ollama container (and a leftover ragcode-qdrant)")
 	flag.Parse()
+	// Parsing stops at the first non-flag argument, so `rag-code-install x -uninstall` would install.
+	if flag.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "unexpected argument %q (flags only; see -h)\n", flag.Arg(0))
+		os.Exit(2)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()

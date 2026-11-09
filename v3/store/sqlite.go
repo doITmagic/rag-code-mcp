@@ -104,6 +104,10 @@ func (s *SQLite) Scroll(ctx context.Context, collection string, f Filter, limit 
 
 func (s *SQLite) Close() error { return s.db.Close() }
 
+// Reopens reports how often the collection's file was found deleted or
+// replaced on disk and reopened (vecdb.DB.Reopens).
+func (s *SQLite) Reopens(collection string) uint64 { return s.db.Reopens(collection) }
+
 func toHits(hs []vecdb.Hit) ([]Hit, error) {
 	out := make([]Hit, len(hs))
 	for i, h := range hs {

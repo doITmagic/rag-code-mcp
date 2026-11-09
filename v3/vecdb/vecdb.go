@@ -28,12 +28,14 @@ type DB struct {
 	dir   string
 	mu    sync.Mutex
 	conns map[string]*sql.DB
+	files map[string]os.FileInfo // the index.db each handle opened
+	gen   map[string]uint64      // reopens after the file was deleted or replaced
 }
 
 // New returns the database rooted at dir. Nothing touches the disk until a
 // collection is created.
 func New(dir string) *DB {
-	return &DB{dir: dir, conns: map[string]*sql.DB{}}
+	return &DB{dir: dir, conns: map[string]*sql.DB{}, files: map[string]os.FileInfo{}, gen: map[string]uint64{}}
 }
 
 // Path is the SQLite file of coll.
@@ -73,10 +75,19 @@ func (d *DB) conn(coll string, create bool) (*sql.DB, error) {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if db, ok := d.conns[coll]; ok {
-		return db, nil
-	}
 	path := d.Path(coll)
+	if db, ok := d.conns[coll]; ok {
+		cur, err := os.Stat(path)
+		if old := d.files[coll]; old == nil || (err == nil && os.SameFile(old, cur)) {
+			return db, nil
+		}
+		// index.db was deleted or replaced on disk: writing on through this
+		// handle would go to an unlinked file no other process sees.
+		go db.Close() // waits for queries still running on it
+		delete(d.conns, coll)
+		delete(d.files, coll)
+		d.gen[coll]++
+	}
 	mode := "rw"
 	if create {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -110,7 +121,19 @@ func (d *DB) conn(coll string, create bool) (*sql.DB, error) {
 		return nil, fmt.Errorf("vecdb: %s: %w", path, err)
 	}
 	d.conns[coll] = db
+	if fi, err := os.Stat(path); err == nil {
+		d.files[coll] = fi
+	}
 	return db, nil
+}
+
+// Reopens counts how often coll's handle was dropped because its index.db
+// was deleted or replaced on disk. The file now open may hold any state, so
+// a caller that sees the count change must resync the collection.
+func (d *DB) Reopens(coll string) uint64 {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.gen[coll]
 }
 
 // dim reads the dimension of coll; 0 when the collection does not exist.

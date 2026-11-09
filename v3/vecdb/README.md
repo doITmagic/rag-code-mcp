@@ -45,7 +45,7 @@ Tests:
 
 | File | What it covers |
 |---|---|
-| [`vecdb_test.go`](vecdb_test.go) | search order, scores and filters; scan conditions; upsert replacing payload, vector and fields; delete; zero vectors; collection lifecycle; vector size mismatch; invalid names and dimensions; cancelled context; payload bytes round trip; two handles writing and reading the same directory like two processes; a drop seen by the other handle; `BenchmarkSearch15k` (15,000 points of 768 dimensions, with and without a kind filter) |
+| [`vecdb_test.go`](vecdb_test.go) | search order, scores and filters; scan conditions; upsert replacing payload, vector and fields; delete; zero vectors; collection lifecycle; vector size mismatch; invalid names and dimensions; cancelled context; payload bytes round trip; two handles writing and reading the same directory like two processes; a drop seen by the other handle; a deleted collection file reopened, not written through the stale handle (`TestReopensDeletedFile`, also counted by `Reopens`); `BenchmarkSearch15k` (15,000 points of 768 dimensions, with and without a kind filter) |
 | [`concurrency_test.go`](concurrency_test.go) | hooks around real SQLite operations make interleavings deterministic: `Upsert` checks the dimension inside its write transaction, reads keep one snapshot across a concurrent `Drop`, a read-only transaction does not block a writer |
 | [`path_test.go`](path_test.go) | directories and collection names with `#`, `%`, `?` and spaces open the exact file (URI escaping); a collection name containing `%` is refused |
 | [`vecdb_unix_test.go`](vecdb_unix_test.go) | (`//go:build unix`) `Ensure` in a read-only directory fails with an error that names the directory and is not `ErrNotFound` |
@@ -194,6 +194,15 @@ From the package documentation: a crash or kill mid-write leaves the last
 committed state; several processes may open the same collection (readers see
 every committed write, writers wait for each other); nothing is cached in the
 process beyond SQLite's page cache.
+
+Each collection's handle stays open between calls. Before reusing it, `conn`
+checks with `os.Stat` that `index.db` is still the file the handle opened
+(`os.SameFile`). When the file was deleted (the collection directory removed
+by hand or by another process) or replaced, the handle is closed and the file
+on disk is opened again, so writes never go to an unlinked file no other
+process can see, and reads see the collection as gone. `Reopens(coll)` counts
+these reopens: the file now open may hold any state (an older copy restored by
+hand), so the engine queues an incremental run when the count changes.
 
 `Ensure`, `Upsert` and `Drop` each run in one write transaction. `Delete` is a
 single `DELETE` statement.

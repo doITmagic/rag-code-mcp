@@ -66,3 +66,16 @@ func TestRunRefusesHomeAsRagcodeHome(t *testing.T) {
 	assert.FileExists(t, keep)
 	assert.Contains(t, out.String(), "not removing")
 }
+
+// RAGCODE_HOME set to an ancestor of the user's home (/home) must never be
+// deleted recursively either: it holds the home.
+func TestRunRefusesHomeAncestorAsRagcodeHome(t *testing.T) {
+	f := setup(t)
+	keep := filepath.Join(f.home, "notes.txt")
+	require.NoError(t, os.WriteFile(keep, []byte("mine"), 0o644))
+	t.Setenv("RAGCODE_HOME", filepath.Dir(f.home))
+	var out bytes.Buffer
+	require.NoError(t, Run(context.Background(), Options{Yes: true, Out: &out}))
+	assert.FileExists(t, keep)
+	assert.Contains(t, out.String(), "not removing")
+}

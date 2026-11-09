@@ -139,6 +139,34 @@ func TestWriteMergeAndRemove(t *testing.T) {
 	}
 }
 
+// v1's env (marked by QDRANT_URL) loses the keys v1 wrote, so its
+// OLLAMA_EMBED cannot override config.yaml; a key the user added stays.
+func TestWriteDropsV1Env(t *testing.T) {
+	tempHome(t)
+	for _, tc := range []struct {
+		name, env string
+		want      any
+	}{
+		{"v1 only", `{"OLLAMA_BASE_URL":"http://localhost:11434","OLLAMA_MODEL":"phi3:medium","OLLAMA_EMBED":"mxbai-embed-large","QDRANT_URL":"http://localhost:6333"}`, nil},
+		{"v1 plus user key", `{"OLLAMA_EMBED":"mxbai-embed-large","QDRANT_URL":"x","HTTPS_PROXY":"p"}`, map[string]any{"HTTPS_PROXY": "p"}},
+		{"v3 override kept", `{"OLLAMA_EMBED":"my-model"}`, map[string]any{"OLLAMA_EMBED": "my-model"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tg := byKey(t, "cursor")
+			require.NoError(t, os.MkdirAll(filepath.Dir(tg.Path), 0o755))
+			require.NoError(t, os.WriteFile(tg.Path, []byte(`{"mcpServers":{"ragcode":{"command":"/old","args":[],"env":`+tc.env+`}}}`), 0o644))
+			require.NoError(t, tg.Write("/bin/ragcode", "/cfg.yaml"))
+			entry := readFile(t, tg.Path)["mcpServers"].(map[string]any)["ragcode"].(map[string]any)
+			env, ok := entry["env"]
+			if tc.want == nil {
+				assert.False(t, ok, "empty env dropped")
+			} else {
+				assert.Equal(t, tc.want, env)
+			}
+		})
+	}
+}
+
 func TestWriteSkipsAndRefuses(t *testing.T) {
 	tempHome(t)
 	tg := byKey(t, "cursor")

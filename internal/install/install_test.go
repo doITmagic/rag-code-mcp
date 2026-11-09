@@ -77,6 +77,7 @@ func TestRun(t *testing.T) {
 	log, _ := os.ReadFile(dockerLog)
 	lines := strings.Split(strings.TrimSpace(string(log)), "\n")
 	assert.Equal(t, []string{
+		"pull -q ollama/ollama",
 		"rm -f ragcode-ollama",
 		"run -d --name ragcode-ollama --restart always --gpus all -p 127.0.0.1:11434:11434 -v ragcode-ollama:/root/.ollama ollama/ollama",
 		"rm -f ragcode-ollama",
@@ -191,6 +192,22 @@ func TestOllamaContainerFailStillPulls(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(dockerLog), "docker"), []byte(fail), 0o755))
 	var out bytes.Buffer
 	require.NoError(t, Run(context.Background(), Options{Ollama: "docker", Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}), out.String())
+	assert.Equal(t, []string{"embeddinggemma-2:270m"}, *pulled)
+}
+
+// docker run reuses a cached image however old (seen: Ollama 0.13 from a
+// 10-month-old ollama/ollama:latest could not pull the model); a failed pull
+// (offline) falls back to the local image.
+func TestOllamaImagePulledFirst(t *testing.T) {
+	_, dockerLog, pulled := env(t)
+	fail := "#!/bin/sh\necho \"$*\" >> " + dockerLog + "\ncase \"$*\" in pull*) exit 1;; esac\n"
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(dockerLog), "docker"), []byte(fail), 0o755))
+	var out bytes.Buffer
+	require.NoError(t, Run(context.Background(), Options{Ollama: "docker", Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}), out.String())
+	log, _ := os.ReadFile(dockerLog)
+	assert.True(t, strings.HasPrefix(string(log), "pull -q ollama/ollama\n"), string(log))
+	assert.Contains(t, string(log), "run -d --name ragcode-ollama")
+	assert.Contains(t, out.String(), "using the local image")
 	assert.Equal(t, []string{"embeddinggemma-2:270m"}, *pulled)
 }
 

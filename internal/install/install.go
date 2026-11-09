@@ -110,7 +110,11 @@ func Run(ctx context.Context, o Options) error {
 	ollamaFailed := false
 	if o.Ollama == "docker" {
 		step(o.Out, "Starting Ollama container")
-		mount := "ragcode-ollama:/root/.ollama"
+		// docker run reuses a cached image however old, and the model may need a newer Ollama.
+		if err := exec.CommandContext(ctx, "docker", "pull", "-q", ollamaImage).Run(); err != nil {
+			warn(o.Out, "docker pull "+ollamaImage+" failed, using the local image: "+err.Error())
+		}
+		mount :="ragcode-ollama:/root/.ollama"
 		if o.ModelsDir != "" {
 			if err := os.MkdirAll(o.ModelsDir, 0o755); err != nil {
 				return fmt.Errorf("install: models dir: %w", err)

@@ -51,7 +51,7 @@ Tests:
 
 | File | Covers |
 |:---|:---|
-| `install_test.go` | Full run with a fake `docker` (GPU start fails, CPU retry) and an `httptest` Ollama: binary mode `0755`, config written, exact Docker commands, model pulled with progress, PATH line once, Cursor entry and summary snippet; a second run with `-ollama skip` keeps the config and does no Docker or model work; `-ollama local` and `-models-dir`; errors (bad `-ollama`, binary missing, user answers no); `pullModel` errors and the 412 "Ollama too old" message; a failed container still pulls from an Ollama already on the port; no Qdrant is started. |
+| `install_test.go` | Full run with a fake `docker` (GPU start fails, CPU retry) and an `httptest` Ollama: binary mode `0755`, config written, exact Docker commands, model pulled with progress, PATH line once, Cursor entry and summary snippet; a second run with `-ollama skip` keeps the config and does no Docker or model work; `-ollama local` and `-models-dir`; errors (bad `-ollama`, binary missing, user answers no); `pullModel` errors and the 412 "Ollama too old" message; a failed container still pulls from an Ollama already on the port; the Ollama image is pulled before the container starts and a failed pull keeps the local image (`TestOllamaImagePulledFirst`); no Qdrant is started. |
 | `v1_test.go` | A v1 install is removed (install dir, `~/.local/share/qdrant` when it holds only ragcode collections, PATH line, the `ragcode` entry in `~/.cursor/mcp.config.json`, Docker `rm -f`); answering no to "Replace?", a failed copy or an invalid config leaves v1 untouched; a collection RagCode did not create, or an unreadable collections directory, is kept; a running v1 server is stopped. |
 | `zz_verify_test.go` | Verification tests: `-ollama local` without Docker still waits and pulls; a cancelled context does not hang `Run`; `waitHTTP` on an unreachable URL returns an error; a reinstall replaces the binary, leaves no temp file and writes `.zshrc` when `SHELL` is zsh. |
 
@@ -90,7 +90,7 @@ flowchart TD
     E --> F[config.Load: keep or write config.yaml]
     F --> D[removeV1 if ~/.local/share/ragcode exists]
     D --> G{-ollama}
-    G -- docker --> H[docker run ragcode-ollama, GPU then CPU]
+    G -- docker --> H[docker pull, then docker run ragcode-ollama, GPU then CPU]
     G -- local --> I
     H --> I[wait for /api/tags, pull model]
     G -- skip --> J
@@ -121,7 +121,7 @@ Ollama URL and model the next steps use. An invalid config stops the run.
 
 | `-ollama` | What happens |
 |:---|:---|
-| `docker` | If `docker` is not on `PATH`, warn and continue as `local`. Otherwise remove any container named `ragcode-ollama` and run `docker run -d --name ragcode-ollama --restart always [--gpus all] -p 127.0.0.1:11434:11434 -v <volume or ModelsDir>:/root/.ollama ollama/ollama`. With `GPU`, a failed GPU start is retried on CPU. If the container still fails (for example a native Ollama holds port 11434), warn and continue: the wait below may find that Ollama. |
+| `docker` | If `docker` is not on `PATH`, warn and continue as `local`. Otherwise `docker pull -q ollama/ollama` first (`docker run` would reuse a cached image however old, and the model needs Ollama 0.40 or later; a failed pull, for example offline, warns and keeps the local image), then remove any container named `ragcode-ollama` and run `docker run -d --name ragcode-ollama --restart always [--gpus all] -p 127.0.0.1:11434:11434 -v <volume or ModelsDir>:/root/.ollama ollama/ollama`. With `GPU`, a failed GPU start is retried on CPU. If the container still fails (for example a native Ollama holds port 11434), warn and continue: the wait below may find that Ollama. |
 | `local` | No container; wait and pull. |
 | `skip` | Nothing: no wait, no pull. |
 

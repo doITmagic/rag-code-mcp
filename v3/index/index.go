@@ -617,7 +617,9 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 		lookups++
 		hits, err := r.Store.Scroll(ctx, r.Collection, f, store.MaxScroll)
 		if err != nil {
-			r.Log.Warn("index: referrer lookup failed", "err", err)
+			if ctx.Err() == nil { // a cancelled run (server stopping) resumes next start
+				r.Log.Warn("index: referrer lookup failed", "err", err)
+			}
 			lookups = maxLookups + 1
 			return nil, false
 		}
@@ -870,7 +872,9 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 		}
 		hits, err := r.Store.Scroll(ctx, r.Collection, f, 20)
 		if err != nil {
-			r.Log.Warn("index: relation lookup failed, remaining targets stay unresolved", "err", err)
+			if ctx.Err() == nil { // a cancelled run (server stopping) resumes next start
+				r.Log.Warn("index: relation lookup failed, remaining targets stay unresolved", "err", err)
+			}
 			failed = true
 			return nil
 		}

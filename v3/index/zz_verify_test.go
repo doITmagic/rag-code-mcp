@@ -278,3 +278,39 @@ func TestVerifyRepoWithoutCommits(t *testing.T) {
 	assert.Equal(t, "", st.Branch)
 	assert.Equal(t, 1, st.Done)
 }
+
+// cancelOnScrollStore cancels the run from inside its second scroll, as a server
+// stopping mid-run does, and returns the context's error.
+type cancelOnScrollStore struct {
+	*store.Memory
+	cancel  context.CancelFunc
+	scrolls int
+}
+
+func (s *cancelOnScrollStore) Scroll(ctx context.Context, c string, f store.Filter, limit int) ([]store.Hit, error) {
+	if s.scrolls++; s.scrolls >= 2 {
+		s.cancel()
+		return nil, ctx.Err()
+	}
+	return s.Memory.Scroll(ctx, c, f, limit)
+}
+
+// A lookup that fails because the run was cancelled (the server is stopping)
+// is not logged as a WARN: the run is interrupted and resumes next start.
+func TestLookupCancelledNoWarn(t *testing.T) {
+	e := newEnv(t)
+	a := e.write(t, "a.go", "func F -> zzz.T\n")
+	e.write(t, "b.go", "func Bar -> a.F\n")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	e.write(t, "a.go", "func F -> zzz.T\nfunc G\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var logBuf bytes.Buffer
+	o := e.opts
+	o.Files = []string{a}
+	o.Store = &cancelOnScrollStore{Memory: e.store, cancel: cancel}
+	o.Log = slog.New(slog.NewTextHandler(&logBuf, nil))
+	_, _ = Run(ctx, o)
+	assert.NotContains(t, logBuf.String(), "level=WARN")
+}

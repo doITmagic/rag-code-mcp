@@ -86,7 +86,7 @@ graph LR
 | `lock_test.go` | Two holders of `index.lock` exclude each other, on every platform. |
 | `fifo_unix_test.go` | A binary file and a fifo in `Files` are skipped without blocking. Build tag `unix`. |
 | `walk_unix_test.go` | `IsLinkedWorktree` refuses a `.git` that is a FIFO, device or oversized file. Build tag `linux`. |
-| `zz_verify_test.go` | Verification tests: edge inputs, unreachable store, wrong vector count, pre-cancelled context, explicit files and directory rules, progress cadence, lock release, batch sizes and purge order, lookups stopping on a store error, repos without commits. |
+| `zz_verify_test.go` | Verification tests: edge inputs, unreachable store, wrong vector count, pre-cancelled context, explicit files and directory rules, progress cadence, lock release, batch sizes and purge order, lookups stopping on a store error, no WARN for a lookup failed by a cancelled run (`TestLookupCancelledNoWarn`), repos without commits. |
 
 ---
 
@@ -405,7 +405,9 @@ each relation:
 
 Store lookups take up to 20 hits, are cached per key, ignore points of files
 in the run (stale until their upsert) and stop for the rest of the run after
-one store error. There is no lookup cap here.
+one store error. There is no lookup cap here. A failed lookup (here or in
+the referrer pass) is a WARN, except when the run was cancelled (the server
+stopping): that run is interrupted and resumes on the next start.
 
 ### 7. Embed and upsert
 

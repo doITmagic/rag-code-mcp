@@ -76,7 +76,7 @@ Every package directory has its own README; start here and follow the links.
 | [internal/idepaths](internal/idepaths/README.md) | where each supported IDE keeps its MCP config; writes or removes the `ragcode` entry |
 | [internal/install](internal/install/README.md) | sets RagCode up: binary, `config.yaml`, Ollama container, model, IDE configs, PATH |
 | [internal/uninstall](internal/uninstall/README.md) | removes processes, IDE entries, per-root `.ragcode` directories, `~/.ragcode` and the PATH line |
-| [engine](engine/README.md) | orchestrates workspaces: root validation, known roots, one index queue per root through a single global slot, a file watcher per root |
+| [engine](engine/README.md) | orchestrates workspaces: root validation, known roots, one index queue per root through a single global slot, a file watcher per root (one watching server per root across processes) |
 | [index](index/README.md) | the indexing pipeline for one root: walk, skip rules, parse, workspace-wide relation resolution, embed, upsert |
 | [embed](embed/README.md) | turns text into vectors through Ollama's `/api/embed`; a deterministic fake for tests |
 | [parser](parser/README.md) | the symbol and relation contract every language analyzer produces |

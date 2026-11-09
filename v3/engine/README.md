@@ -65,7 +65,7 @@ graph TD
 |------|----------|
 | `engine.go` | Package doc, `Engine`, `New`, errors (`ErrNotIndexed`, `ErrLocked`, `ErrClosed`), `RootError`, `Loaded`, `Workspace`, `validateRoot`, `roots.json` (`registerRoot`, `readRoots`), `Resume`, `Close`, and the job queue (`enqueue`, `merge`, `kick`, `runJobs`, `runOne`, `retryDelay`). |
 | `workspace.go` | `Workspace` and its job fields, `Status`, `Index`, `IndexFiles`, `Search`, `Scroll`, `mapErr`/`dimChanged` (the `ErrNotIndexed` mapping), `resyncIfReopened`, `Ready`. |
-| `watch.go` | The per-root `watcher`: `startWatcher`, `addTree`, `watchGit`, event `handle`, `dropDir`, debounce (`add`, `flush`), `full`, `Stop`. |
+| `watch.go` | The per-root `watcher`: `startWatcher` (leader lock `watch.lock`), `follow`/`takeOver` (a follower's takeover poll, `takeoverPoll`), `addTree`, `watchGit`, event `handle`, `dropDir`, debounce (`add`, `flush`), `full`, `Stop`. |
 | `iderules.go` | `WriteIDERules`, `IDEPointer`, `PointerFiles`, the list of agent instruction files, `tracked`, `within`, `appendPointer`. |
 
 ### Tests
@@ -73,7 +73,7 @@ graph TD
 | File | Covers |
 |------|--------|
 | `engine_test.go` | Root validation, auto-index on first contact, request coalescing, `ErrHeadChanged` re-queue, retry of failed runs, a failed recreate that resumes without dropping again, no watcher without `auto_index`, recreate, embedding model change, concurrent root registration from several engines, a search refused on an index of another model with the same vector size, a lock held by another engine, `Resume`, no goroutines left after `Close`, `WriteIDERules` (tracked files, symlinks, symlinked parent directories, continuing after a refused file), backoff, a run waiting for the slot counts as queued, the end of a run logged with its counts and duration, another process's run shown as running and a dead run's phase shown as `interrupted` (`TestStatusOfAnotherProcessRun`), the first retry after another process's lock within seconds (`TestLockedRetrySoon`), parents of home and broad system directories refused as roots (`TestValidateRootRefusesBroadDirs`), the watcher's full run logged once while queued, a request queued while the runner exits is still picked up, a run failing because the root was deleted is not retried and the root is caught up when it is back, a query after the store reopened a replaced collection file queues an incremental run (`TestQueryAfterReopenQueuesResync`). `TestMain` points `RAGCODE_HOME` at a temp dir. |
-| `watch_test.go` | The watcher end to end, a `.gitignore` edit queues a full run, a directory that becomes a linked worktree after it was watched is dropped with a full run (`TestWatcherLinkedWorktreeAdded`), a `.git` created after start queues a full run and is watched with its refs (`TestWatcherGitInitAfterStart`), RagCode's own home inside a root neither watched nor accepted as a root (`TestWatcherIgnoresOwnHome`), root removed, root that comes back, unreadable subdirectory, watcher restart retried, `Close` beginning during `Resume`'s watcher setup (no catch-up, no warning). |
+| `watch_test.go` | The watcher end to end, a `.gitignore` edit queues a full run, a directory that becomes a linked worktree after it was watched is dropped with a full run (`TestWatcherLinkedWorktreeAdded`), a `.git` created after start queues a full run and is watched with its refs (`TestWatcherGitInitAfterStart`), RagCode's own home inside a root neither watched nor accepted as a root (`TestWatcherIgnoresOwnHome`), root removed, root that comes back, unreadable subdirectory, watcher restart retried, `Close` beginning during `Resume`'s watcher setup (no catch-up, no warning), only one of two servers on a root watches and indexes a save (`TestWatcherOneLeaderPerRoot`), the follower takes over with a catch-up run when the leader exits (`TestWatcherFollowerTakesOver`), `Resume` in a follower queues no catch-up (`TestResumeFollowerSkipsCatchUp`). |
 | `watch_linux_test.go` | All roots share one inotify instance (nested roots both see an event, `Close` releases it); a watcher that cannot start is retried; an event overflow re-walks the tree so new directories are watched again. |
 | `prefix_test.go` | `Search` adds the model's query prefix. |
 | `zz_verify_test.go` | Verification tests: concurrent `Workspace` calls, cancelled contexts, enqueue during a lock retry, recreate while locked, a directory moved out and the forced debounce flush, status read from disk before any run, home symlink guard, `Close` cancelling a blocked run, junk `roots.json`, a files run with only deletions, junk paths, `Ready` remediation text, a failed query embed does not enqueue, recreate absorbing queued files, catch-up with and without `auto_index`, double `Close`, `.git/refs` plus hidden and excluded directories, kernel file systems refused. |
@@ -106,7 +106,10 @@ already opened for a resolved root, or nil (also on a nil or closed
 type Workspace struct {
     Root       string // cleaned and symlink-resolved
     Collection string // "ragcode-" + 16 hex characters of sha1(Root)
-    // job state guarded by the engine mutex ...
+    // job state guarded by the engine mutex, among it:
+    watch    *watcher    // set while this server leads the root (holds watch.lock)
+    takeover *time.Timer // a follower's poll of watch.lock (takeoverPoll); nil when leading or not watching
+    gone     bool        // root removed or renamed; the next Workspace call re-watches it
 }
 
 func (w *Workspace) Index(recreate bool)                 // queue a full (or recreate) run
@@ -225,9 +228,10 @@ When a run fails and the engine is not closing, the request is merged back
 into the queue and a timer restarts the runner later, so neither another
 process's lock nor an embedder or store outage drops its files.
 
-- **`index.ErrLocked`**: another process indexes this root (normal with
-  several MCP clients on one root: on a save every server's watcher queues
-  the file, one indexes it in milliseconds, the others find the lock held).
+- **`index.ErrLocked`**: another process indexes this root (with several
+  MCP clients on one root only the leader watches, but an explicit
+  `rag_index_workspace`, an auto-index after `ErrNotIndexed` or a resync can
+  still meet the leader's run).
   The retry waits `lockRetryDelay`: 2 s, doubled per consecutive `ErrLocked`
   up to 30 s (2, 4, 8, 16, 30 s), reset once a run takes place. It is not a
   failure: no failure backoff, no WARN, and the last status is kept (nothing
@@ -253,6 +257,9 @@ logged and skipped). When `auto_index` is on and the root has an
 run, so edits made while the server was down are picked up; the mtime/size
 diff keeps it cheap. An interrupted run is completed this way, since
 `index.Run` widens to a full walk after a run that did not end `done`.
+A follower (another server holds the root's `watch.lock`, see
+[File watcher](#file-watcher)) skips this run: the leader keeps the index
+current, and it catches up itself when it takes over.
 `Resume` stops at the first root that returns `ErrClosed` (the session ended
 during start-up), and logs "catch-up index" only when the run was queued.
 `Workspace` returns `ErrClosed` when `Close` begins while it sets up the
@@ -272,6 +279,20 @@ hidden directories, directories named in `exclude_patterns` and linked git
 worktrees; it also watches `.git` and the `.git/refs` tree, from start or from
 the moment they are created (`git init` after start). A subdirectory
 that cannot be watched is logged and skipped.
+
+**One watcher per root across processes.** Every MCP client session starts
+its own server, and the index of a root is shared by all of them. Only the
+server holding `index.Dir(root)/watch.lock` (`index.LockFile`, non-blocking)
+watches the root: the leader. The others are followers: no watches, they
+answer queries from the shared index (`Status` shows the leader's run through
+`index.Running`), and explicit `rag_index_workspace`, the `ErrNotIndexed`
+auto-index, resyncs and model-change runs still run in them, serialized by
+`index.lock`. A follower retries the lock every `takeoverPoll` (5 s); when the
+leader exits (or its watcher stops) it takes over, logs `engine: watcher taken
+over` and queues a full incremental run for what changed meanwhile. The lock
+is released whenever the watcher stops: `Stop` (root removed), the root-gone
+path of a failed run, `Close`. The poll stops on `Close` and when the root is
+gone. Where locking is a no-op (no flock), every server leads, as before.
 
 | Event | Action |
 |-------|--------|
@@ -387,6 +408,7 @@ Keys from [internal/config](../internal/config/README.md):
 | `~/.ragcode/roots.json`, `~/.ragcode/roots.json.lock` | `registerRoot` |
 | `<root>/.ragcode/RAGCODE.md`, `<root>/.ragcode/.gitignore` | `WriteIDERules` |
 | pointer line in the instruction files above | `WriteIDERules` |
+| `~/.ragcode/index/<collection>/watch.lock` | `startWatcher` (the watching leader holds it) |
 | `~/.ragcode/index/<collection>/…` | [index](../index/README.md) and [store](../store/README.md), through the runs the engine starts |
 
 `~/.ragcode` is `$RAGCODE_HOME` when set.

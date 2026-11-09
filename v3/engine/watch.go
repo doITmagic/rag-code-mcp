@@ -23,9 +23,10 @@ const maxDebounces = 10
 // to .git/HEAD, .git/refs or a .gitignore, an event overflow or a removed
 // directory queue a full run instead.
 type watcher struct {
-	ws   *Workspace
-	fsw  *fsnotify.Watcher // the engine's, shared by every root
-	once sync.Once
+	ws     *Workspace
+	fsw    *fsnotify.Watcher // the engine's, shared by every root
+	unlock func()            // releases watch.lock; called once, by Stop
+	once   sync.Once
 
 	dirs map[string]bool // watched directories; the engine's watch loop owns it
 
@@ -58,32 +59,100 @@ func (e *Engine) watchFS() (*fsnotify.Watcher, error) {
 	return e.fsw, nil
 }
 
-func (e *Engine) startWatcher(w *Workspace) error {
+// takeoverPoll is how often a follower retries the leader lock; tests shorten it.
+var takeoverPoll = 5 * time.Second
+
+// startWatcher makes this process the root's leader and watches it, and
+// reports whether it did. Every client starts its own server: only the holder
+// of index.Dir(root)/watch.lock watches and indexes on file events, so a save
+// is not queued by every server. On ErrLocked the workspace is a follower: it
+// answers queries from the shared index and polls the lock to take over.
+func (e *Engine) startWatcher(w *Workspace) (leader bool, err error) {
+	dir := index.Dir(w.Root)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return false, err
+	}
+	unlock, err := index.LockFile(filepath.Join(dir, "watch.lock"))
+	if errors.Is(err, index.ErrLocked) {
+		e.follow(w)
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
 	e.mu.Lock()
 	fsw, err := e.watchFS()
 	e.mu.Unlock()
 	if err != nil {
-		return err
+		unlock()
+		return false, err
 	}
-	wt := &watcher{ws: w, fsw: fsw, dirs: map[string]bool{}, changed: map[string]bool{}, deleted: map[string]bool{}}
+	wt := &watcher{ws: w, fsw: fsw, unlock: unlock, dirs: map[string]bool{}, changed: map[string]bool{}, deleted: map[string]bool{}}
 	if err := wt.addTree(w.Root, false); err != nil {
+		wt.Stop()
 		wt.forget()
 		if errors.Is(err, fsnotify.ErrClosed) {
-			return ErrClosed // Close began after watchFS
+			return false, ErrClosed // Close began after watchFS
 		}
-		return err
+		return false, err
 	}
 	wt.watchGit()
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.closed {
-		return ErrClosed
+		wt.Stop()
+		return false, ErrClosed
 	}
-	if w.watch != nil { // a concurrent call won; its watches are the same
-		return nil
+	if w.watch != nil { // a concurrent call won (only where locking is a no-op); its watches are the same
+		wt.Stop()
+		return true, nil
 	}
 	w.watch = wt
-	return nil
+	return true, nil
+}
+
+// follow arms the takeover poll of a follower; idempotent.
+func (e *Engine) follow(w *Workspace) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.closed || w.watch != nil || w.takeover != nil {
+		return
+	}
+	w.takeover = time.AfterFunc(takeoverPoll, func() {
+		e.mu.Lock()
+		w.takeover = nil
+		if e.closed || w.gone || w.watch != nil {
+			e.mu.Unlock()
+			return
+		}
+		e.wg.Add(1) // Close waits for a takeover in progress
+		e.mu.Unlock()
+		defer e.wg.Done()
+		e.takeOver(w)
+	})
+}
+
+// takeOver retries the leader lock; on success the catch-up run picks up
+// what changed since the leader exited.
+func (e *Engine) takeOver(w *Workspace) {
+	if !isDir(w.Root) { // the next Workspace call re-validates it
+		e.mu.Lock()
+		w.gone = true
+		e.mu.Unlock()
+		return
+	}
+	leader, err := e.startWatcher(w)
+	switch {
+	case errors.Is(err, ErrClosed):
+	case err != nil:
+		e.log.Warn("engine: watcher not taken over, retrying on the next call", "root", w.Root, "err", err)
+		e.mu.Lock()
+		w.gone = true
+		e.mu.Unlock()
+	case leader:
+		e.log.Info("engine: watcher taken over", "root", w.Root)
+		w.Index(false)
+	}
 }
 
 // watchLoop hands each event to every watcher of a root containing it.
@@ -317,7 +386,7 @@ func (wt *watcher) full(reason string) {
 	wt.ws.Index(false)
 }
 
-// Stop cancels the pending batch; idempotent. The engine stops handing
+// Stop cancels the pending batch and releases the leader lock; idempotent. The engine stops handing
 // events to a watcher once it is no longer its workspace's watch.
 func (wt *watcher) Stop() {
 	wt.once.Do(func() {
@@ -326,5 +395,6 @@ func (wt *watcher) Stop() {
 			wt.timer.Stop()
 		}
 		wt.mu.Unlock()
+		wt.unlock()
 	})
 }

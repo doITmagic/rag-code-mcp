@@ -31,7 +31,8 @@ type Workspace struct {
 	lockFails int         // consecutive ErrLocked results; sets lockRetryDelay
 	status    index.Status
 	watch     *watcher
-	gone      bool // the root was removed or renamed; the next Workspace call re-watches it
+	takeover  *time.Timer // a follower's poll of watch.lock; nil when leading or not watching
+	gone      bool        // the root was removed or renamed; the next Workspace call re-watches it
 
 	modelOK atomic.Bool   // the index was made with the embedder's model (fixed for the process)
 	reopens atomic.Uint64 // store.SQLite.Reopens last seen; a change queues a resync

@@ -516,11 +516,14 @@ All under `config.HomeDir()`: `$RAGCODE_HOME` or `~/.ragcode`.
         ├── index.db-wal, -shm   # SQLite WAL files
         ├── state.json           # State: model, format, per-file entries
         ├── index_status.json    # Status of the current or last run
-        └── index.lock           # flock target for one run at a time
+        ├── index.lock           # flock target for one run at a time
+        └── watch.lock           # flock held by the watching server (engine)
 ```
 
 `index.db` is written by [store](../store/README.md) /
-[vecdb](../vecdb/README.md); the other three files belong to this package.
+[vecdb](../vecdb/README.md); `watch.lock` by the
+[engine](../engine/README.md) (`LockFile`); the other three files belong to
+this package.
 `state.json` and `index_status.json` are written with `WriteAtomic` (temp
 file in the same directory, `chmod 0644`, rename), so readers never see a
 truncated file and a symlink at the path is replaced, not followed. They are

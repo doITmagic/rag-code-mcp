@@ -127,14 +127,14 @@ func (e *Engine) Workspace(root string) (*Workspace, error) {
 		w.gone = false
 		e.mu.Unlock()
 		if back {
-			if err := e.startWatcher(w); errors.Is(err, ErrClosed) {
+			if leader, err := e.startWatcher(w); errors.Is(err, ErrClosed) {
 				return nil, err
 			} else if err != nil {
 				e.log.Warn("engine: watcher not restarted", "root", real, "err", err)
 				e.mu.Lock()
 				w.gone = true // retry on the next call
 				e.mu.Unlock()
-			} else {
+			} else if leader {
 				w.Index(false) // catch up on what changed while it was gone
 			}
 		}
@@ -146,7 +146,7 @@ func (e *Engine) Workspace(root string) (*Workspace, error) {
 	// auto_index: false leaves indexing to an explicit rag_index_workspace, so
 	// no watcher may start one.
 	if e.cfg.WatchEnabled && e.cfg.AutoIndex {
-		if err := e.startWatcher(w); errors.Is(err, ErrClosed) {
+		if _, err := e.startWatcher(w); errors.Is(err, ErrClosed) {
 			return nil, err
 		} else if err != nil {
 			e.log.Warn("engine: watcher not started, retrying on the next call", "root", real, "err", err)
@@ -260,7 +260,8 @@ func (e *Engine) registerRoot(root string) error {
 
 // Resume opens every known root that still exists and, when auto_index is on,
 // queues an incremental run for each root indexed before, so edits made while
-// the server was down are picked up (the mtime/size diff keeps it cheap).
+// the server was down are picked up (the mtime/size diff keeps it cheap). A
+// follower (another server watches the root) skips it.
 func (e *Engine) Resume(ctx context.Context) {
 	for _, root := range readRoots() {
 		if ctx.Err() != nil {
@@ -274,7 +275,10 @@ func (e *Engine) Resume(ctx context.Context) {
 			e.log.Info("engine: skipping known root", "root", root, "err", err)
 			continue
 		}
-		if _, ok := index.ReadStatus(root); ok && e.cfg.AutoIndex && e.enqueue(w, kindFull, nil, nil) {
+		e.mu.Lock()
+		follower := w.takeover != nil // the leader keeps the index current
+		e.mu.Unlock()
+		if _, ok := index.ReadStatus(root); ok && e.cfg.AutoIndex && !follower && e.enqueue(w, kindFull, nil, nil) {
 			e.log.Info("engine: catch-up index", "root", root)
 		}
 	}
@@ -293,6 +297,9 @@ func (e *Engine) Close() {
 		}
 		if w.retry != nil {
 			w.retry.Stop()
+		}
+		if w.takeover != nil {
+			w.takeover.Stop()
 		}
 	}
 	fsw := e.fsw
@@ -426,6 +433,10 @@ func (e *Engine) runJobs(w *Workspace) {
 			w.gone, w.running = e.cfg.WatchEnabled && e.cfg.AutoIndex, false // gone restarts the watcher
 			wt := w.watch
 			w.watch = nil
+			if w.takeover != nil {
+				w.takeover.Stop()
+				w.takeover = nil
+			}
 			e.mu.Unlock()
 			if wt != nil {
 				// Not forget(): dirs belongs to the watch loop, which forgets on the

@@ -354,3 +354,74 @@ func TestWatcherIgnoresOwnHome(t *testing.T) {
 		}
 	}
 }
+
+func leading(w *Workspace) bool {
+	w.e.mu.Lock()
+	defer w.e.mu.Unlock()
+	return w.watch != nil
+}
+
+// twoServers opens root in two engines sharing RAGCODE_HOME, like two MCP
+// clients on one project: the first holds watch.lock.
+func twoServers(t *testing.T) (root string, w1, w2 *Workspace, rec1, rec2 *runRecorder) {
+	cfg := testConfig(t)
+	cfg.WatchEnabled = true
+	root = t.TempDir()
+	rec1, rec2 = &runRecorder{}, &runRecorder{}
+	open := func(rec *runRecorder) *Workspace {
+		e := New(cfg, store.NewMemory(), &embed.Fake{}, nil)
+		t.Cleanup(e.Close)
+		e.run = rec.run
+		w, err := e.Workspace(root)
+		require.NoError(t, err)
+		return w
+	}
+	return root, open(rec1), open(rec2), rec1, rec2
+}
+
+// Only the leader watches: a save is indexed by one server, not by each.
+func TestWatcherOneLeaderPerRoot(t *testing.T) {
+	root, w1, w2, rec1, rec2 := twoServers(t)
+	require.True(t, leading(w1))
+	require.False(t, leading(w2), "the second server follows")
+	writeFile(t, filepath.Join(root, "a.go"), "func A\n")
+	require.Eventually(t, func() bool { return len(rec1.snapshot()) > 0 }, 2*time.Second, 10*time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
+	assert.Empty(t, rec2.snapshot(), "the follower queued nothing")
+}
+
+// When the leader exits, the follower takes over, catches up and watches.
+func TestWatcherFollowerTakesOver(t *testing.T) {
+	old := takeoverPoll
+	takeoverPoll = 20 * time.Millisecond
+	t.Cleanup(func() { takeoverPoll = old })
+	root, w1, w2, _, rec2 := twoServers(t)
+	require.False(t, leading(w2))
+	w1.e.Close()
+	require.Eventually(t, func() bool { return leading(w2) }, 2*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool { return fullRuns(rec2) == 1 }, 2*time.Second, 10*time.Millisecond, "catch-up run")
+	a := filepath.Join(root, "a.go")
+	writeFile(t, a, "func A\n")
+	require.Eventually(t, func() bool {
+		return slices.ContainsFunc(rec2.snapshot(), func(o index.Options) bool { return slices.Contains(o.Files, a) })
+	}, 2*time.Second, 10*time.Millisecond)
+}
+
+// Resume in a follower queues no catch-up: the leader keeps the index current.
+func TestResumeFollowerSkipsCatchUp(t *testing.T) {
+	root, w1, _, _, _ := twoServers(t)
+	require.True(t, leading(w1))
+	data, _ := json.Marshal([]string{root})
+	require.NoError(t, os.WriteFile(rootsPath(), data, 0o644))
+	st, _ := json.Marshal(index.Status{Root: root, StartedAt: time.Now(), EndedAt: time.Now(), Phase: "done"})
+	writeFile(t, filepath.Join(index.Dir(root), "index_status.json"), string(st))
+
+	cfg := w1.e.cfg
+	rec := &runRecorder{}
+	e := New(cfg, store.NewMemory(), &embed.Fake{}, nil)
+	defer e.Close()
+	e.run = rec.run
+	e.Resume(context.Background())
+	time.Sleep(200 * time.Millisecond)
+	assert.Empty(t, rec.snapshot())
+}

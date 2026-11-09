@@ -1,155 +1,151 @@
+// Command rag-code-mcp is the RagCode MCP server: stdio by default, or
+// Streamable HTTP with --http. Nothing but the stdio transport writes to
+// stdout; logs go to $RAGCODE_HOME/logs/ragcode.log.
 package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
-	"log"
+	"io"
+	"log/slog"
+	"net/http"
 	"os"
-	"strconv"
+	"os/signal"
+	"path/filepath"
+	"runtime/debug"
+	"syscall"
+	"time"
 
-	"github.com/Masterminds/semver/v3"
-	"github.com/doITmagic/rag-code-mcp/internal/adapter"
-	"github.com/doITmagic/rag-code-mcp/internal/daemon"
-	"github.com/doITmagic/rag-code-mcp/internal/logger"
-	"github.com/doITmagic/rag-code-mcp/internal/uninstall"
+	"github.com/doITmagic/rag-code-mcp/v2/internal/app"
+	"github.com/doITmagic/rag-code-mcp/v2/internal/config"
+	"github.com/doITmagic/rag-code-mcp/v2/internal/uninstall"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-var (
-	Version = "2.1.110"
-	Commit  = "none"
-	Date    = "24.10.2025"
-)
+// Version is set at build time: -ldflags "-X main.Version=v3.x.y".
+var Version = "dev"
+
+const closeTimeout = 10 * time.Second
+
+func versionLine() string { return "rag-code-mcp " + Version }
 
 func main() {
-	// Flags
-	daemonFlag := flag.Bool("daemon", false, "Run as background daemon (internal use)")
-	configPath := flag.String("config", "config.yaml", "Path to configuration file")
-	ollamaURLFlag := flag.String("ollama-base-url", "", "Ollama base URL override")
-	ollamaModel := flag.String("ollama-model", "", "Ollama chat model override")
-	ollamaEmbed := flag.String("ollama-embed", "", "Ollama embedding model override")
-	qdrantURLFlag := flag.String("qdrant-url", "", "Qdrant URL override")
-	httpPort := flag.Int("http-port", 39000, "Port for TCP daemon server (default 39000)")
-	versionFlag := flag.Bool("version", false, "Print version and exit")
-	uninstallFlag := flag.Bool("uninstall", false, "Uninstall RagCode MCP from this system")
+	cfgPath := flag.String("config", config.DefaultPath(), "configuration file")
+	httpAddr := flag.String("http", "", "serve Streamable HTTP on this address instead of stdio (e.g. 127.0.0.1:39000)")
+	logLevel := flag.String("log-level", "", "debug, info, warn or error (overrides the config)")
+	showVersion := flag.Bool("version", false, "print the version and exit")
+	doUninstall := flag.Bool("uninstall", false, "remove RagCode MCP from this machine and exit")
 	flag.Parse()
-
-	if *uninstallFlag {
-		uninstall.RunUninstall()
-		os.Exit(0)
+	// Parsing stops at the first non-flag argument; flags after it would be ignored silently.
+	if flag.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "unexpected argument %q (flags only; see -h)\n", flag.Arg(0))
+		os.Exit(2)
 	}
 
-	if *versionFlag {
-		fmt.Printf("RagCode MCP  version=%s  commit=%s  date=%s\n", Version, Commit, Date)
-		os.Exit(0)
+	if *showVersion {
+		fmt.Println(versionLine())
+		return
 	}
-
-	logger.InitLoggerFromEnv()
-
-	if *daemonFlag {
-		// ═══════════════════════════════════════════════════════════════
-		// DAEMON MODE — the heavy process: Qdrant, Ollama, Engine, MCP
-		// Listens exclusively on local TCP port to guarantee singleton
-		// ═══════════════════════════════════════════════════════════════
-		if err := daemon.Run(daemon.RunConfig{
-			Version:       Version,
-			Commit:        Commit,
-			Date:          Date,
-			ConfigPath:    *configPath,
-			HTTPPort:      *httpPort,
-			OllamaBaseURL: *ollamaURLFlag,
-			OllamaModel:   *ollamaModel,
-			OllamaEmbed:   *ollamaEmbed,
-			QdrantURL:     *qdrantURLFlag,
-		}); err != nil {
-			log.Fatalf("Daemon error: %v", err)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if *doUninstall {
+		if err := uninstall.Run(ctx, uninstall.Options{}); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
 		}
-	} else {
-		// ═══════════════════════════════════════════════════════════════
-		// ADAPTER MODE (default) — thin Stdio ↔ TCP bridge
-		// Each IDE launches this mode; daemon is started automatically.
-		// ═══════════════════════════════════════════════════════════════
-
-		// Build daemon args from CLI flags so the adapter-started daemon
-		// uses the same configuration as the adapter process.
-		var daemonArgs []string
-		if *configPath != "config.yaml" {
-			daemonArgs = append(daemonArgs, "--config", *configPath)
-		}
-		if *httpPort != 39000 {
-			daemonArgs = append(daemonArgs, "--http-port", strconv.Itoa(*httpPort))
-		}
-		if *ollamaURLFlag != "" {
-			daemonArgs = append(daemonArgs, "--ollama-base-url", *ollamaURLFlag)
-		}
-		if *ollamaModel != "" {
-			daemonArgs = append(daemonArgs, "--ollama-model", *ollamaModel)
-		}
-		if *ollamaEmbed != "" {
-			daemonArgs = append(daemonArgs, "--ollama-embed", *ollamaEmbed)
-		}
-		if *qdrantURLFlag != "" {
-			daemonArgs = append(daemonArgs, "--qdrant-url", *qdrantURLFlag)
-		}
-
-		runAdapter(Version, *httpPort, daemonArgs)
+		return
 	}
-}
-
-// runAdapter is the thin stdio adapter that bridges IDE ↔ daemon.
-// It ensures the daemon is running, handles version upgrades, and bridges stdin/stdout.
-// daemonArgs are extra CLI flags forwarded to the daemon process.
-func runAdapter(version string, httpPort int, daemonArgs []string) {
-	// Check if daemon is already running
-	running, existingVersion := adapter.IsDaemonRunning(httpPort)
-
-	// Version upgrade check: if daemon is running an older version, restart it
-	if running && needsUpgrade(existingVersion, version) {
-		logger.Instance.Info("Daemon upgrade needed (%s → %s), restarting...", existingVersion, version)
-		if err := adapter.StopDaemon(httpPort); err != nil {
-			logger.Instance.Warn("Failed to stop old daemon: %v", err)
-		}
-		running = false
-	}
-
-	binaryPath, err := os.Executable()
-	if err != nil {
-		log.Fatalf("Cannot determine binary path: %v", err)
-	}
-	restart := func() error {
-		logger.Instance.Warn("Daemon on port %d is gone, starting it again...", httpPort)
-		return adapter.StartDaemon(binaryPath, httpPort, daemonArgs...)
-	}
-
-	// Start daemon if not running
-	if !running {
-		logger.Instance.Info("Starting daemon on port %d...", httpPort)
-		// Keep bridging on failure: each request then gets a JSON-RPC error
-		// with the cause and retries the start, so the session recovers once
-		// the missing dependency is back.
-		if err := adapter.StartDaemon(binaryPath, httpPort, daemonArgs...); err != nil {
-			logger.Instance.Error("Failed to start daemon: %v", err)
-		} else {
-			logger.Instance.Info("Daemon started successfully")
-		}
-	}
-
-	// Bridge stdin ↔ daemon via local TCP port
-	workspaceHint, _ := os.Getwd()
-	logger.Instance.Info("Adapter bridging stdin ↔ daemon on port %d (workspace_hint=%s)", httpPort, workspaceHint)
-
-	if err := adapter.RunBridge(context.Background(), httpPort, os.Stdin, os.Stdout, workspaceHint, restart); err != nil {
-		logger.Instance.Error("Adapter bridge error: %v", err)
+	if err := run(ctx, *cfgPath, *httpAddr, *logLevel); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-// needsUpgrade checks if the current version is newer than the daemon's version.
-func needsUpgrade(daemonVersion, currentVersion string) bool {
-	current, errC := semver.NewVersion(currentVersion)
-	existing, errD := semver.NewVersion(daemonVersion)
-	if errC != nil || errD != nil {
-		return false // can't compare, don't upgrade
+// setMemoryLimit caps the heap at 1 GiB unless GOMEMLIMIT is set: parallel
+// tree-sitter parsing otherwise left 1.3-5 GB RSS for minutes during indexing.
+func setMemoryLimit() {
+	if os.Getenv("GOMEMLIMIT") == "" {
+		debug.SetMemoryLimit(1 << 30)
 	}
-	return current.GreaterThan(existing)
+}
+
+func run(ctx context.Context, cfgPath, httpAddr, logLevel string) error {
+	setMemoryLimit()
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return err
+	}
+	if logLevel != "" {
+		cfg.LogLevel = logLevel
+		if err := cfg.Validate(); err != nil {
+			return err
+		}
+	}
+	logPath := filepath.Join(config.HomeDir(), "logs", "ragcode.log")
+	var out io.Writer = os.Stderr
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err == nil {
+		if f, err := config.OpenLogFile(logPath, cfg.LogMaxSizeMB); err == nil {
+			defer f.Close()
+			out = f
+		} else {
+			fmt.Fprintln(os.Stderr, "logging to stderr:", err)
+		}
+	}
+	log := config.NewLogger(cfg.LogLevel, out).With("pid", os.Getpid()) // every server process writes the same file
+
+	a, err := app.New(app.Options{Config: cfg, Version: Version, Log: log})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		cctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
+		defer cancel()
+		a.Close(cctx)
+	}()
+	log.Info("rag-code-mcp starting", "version", Version, "http", httpAddr)
+
+	if httpAddr == "" {
+		go a.Engine.Resume(ctx)
+		err = a.Server.Run(ctx, &mcp.StdioTransport{})
+	} else {
+		err = serveHTTP(ctx, httpAddr, a, log)
+	}
+	if err != nil && !errors.Is(err, context.Canceled) {
+		log.Error("server stopped", "err", err)
+		return err
+	}
+	log.Info("rag-code-mcp stopped")
+	return nil
+}
+
+// httpHandler serves the MCP endpoint at / and GET /health.
+func httpHandler(server *mcp.Server, log *slog.Logger) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"version": Version, "pid": os.Getpid()})
+	})
+	mux.Handle("/", mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server },
+		&mcp.StreamableHTTPOptions{Stateless: true, Logger: log}))
+	return mux
+}
+
+// serveHTTP listens on addr until ctx is done; Resume starts once the
+// listener is up.
+func serveHTTP(ctx context.Context, addr string, a *app.App, log *slog.Logger) error {
+	srv := &http.Server{Addr: addr, Handler: httpHandler(a.Server, log), ReadHeaderTimeout: 10 * time.Second}
+	errc := make(chan error, 1)
+	go func() { errc <- srv.ListenAndServe() }()
+	go a.Engine.Resume(ctx)
+	select {
+	case err := <-errc:
+		return err
+	case <-ctx.Done():
+		sctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
+		defer cancel()
+		return srv.Shutdown(sctx)
+	}
 }

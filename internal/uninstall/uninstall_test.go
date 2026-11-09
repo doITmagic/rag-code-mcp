@@ -2,343 +2,130 @@ package uninstall
 
 import (
 	"bytes"
-	"encoding/json"
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sort"
+	"runtime"
+	"strings"
 	"testing"
 
-	"github.com/doITmagic/rag-code-mcp/internal/utils"
+	"github.com/doITmagic/rag-code-mcp/v2/engine"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestExtractWorkspaceRoots_V2(t *testing.T) {
-	data := []byte(`{
-		"version": "v2",
-		"entries": [
-			{"root": "/home/user/project-a", "id": "abc123"},
-			{"root": "/home/user/project-b", "id": "def456"},
-			{"root": "/opt/workspace/app",   "id": "ghi789"}
-		],
-		"candidates": []
-	}`)
-
-	roots := extractWorkspaceRoots(data)
-	if len(roots) != 3 {
-		t.Fatalf("expected 3 roots, got %d: %v", len(roots), roots)
-	}
-
-	sort.Strings(roots)
-	expected := []string{"/home/user/project-a", "/home/user/project-b", "/opt/workspace/app"}
-	sort.Strings(expected)
-
-	for i, r := range roots {
-		if r != expected[i] {
-			t.Errorf("root[%d] = %q, want %q", i, r, expected[i])
-		}
-	}
+type fixture struct {
+	home, root, dockerLog string
 }
 
-func TestExtractWorkspaceRoots_V1(t *testing.T) {
-	data := []byte(`[
-		{"root": "/home/user/proj1", "id": "a1"},
-		{"root": "/home/user/proj2", "id": "b2"}
-	]`)
-
-	roots := extractWorkspaceRoots(data)
-	if len(roots) != 2 {
-		t.Fatalf("expected 2 roots, got %d: %v", len(roots), roots)
-	}
-
-	sort.Strings(roots)
-	if roots[0] != "/home/user/proj1" || roots[1] != "/home/user/proj2" {
-		t.Errorf("unexpected roots: %v", roots)
-	}
-}
-
-func TestExtractWorkspaceRoots_LegacyFlatMap(t *testing.T) {
-	data := []byte(`{
-		"/home/user/old-project": {"name": "old"},
-		"/var/www/site": {"name": "site"}
-	}`)
-
-	roots := extractWorkspaceRoots(data)
-	if len(roots) != 2 {
-		t.Fatalf("expected 2 roots, got %d: %v", len(roots), roots)
-	}
-
-	sort.Strings(roots)
-	if roots[0] != "/home/user/old-project" || roots[1] != "/var/www/site" {
-		t.Errorf("unexpected roots: %v", roots)
-	}
-}
-
-func TestExtractWorkspaceRoots_EmptyV2(t *testing.T) {
-	data := []byte(`{"version": "v2", "entries": []}`)
-
-	roots := extractWorkspaceRoots(data)
-	if roots != nil {
-		t.Errorf("expected nil for empty V2, got %v", roots)
-	}
-}
-
-func TestExtractWorkspaceRoots_InvalidJSON(t *testing.T) {
-	data := []byte(`{not valid json at all`)
-
-	roots := extractWorkspaceRoots(data)
-	if roots != nil {
-		t.Errorf("expected nil for invalid JSON, got %v", roots)
-	}
-}
-
-func TestExtractWorkspaceRoots_V2SkipsEmptyRoots(t *testing.T) {
-	data := []byte(`{
-		"version": "v2",
-		"entries": [
-			{"root": "/valid/path", "id": "x"},
-			{"root": "",            "id": "y"},
-			{"root": "/another",    "id": "z"}
-		]
-	}`)
-
-	roots := extractWorkspaceRoots(data)
-	if len(roots) != 2 {
-		t.Fatalf("expected 2 roots (skipping empty), got %d: %v", len(roots), roots)
-	}
-}
-
-func TestCleanWorkspaceData_WithV2Registry(t *testing.T) {
-	// Create a temp "home" directory
-	home := t.TempDir()
-	isolate(t)
-
-	// Create fake .ragcode install dir with registry
-	installDir := filepath.Join(home, ".ragcode")
-	if err := os.MkdirAll(installDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create two fake project directories with .ragcode inside
-	proj1 := filepath.Join(home, "projects", "app1")
-	proj2 := filepath.Join(home, "projects", "app2")
-	proj3 := filepath.Join(home, "projects", "app3") // not in registry
-
-	for _, p := range []string{proj1, proj2, proj3} {
-		ragDir := filepath.Join(p, ".ragcode")
-		if err := os.MkdirAll(ragDir, 0755); err != nil {
-			t.Fatal(err)
-		}
-		// Create a file inside to verify full removal
-		if err := os.WriteFile(filepath.Join(ragDir, "state.json"), []byte("{}"), 0644); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	// Write V2 registry with proj1 and proj2 (NOT proj3)
-	registry := map[string]interface{}{
-		"version": "v2",
-		"entries": []map[string]string{
-			{"root": proj1, "id": "aaa"},
-			{"root": proj2, "id": "bbb"},
-		},
-	}
-	regData, _ := json.MarshalIndent(registry, "", "  ")
-	if err := os.WriteFile(filepath.Join(installDir, "registry.json"), regData, 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Run the function
-	cleanWorkspaceData(home)
-
-	// proj1/.ragcode should be gone
-	if _, err := os.Stat(filepath.Join(proj1, ".ragcode")); !os.IsNotExist(err) {
-		t.Errorf("proj1/.ragcode should have been removed")
-	}
-
-	// proj2/.ragcode should be gone
-	if _, err := os.Stat(filepath.Join(proj2, ".ragcode")); !os.IsNotExist(err) {
-		t.Errorf("proj2/.ragcode should have been removed")
-	}
-
-	// proj3/.ragcode should be gone too (cleaned by fallback scan)
-	if _, err := os.Stat(filepath.Join(proj3, ".ragcode")); !os.IsNotExist(err) {
-		t.Errorf("proj3/.ragcode should have been removed by fallback scan")
-	}
-}
-
-// isolate keeps cleanWorkspaceData inside the test's temp dirs: without it
-// the sweep queried the live Qdrant and the real IDE configs and deleted
-// .ragcode directories on the developer's machine, ~/.ragcode included.
-func isolate(t *testing.T) {
+func setup(t *testing.T) *fixture {
 	t.Helper()
-	origQ, origI := qdrantRootsFn, ideProjectParentsFn
-	qdrantRootsFn = func() []string { return nil }
-	ideProjectParentsFn = func(string) []string { return nil }
-	t.Cleanup(func() { qdrantRootsFn, ideProjectParentsFn = origQ, origI })
-	t.Setenv("APPDATA", t.TempDir())
-	t.Setenv("LOCALAPPDATA", t.TempDir())
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("USERPROFILE", t.TempDir())
+	if runtime.GOOS == "windows" {
+		t.Skip("shell scripts")
+	}
+	f := &fixture{home: t.TempDir(), root: t.TempDir()}
+	t.Setenv("HOME", f.home)
+	t.Setenv("RAGCODE_HOME", "")
+	bin := t.TempDir()
+	f.dockerLog = filepath.Join(bin, "docker.log")
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\necho \"$*\" >> "+f.dockerLog+"\n"), 0o755))
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	rag := filepath.Join(f.home, ".ragcode")
+	require.NoError(t, os.MkdirAll(filepath.Join(rag, "bin"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(rag, "config.yaml"), []byte("log_level: info\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(rag, "roots.json"), []byte(`["`+f.root+`","`+filepath.Join(f.root, "missing")+`"]`), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(f.root, ".ragcode"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(f.root, "keep.go"), nil, 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(f.root, ".cursor", "rules"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(f.root, "CLAUDE.md"), []byte("# Project"), 0o644))
+	require.NoError(t, engine.WriteIDERules(f.root))
+
+	binDir := filepath.Join(rag, "bin")
+	require.NoError(t, os.WriteFile(filepath.Join(f.home, ".bashrc"), []byte("alias ll='ls -l'\n\n# RagCode MCP\nexport PATH=\""+binDir+":$PATH\"\n# RagCode MCP\nexport FOO=1\n"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(f.home, ".cursor"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(f.home, ".cursor", "mcp.json"), []byte(`{"mcpServers":{"ragcode":{"command":"x"},"other":{"command":"y"}}}`), 0o644))
+	return f
 }
 
-func TestCleanupReadsCanonicalRegistry(t *testing.T) {
-	isolate(t)
-	home, workspace := t.TempDir(), t.TempDir()
-	cache := filepath.Join(workspace, ".ragcode")
-	if err := os.MkdirAll(cache, 0755); err != nil {
-		t.Fatal(err)
-	}
-	registry := utils.GetRegistryPath()
-	if err := os.MkdirAll(filepath.Dir(registry), 0755); err != nil {
-		t.Fatal(err)
-	}
-	data, err := json.Marshal(map[string]interface{}{"version": "v2", "entries": []map[string]string{{"root": workspace}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(registry, data, 0600); err != nil {
-		t.Fatal(err)
-	}
-	cleanWorkspaceData(home)
-	if _, err := os.Stat(cache); !os.IsNotExist(err) {
-		t.Fatalf("canonical registry workspace not cleaned: %v", err)
-	}
+func TestRun(t *testing.T) {
+	f := setup(t)
+	var out bytes.Buffer
+	require.NoError(t, Run(context.Background(), Options{Yes: true, Docker: true, Out: &out}), out.String())
+
+	assert.NoDirExists(t, filepath.Join(f.root, ".ragcode"))
+	assert.FileExists(t, filepath.Join(f.root, "keep.go"))
+	assert.NoDirExists(t, filepath.Join(f.home, ".ragcode"))
+	claude, _ := os.ReadFile(filepath.Join(f.root, "CLAUDE.md"))
+	assert.Equal(t, "# Project\n", string(claude))
+	assert.NoFileExists(t, filepath.Join(f.root, ".cursor", "rules", "ragcode.mdc"))
+
+	rc, _ := os.ReadFile(filepath.Join(f.home, ".bashrc"))
+	assert.Equal(t, "alias ll='ls -l'\n\n# RagCode MCP\nexport FOO=1\n", string(rc), "only the installer's pair goes")
+
+	cursor, _ := os.ReadFile(filepath.Join(f.home, ".cursor", "mcp.json"))
+	assert.NotContains(t, string(cursor), "ragcode")
+	assert.Contains(t, string(cursor), "other")
+
+	log, _ := os.ReadFile(f.dockerLog)
+	assert.Equal(t, "rm -f ragcode-qdrant\nvolume rm ragcode-qdrant\nrm -f ragcode-ollama\nvolume rm ragcode-ollama\n", string(log))
 }
 
-// A .ragcode holding bin/ is the installation, never workspace cache: the
-// sweep must leave it alone even when it sits under a scan root.
-func TestScanSkipsInstallDirAndUnsafeRoots(t *testing.T) {
-	isolate(t)
-	home := t.TempDir()
-	install := filepath.Join(home, ".ragcode")
-	if err := os.MkdirAll(filepath.Join(install, "bin"), 0o755); err != nil {
-		t.Fatal(err)
+func TestRunAsksForWorkspaceData(t *testing.T) {
+	cases := []struct {
+		answer string
+		kept   bool
+	}{
+		{"n\n", true},
+		{"\n", true},
+		{"y\n", false},
 	}
-	ws := filepath.Join(home, "projects", "app")
-	if err := os.MkdirAll(filepath.Join(ws, ".ragcode"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	// registry root under home → its parent (home/projects) is scanned; home
-	// itself is scanned at depth 1; home's parent must be refused.
-	scanAndCleanRagcodeDirs(home, []string{ws, filepath.Join(filepath.Dir(home), "x", "y")})
-
-	if _, err := os.Stat(filepath.Join(install, "bin")); err != nil {
-		t.Fatal("install dir was removed by the sweep")
-	}
-	if _, err := os.Stat(filepath.Join(ws, ".ragcode")); !os.IsNotExist(err) {
-		t.Fatal("workspace .ragcode should have been removed")
-	}
-}
-
-// A file whose project is gone must not resolve to $HOME via the install
-// dir marker.
-func TestFindWorkspaceRootNeverReturnsHome(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	if err := os.MkdirAll(filepath.Join(home, ".ragcode", "bin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if got := findWorkspaceRootFromFilePath(filepath.Join(home, "gone", "project", "main.go")); got != "" {
-		t.Fatalf("root = %q, want none", got)
-	}
-	repo := filepath.Join(home, "code", "repo")
-	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if got := findWorkspaceRootFromFilePath(filepath.Join(repo, "pkg", "a.go")); got != repo {
-		t.Fatalf("root = %q, want %q", got, repo)
+	for _, tc := range cases {
+		t.Run(strings.TrimSpace(tc.answer), func(t *testing.T) {
+			f := setup(t)
+			var out bytes.Buffer
+			require.NoError(t, Run(context.Background(), Options{In: strings.NewReader(tc.answer), Out: &out}))
+			assert.Equal(t, tc.kept, dirExists(filepath.Join(f.root, ".ragcode")))
+			assert.Contains(t, out.String(), "Remove "+filepath.Join(f.root, ".ragcode")+"?")
+			assert.NoFileExists(t, f.dockerLog, "no -docker")
+		})
 	}
 }
 
-func TestRemoveRagcodeFromJSONPreservesOtherSettings(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.json")
-	original := []byte("\xef\xbb\xbf" + `{"counter":9007199254740993,"mcpServers":{"ragcode":{"command":"old"},"other":{"command":"keep"}},"projects":{"A":{},"a":{}}}`)
-	if err := os.WriteFile(path, original, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	removeRagcodeFromJSON("test", path)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	var cfg map[string]interface{}
-	if err := decoder.Decode(&cfg); err != nil {
-		t.Fatal(err)
-	}
-	servers := cfg["mcpServers"].(map[string]interface{})
-	if servers["ragcode"] != nil || servers["other"].(map[string]interface{})["command"] != "keep" {
-		t.Fatalf("wrong servers: %v", servers)
-	}
-	if cfg["counter"].(json.Number).String() != "9007199254740993" {
-		t.Fatalf("number changed: %v", cfg["counter"])
-	}
+func dirExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
 }
 
-func TestRemoveZedEntryPreservesNumbers(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "settings.json")
-	original := `{"counter":9007199254740993,"context_servers":{"ragcode":{},"other":{}}}`
-	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	removeZedRagcodeEntry("Zed", path)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Contains(data, []byte(`"counter": 9007199254740993`)) || bytes.Contains(data, []byte(`"ragcode"`)) {
-		t.Fatalf("wrong rewrite:\n%s", data)
-	}
+// Every file WriteIDERules appends the pointer to gets it stripped again.
+func TestRunStripsEveryPointerFile(t *testing.T) {
+	f := setup(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(f.root, ".github"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(f.root, "AGENTS.md"), []byte("# Agents"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(f.root, ".github", "copilot-instructions.md"), []byte("# Copilot"), 0o644))
+	require.NoError(t, engine.WriteIDERules(f.root))
+	require.NoError(t, Run(context.Background(), Options{Yes: true, Out: &bytes.Buffer{}}))
+	agents, _ := os.ReadFile(filepath.Join(f.root, "AGENTS.md"))
+	assert.Equal(t, "# Agents\n", string(agents))
+	copilot, _ := os.ReadFile(filepath.Join(f.root, ".github", "copilot-instructions.md"))
+	assert.Equal(t, "# Copilot\n", string(copilot))
 }
 
-func TestRemoveFromShellConfigKeepsUserComment(t *testing.T) {
-	home := t.TempDir()
-	binDir := filepath.Join(home, ".ragcode", "bin")
-	user := "# RagCode MCP\nexport QDRANT_API_KEY=mine\n# RagCode MCP\nalias rc=\"" + binDir + "/rag-code-mcp --http-port 39555\"\n"
-	rc := filepath.Join(home, ".bashrc")
-	if err := os.WriteFile(rc, []byte(user+"\n# RagCode MCP\nexport PATH=\""+binDir+":$PATH\"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	removeFromShellConfig(home, binDir)
-	data, err := os.ReadFile(rc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != user+"\n" {
-		t.Fatalf(".bashrc = %q, want %q", data, user+"\n")
-	}
-}
-
-func TestUninstallIntegrationPathsMatchInstaller(t *testing.T) {
-	t.Setenv("CODEX_HOME", "")
-	home := t.TempDir()
-	paths := resolveIDEPaths(home)
-	if paths["codex"].path != filepath.Join(home, ".codex", "config.toml") {
-		t.Fatal(paths["codex"].path)
-	}
-	if paths["antigravity"].path != filepath.Join(home, ".gemini", "config", "mcp_config.json") {
-		t.Fatal(paths["antigravity"].path)
-	}
-	if paths["claude-cli"].path != filepath.Join(home, ".claude.json") {
-		t.Fatal(paths["claude-cli"].path)
-	}
-}
-
-func TestRemoveCodexEntryPreservesOtherServer(t *testing.T) {
-	if findCodexCLI(t.TempDir()) == "" {
-		t.Skip("Codex CLI required")
-	}
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
-	config := "[mcp_servers.other]\ncommand = \"keep\"\n\n[mcp_servers.ragcode]\ncommand = \"remove\"\n"
-	if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	removeCodexEntry(t.TempDir(), path)
-	data, _ := os.ReadFile(path)
-	if bytes.Contains(data, []byte("mcp_servers.ragcode")) || !bytes.Contains(data, []byte("mcp_servers.other")) {
-		t.Fatalf("unexpected config: %s", data)
-	}
+// The index lives in RAGCODE_HOME/index: removing the home removes it, and
+// no Qdrant is asked to drop anything.
+func TestUninstallRemovesIndexDir(t *testing.T) {
+	f := setup(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected HTTP call %s %s", r.Method, r.URL.Path)
+	}))
+	defer srv.Close()
+	rag := filepath.Join(f.home, ".ragcode")
+	require.NoError(t, os.WriteFile(filepath.Join(rag, "config.yaml"), []byte("qdrant_url: "+srv.URL+"\n"), 0o644))
+	db := filepath.Join(rag, "index", "ragcode-x", "index.db")
+	require.NoError(t, os.MkdirAll(filepath.Dir(db), 0o755))
+	require.NoError(t, os.WriteFile(db, []byte("db"), 0o644))
+	require.NoError(t, Run(context.Background(), Options{Yes: true, Out: &bytes.Buffer{}}))
+	assert.NoDirExists(t, rag)
 }

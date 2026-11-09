@@ -1,30 +1,88 @@
+[RagCode v3](../README.md) › internal
+
 # Internal Packages
 
-This directory contains private library code that is specific to the `rag-code-mcp` application. Following Go conventions, code in `internal/` cannot be imported by other projects, ensuring a clean boundary between the public API and implementation details.
+Application-level packages that only the two RagCode binaries need. Go's
+`internal/` rule means nothing outside the `github.com/doITmagic/rag-code-mcp/v3`
+module can import them.
 
-## Directory Structure
+The split in v3 is simple:
 
-| Package | Description |
-|:---|:---|
-| [`config`](./config) | Configuration management (YAML loading, environment overrides). |
-| [`healthcheck`](./healthcheck) | Startup validation for external dependencies (Ollama, Qdrant). |
-| [`logger`](./logger) | Unified logging system with terminal colors and file rotation. |
-| [`service`](./service) | High-level business logic orchestration (Engine, Search, Tools). |
-| [`skills`](./skills) | System for installing and managing repository-local capabilities. |
-| [`updater`](./updater) | Logic for self-updating the MCP server. |
-| [`utils`](./utils) | Common helper functions (file paths, string manipulation). |
+- **Top-level packages** (`parser`, `index`, `engine`, `embed`, `store`,
+  `vecdb`, `tools`) are the indexing and search machinery.
+- **`internal/`** is everything around it: reading the user's configuration,
+  wiring the machinery into an MCP server, and putting the program on (or
+  taking it off) a machine.
 
-## Architectural Role
+## Sub-packages
 
-The `internal` directory serves as the "glue" that connects the generic packages in `pkg/` (like `parser`, `storage`, and `indexer`) into a cohesive application.
+| Package | What it does | Used by |
+|:---|:---|:---|
+| [`app`](./app/README.md) | Wires config, embedder, store, engine, parsers and MCP tools into one `*mcp.Server`. | [`cmd/rag-code-mcp`](../cmd/rag-code-mcp/README.md), tests |
+| [`config`](./config/README.md) | Loads `~/.ragcode/config.yaml` (written from `default.yaml` on first run), applies environment overrides, validates; builds the logger and the rotating log file. | almost everything |
+| [`idepaths`](./idepaths/README.md) | The table of 14 IDE MCP config files and the code that adds or removes the `ragcode` entry in them. | `install`, `uninstall` |
+| [`install`](./install/README.md) | The installer: binary copy, config, Ollama container, model pull, IDE configs, PATH, removal of a RagCode v1 install. | [`cmd/rag-code-install`](../cmd/rag-code-install/README.md) |
+| [`uninstall`](./uninstall/README.md) | The uninstaller: stop running servers, remove IDE entries, per-workspace data, `~/.ragcode`, the PATH line and optionally the Docker containers. | `cmd/rag-code-install -uninstall`, `cmd/rag-code-mcp -uninstall`, `install` (for `Binary` and `StopProcess`) |
 
-- **Orchestration**: The `service` sub-packages coordinate how data flows between the filesystem, the LLM, and the vector database.
-- **Environment**: Packages like `config` and `logger` set up the execution environment.
-- **Extensions**: The `skills` system allows the application to extend its own functionality within a specific workspace.
+## Dependency graph
 
-## Documentation Policy
+```mermaid
+graph TD
+    MCP[cmd/rag-code-mcp] --> APP[app]
+    MCP --> CFG[config]
+    MCP --> UN[uninstall]
+    INST[cmd/rag-code-install] --> IN[install]
+    INST --> UN
+    APP --> CFG
+    APP --> ENG[engine]
+    APP --> TOOLS[tools]
+    APP --> STORE[store]
+    APP --> EMBED[embed]
+    APP --> PARSERS[parser/*]
+    IN --> CFG
+    IN --> IDE[idepaths]
+    IN --> UN
+    UN --> CFG
+    UN --> IDE
+    UN --> ENG
+```
 
-Each sub-directory in `internal` must contain its own `README.md` that describes:
-1. The specific problem the package solves.
-2. Key types and interfaces.
-3. Usage examples.
+`config` imports nothing from the module, so any package (including
+[`engine`](../engine/README.md) and [`tools`](../tools/README.md)) can depend
+on it without cycles. `uninstall` imports `engine` only for
+`engine.PointerFiles` and `engine.IDEPointer`, so it removes exactly what
+`engine.WriteIDERules` added.
+
+## Files on disk owned by these packages
+
+| Path | Written by | Removed by |
+|:---|:---|:---|
+| `~/.ragcode/config.yaml` | `config.Load` (when missing) | `uninstall` |
+| `~/.ragcode/logs/ragcode.log`, `ragcode.log.1` | `config.OpenLogFile` | `uninstall` |
+| `~/.ragcode/bin/rag-code-mcp[.exe]` | `install` | `uninstall` |
+| IDE MCP configs (see [idepaths](./idepaths/README.md)) | `install` via `idepaths` | `uninstall` via `idepaths` |
+| `~/.bashrc` or `~/.zshrc` PATH line | `install` | `uninstall` |
+
+`~/.ragcode` is `$RAGCODE_HOME` when that variable is set. The index under
+`~/.ragcode/index/` and `~/.ragcode/roots.json` are written by the
+[`store`](../store/README.md) and [`engine`](../engine/README.md); the
+uninstaller deletes them with the rest of `~/.ragcode`.
+
+## Testing
+
+```bash
+cd v3
+go test ./internal/...
+```
+
+Each package has `zz_verify_test.go` files with independent verification
+tests next to the regular `*_test.go` files. The installer and uninstaller
+tests use a temporary `HOME`, a fake `docker` shell script on `PATH` and an
+`httptest` Ollama; they skip on Windows. A fake `codex` script is used only by
+the idepaths tests.
+
+## See also
+
+- [RagCode v3 overview](../README.md)
+- [cmd](../cmd/README.md): the binaries built on these packages
+- [engine](../engine/README.md), [tools](../tools/README.md): what `app` wires together

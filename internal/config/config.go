@@ -1,296 +1,152 @@
+// Package config loads the global RagCode configuration from
+// ~/.ragcode/config.yaml (or $RAGCODE_HOME/config.yaml) and provides the
+// process logger.
 package config
 
 import (
+	_ "embed"
+	"errors"
+	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
-const (
-	DefaultOllamaBaseURL = "http://localhost:11434"
-	DefaultQdrantURL     = "http://localhost:6333"
+//go:embed default.yaml
+var defaultYAML []byte
 
-	// StableEmbeddingModel is the current officially recommended embedding model.
-	// Changing this impacts the installer and may require re-indexing.
-	StableEmbeddingModel = "qwen3-embedding:0.6b"
-)
-
-// Config represents the global application configuration
+// Config is the whole user-facing configuration.
 type Config struct {
-	// LLM configuration
-	LLM LLMConfig `yaml:"llm"`
-
-	// Memory configuration
-	Memory MemoryConfig `yaml:"memory"`
-
-	// Storage configuration
-	Storage StorageConfig `yaml:"storage"`
-
-	// Server configuration
-	Server ServerConfig `yaml:"server"`
-
-	// Logging configuration
-	Logging LoggingConfig `yaml:"logging"`
-
-	// RagCode configuration
-	RagCode RagCodeConfig `yaml:"rag_code"`
-
-	// Docs configuration (Markdown documentation indexing)
-	Docs DocsConfig `yaml:"docs"`
-
-	// APIDocs configuration (legacy optional extra collection). There is no
-	// dedicated APIChunk/APIIndexer pipeline anymore; this collection can be
-	// used as an additional LongTermMemory for pre-indexed structured content.
-	APIDocs APIDocsConfig `yaml:"api_docs"`
-
-	// HealthCheck configuration
-	HealthCheck HealthCheckConfig `yaml:"health_check"`
-
-	// Workspace configuration (multi-workspace support)
-	Workspace WorkspaceConfig `yaml:"workspace"`
-
-	// Skills configuration (multi-source skill repos)
-	Skills SkillsConfig `yaml:"skills"`
-
-	// Paths configuration (global application paths)
-	Paths PathsConfig `yaml:"paths"`
-
-	// AutoUpdate enables automatic update check and apply on startup
-	AutoUpdate bool `yaml:"auto_update"`
+	OllamaBaseURL         string        `yaml:"ollama_base_url"`
+	OllamaEmbed           string        `yaml:"ollama_embed"`
+	EmbedThreads          int           `yaml:"embed_threads"`
+	LogLevel              string        `yaml:"log_level"`
+	LogMaxSizeMB          int           `yaml:"log_max_size_mb"`
+	ExcludePatterns       []string      `yaml:"exclude_patterns"`
+	AllowedWorkspacePaths []string      `yaml:"allowed_workspace_paths"`
+	AutoIndex             bool          `yaml:"auto_index"`
+	WatchEnabled          bool          `yaml:"watch_enabled"`
+	WatchDebounce         time.Duration `yaml:"watch_debounce"`
+	AutoCreateIDERules    bool          `yaml:"auto_create_ide_rules"`
 }
 
-// LLMConfig contains LLM provider settings
-type LLMConfig struct {
-	// Provider type: "ollama" (local Ollama), "llamafile" (local GGUF), "huggingface" (HF API)
-	Provider string `yaml:"provider"`
-
-	// Embedding provider: if set, use different provider for embeddings
-	// Options: "ollama", "llamafile", "huggingface", "" (empty = use same as Provider)
-	EmbedProvider string `yaml:"embed_provider"`
-
-	// Ollama settings
-	OllamaBaseURL string `yaml:"ollama_base_url"` // Default: http://localhost:11434
-	OllamaModel   string `yaml:"ollama_model"`    // e.g., phi3:medium, granite3.1-dense:8b
-	OllamaEmbed   string `yaml:"ollama_embed"`    // e.g., mxbai-embed-large
-
-	// Llamafile settings (local GGUF models via llama.cpp server)
-	LlamafileBaseURL string `yaml:"llamafile_base_url"` // Default: http://localhost:8080
-	LlamafileModel   string `yaml:"llamafile_model"`    // Model name or path
-	LlamafileEmbed   string `yaml:"llamafile_embed"`    // Embedding model
-
-	// HuggingFace settings (cloud API)
-	HuggingFaceAPIKey     string `yaml:"huggingface_api_key"`     // Optional: HF API token
-	HuggingFaceModel      string `yaml:"huggingface_model"`       // e.g., gpt2, zephyr-7b-beta
-	HuggingFaceEmbedModel string `yaml:"huggingface_embed_model"` // e.g., sentence-transformers/all-MiniLM-L6-v2
-	HuggingFaceProvider   string `yaml:"huggingface_provider"`    // Optional: inference provider (e.g., hyperbolic)
-
-	// Global settings (apply to all providers)
-	FallbackProvider string        `yaml:"fallback_provider"` // Fallback provider if primary fails
-	Temperature      float64       `yaml:"temperature"`
-	MaxTokens        int           `yaml:"max_tokens"`
-	Timeout          time.Duration `yaml:"timeout"`
-	MaxRetries       int           `yaml:"max_retries"`
-	EmbedBatchSize   int           `yaml:"embed_batch_size"` // Number of texts per batch embedding call (default: 8)
-	EmbedWorkers     int           `yaml:"embed_workers"`    // Number of concurrent embedding workers (default: 1)
-
-	// Deprecated (kept for backward compatibility)
-	BaseURL    string `yaml:"base_url"`    // Legacy: use OllamaBaseURL
-	APIKey     string `yaml:"api_key"`     // Legacy: use HuggingFaceAPIKey
-	Model      string `yaml:"model"`       // Legacy: use provider-specific model
-	EmbedModel string `yaml:"embed_model"` // Legacy: use provider-specific embed model
+// Default returns the built-in configuration; default.yaml mirrors it.
+func Default() Config {
+	return Config{
+		OllamaBaseURL: "http://localhost:11434",
+		OllamaEmbed:   "embeddinggemma-2:270m",
+		// A CPU-only Ollama otherwise takes every performance core.
+		EmbedThreads:       max(2, runtime.NumCPU()/8),
+		LogLevel:           "info",
+		LogMaxSizeMB:       10,
+		ExcludePatterns:    []string{"node_modules", "vendor", "target", "build", "dist", "__pycache__"},
+		AutoIndex:          true,
+		WatchEnabled:       true,
+		WatchDebounce:      time.Second,
+		AutoCreateIDERules: true,
+	}
 }
 
-// MemoryConfig contains memory engine settings
-type MemoryConfig struct {
-	ShortTermSize  int  `yaml:"short_term_size"`
-	EnableLongTerm bool `yaml:"enable_long_term"`
+// HomeDir is the global RagCode directory: $RAGCODE_HOME or ~/.ragcode.
+func HomeDir() string {
+	if h := os.Getenv("RAGCODE_HOME"); h != "" {
+		return h
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = "."
+	}
+	return filepath.Join(home, ".ragcode")
 }
 
-// StorageConfig contains storage backend settings
-type StorageConfig struct {
-	VectorDB VectorDBConfig `yaml:"vector_db"`
-	Redis    RedisConfig    `yaml:"redis"`
-	SQLite   SQLiteConfig   `yaml:"sqlite"`
+// DefaultPath is HomeDir()/config.yaml.
+func DefaultPath() string { return filepath.Join(HomeDir(), "config.yaml") }
+
+// Load reads path on top of Default(), applies environment overrides and
+// validates. A missing file is created from the embedded default.yaml.
+func Load(path string) (Config, error) {
+	cfg := Default()
+	data, err := os.ReadFile(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return cfg, fmt.Errorf("config: create dir: %w", err)
+		}
+		if err := os.WriteFile(path, defaultYAML, 0o644); err != nil {
+			return cfg, fmt.Errorf("config: write default: %w", err)
+		}
+	case err != nil:
+		return cfg, fmt.Errorf("config: read %s: %w", path, err)
+	default:
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			return cfg, fmt.Errorf("config: parse %s: %w", path, err)
+		}
+	}
+	cfg.applyEnv()
+	if err := cfg.Validate(); err != nil {
+		return cfg, err
+	}
+	return cfg, nil
 }
 
-// VectorDBConfig contains vector database settings
-type VectorDBConfig struct {
-	Provider   string `yaml:"provider"` // qdrant, chromadb
-	URL        string `yaml:"url"`
-	APIKey     string `yaml:"api_key"`
-	Collection string `yaml:"collection"`
+func (c *Config) applyEnv() {
+	set := func(dst *string, key string) {
+		if v := os.Getenv(key); v != "" {
+			*dst = v
+		}
+	}
+	set(&c.OllamaBaseURL, "OLLAMA_BASE_URL")
+	set(&c.OllamaEmbed, "OLLAMA_EMBED")
+	set(&c.LogLevel, "MCP_LOG_LEVEL")
+	if v := os.Getenv("RAGCODE_ALLOWED_PATHS"); v != "" {
+		c.AllowedWorkspacePaths = c.AllowedWorkspacePaths[:0]
+		for _, p := range filepath.SplitList(v) {
+			if p = strings.TrimSpace(p); p != "" {
+				c.AllowedWorkspacePaths = append(c.AllowedWorkspacePaths, p)
+			}
+		}
+	}
 }
 
-// RedisConfig contains Redis settings
-type RedisConfig struct {
-	Enabled  bool   `yaml:"enabled"`
-	URL      string `yaml:"url"`
-	Password string `yaml:"password"`
-	DB       int    `yaml:"db"`
+// Validate reports the first invalid field.
+func (c Config) Validate() error {
+	if err := checkURL("ollama_base_url", c.OllamaBaseURL); err != nil {
+		return err
+	}
+	if c.OllamaEmbed == "" {
+		return errors.New("config: ollama_embed is required")
+	}
+	switch c.LogLevel {
+	case "debug", "info", "warn", "error":
+	default:
+		return fmt.Errorf("config: log_level %q must be debug, info, warn or error", c.LogLevel)
+	}
+	if c.EmbedThreads < 0 {
+		return fmt.Errorf("config: embed_threads must not be negative, got %d", c.EmbedThreads)
+	}
+	if c.LogMaxSizeMB <= 0 {
+		return fmt.Errorf("config: log_max_size_mb must be positive, got %d", c.LogMaxSizeMB)
+	}
+	if c.WatchDebounce < 0 {
+		return fmt.Errorf("config: watch_debounce must not be negative, got %s", c.WatchDebounce)
+	}
+	for _, p := range c.AllowedWorkspacePaths {
+		if !filepath.IsAbs(p) {
+			return fmt.Errorf("config: allowed_workspace_paths entry %q is not absolute", p)
+		}
+	}
+	return nil
 }
 
-// SQLiteConfig contains SQLite settings
-type SQLiteConfig struct {
-	Path string `yaml:"path"`
-}
-
-// ServerConfig contains HTTP server settings
-type ServerConfig struct {
-	Host            string `yaml:"host"`
-	Port            int    `yaml:"port"`
-	EnableWebSocket bool   `yaml:"enable_websocket"`
-}
-
-// LoggingConfig contains logging settings
-type LoggingConfig struct {
-	Level     string `yaml:"level"`  // debug, info, warn, error
-	Format    string `yaml:"format"` // json, text
-	Output    string `yaml:"output"` // stdout, file
-	Path      string `yaml:"path"`
-	MaxSizeMB int    `yaml:"max_size_mb"` // Max size in MB before rotation (default: 10)
-}
-
-// RagCodeConfig contains configuration for codebase indexing at startup
-type RagCodeConfig struct {
-	Enabled        bool     `yaml:"enabled"`          // enable Code RAG features
-	IndexOnStartup bool     `yaml:"index_on_startup"` // run indexer when server starts
-	Paths          []string `yaml:"paths"`            // directories to index
-	Collection     string   `yaml:"collection"`       // Qdrant collection for code index
-	Model          string   `yaml:"model"`            // optional: embedding model override
-	Include        []string `yaml:"include"`          // glob include patterns
-	Exclude        []string `yaml:"exclude"`          // glob exclude patterns
-	SearchLimit    int      `yaml:"search_limit"`     // default limit for search results (default: 10)
-	EmbedBatchSize int      `yaml:"embed_batch_size"` // optional: batch size for embedding calls
-	EmbedWorkers   int      `yaml:"embed_workers"`    // optional: concurrent embedding workers
-}
-
-// DocsConfig contains configuration for Markdown documentation indexing
-type DocsConfig struct {
-	// Qdrant collection for docs index (e.g., do-ai-docs)
-	Collection string `yaml:"collection"`
-
-	// Root-level README and docs directory paths
-	ReadmePath string   `yaml:"readme_path"`
-	DocsPaths  []string `yaml:"docs_paths"`
-}
-
-// APIDocsConfig contains configuration for API documentation indexing
-type APIDocsConfig struct {
-	// Qdrant collection for API docs index (e.g., do-ai-api-docs)
-	Collection string `yaml:"collection"`
-}
-
-// WorkspaceConfig contains configuration for multi-workspace support
-type WorkspaceConfig struct {
-	// Enabled controls whether multi-workspace mode is active
-	// When true, collections are created per-workspace automatically
-	// When false, uses traditional single-collection mode
-	Enabled bool `yaml:"enabled"`
-
-	// AutoIndex controls whether indexing is triggered automatically
-	// when a new workspace is detected
-	AutoIndex bool `yaml:"auto_index"`
-
-	// MaxWorkspaces limits the number of workspaces that can be indexed
-	// Set to 0 for unlimited (default: 10)
-	MaxWorkspaces int `yaml:"max_workspaces"`
-
-	// ExcludePatterns are glob patterns for paths to exclude from workspace detection
-	// Default: ["node_modules", ".git", "vendor", "target"]
-	ExcludePatterns []string `yaml:"exclude_patterns"`
-
-	// CollectionPrefix is prepended to all workspace collection names
-	// Format: {prefix}-{workspaceID}
-	// Default: "ragcode"
-	CollectionPrefix string `yaml:"collection_prefix"`
-
-	// IndexPatterns override rag_code include/exclude patterns per workspace
-	// If empty, uses global rag_code patterns
-	IndexInclude []string `yaml:"index_include"`
-	IndexExclude []string `yaml:"index_exclude"`
-
-	// AllowedWorkspacePaths restricts workspace detection to specific directories
-	// If set, only paths within these directories are allowed as workspaces
-	// Useful for restricting tool to ~/projects, ~/code, etc.
-	// Example: ["/home/user/projects", "/home/user/work"]
-	// Empty list = allow any path (subject to other security checks)
-	AllowedWorkspacePaths []string `yaml:"allowed_workspace_paths"`
-
-	// DisableUpwardSearch when true, disables searching parent directories for workspace markers
-	// The tool will only use the exact directory provided or current directory
-	// Useful when you want strict control and don't want automatic parent directory traversal
-	// Default: false (upward search enabled)
-	DisableUpwardSearch bool `yaml:"disable_upward_search"`
-
-	// AutoCreateIDERules when true, automatically creates rule files (.cursorrules, etc.)
-	// in workspace roots to ensure AI follows the "Golden Rule"
-	// Default: true
-	AutoCreateIDERules bool `yaml:"auto_create_ide_rules"`
-
-	// AutoInstallSSESkill installs the ragcode-sse skill into detected workspaces.
-	AutoInstallSSESkill bool `yaml:"auto_install_sse_skill"`
-
-	// WatchEnabled controls filesystem watchers for incremental reindexing.
-	WatchEnabled bool `yaml:"watch_enabled"`
-
-	// WatchDebounce configures debounce duration for filesystem events.
-	// Example: 5s
-	WatchDebounce time.Duration `yaml:"watch_debounce"`
-
-	// EmbedBatchSize configures the number of symbols embedded per batch request.
-	EmbedBatchSize int `yaml:"embed_batch_size"`
-
-	// EmbedWorkers configures the number of concurrent embedding workers.
-	EmbedWorkers int `yaml:"embed_workers"`
-}
-
-// SkillsConfig contains configuration for multi-source skill repositories
-type SkillsConfig struct {
-	// CacheTTL controls how long the aggregated skill list is cached locally.
-	// Default: 24h. Set to 0 to disable caching.
-	CacheTTL time.Duration `yaml:"cache_ttl"`
-
-	// Repos is the list of GitHub repositories containing skills.
-	// Each repo is scanned for folders containing SKILL.md files.
-	Repos []SkillRepoConfig `yaml:"repos"`
-}
-
-// SkillRepoConfig represents a single GitHub repository that hosts skills.
-type SkillRepoConfig struct {
-	// Repo is the GitHub "owner/repo" identifier, e.g. "anthropics/skills"
-	Repo string `yaml:"repo"`
-
-	// Branch is the git branch to scan. Default: "main"
-	Branch string `yaml:"branch"`
-
-	// SkillsPath is the path within the repo where skills live, e.g. "skills".
-	// Set to "." or "" for repos where skill folders are at the root.
-	SkillsPath string `yaml:"skills_path"`
-
-	// Enabled controls whether this repo is included in skill discovery.
-	Enabled bool `yaml:"enabled"`
-}
-
-// HealthCheckConfig contains health check settings
-type HealthCheckConfig struct {
-	// EnableOnStartup controls whether health checks are run when the server starts
-	EnableOnStartup bool `yaml:"enable_on_startup"`
-}
-
-// PathsConfig centralizes all global (non-workspace) application paths.
-// Empty values mean "use default" which resolves to ~/.ragcode/ subtree.
-type PathsConfig struct {
-	// LogsDir is the directory for log files.
-	// Default: ~/.ragcode/logs/
-	LogsDir string `yaml:"logs_dir"`
-
-	// Registry is the path to the workspace registry file.
-	// Default: ~/.ragcode/registry.json
-	Registry string `yaml:"registry"`
-
-	// SkillsCache is the path to the skills cache file.
-	// Default: ~/.ragcode/skills_cache.json
-	SkillsCache string `yaml:"skills_cache"`
-
-	// UpdateCache is the path to the update cache file.
-	// Default: ~/.ragcode/update_cache.json
-	UpdateCache string `yaml:"update_cache"`
+func checkURL(field, raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("config: %s %q must be an http(s) URL", field, raw)
+	}
+	return nil
 }

@@ -20,17 +20,18 @@ type Workspace struct {
 	Collection string
 
 	// Job state, guarded by e.mu.
-	running bool // a runner goroutine exists (it may be waiting for the slot)
-	active  bool // the runner holds the slot: a run is in progress
-	queued  queueKind
-	files   map[string]bool
-	deleted map[string]bool
-	lastErr error
-	retry   *time.Timer // pending lock retry
-	fails   int         // consecutive failed runs; sets the retry delay
-	status  index.Status
-	watch   *watcher
-	gone    bool // the root was removed or renamed; the next Workspace call re-watches it
+	running   bool // a runner goroutine exists (it may be waiting for the slot)
+	active    bool // the runner holds the slot: a run is in progress
+	queued    queueKind
+	files     map[string]bool
+	deleted   map[string]bool
+	lastErr   error
+	retry     *time.Timer // pending lock retry
+	fails     int         // consecutive failed runs; sets the retry delay
+	lockFails int         // consecutive ErrLocked results; sets lockRetryDelay
+	status    index.Status
+	watch     *watcher
+	gone      bool // the root was removed or renamed; the next Workspace call re-watches it
 
 	modelOK atomic.Bool   // the index was made with the embedder's model (fixed for the process)
 	reopens atomic.Uint64 // store.SQLite.Reopens last seen; a change queues a resync

@@ -866,3 +866,32 @@ func TestQueryAfterReopenQueuesResync(t *testing.T) {
 	assert.Nil(t, rec.calls[n].Files, "a walk run, not a files run")
 	assert.False(t, rec.calls[n].Recreate)
 }
+
+// Several clients on one root: after a save one server indexes the file in
+// milliseconds and the others find the lock held. Their first retry comes
+// within seconds, not 30 s, so their answers do not read "indexing" long
+// after the index is up to date.
+func TestLockedRetrySoon(t *testing.T) {
+	cfg := testConfig(t)
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a.go"), "func A\n")
+	be := &blockingEmbedder{release: make(chan struct{})}
+	a := New(cfg, store.NewMemory(), be, nil)
+	defer a.Close()
+	wa, err := a.Workspace(root)
+	require.NoError(t, err)
+	wa.Index(false)
+	require.Eventually(t, func() bool { p := wa.Status().Phase; return p == "parsing" || p == "embedding" }, 2*time.Second, 5*time.Millisecond)
+
+	b := New(cfg, store.NewMemory(), &embed.Fake{}, nil)
+	defer b.Close()
+	wb, err := b.Workspace(root)
+	require.NoError(t, err)
+	wb.Index(false)
+	require.Eventually(t, func() bool { return errors.Is(wb.lastErrLocked(), index.ErrLocked) }, 2*time.Second, 5*time.Millisecond)
+	close(be.release)
+	require.Eventually(t, func() bool { return wa.Status().Phase == "done" }, 2*time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool { s := wb.Status(); return !s.Queued && !s.Running && s.LastError == "" }, 5*time.Second, 20*time.Millisecond)
+	assert.Equal(t, 2*time.Second, lockRetryDelay(0))
+	assert.Equal(t, lockRetry, lockRetryDelay(10), "capped at the old fixed delay")
+}

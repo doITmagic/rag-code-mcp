@@ -72,7 +72,7 @@ graph TD
 
 | File | Covers |
 |------|--------|
-| `engine_test.go` | Root validation, auto-index on first contact, request coalescing, `ErrHeadChanged` re-queue, retry of failed runs, a failed recreate that resumes without dropping again, no watcher without `auto_index`, recreate, embedding model change, concurrent root registration from several engines, a search refused on an index of another model with the same vector size, a lock held by another engine, `Resume`, no goroutines left after `Close`, `WriteIDERules` (tracked files, symlinks, symlinked parent directories, continuing after a refused file), backoff, a run waiting for the slot counts as queued, the end of a run logged with its counts and duration, another process's run shown as running and a dead run's phase shown as `interrupted` (`TestStatusOfAnotherProcessRun`), parents of home and broad system directories refused as roots (`TestValidateRootRefusesBroadDirs`), the watcher's full run logged once while queued, a request queued while the runner exits is still picked up, a run failing because the root was deleted is not retried and the root is caught up when it is back, a query after the store reopened a replaced collection file queues an incremental run (`TestQueryAfterReopenQueuesResync`). `TestMain` points `RAGCODE_HOME` at a temp dir. |
+| `engine_test.go` | Root validation, auto-index on first contact, request coalescing, `ErrHeadChanged` re-queue, retry of failed runs, a failed recreate that resumes without dropping again, no watcher without `auto_index`, recreate, embedding model change, concurrent root registration from several engines, a search refused on an index of another model with the same vector size, a lock held by another engine, `Resume`, no goroutines left after `Close`, `WriteIDERules` (tracked files, symlinks, symlinked parent directories, continuing after a refused file), backoff, a run waiting for the slot counts as queued, the end of a run logged with its counts and duration, another process's run shown as running and a dead run's phase shown as `interrupted` (`TestStatusOfAnotherProcessRun`), the first retry after another process's lock within seconds (`TestLockedRetrySoon`), parents of home and broad system directories refused as roots (`TestValidateRootRefusesBroadDirs`), the watcher's full run logged once while queued, a request queued while the runner exits is still picked up, a run failing because the root was deleted is not retried and the root is caught up when it is back, a query after the store reopened a replaced collection file queues an incremental run (`TestQueryAfterReopenQueuesResync`). `TestMain` points `RAGCODE_HOME` at a temp dir. |
 | `watch_test.go` | The watcher end to end, a `.gitignore` edit queues a full run, a directory that becomes a linked worktree after it was watched is dropped with a full run (`TestWatcherLinkedWorktreeAdded`), a `.git` created after start queues a full run and is watched with its refs (`TestWatcherGitInitAfterStart`), RagCode's own home inside a root neither watched nor accepted as a root (`TestWatcherIgnoresOwnHome`), root removed, root that comes back, unreadable subdirectory, watcher restart retried, `Close` beginning during `Resume`'s watcher setup (no catch-up, no warning). |
 | `watch_linux_test.go` | All roots share one inotify instance (nested roots both see an event, `Close` releases it); a watcher that cannot start is retried; an event overflow re-walks the tree so new directories are watched again. |
 | `prefix_test.go` | `Search` adds the model's query prefix. |
@@ -214,7 +214,7 @@ flowchart TD
     G --> H{result}
     H -->|ok| E
     H -->|ErrHeadChanged| H1[queue full run] --> E
-    H -->|ErrLocked| I[re-merge request,<br/>retry in 30 s]
+    H -->|ErrLocked| I[re-merge request,<br/>retry in 2-30 s]
     H -->|other error| J[re-merge request,<br/>retry after backoff]
     H -->|engine closed| K[stop]
 ```
@@ -226,8 +226,12 @@ into the queue and a timer restarts the runner later, so neither another
 process's lock nor an embedder or store outage drops its files.
 
 - **`index.ErrLocked`**: another process indexes this root (normal with
-  several MCP clients on one root). The retry waits a fixed 30 s with no
-  backoff, and the last status is kept (nothing ran).
+  several MCP clients on one root: on a save every server's watcher queues
+  the file, one indexes it in milliseconds, the others find the lock held).
+  The retry waits `lockRetryDelay`: 2 s, doubled per consecutive `ErrLocked`
+  up to 30 s (2, 4, 8, 16, 30 s), reset once a run takes place. It is not a
+  failure: no failure backoff, no WARN, and the last status is kept (nothing
+  ran).
 - **Any other error**: `retryDelay(fails)` = 30 s doubled per consecutive
   failure, capped at 10 minutes (30 s, 1 m, 2 m, 4 m, 8 m, 10 m). A success
   or a new request resets the count.

@@ -27,6 +27,12 @@ import (
 
 const lockRetry = 30 * time.Second
 
+// lockRetryDelay is the wait after the n-th consecutive ErrLocked: 2 s
+// doubled up to lockRetry. Another server's files run on one save takes
+// milliseconds, so the first retry comes soon; a long run elsewhere is polled
+// less and less often.
+func lockRetryDelay(n int) time.Duration { return min(2*time.Second<<min(n, 5), lockRetry) }
+
 // retryDelay doubles lockRetry per consecutive failure, capped at 10 minutes
 // so a workspace that fails every time does not take the slot every 30 s.
 func retryDelay(fails int) time.Duration {
@@ -38,7 +44,7 @@ var (
 	// workspace has no collection yet.
 	ErrNotIndexed = errors.New("engine: workspace is not indexed yet; run rag_index_workspace or wait for the automatic index to finish")
 	// ErrLocked wraps index.ErrLocked with the retry policy, for Status.
-	ErrLocked = fmt.Errorf("engine: another process is indexing this workspace, retrying in %s (%w)", lockRetry, index.ErrLocked)
+	ErrLocked = fmt.Errorf("engine: another process is indexing this workspace, retrying shortly (%w)", index.ErrLocked)
 	// ErrClosed is returned by Workspace after Close.
 	ErrClosed = errors.New("engine: closed")
 )
@@ -407,6 +413,9 @@ func (e *Engine) runJobs(w *Workspace) {
 		if err == nil {
 			w.fails = 0
 		}
+		if !errors.Is(err, index.ErrLocked) {
+			w.lockFails = 0 // a run took place
+		}
 		switch {
 		case errors.Is(err, index.ErrHeadChanged):
 			w.queued = max(w.queued, kindFull)
@@ -427,10 +436,12 @@ func (e *Engine) runJobs(w *Workspace) {
 		case err != nil && e.ctx.Err() == nil:
 			// Keep the request and retry it after a pause, so neither another
 			// process's lock nor an embedder or store outage drops its files.
-			delay := lockRetry
+			var delay time.Duration
 			if errors.Is(err, index.ErrLocked) {
 				// Normal with several clients on one root: not a failure, so
-				// no backoff, and the poll of a free flock costs nothing.
+				// no failure backoff; the poll of a free flock costs nothing.
+				delay = lockRetryDelay(w.lockFails)
+				w.lockFails++
 				e.log.Info("engine: another process is indexing this root, retrying", "root", w.Root, "in", delay)
 			} else {
 				delay = retryDelay(w.fails)

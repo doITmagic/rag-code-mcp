@@ -389,6 +389,27 @@ Keys from [internal/config](../internal/config/README.md):
 
 ---
 
+## Known limitations
+
+Found in the v3 test rounds; none gives a wrong symbol, they delay or blur a
+status.
+
+- The watcher follows `.git/HEAD` and `.git/refs/**` of the root only. A HEAD
+  kept elsewhere is not watched: a linked worktree's (`.git/worktrees/<n>/HEAD`
+  of the main repository), a `--separate-git-dir` repository's, and a reftable
+  repository's refs (`.git/reftable/`). A branch switch there that changes
+  files is still indexed through the file events; one that changes no file
+  leaves the old branch name in the status until the next run.
+- A HEAD move during a run that changes nothing saves that run's zero
+  counters.
+- A permission change alone (`chmod`) on an indexed file queues no run: a file
+  made unreadable stays indexed with its last content.
+- `ErrNotIndexed` says "or wait for the automatic index to finish" even with
+  `auto_index: false`, where only `rag_index_workspace` indexes.
+- A deleted index directory: until a server reopens the file, the run it had
+  in flight holds `index.lock` on the unlinked copy, so a second process may
+  run at the same time once. The result stays consistent.
+
 ## Testing
 
 ```bash

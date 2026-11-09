@@ -496,6 +496,25 @@ endpoints cost one timeout, not two.
 {"name": "rag_server_info", "arguments": {}}
 ```
 
+## Known limitations
+
+- `rag_list_package_exports` never lists the workspace root as a directory
+  (`.`, `./` or the absolute root path answer "no indexed module or directory
+  matches"): the root's own files are reached through their module path (a
+  Go module path, a Python module name) or file by file.
+- A short directory name resolves only through indexed files: an unreadable
+  directory, or one whose files export nothing, answers "no match" by its
+  short name; its path gives the precise message.
+- After a crash, `rag_find_usages` leaves out the "interrupted" hint when it
+  already returns its own message.
+- `rag_server_info` lists a `roots.json` entry that the engine now refuses (for
+  example one inside RagCode's own home) as `not_indexed`, without the reason,
+  and a `missing` root with `last_run_files: 0`, without reading its saved
+  status.
+- `rag_read_file_context` reads any workspace file except secrets, including
+  files under a non-hidden `RAGCODE_HOME` inside the root, which the index
+  skips.
+
 ## Adding a tool
 
 Follow the pattern of the existing handlers:

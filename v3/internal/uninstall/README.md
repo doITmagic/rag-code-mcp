@@ -140,6 +140,14 @@ For `ragcode-qdrant` (left by v1) and `ragcode-ollama`:
 `ragcode-ollama` volume deletes the downloaded models. A host directory given
 to the installer with `-models-dir` is not touched.
 
+## Known limitations
+
+- Continue's dedicated file `~/.continue/mcpServers/ragcode.json` is left as
+  `{"mcpServers": {}}` instead of being deleted.
+- Zed's default `settings.json` is JSONC, which counts as invalid JSON here, so
+  on a typical Zed setup the entry is neither written nor removed; a warning
+  says so.
+
 ## Usage
 
 ```go

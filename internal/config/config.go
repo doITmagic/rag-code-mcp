@@ -41,7 +41,7 @@ func Default() Config {
 		OllamaBaseURL: "http://localhost:11434",
 		OllamaEmbed:   "embeddinggemma-2:270m",
 		// A CPU-only Ollama otherwise takes every performance core.
-		EmbedThreads:       max(2, runtime.NumCPU()/8),
+		EmbedThreads:       max(2, runtime.NumCPU()/3),
 		LogLevel:           "info",
 		LogMaxSizeMB:       10,
 		ExcludePatterns:    []string{"node_modules", "vendor", "target", "build", "dist", "__pycache__"},

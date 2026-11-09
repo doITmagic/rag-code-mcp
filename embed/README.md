@@ -204,7 +204,7 @@ Keys from [internal/config](../internal/config/README.md), applied in
 |-----|--------------|---------|--------|
 | `ollama_base_url` | `OLLAMA_BASE_URL` | `http://localhost:11434` | Base URL of Ollama (must be http/https). |
 | `ollama_embed` | `OLLAMA_EMBED` | `embeddinggemma-2:270m` | The embedding model; needs Ollama 0.40 or later. Changing it makes the next index run recreate the collection. |
-| `embed_threads` | none | `max(2, NumCPU/8)` | `Ollama.Threads` -> `options.num_thread`. `0` lets Ollama use every performance core; negative values are rejected by config validation. |
+| `embed_threads` | none | `max(2, NumCPU/3)` | `Ollama.Threads` -> `options.num_thread`. `0` lets Ollama use every performance core; negative values are rejected by config validation. |
 
 The package writes no files.
 

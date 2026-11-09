@@ -3,8 +3,8 @@
 
 ollama_base_url: http://localhost:11434
 ollama_embed: embeddinggemma-2:270m   # needs Ollama 0.40 or later
-# CPU threads Ollama may use for embeddings. Default: an eighth of the logical
-# CPUs, at least 2, so indexing on a machine without a GPU stays quiet.
+# CPU threads Ollama may use for embeddings. Default: a third of the logical
+# CPUs, at least 2, so a machine without a GPU stays usable while indexing.
 # 0 lets Ollama use every performance core (fastest, loudest).
 # embed_threads: 4
 

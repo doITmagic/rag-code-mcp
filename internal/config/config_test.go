@@ -222,10 +222,10 @@ func TestOpenLogFileFollowsRotationByAnotherProcess(t *testing.T) {
 	assert.True(t, bytes.Contains(cur, []byte("quiet-line")) || bytes.Contains(rot, []byte("quiet-line")), "line lost in a rotated-away file")
 }
 
-// embed_threads defaults to an eighth of the logical CPUs (at least 2), so a
+// embed_threads defaults to a third of the logical CPUs (at least 2), so a
 // CPU-only Ollama does not take every core; 0 hands the choice to Ollama.
 func TestEmbedThreads(t *testing.T) {
-	assert.Equal(t, max(2, runtime.NumCPU()/8), Default().EmbedThreads)
+	assert.Equal(t, max(2, runtime.NumCPU()/3), Default().EmbedThreads)
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	require.NoError(t, os.WriteFile(path, []byte("embed_threads: 0\n"), 0o644))
 	cfg, err := Load(path)

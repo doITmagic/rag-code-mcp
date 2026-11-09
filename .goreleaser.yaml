@@ -34,7 +34,7 @@ builds:
     
     ldflags:
       - -s -w
-      - -X main.Version={{.Version}}
+      - -X main.Version={{.Tag}}
 
   - id: rag-code-install
     main: ./cmd/rag-code-install
@@ -58,12 +58,11 @@ builds:
     
     ldflags:
       - -s -w
-      - -X main.Version={{.Version}}
 
 
 archives:
   - id: default
-    format: tar.gz
+    formats: [ tar.gz ]
     name_template: >-
       {{ .ProjectName }}_
       {{- .Os }}_
@@ -72,7 +71,7 @@ archives:
     # Use zip for Windows
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [ zip ]
     
     files:
       - LICENSE
@@ -119,6 +118,8 @@ release:
   
   header: |
     ## RagCode MCP Server v{{.Version}}
+
+    **Upgrading from v1:** run `./rag-code-install` from the archive. Do not use v1's `rag-code-mcp --update` or `brew upgrade`: they replace only the binary and leave the v1 setup (Qdrant, old config, IDE entries) behind.
     
     Semantic code navigation using RAG (Retrieval-Augmented Generation).
     

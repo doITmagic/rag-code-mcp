@@ -10,7 +10,8 @@ context. Everything runs on your machine: an embedded SQLite index per
 workspace and a local Ollama model for embeddings.
 
 This is RagCode v2 (Go module `github.com/doITmagic/rag-code-mcp/v2`), a
-rewrite of v1 that needs no database server. v1 lives on the `v1` branch.
+rewrite of v1 that needs no database server. The last v1 release is
+[v1.1.21](https://github.com/doITmagic/rag-code-mcp/releases/tag/v1.1.21).
 
 ## Requirements
 
@@ -47,6 +48,10 @@ The installer copies `rag-code-mcp` to `~/.ragcode/bin`, writes
 `~/.ragcode/config.yaml`, starts Ollama, pulls the model and registers the
 server in the IDE configs it finds. A RagCode v1 install is removed first; its
 indexes are not compatible, so projects are indexed again.
+
+**Upgrading from v1:** run `rag-code-install` as above. v1's
+`rag-code-mcp --update` and `brew upgrade` replace only the binary and leave
+the v1 setup (Qdrant, old config, IDE entries) behind.
 
 `dist/rag-code-install -uninstall -y` removes everything; add `-docker` to also
 remove the `ragcode-ollama` container.

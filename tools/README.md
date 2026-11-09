@@ -486,8 +486,9 @@ otherwise from the GitHub API
 (`/repos/doITmagic/rag-code-mcp/releases/latest`); the answer is written back
 to the cache. When the check fails, `latest` is `"unknown"` and `available` is
 `false`; the failure is cached for one hour, so an offline machine does not
-wait on GitHub at every call (a request canceled by the client is not cached). `available` compares `vMAJOR.MINOR.PATCH` tags (a
-`-suffix` is ignored); a version that does not parse, such as a dev build, is
+wait on GitHub at every call (a request canceled by the client is not cached). `available` compares `vMAJOR.MINOR.PATCH` tags (the
+leading `v` is optional); a pre-release (`-suffix`) is older than its final
+release, and two pre-releases of one version compare equal; a version that does not parse, such as a dev build, is
 never reported as outdated. Every HTTP request uses a 3-second client timeout,
 and the Ollama probe and the update check run in parallel, so two stalled
 endpoints cost one timeout, not two.

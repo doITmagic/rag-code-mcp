@@ -4,11 +4,6 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Tag to release (defaults to latest)'
-        required: false
 
 permissions:
   contents: write
@@ -53,19 +48,31 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
       
+      # Final releases only, and only when the tag is on main: an rc tag on a
+      # branch must not move main or advertise a pre-release in server.json.
       - name: Update server.json version
+        id: bump
+        if: ${{ !contains(github.ref_name, '-') }}
         run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "Tag is not on main; server.json left as is."
+            exit 0
+          fi
+          echo "on_main=true" >> $GITHUB_OUTPUT
+          git checkout -q -B main origin/main # main may be ahead of the tag
           VERSION=${GITHUB_REF#refs/tags/v}
           jq --arg v "$VERSION" '.version = $v' server.json > tmp && mv tmp server.json
       
       - name: Commit updated server.json
+        if: ${{ steps.bump.outputs.on_main == 'true' }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add server.json
           if ! git diff --cached --quiet; then
             git commit -m "chore: update server.json to version ${GITHUB_REF#refs/tags/v}"
-            git push origin HEAD:main
+            git push origin main
           else
             echo "No changes to commit"
           fi

@@ -1,6 +1,6 @@
 # Agent-assisted issue reports
 
-**Status:** proposal, 2026-11-07. Not implemented. Target: v3.1.
+**Status:** proposal, 2026-11-07. Not implemented. Target: v2.1.
 
 ## Why
 
@@ -73,7 +73,7 @@ flowchart TD
 
 ## Known limitations page
 
-A single page, `v3/KNOWN-LIMITATIONS.md`, will list what we already know, so
+A single page, `KNOWN-LIMITATIONS.md`, will list what we already know, so
 nobody reports it again: **Known issues** (errors not fixed yet) and **Not
 supported yet** (missing features, with language, a short example, where it
 was found, and the issue link once there is one). Package READMEs keep the
@@ -94,11 +94,11 @@ live in the package READMEs under "Known limitations".
 
 | File | Change |
 |---|---|
-| `v3/engine/iderules.go` (the generated `<root>/.ragcode/RAGCODE.md`) | A short "Reporting a RagCode gap" section with the steps above: verify, show the full text, ask, search duplicates, send only after yes, give the link. |
+| `engine/iderules.go` (the generated `<root>/.ragcode/RAGCODE.md`) | A short "Reporting a RagCode gap" section with the steps above: verify, show the full text, ask, search duplicates, send only after yes, give the link. |
 | `.github/ISSUE_TEMPLATE/agent-report.yml` | A form with version, language, tool, input, actual and expected answer, minimal example, and a warning not to paste project code. |
 | `.github/workflows/agent-reports.yml` | The Action that closes `from-agent` issues missing required fields or duplicating an open title. |
 | GitHub repository settings | A `from-agent` label. |
-| `v3/engine/README.md` | Document the new `RAGCODE.md` section. |
+| `engine/README.md` | Document the new `RAGCODE.md` section. |
 
 No change to the server, the tools, the index or the network access of the
 program.
@@ -160,12 +160,12 @@ of the design, on both sides.
 
 ## Related decision (2026-11-07)
 
-Broad testing on new projects is closed for v3. From now on:
+Broad testing on new projects is closed for v2. From now on:
 
 - **Errors are fixed:** answers that are false (a wrong link, wrong line
   numbers, a crash, a misleading message).
 - **Coverage gaps are documented:** a case the parsers do not see yet goes to
   the package README under "Known limitations" and, where it can mislead, the
   tool answer says so (as `rag_find_usages` does for reads of constants). The
-  list is the v3.1 backlog; user reports through this feature decide its
+  list is the v2.1 backlog; user reports through this feature decide its
   order.

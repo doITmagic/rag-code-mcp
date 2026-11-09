@@ -1220,3 +1220,22 @@ func TestExactQualifiedNameWins(t *testing.T) {
 	r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "a.Hook"})
 	assert.Equal(t, "ambiguous", r.Status, "neither equals a.Hook: both only end with it")
 }
+
+// A pre-release is older than its final release, so an rc build learns that
+// the final is out; dev builds are never outdated.
+func TestSemverLess(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		want bool
+	}{
+		{"2.0.0-rc1", "v2.0.0", true},
+		{"v2.0.0", "v2.0.0-rc1", false},
+		{"v2.0.0", "v2.0.0", false},
+		{"2.0.0", "v2.0.1", true},
+		{"v2.0.0-rc1", "v1.1.21", false},
+		{"v2.0.0-rc1", "v2.0.0-rc2", false},
+		{"dev", "v9.0.0", false},
+	} {
+		assert.Equal(t, c.want, semverLess(c.a, c.b), "%s < %s", c.a, c.b)
+	}
+}

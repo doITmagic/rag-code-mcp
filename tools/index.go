@@ -196,8 +196,9 @@ func (t *tools) update(ctx context.Context) Update {
 	return u
 }
 
-// semverLess reports a < b for "v1.2.3"-style tags; anything unparsable
-// (dev builds) is never considered outdated.
+// semverLess reports a < b for "v1.2.3"-style tags; a pre-release is older
+// than its final release; anything unparsable (dev builds) is never
+// considered outdated.
 func semverLess(a, b string) bool {
 	parse := func(s string) ([3]int, bool) {
 		var v [3]int
@@ -225,7 +226,7 @@ func semverLess(a, b string) bool {
 			return x[i] < y[i]
 		}
 	}
-	return false
+	return strings.Contains(a, "-") && !strings.Contains(b, "-") // shortcut: two pre-releases of one version compare equal; order them if testers run several
 }
 
 // knownRoots lists roots.json with the persisted status of each root, or the

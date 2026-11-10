@@ -278,6 +278,7 @@ func (wt *watcher) handle(ev fsnotify.Event) {
 		case refs && ev.Has(fsnotify.Create) && isDir(ev.Name): // refs, refs/heads made after .git was watched
 			_ = wt.addTree(ev.Name, false)
 			wt.full("git HEAD changed")
+		case strings.HasSuffix(rel, ".lock"): // git writes <ref>.lock, then renames it over the ref: wait for the ref
 		case rel == filepath.Join(".git", "HEAD") || (refs && len(parts) > 2):
 			wt.full("git HEAD changed")
 		}

@@ -425,3 +425,29 @@ func TestResumeFollowerSkipsCatchUp(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	assert.Empty(t, rec.snapshot())
 }
+
+// A commit moves a ref the way git does it (write <ref>.lock, rename it over
+// the ref): one full run, not one per event of the lock file.
+func TestWatcherRefUpdateQueuesOneFullRun(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.WatchEnabled = true
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".git", "HEAD"), "ref: refs/heads/main\n")
+	writeFile(t, filepath.Join(root, ".git", "refs", "heads", "main"), "aaa\n")
+	rec := &runRecorder{}
+	e := New(cfg, store.NewMemory(), &embed.Fake{}, nil)
+	defer e.Close()
+	e.run = rec.run
+	_, err := e.Workspace(root)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return watching(e, filepath.Join(root, ".git", "refs", "heads")) }, 2*time.Second, 10*time.Millisecond)
+	time.Sleep(300 * time.Millisecond) // let the start-up run settle
+	n := fullRuns(rec)
+
+	lock := filepath.Join(root, ".git", "refs", "heads", "main.lock")
+	writeFile(t, lock, "bbb\n")
+	require.NoError(t, os.Rename(lock, filepath.Join(root, ".git", "refs", "heads", "main")))
+	require.Eventually(t, func() bool { return fullRuns(rec) > n }, 2*time.Second, 10*time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
+	assert.Equal(t, n+1, fullRuns(rec))
+}

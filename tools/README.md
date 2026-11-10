@@ -56,7 +56,7 @@ Tests:
 | File | What it covers |
 |---|---|
 | [`tools_test.go`](tools_test.go) | an MCP client and server over in-memory transports with a real engine on `store.NewMemory()`, `embed.Fake` and a fake `.fk` analyzer. Missing and bad roots, the root taken from client roots, every tool, the not-indexed and during-recreate fallbacks, dependency down, tool schemas, helpers, fallback skip rules, edits and deletes keeping results right, no Qdrant left in `rag_server_info`, same-name variants, lookup by declared name with `file_path` as a hard filter, `by_name` usages and hierarchy nodes, the live state of a root being indexed in `rag_server_info`, the last run's error kept after a restart, a deleted root reported as `missing`, overloads and get/set pairs resolved as one symbol, twins as one hierarchy node (both directions, every depth), one export (and count) and one search hit, `ambiguous_by_name` not counting calls that name another symbol's qualified name, the module spelling of a barrel file in `rag_list_package_exports`, an equal qualified name winning over suffix matches, a qualified call bound by name only marked `by_name`, short directory names and file paths in `rag_list_package_exports` with one module per file (`.fkm` analyzer), the export-less file message, an unreadable directory reported as such, an excluded directory and file reported as not indexed, the zero-usage note not claiming imports, `indexing` (not `ok`, not the fallback) while a run goes over an existing index, `kinds` validation and the no-such-kinds message, `limit` respected exactly with `truncated` in usages and the hierarchy, a binary file with an unknown extension not dumped, also for a line range |
-| [`zz_verify_test.go`](zz_verify_test.go) | verification tests: short package names past the scroll cap, call-hierarchy cycles and the node cap, cancelled contexts, stalled `rag_server_info` endpoints, read-file edge cases (degenerate files, symlink out of the root, ranges, minified files, long lines, secrets), the 200-file fallback cap, multi-byte usage line cut, compact/full output and path boost, the 24 h update cache, a second index confirm while running, huge limits, `total_lines` and negative line numbers, the breadth-first node cap, a line range of a file over 8 MiB, exports of a workspace directory and `res://` paths, a Godot scene node not making its class ambiguous, the note on zero usages of a constant |
+| [`zz_verify_test.go`](zz_verify_test.go) | verification tests: short package names past the scroll cap, call-hierarchy cycles and the node cap, cancelled contexts, stalled `rag_server_info` endpoints, read-file edge cases (degenerate files, symlink out of the root, ranges, minified files, long lines, secrets), the 200-file fallback cap, multi-byte usage line cut, compact/full output and path boost, the 24 h update cache, a second index call while running, huge limits, `total_lines` and negative line numbers, the breadth-first node cap, a line range of a file over 8 MiB, exports of a workspace directory and `res://` paths, a Godot scene node not making its class ambiguous, the note on zero usages of a constant |
 | [`fifo_unix_test.go`](fifo_unix_test.go) | the not-indexed fallback keeps the index skip rules: no symlink out of the root, no fifo, no secret file (Unix only) |
 | [`index_unix_test.go`](index_unix_test.go) | (`//go:build unix`) a known root with no `ended_at` is `interrupted` only when nobody holds its lock |
 
@@ -86,10 +86,9 @@ type IndexInfo struct {
 |---|---|---|
 | `ok` | every tool | the answer is in `data`. A lookup that finds nothing is still `ok`, with a message such as `no indexed symbol named "X"; try rag_search` |
 | `not_indexed` | search, usages, hierarchy, exports | the workspace has no index yet. `rag_search` still returns fallback results |
-| `indexing` | the same tools, and `rag_index_workspace` with `confirm=true` | an index run is running or queued; for `rag_index_workspace` it means "run queued". An answer that would be `ok` becomes `indexing`, keeps its `data` and adds `index run in progress: results may be incomplete until it ends` to the message (`rag_read_file_context` parses on the spot and stays `ok`) |
+| `indexing` | the same tools, and `rag_index_workspace` | an index run is running or queued; for `rag_index_workspace` it means "run queued". An answer that would be `ok` becomes `indexing`, keeps its `data` and adds `index run in progress: results may be incomplete until it ends` to the message (`rag_read_file_context` parses on the spot and stays `ok`) |
 | `dependency_down` | every tool except `rag_read_file_context` and `rag_server_info` | the embedder (Ollama) or the index store cannot be used; the message says what to do |
 | `ambiguous` | `rag_find_usages`, `rag_call_hierarchy` | several symbols match; `data.candidates` lists them |
-| `confirmation_required` | `rag_index_workspace` without `confirm=true` | nothing was started; `data` holds the plan |
 
 Input errors (empty query, bad mode, unknown `kinds` value, path outside the
 root, missing root, cancelled request) are **tool errors**: `IsError` is set and the content is a
@@ -108,7 +107,7 @@ Every answer tied to a workspace carries `index`:
 
 When the state is `failed` or `interrupted` and the tool set no message, the
 message becomes `last index run <state> (<error>); run rag_index_workspace
-with confirm=true to retry`. After a restart the error comes from the saved
+to retry`. After a restart the error comes from the saved
 index status; with none, the parentheses are left out.
 
 ## Workspace root resolution
@@ -443,25 +442,23 @@ Indexes the workspace.
 |---|---|---|
 | `workspace_root` | string | absolute project path |
 | `mode` | string | `incremental` (default, changed files only) or `recreate` (drop the collection and re-embed everything) |
-| `confirm` | bool | `true` starts the run; `false` only reports the plan |
+| `confirm` | bool | ignored; every call starts the run (kept so older calls still validate) |
 
-- Without `confirm`: walks the root with the configured exclude patterns and
-  answers `confirmation_required` with `data.estimated_files`. When the
-  existing index has another `Format`, an `incremental` request also carries
-  `data.full_reindex`: every file is re-indexed anyway.
-- With `confirm=true`: when `auto_create_ide_rules` is on, writes the IDE rules
+- When `auto_create_ide_rules` is on, writes the IDE rules
   (`<root>/.ragcode/RAGCODE.md` and the pointers, see
   [engine](../engine/README.md)); a failure there is added to the message, not
-  fatal. Then it queues the run and answers `indexing` right away. Progress is
-  visible in the `index` block of any later call, or in `rag_server_info`.
+  fatal. Then it queues the run and answers `indexing` right away; no
+  confirmation step. When the existing index has another `Format`, an
+  `incremental` request also carries `data.full_reindex`: every file is
+  re-indexed anyway. Progress is visible in the `index` block of any later
+  call, or in `rag_server_info`.
 
-Output `data`: `{root, collection, mode, full_reindex?, estimated_files?}`.
+Output `data`: `{root, collection, mode, full_reindex?}`.
 
 ```json
 {"name": "rag_index_workspace", "arguments": {
   "workspace_root": "/home/me/project",
-  "mode": "incremental",
-  "confirm": true
+  "mode": "incremental"
 }}
 ```
 

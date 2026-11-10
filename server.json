@@ -51,7 +51,7 @@
     },
     {
       "name": "rag_index_workspace",
-      "description": "Index the workspace. Without confirm=true it only reports what would be indexed. mode=incremental re-indexes changed files; mode=recreate drops the collection and re-embeds everything."
+      "description": "Index the workspace: queues a run and returns at once. mode=incremental re-indexes changed files; mode=recreate drops the collection and re-embeds everything."
     },
     {
       "name": "rag_server_info",

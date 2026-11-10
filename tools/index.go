@@ -25,7 +25,7 @@ import (
 type IndexInput struct {
 	WorkspaceRoot string `json:"workspace_root,omitempty" jsonschema:"Absolute path of the project directory (required). Pass it on every call."`
 	Mode          string `json:"mode,omitempty" jsonschema:"incremental (default: changed files only) or recreate (drop the collection and re-embed everything)."`
-	Confirm       bool   `json:"confirm,omitempty" jsonschema:"Set true to start the run; false only reports the plan."`
+	Confirm       bool   `json:"confirm,omitempty" jsonschema:"Ignored: every call starts the run. Kept so older calls still validate."`
 }
 
 func (t *tools) indexWorkspace(ctx context.Context, req *mcp.CallToolRequest, in IndexInput) (*mcp.CallToolResult, any, error) {
@@ -43,15 +43,6 @@ func (t *tools) indexWorkspace(ctx context.Context, req *mcp.CallToolRequest, in
 	data := map[string]any{"root": w.Root, "collection": w.Collection, "mode": in.Mode}
 	if st, err := index.LoadState(w.Root); in.Mode == "incremental" && err == nil && len(st.Files) > 0 && st.Format != index.Format {
 		data["full_reindex"] = fmt.Sprintf("index format %d -> %d: every file is re-indexed", st.Format, index.Format)
-	}
-	if !in.Confirm {
-		files, err := index.Walk(w.Root, t.cfg.ExcludePatterns)
-		if err != nil {
-			return fail(fmt.Sprintf("cannot walk %s: %v", w.Root, err))
-		}
-		data["estimated_files"] = len(files)
-		msg := fmt.Sprintf("call again with confirm=true to run an index (%s) of %d files into %s", in.Mode, len(files), w.Collection)
-		return reply("confirmation_required", msg, data, w)
 	}
 	var notes []string
 	if t.cfg.AutoCreateIDERules {

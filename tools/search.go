@@ -138,7 +138,7 @@ func (t *tools) searchErr(ctx context.Context, w *engine.Workspace, in SearchInp
 	}
 	hits := t.fallback(ctx, w.Root, in, f)
 	hits = rank(hits, w.Root, in.FilePath, in.Limit, in.Full)
-	status, msg := "not_indexed", "no index yet: results come from a bounded on-the-fly parse of up to 200 files; run rag_index_workspace with confirm=true"
+	status, msg := "not_indexed", "no index yet: results come from a bounded on-the-fly parse of up to 200 files; run rag_index_workspace"
 	if s := w.Status(); s.Running || s.Queued {
 		status, msg = "indexing", "index in progress: results come from a bounded on-the-fly parse of up to 200 files; retry when the index is done"
 	}

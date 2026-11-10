@@ -497,9 +497,6 @@ Files runs apply the same check to the listed files.
 
 ### Known limitations
 
-- A plan (`rag_index_workspace` without `confirm`) walks the root, so an
-  unreadable directory logs its WARN on every plan call, although no run
-  happens.
 - Only hidden directories are pruned; a hidden file with a source extension
   (`pkg/.hidden.py`) is indexed, with a qualified name such as
   `pkg..hidden.hidden_fn`.

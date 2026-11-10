@@ -483,20 +483,17 @@ func TestReadFileContext(t *testing.T) {
 func TestIndexWorkspace(t *testing.T) {
 	v := newEnv(t, false, nil)
 	var out struct {
-		Root           string `json:"root"`
-		Collection     string `json:"collection"`
-		EstimatedFiles int    `json:"estimated_files"`
-		Mode           string `json:"mode"`
+		Root       string `json:"root"`
+		Collection string `json:"collection"`
+		Mode       string `json:"mode"`
 	}
+	// No confirmation step: a call without confirm starts the run.
 	r, _ := v.call(t, "rag_index_workspace", map[string]any{"workspace_root": v.root})
-	require.Equal(t, "confirmation_required", r.Status, r.Message)
+	require.Equal(t, "indexing", r.Status, r.Message)
 	data(t, r, &out)
 	assert.Equal(t, v.root, out.Root)
 	assert.True(t, strings.HasPrefix(out.Collection, "ragcode-"))
-	assert.Equal(t, 3, out.EstimatedFiles)
-	assert.Contains(t, r.Message, "to run an index (incremental) of 3 files")
 	assert.Equal(t, "incremental", out.Mode)
-	assert.Equal(t, "not_indexed", r.Index.State)
 
 	r, _ = v.call(t, "rag_index_workspace", map[string]any{"workspace_root": v.root, "confirm": true, "mode": "recreate"})
 	require.Equal(t, "indexing", r.Status, r.Message)

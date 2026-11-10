@@ -1254,3 +1254,15 @@ func TestResolveSymbolCodeBeatsDocChunk(t *testing.T) {
 	r, _ = v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "Only"})
 	assert.NotEqual(t, "ambiguous", r.Status, r.Message)
 }
+
+// An identifier with no symbol of that name (a struct field) says so: the
+// semantic neighbours that follow are not that name.
+func TestSearchIdentifierWithoutExactMatchSaysSo(t *testing.T) {
+	v := newEnv(t, true, nil)
+	r, _ := v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "ElectionDate"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	assert.Contains(t, r.Message, `no symbol named "ElectionDate"`)
+	r, _ = v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "Foo"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	assert.NotContains(t, r.Message, "no symbol named")
+}

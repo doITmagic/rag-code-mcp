@@ -94,12 +94,17 @@ func (t *tools) search(ctx context.Context, req *mcp.CallToolRequest, in SearchI
 	merge := func(hs []store.Hit) []store.Hit {
 		return mergeTwins(live(w, hs), func(h *store.Hit) *parser.Symbol { return &h.Symbol })
 	}
+	msg := ""
 	if isIdentifier(in.Query) {
 		exact, err := byName(ctx, w, f, in.Query, exactLimit)
 		if err != nil {
 			return t.searchErr(ctx, w, in, f, err)
 		}
-		for _, h := range merge(exact) {
+		exact = merge(exact)
+		if len(exact) == 0 { // said plainly: the semantic hits below are not that name
+			msg = fmt.Sprintf("no symbol named %q (struct fields, locals and Go interface methods are not symbols): the results are semantic neighbours only; grep finds field uses", in.Query)
+		}
+		for _, h := range exact {
 			seen[twinOf(&h.Symbol)] = true
 			hits = append(hits, toHit(h.Symbol, 1, "exact"))
 		}
@@ -127,7 +132,7 @@ func (t *tools) search(ctx context.Context, req *mcp.CallToolRequest, in SearchI
 			return t.searchErr(ctx, w, in, f, engine.ErrNotIndexed)
 		}
 	}
-	return reply("ok", "", map[string]any{"query": in.Query, "results": hits, "count": len(hits)}, w)
+	return reply("ok", msg, map[string]any{"query": in.Query, "results": hits, "count": len(hits)}, w)
 }
 
 // searchErr answers a failed store call: the bounded AST fallback while the

@@ -140,6 +140,10 @@ Relations of a `var` or `const` spec are shared by every name in that spec.
   `go.mod` changes (mtime) or disappears; a `go.mod` created later in a
   directory that had none needs a restart to show up.
 - Methods whose receiver type cannot be read produce no symbol.
+- Interface methods are not symbols of their own: they are only listed in the
+  interface's `Metadata["methods"]`. `rag_find_usages` on a method declared
+  only in an interface (no implementation) answers "no indexed symbol named";
+  calls through the interface (`repo.M()`) stay unresolved (`x.M()` rule).
 - An import without an alias is known by the goimports guess of its name
   (`assumedName`), not by the imported package's `package` clause; a
   package whose real name differs from that guess gets calls with an empty

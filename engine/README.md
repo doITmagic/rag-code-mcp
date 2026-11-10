@@ -308,6 +308,7 @@ gone. Where locking is a no-op (no flock), every server leads, as before.
 | a path inside a linked worktree (`index.LinkedWorktreeOf`) | its watches are dropped, full run ("linked worktree added"): `git worktree add` writes the `.git` after the directory was created and watched, and the walk purges what was indexed from it |
 | a `.gitignore` at any depth | full run (".gitignore changed"): only the walk applies ignore rules to files already indexed or newly eligible |
 | remove/rename of a watched directory | its watches are dropped, full run ("directory removed"); the walk reconciles its files |
+| any file no analyzer handles (`parser.ForFile` is nil: PDFs, images, rsync temp files) | ignored: never indexed, so nothing to add or purge |
 | remove/rename of a file | queued as deleted |
 | create of a directory | watched with its subtree, and every file already in it is queued as changed (a directory moved in emits no events for its contents) |
 | create/write of a file | queued as changed |

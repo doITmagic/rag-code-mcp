@@ -59,6 +59,8 @@ func TestWatcher(t *testing.T) {
 	writeFile(t, b, "func B\n")
 	writeFile(t, filepath.Join(root, "vendor", "v.go"), "func V\n")
 	writeFile(t, filepath.Join(root, ".ragcode", "state.json"), "{}")
+	writeFile(t, filepath.Join(root, "doc.pdf"), "%PDF") // no analyzer: never queued (an rsync of 40k PDFs)
+	require.NoError(t, os.Remove(filepath.Join(root, "doc.pdf")))
 	run := wait("debounced batch", has(a))
 	assert.Contains(t, run.Files, b)
 	assert.Len(t, rec.snapshot(), 1, "one run for the whole batch")
@@ -73,6 +75,8 @@ func TestWatcher(t *testing.T) {
 	for _, c := range rec.snapshot() {
 		assert.NotContains(t, c.Files, filepath.Join(root, "vendor", "v.go"))
 		assert.NotContains(t, c.Files, filepath.Join(root, ".ragcode", "state.json"))
+		assert.NotContains(t, c.Files, filepath.Join(root, "doc.pdf"))
+		assert.NotContains(t, c.Deleted, filepath.Join(root, "doc.pdf"))
 		assert.NotNil(t, c.Files, "no full run yet")
 	}
 

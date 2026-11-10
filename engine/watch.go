@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/v2/index"
+	"github.com/doITmagic/rag-code-mcp/v2/parser"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -301,14 +302,15 @@ func (wt *watcher) handle(ev fsnotify.Event) {
 	switch {
 	case gone && wt.dropDir(ev.Name):
 		wt.full("directory removed") // the walk reconciles its files
-	case gone:
-		wt.add(ev.Name, true)
 	case ev.Has(fsnotify.Create) && isDir(ev.Name):
 		if !wt.skipDir(filepath.Base(ev.Name)) && !index.IsLinkedWorktree(ev.Name) {
 			if err := wt.addTree(ev.Name, true); err != nil {
 				wt.ws.e.log.Warn("engine: cannot watch new directory", "dir", ev.Name, "err", err)
 			}
 		}
+	case parser.ForFile(ev.Name) == nil: // never indexed (PDFs, images, rsync temp files): nothing to queue
+	case gone:
+		wt.add(ev.Name, true)
 	default:
 		wt.add(ev.Name, false)
 	}

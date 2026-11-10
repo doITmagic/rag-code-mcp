@@ -48,8 +48,8 @@ func (fakeAnalyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 			}
 			syms = append(syms, parser.Symbol{Name: name, QualifiedName: qn, Kind: parser.KindFunction, Module: mod, Content: line, StartLine: i + 1,
 				EndLine: i + 1, Exported: unicode.IsUpper(rune(name[0])), Signature: "func " + name + "()"})
-		} else if kind, name, ok := strings.Cut(line, " "); ok && (kind == "scene" || kind == "const") {
-			k := map[string]parser.Kind{"scene": parser.KindScene, "const": parser.KindConstant}[kind]
+		} else if kind, name, ok := strings.Cut(line, " "); ok && (kind == "scene" || kind == "const" || kind == "chunk") {
+			k := map[string]parser.Kind{"scene": parser.KindScene, "const": parser.KindConstant, "chunk": parser.KindChunk}[kind]
 			syms = append(syms, parser.Symbol{Name: name, Kind: k, Module: mod, Content: line, StartLine: i + 1, EndLine: i + 1, Exported: true})
 		} else if target, ok := strings.CutPrefix(strings.TrimSpace(line), "call "); ok && len(syms) > 0 {
 			s := &syms[len(syms)-1]
@@ -1235,4 +1235,22 @@ func TestSemverLess(t *testing.T) {
 	} {
 		assert.Equal(t, c.want, semverLess(c.a, c.b), "%s < %s", c.a, c.b)
 	}
+}
+
+// A documentation heading named like a code symbol does not make the symbol
+// ambiguous: the code symbol wins. Only doc chunks still resolve to a chunk.
+func TestResolveSymbolCodeBeatsDocChunk(t *testing.T) {
+	v := newEnv(t, false, func(c *config.Config) { c.AutoIndex = false })
+	v.addFiles(t, map[string]string{
+		"t/t.fk":    "func Task\nfunc Run\n  call m/t.Task\n",
+		"doc/r.fk":  "package doc/README.Tasks\nchunk Task\n",
+		"doc2/s.fk": "package doc2/README\nchunk Only\n",
+	})
+	r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "Task"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	assert.Contains(t, r.Message, "1 usages")
+	r, _ = v.call(t, "rag_call_hierarchy", map[string]any{"workspace_root": v.root, "symbol": "Task"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	r, _ = v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "Only"})
+	assert.NotEqual(t, "ambiguous", r.Status, r.Message)
 }

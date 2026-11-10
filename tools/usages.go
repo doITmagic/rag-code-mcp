@@ -78,6 +78,17 @@ func resolveSymbol(ctx context.Context, w *engine.Workspace, query, filePath str
 		}
 		hits = kept
 	}
+	if len(hits) > 1 { // a doc heading named like a code symbol (README "### CleanupTask"): the code symbol wins
+		var code []store.Hit
+		for _, h := range hits {
+			if h.Symbol.Kind != parser.KindChunk {
+				code = append(code, h)
+			}
+		}
+		if len(code) > 0 {
+			hits = code
+		}
+	}
 	hits = mergeTwins(hits, func(h *store.Hit) *parser.Symbol { return &h.Symbol })
 	if len(hits) > 1 { // the one whose qualified name is the query beats those that only end with it
 		q := parser.Normalize(query)

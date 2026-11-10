@@ -16,7 +16,8 @@ const ideRules = `# RagCode MCP
 This workspace is indexed by RagCode MCP. For anything about the code in it,
 query the index instead of guessing or grepping blindly:
 
-- rag_search: semantic + exact search by name or qualified name. Start here.
+- rag_search: semantic + exact search by name or qualified name. Start here. Add language, path_prefix
+  or kinds to keep other languages or folders out of the results.
 - rag_find_usages: every reference to a symbol.
 - rag_call_hierarchy: callers and callees of a function.
 - rag_list_package_exports: the public surface of a package.

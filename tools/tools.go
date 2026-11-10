@@ -61,7 +61,7 @@ func Register(server *mcp.Server, e *engine.Engine, cfg config.Config, version s
 }
 
 func (t *tools) register(server *mcp.Server) {
-	mcp.AddTool(server, &mcp.Tool{Name: "rag_search", Description: "Search the indexed code: exact match by (qualified) name when the query is an identifier, semantic search otherwise. Results carry file, lines, kind and score; compact when there are more than 4 unless full=true."}, t.search)
+	mcp.AddTool(server, &mcp.Tool{Name: "rag_search", Description: "Search the indexed code: exact match by (qualified) name when the query is an identifier, semantic search otherwise. Narrow it with language (e.g. go), path_prefix or kinds when other languages or folders crowd the results. Results carry file, lines, kind and score; compact when there are more than 4 unless full=true."}, t.search)
 	mcp.AddTool(server, &mcp.Tool{Name: "rag_find_usages", Description: "Every indexed reference to a symbol (calls, extends, implements, uses), grouped by file with the calling symbol and the call line."}, t.findUsages)
 	mcp.AddTool(server, &mcp.Tool{Name: "rag_call_hierarchy", Description: "Callers (incoming) and callees (outgoing) of a function as a tree, up to depth 4."}, t.callHierarchy)
 	mcp.AddTool(server, &mcp.Tool{Name: "rag_list_package_exports", Description: "The exported symbols of a package or module, grouped by kind."}, t.listExports)

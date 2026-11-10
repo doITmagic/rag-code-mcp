@@ -31,7 +31,7 @@
   "tools": [
     {
       "name": "rag_search",
-      "description": "Search the indexed code: exact match by (qualified) name when the query is an identifier, semantic search otherwise. Results carry file, lines, kind and score; compact when there are more than 4 unless full=true."
+      "description": "Search the indexed code: exact match by (qualified) name when the query is an identifier, semantic search otherwise. Narrow it with language (e.g. go), path_prefix or kinds when other languages or folders crowd the results. Results carry file, lines, kind and score; compact when there are more than 4 unless full=true."
     },
     {
       "name": "rag_find_usages",

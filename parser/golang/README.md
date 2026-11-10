@@ -140,6 +140,8 @@ Relations of a `var` or `const` spec are shared by every name in that spec.
   `go.mod` changes (mtime) or disappears; a `go.mod` created later in a
   directory that had none needs a restart to show up.
 - Methods whose receiver type cannot be read produce no symbol.
+- Route registrations (Echo/Gin/Chi `r.GET("/path", h)`, `http.HandleFunc`)
+  are not `route` symbols: `rag_search` with `kinds=route` finds no Go route.
 - Interface methods are not symbols of their own: they are only listed in the
   interface's `Metadata["methods"]`. `rag_find_usages` on a method declared
   only in an interface (no implementation) answers "no indexed symbol named";

@@ -628,6 +628,9 @@ func (e *Engine) runJobs(w *Workspace) {
 				wt.Stop()
 			}
 			return
+		case errors.Is(err, index.ErrTooManyFiles):
+			// Only a config change helps: no retry. The next call scans again.
+			e.log.Warn("engine: index run refused, not retrying", "root", w.Root, "err", err)
 		case err != nil && e.ctx.Err() == nil:
 			// Keep the request and retry it after a pause, so neither another
 			// process's lock nor an embedder or store outage drops its files.
@@ -663,7 +666,7 @@ func (e *Engine) runJobs(w *Workspace) {
 
 func (e *Engine) runOne(w *Workspace, kind queueKind, files, deleted []string) (index.Status, error) {
 	o := index.Options{Root: w.Root, Collection: w.Collection, Store: e.store, Embedder: e.embed,
-		Recreate: kind == kindRecreate, Exclude: e.cfg.ExcludePatterns, Log: e.log, Progress: func(s index.Status) {
+		Recreate: kind == kindRecreate, Exclude: e.cfg.ExcludePatterns, MaxFiles: e.cfg.MaxFiles, Log: e.log, Progress: func(s index.Status) {
 			e.mu.Lock()
 			w.status = s
 			e.mu.Unlock()

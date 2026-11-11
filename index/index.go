@@ -35,6 +35,9 @@ var (
 	// ErrHeadChanged means git HEAD moved while the run was indexing; the
 	// caller should queue a full run.
 	ErrHeadChanged = errors.New("index: git HEAD changed during the run")
+	// ErrTooManyFiles means a full walk found more indexable files than
+	// Options.MaxFiles: nothing was parsed or embedded.
+	ErrTooManyFiles = errors.New("index: too many files")
 )
 
 const (
@@ -55,6 +58,7 @@ type Options struct {
 	Exclude    []string     // directory names pruned at any depth
 	Files      []string     // nil = full walk; otherwise only these files are checked
 	Deleted    []string     // files to purge from the index
+	MaxFiles   int          // a full walk with more indexable files fails with ErrTooManyFiles; 0 = no limit
 	Recreate   bool         // drop the collection under the lock first: everything is re-embedded
 	Log        *slog.Logger // nil discards
 	Progress   func(Status) // called at most every 500 ms, from the run goroutine
@@ -225,6 +229,10 @@ func Run(ctx context.Context, o Options) (Status, error) {
 	}
 
 	changed, gone, err := r.scan(ctx)
+	if errors.Is(err, ErrTooManyFiles) && r.fresh {
+		// Not an empty index that answers "no results": the workspace is not indexed.
+		_ = o.Store.DeleteCollection(ctx, o.Collection)
+	}
 	if err != nil {
 		return r.finish(ctx, err)
 	}
@@ -435,6 +443,10 @@ func (r *run) scan(ctx context.Context) (changed, gone []string, err error) {
 	if r.Files == nil {
 		if files, err = Walk(r.root, r.Exclude); err != nil {
 			return nil, nil, err
+		}
+		if r.MaxFiles > 0 && len(files) > r.MaxFiles {
+			return nil, nil, fmt.Errorf("%w: %d indexable files under %s, more than max_files (%d). Nothing was indexed. Indexing this many files takes long: ask the user whether this is the directory they mean. A smaller project directory can be indexed as it is; to index this one, the user raises max_files in config.yaml (0 = no limit) and restarts the server",
+				ErrTooManyFiles, len(files), r.root, r.MaxFiles)
 		}
 	} else {
 		for _, f := range r.Files {

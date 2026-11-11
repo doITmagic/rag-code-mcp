@@ -25,6 +25,11 @@ rewrite of v1 that needs no database server. The last v1 release is
   The embedding model needs about 750 MB of free memory: with less, the tools
   answer `low_memory` and say how much to free (`min_free_memory_mb`).
 
+A workspace with more than 20,000 indexable files is not indexed: the tools
+answer with the count, since such a root is usually a folder of several
+projects. Raise `max_files` in `~/.ragcode/config.yaml` (`0` = no limit) and
+restart the server to index it anyway.
+
 No database server is needed: the index is an embedded SQLite file per
 workspace.
 

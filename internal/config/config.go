@@ -29,6 +29,7 @@ type Config struct {
 	LogLevel              string        `yaml:"log_level"`
 	LogMaxSizeMB          int           `yaml:"log_max_size_mb"`
 	ExcludePatterns       []string      `yaml:"exclude_patterns"`
+	MaxFiles              int           `yaml:"max_files"`
 	AllowedWorkspacePaths []string      `yaml:"allowed_workspace_paths"`
 	AutoIndex             bool          `yaml:"auto_index"`
 	WatchEnabled          bool          `yaml:"watch_enabled"`
@@ -49,6 +50,7 @@ func Default() Config {
 		LogLevel:           "info",
 		LogMaxSizeMB:       10,
 		ExcludePatterns:    []string{"node_modules", "vendor", "target", "build", "dist", "__pycache__"},
+		MaxFiles:           20000,
 		AutoIndex:          true,
 		WatchEnabled:       true,
 		WatchDebounce:      time.Second,
@@ -134,6 +136,9 @@ func (c Config) Validate() error {
 	}
 	if c.EmbedThreads < 0 {
 		return fmt.Errorf("config: embed_threads must not be negative, got %d", c.EmbedThreads)
+	}
+	if c.MaxFiles < 0 {
+		return fmt.Errorf("config: max_files must not be negative, got %d", c.MaxFiles)
 	}
 	if c.MinFreeMemoryMB < 0 {
 		return fmt.Errorf("config: min_free_memory_mb must not be negative, got %d", c.MinFreeMemoryMB)

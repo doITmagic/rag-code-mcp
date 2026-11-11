@@ -26,6 +26,11 @@ exclude_patterns:
   - dist
   - __pycache__
 
+# A workspace with more indexable files than this is not indexed: the tools
+# answer with the count instead, so a wrong root (a home directory, a folder of
+# many projects) does not cost hours of embedding. 0 = no limit.
+max_files: 20000
+
 # When set, only roots under these directories may be indexed.
 # allowed_workspace_paths:
 #   - /home/me/projects

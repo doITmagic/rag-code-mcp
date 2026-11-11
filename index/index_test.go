@@ -1293,3 +1293,35 @@ func TestWalkSkipsOwnHome(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, skipExplicit(root, nil, map[string]bool{}, f, info))
 }
+
+// A full walk over more indexable files than MaxFiles fails before anything is
+// parsed; at the limit, and for a files run, the run goes on.
+func TestRunMaxFiles(t *testing.T) {
+	e := newEnv(t)
+	a := e.write(t, "a.go", "func A\n")
+	e.write(t, "b.go", "func B\n")
+	e.write(t, "notes.txt", "no analyzer: not counted")
+
+	st, err := e.run(t, func(o *Options) { o.MaxFiles = 1 })
+	require.ErrorIs(t, err, ErrTooManyFiles)
+	assert.Contains(t, err.Error(), "2 indexable files")
+	assert.Contains(t, err.Error(), "max_files (1)")
+	assert.Equal(t, "failed", st.Phase)
+	exists, err := e.store.CollectionExists(context.Background(), "c")
+	require.NoError(t, err)
+	assert.False(t, exists, "a refused first run leaves no empty collection")
+
+	st, err = e.run(t, func(o *Options) { o.MaxFiles = 2 })
+	require.NoError(t, err)
+	assert.Equal(t, 2, st.Done)
+
+	// An indexed workspace: a files run is not counted, and a refused full
+	// run keeps the index.
+	e.write(t, "a.go", "func A2\n")
+	st, err = e.run(t, func(o *Options) { o.MaxFiles = 1; o.Files = []string{a} })
+	require.NoError(t, err)
+	assert.Equal(t, 1, st.Done)
+	_, err = e.run(t, func(o *Options) { o.MaxFiles = 1 })
+	require.ErrorIs(t, err, ErrTooManyFiles)
+	assert.Equal(t, 2, e.count(t, store.Filter{}))
+}

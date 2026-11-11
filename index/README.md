@@ -46,7 +46,7 @@ graph LR
 
 | Direction | Package | What for |
 |-----------|---------|----------|
-| Called by | [engine](../engine/README.md) | Runs `index.Run` for each queued job; uses `ReadStatus`, `IsLinkedWorktree`, `LinkedWorktreeOf`, `WriteAtomic`, `LockFile` (for `roots.json.lock`), `StateModel` (model check before a search), `ErrLocked`, `ErrHeadChanged`. |
+| Called by | [engine](../engine/README.md) | Runs `index.Run` for each queued job; uses `ReadStatus`, `IsLinkedWorktree`, `LinkedWorktreeOf`, `WriteAtomic`, `LockFile` (for `roots.json.lock`), `StateModel` (model check before a search), `ErrLocked`, `ErrHeadChanged`, `ErrTooManyFiles`. |
 | Called by | [tools](../tools/README.md) | `Skip`/`Secret` before reading a file, `ReadStatus`/`Running` for server info, `WriteAtomic` for the update-check cache, `LoadState` for package exports; the fallback text search of `rag_search` walks with `IsLinkedWorktree`, `Skip` and `GitIgnored`. |
 | Calls | [parser](../parser/README.md) | `parser.ForFile`, `parser.Analyze`, `parser.Normalize`, `parser.MatchQualified`, `parser.ReleaseParsers`. |
 | Calls | [embed](../embed/README.md) | `Embedder.Embed`, `Dimension`, `Model`, and `embed.DocText` for the per-model document prefix. |
@@ -61,7 +61,7 @@ graph LR
 
 | File | Contents |
 |------|----------|
-| `index.go` | Package doc, `ErrLocked`, `ErrHeadChanged`, `Options`, `Status`, `ReadStatus`, `Run` and the whole run: scan, two-pass parse, `staleReferrers`, the name index and `resolve`, `embedUpsert`, `record`, progress ticks, `gitHead`, `embedText`. |
+| `index.go` | Package doc, `ErrLocked`, `ErrHeadChanged`, `ErrTooManyFiles`, `Options`, `Status`, `ReadStatus`, `Run` and the whole run: scan, two-pass parse, `staleReferrers`, the name index and `resolve`, `embedUpsert`, `record`, progress ticks, `gitHead`, `embedText`. |
 | `state.go` | `Entry`, `Format`, `State`, `LoadState`, `StateModel`, `State.Save`, `WriteAtomic`, and `readIndexFile` (the guarded reader for index files). |
 | `walk.go` | Size and batch constants, `Walk`, `GitIgnored`, `IsLinkedWorktree`, `LinkedWorktreeOf`, `Skip`, `Secret`, the lockfile list and `readHead`. |
 | `dir.go` | `Dir(root)`: the per-root index directory under the global home. |
@@ -74,7 +74,7 @@ graph LR
 
 | File | Covers |
 |------|--------|
-| `index_test.go` | The main suite, with a line-based fake analyzer and a hook embedder: full, incremental, delete, recreate, model and `Format` change, embed failure, parse failures and panics, cancel, `ErrHeadChanged`, relation resolution, `Skip`, `Walk`, `.gitignore`, linked worktrees, symlinks in `Files`, byte-budgeted upsert batches, empty collection with stale state, a crash between a recreate's state save and its drop, moved targets, vanished referrers, a file that changed between the two passes, deleted paths counted only when they were indexed, relation target kinds (`TestResolutionTargetKinds`) and inherited members through the owner's bases (`TestResolutionThroughBases`), in full and files runs, Go bases limited to embeddings (`TestResolutionThroughBasesGoEmbeddingOnly`), a run cancelled before it changed anything keeping the previous `done` status (`TestRunCancelledKeepsDoneStatus`), and a run with nothing to do keeping the last run's counters on disk (`TestRunWithoutChangesKeepsLastCounters`), and a model the embedder cannot serve leaving the old index and state untouched (`TestRunModelChangeUnavailableKeepsIndex`), the WARN for an unreadable directory (`TestWalkWarnsUnreadableDir`), RagCode's own home pruned (`TestWalkSkipsOwnHome`), a failed run that changed nothing keeping the last real counters under its error (`TestRunFailedUnchangedKeepsCounters`), a files run skipping a file inside a linked worktree (`TestRunFilesSkipsLinkedWorktree`), a run with nothing to do recording the current branch (`TestRunWithoutChangesRecordsBranch`), a run with nothing to do after one stopped by `ErrHeadChanged` keeping that run's counters (`TestRunAfterHeadChangedKeepsCounters`), and a file deleted between the scan and the parse purged, not counted as failed (`TestRunFileVanishedDuringRun`). Its `TestMain` points `RAGCODE_HOME` at a temp dir. |
+| `index_test.go` | The main suite, with a line-based fake analyzer and a hook embedder: full, incremental, delete, recreate, model and `Format` change, embed failure, parse failures and panics, cancel, `ErrHeadChanged`, relation resolution, `Skip`, `Walk`, `.gitignore`, linked worktrees, symlinks in `Files`, byte-budgeted upsert batches, empty collection with stale state, a crash between a recreate's state save and its drop, moved targets, vanished referrers, a file that changed between the two passes, deleted paths counted only when they were indexed, relation target kinds (`TestResolutionTargetKinds`) and inherited members through the owner's bases (`TestResolutionThroughBases`), in full and files runs, Go bases limited to embeddings (`TestResolutionThroughBasesGoEmbeddingOnly`), a run cancelled before it changed anything keeping the previous `done` status (`TestRunCancelledKeepsDoneStatus`), and a run with nothing to do keeping the last run's counters on disk (`TestRunWithoutChangesKeepsLastCounters`), and a model the embedder cannot serve leaving the old index and state untouched (`TestRunModelChangeUnavailableKeepsIndex`), the WARN for an unreadable directory (`TestWalkWarnsUnreadableDir`), RagCode's own home pruned (`TestWalkSkipsOwnHome`), a failed run that changed nothing keeping the last real counters under its error (`TestRunFailedUnchangedKeepsCounters`), a files run skipping a file inside a linked worktree (`TestRunFilesSkipsLinkedWorktree`), a run with nothing to do recording the current branch (`TestRunWithoutChangesRecordsBranch`), a run with nothing to do after one stopped by `ErrHeadChanged` keeping that run's counters (`TestRunAfterHeadChangedKeepsCounters`), and a file deleted between the scan and the parse purged, not counted as failed (`TestRunFileVanishedDuringRun`), and a full walk over `MaxFiles` refused before parsing, leaving no empty collection and keeping an existing index (`TestRunMaxFiles`). Its `TestMain` points `RAGCODE_HOME` at a temp dir. |
 | `js_object_members_test.go` | With the real JavaScript analyzer: `Obj.f()` through a default or named import of an object literal with a shorthand or `key: ident` member (`export default { getToken }`, `export const api = { read }`) resolves exactly to the function the member names. |
 | `budget_test.go` | The parse byte budget is respected, and batches still resolve forward references. |
 | `go_value_use_test.go` | With the real Go analyzer, two files of one package: a method passed as `s.firmaJSON` (on a local `s := &server{}` and on the receiver) and a function passed as `handler` link exactly to their declarations in the other file, in a full run and from the store; a field read (also one named like a method of another type), a constant, a variable and `http.MethodGet` in the same positions leave no relation at all. |
@@ -106,6 +106,7 @@ type Options struct {
     Exclude    []string     // directory names pruned at any depth
     Files      []string     // nil = full walk; otherwise only these files are checked
     Deleted    []string     // files to purge from the index
+    MaxFiles   int          // a full walk with more indexable files fails with ErrTooManyFiles; 0 = no limit
     Recreate   bool         // drop the collection under the lock first
     Log        *slog.Logger // nil discards
     Progress   func(Status) // called at most every 500 ms, from the run goroutine
@@ -152,6 +153,7 @@ to `index_status.json`:
 | `WriteAtomic(path, data)` | Temp file plus rename; also used by the engine for `roots.json` and `RAGCODE.md`. |
 | `ErrLocked` | Another run holds `index.lock`. |
 | `ErrHeadChanged` | Git HEAD moved during the run; the caller should queue a full run. |
+| `ErrTooManyFiles` | A full walk found more indexable files than `Options.MaxFiles`; nothing was parsed or embedded. |
 
 ### State and Format
 
@@ -288,7 +290,12 @@ index nothing ever completes. A fresh run also skips every store lookup.
 ### 3. Scan
 
 - Full run (`Files == nil`): `Walk` lists the files; every state entry not
-  seen on disk is **gone**.
+  seen on disk is **gone**. With `MaxFiles > 0` and more files listed than
+  that, the run fails here with `ErrTooManyFiles` (the message gives the
+  count and names `max_files`). When the collection was empty or just
+  created (a first run, a recreate) it is deleted, so the workspace reads as
+  not indexed instead of answering "no results"; an index that already holds
+  points is kept as it is. A files run is not counted.
 - Files run: each listed path is made absolute, checked with `os.Lstat`,
   filtered by `GitIgnored` and by `skipExplicit` (must lie under the root,
   outside hidden or excluded directories and linked worktrees, checked with
@@ -555,6 +562,7 @@ these keys from [internal/config](../internal/config/README.md) into `Options`:
 | Key | Effect here |
 |-----|-------------|
 | `exclude_patterns` | `Options.Exclude`: directory names pruned at any depth. |
+| `max_files` | `Options.MaxFiles`: the limit of indexable files of a full walk (default `20000`, `0` = none). |
 | `ollama_embed` | The embedder's `Model()`; a change recreates the collection. |
 | `RAGCODE_HOME` (env) | Moves `Dir(root)` with the rest of the home. |
 

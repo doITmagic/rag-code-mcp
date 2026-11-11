@@ -897,3 +897,28 @@ func TestLockedRetrySoon(t *testing.T) {
 }
 
 func readRoots() []string { r, _ := ReadRoots(); return r }
+
+// A root over max_files is not indexed and not retried; the error reaches Status.
+func TestMaxFilesRefusedWithoutRetry(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.MaxFiles = 1
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a.go"), "func A\n")
+	writeFile(t, filepath.Join(root, "b.go"), "func B\n")
+	e := New(cfg, store.NewMemory(), &embed.Fake{}, nil)
+	defer e.Close()
+	w, err := e.Workspace(root)
+	require.NoError(t, err)
+	w.Index(false)
+	require.Eventually(t, func() bool {
+		s := w.Status()
+		return !s.Running && strings.Contains(s.LastError, "max_files (1)")
+	}, 2*time.Second, 10*time.Millisecond)
+	e.mu.Lock()
+	armed, queued := w.retry != nil, w.queued
+	e.mu.Unlock()
+	assert.False(t, armed)
+	assert.Equal(t, kindNone, queued)
+	_, err = w.Scroll(context.Background(), store.Filter{}, 10)
+	require.ErrorIs(t, err, ErrNotIndexed)
+}

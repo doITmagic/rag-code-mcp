@@ -50,7 +50,7 @@ graph TD
 | Called by | [cmd/rag-code-mcp](../cmd/rag-code-mcp/README.md) | `go a.Engine.Resume(ctx)` at start-up. |
 | Called by | [tools](../tools/README.md) | Every MCP tool opens a workspace with `Workspace(root)`; `rag_index_workspace` calls `WriteIDERules` and `Index`. |
 | Called by | [internal/uninstall](../internal/uninstall/README.md) | `PointerFiles` and `IDEPointer` to strip the pointer line. |
-| Calls | [index](../index/README.md) | `index.Run`, `ReadStatus`, `IsLinkedWorktree`, `LinkedWorktreeOf`, `WriteAtomic`, `LockFile` (the `roots.json.lock`), `StateModel` (the model check in `Search`), `ErrLocked`, `ErrHeadChanged`. |
+| Calls | [index](../index/README.md) | `index.Run`, `ReadStatus`, `IsLinkedWorktree`, `LinkedWorktreeOf`, `WriteAtomic`, `LockFile` (the `roots.json.lock`), `StateModel` (the model check in `Search`), `ErrLocked`, `ErrHeadChanged`, `ErrTooManyFiles`. |
 | Calls | [embed](../embed/README.md) | Embeds search queries, with `embed.QueryText` for the model's prefix. |
 | Calls | [store](../store/README.md) | `Search`, `Scroll`, `CollectionExists`, `VectorSize`, `CollectionName`. |
 | Calls | [internal/config](../internal/config/README.md) | `config.Config` and `config.HomeDir()`. |
@@ -73,7 +73,7 @@ graph TD
 
 | File | Covers |
 |------|--------|
-| `engine_test.go` | Root validation, auto-index on first contact, request coalescing, `ErrHeadChanged` re-queue, retry of failed runs, a failed recreate that resumes without dropping again, no watcher without `auto_index`, recreate, embedding model change, concurrent root registration from several engines, a search refused on an index of another model with the same vector size, a lock held by another engine, `Resume`, no goroutines left after `Close`, `WriteIDERules` (tracked files, symlinks, symlinked parent directories, continuing after a refused file), backoff, a run waiting for the slot counts as queued, the end of a run logged with its counts and duration, another process's run shown as running and a dead run's phase shown as `interrupted` (`TestStatusOfAnotherProcessRun`), the first retry after another process's lock within seconds (`TestLockedRetrySoon`), parents of home and broad system directories refused as roots (`TestValidateRootRefusesBroadDirs`), the watcher's full run logged once while queued, a request queued while the runner exits is still picked up, a run failing because the root was deleted is not retried and the root is caught up when it is back, a query after the store reopened a replaced collection file queues an incremental run (`TestQueryAfterReopenQueuesResync`). `TestMain` points `RAGCODE_HOME` at a temp dir. |
+| `engine_test.go` | Root validation, auto-index on first contact, request coalescing, `ErrHeadChanged` re-queue, retry of failed runs, a failed recreate that resumes without dropping again, no watcher without `auto_index`, recreate, embedding model change, concurrent root registration from several engines, a search refused on an index of another model with the same vector size, a lock held by another engine, `Resume`, no goroutines left after `Close`, `WriteIDERules` (tracked files, symlinks, symlinked parent directories, continuing after a refused file), backoff, a run waiting for the slot counts as queued, the end of a run logged with its counts and duration, another process's run shown as running and a dead run's phase shown as `interrupted` (`TestStatusOfAnotherProcessRun`), the first retry after another process's lock within seconds (`TestLockedRetrySoon`), parents of home and broad system directories refused as roots (`TestValidateRootRefusesBroadDirs`), the watcher's full run logged once while queued, a request queued while the runner exits is still picked up, a run failing because the root was deleted is not retried and the root is caught up when it is back, a query after the store reopened a replaced collection file queues an incremental run (`TestQueryAfterReopenQueuesResync`), a root over `max_files` refused once, without a retry (`TestMaxFilesRefusedWithoutRetry`). `TestMain` points `RAGCODE_HOME` at a temp dir. |
 | `watch_test.go` | The watcher end to end, a `.gitignore` edit queues a full run, a directory that becomes a linked worktree after it was watched is dropped with a full run (`TestWatcherLinkedWorktreeAdded`), a `.git` created after start queues a full run and is watched with its refs (`TestWatcherGitInitAfterStart`), a ref moved through its `.lock` file queues one full run (`TestWatcherRefUpdateQueuesOneFullRun`), RagCode's own home inside a root neither watched nor accepted as a root (`TestWatcherIgnoresOwnHome`), root removed, root that comes back, unreadable subdirectory, watcher restart retried, `Close` beginning during `Resume`'s watcher setup (no catch-up, no warning), only one of two servers on a root watches and indexes a save (`TestWatcherOneLeaderPerRoot`), the follower takes over with a catch-up run when the leader exits (`TestWatcherFollowerTakesOver`), `Resume` in a follower queues no catch-up (`TestResumeFollowerSkipsCatchUp`). |
 | `nonotify_linux_test.go` | A root on 9p is named by `noNotify`, warned once per process and reported in `Status.Unwatched`; other file systems are not. Build: Linux. |
 | `watch_linux_test.go` | All roots share one inotify instance (nested roots both see an event, `Close` releases it); a watcher that cannot start is retried; an event overflow re-walks the tree so new directories are watched again. |
@@ -270,6 +270,10 @@ process's lock nor an embedder or store outage drops its files.
 - **Recreate that already dropped**: if the failed run had `Recreated` set,
   the retry becomes a full run, so what was re-indexed is not thrown away.
 - **`index.ErrHeadChanged`**: not a failure; a full run is queued at once.
+- **Too many files**: a run that ends with `index.ErrTooManyFiles` (more
+  indexable files than `max_files`) is not retried: only a config change
+  helps. One warning ("index run refused, not retrying") is logged and the
+  error stays in `Status.LastError`. A later request scans the root again.
 - **The root is gone**: when the root is no longer a directory after a failed
   run (deleted while the server runs), nothing is retried. One warning
   ("workspace root is gone, not retrying") is logged, the watcher is stopped
@@ -430,6 +434,7 @@ Keys from [internal/config](../internal/config/README.md):
 | `watch_enabled` | `true` | Start a watcher per root (also needs `auto_index`). |
 | `watch_debounce` | `1s` | Debounce period of the watcher. |
 | `exclude_patterns` | `node_modules`, `vendor`, `target`, `build`, `dist`, `__pycache__` | Directory names not watched, passed to `index.Run` as `Exclude`. |
+| `max_files` | `20000` | Passed to `index.Run` as `MaxFiles`: a full run over more indexable files fails and is not retried. `0` = no limit. |
 | `allowed_workspace_paths` (env `RAGCODE_ALLOWED_PATHS`) | empty | When set, roots must be under one of these. |
 | `auto_create_ide_rules` | `true` | Read by the index tool before it calls `WriteIDERules`. |
 | `ollama_base_url` | `http://localhost:11434` | Only named in the `Ready` message. |

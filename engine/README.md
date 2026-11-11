@@ -63,7 +63,7 @@ graph TD
 
 | File | Contents |
 |------|----------|
-| `engine.go` | Package doc, `Engine`, `New`, errors (`ErrNotIndexed`, `ErrLocked`, `ErrClosed`), `RootError`, `Loaded`, `Workspace`, `validateRoot`, `roots.json` (`registerRoot`, `readRoots`), `Resume`, `Close`, and the job queue (`enqueue`, `merge`, `kick`, `runJobs`, `runOne`, `retryDelay`). |
+| `engine.go` | Package doc, `Engine`, `New`, errors (`ErrNotIndexed`, `ErrLocked`, `ErrClosed`), `RootError`, `Loaded`, `Workspace`, `validateRoot`, `roots.json` (`registerRoot`, `ReadRoots`), `Resume`, `Close`, and the job queue (`enqueue`, `merge`, `kick`, `runJobs`, `runOne`, `retryDelay`). |
 | `workspace.go` | `Workspace` and its job fields, `Status`, `Index`, `IndexFiles`, `Search`, `Scroll`, `mapErr`/`dimChanged` (the `ErrNotIndexed` mapping), `resyncIfReopened`, `Ready`. |
 | `watch.go` | The per-root `watcher`: `startWatcher` (leader lock `watch.lock`), `follow`/`takeOver` (a follower's takeover poll, `takeoverPoll`), `addTree`, `watchGit`, event `handle`, `dropDir`, debounce (`add`, `flush`), `full`, `Stop`. |
 | `iderules.go` | `WriteIDERules`, `IDEPointer`, `PointerFiles`, the list of agent instruction files, `tracked`, `within`, `appendPointer`. |
@@ -76,6 +76,7 @@ graph TD
 | `watch_test.go` | The watcher end to end, a `.gitignore` edit queues a full run, a directory that becomes a linked worktree after it was watched is dropped with a full run (`TestWatcherLinkedWorktreeAdded`), a `.git` created after start queues a full run and is watched with its refs (`TestWatcherGitInitAfterStart`), a ref moved through its `.lock` file queues one full run (`TestWatcherRefUpdateQueuesOneFullRun`), RagCode's own home inside a root neither watched nor accepted as a root (`TestWatcherIgnoresOwnHome`), root removed, root that comes back, unreadable subdirectory, watcher restart retried, `Close` beginning during `Resume`'s watcher setup (no catch-up, no warning), only one of two servers on a root watches and indexes a save (`TestWatcherOneLeaderPerRoot`), the follower takes over with a catch-up run when the leader exits (`TestWatcherFollowerTakesOver`), `Resume` in a follower queues no catch-up (`TestResumeFollowerSkipsCatchUp`). |
 | `watch_linux_test.go` | All roots share one inotify instance (nested roots both see an event, `Close` releases it); a watcher that cannot start is retried; an event overflow re-walks the tree so new directories are watched again. |
 | `prefix_test.go` | `Search` adds the model's query prefix. |
+| `roots_bom_test.go` | A `roots.json` with a UTF-8 BOM is read and kept; an invalid one is moved to `roots.json.bad` before the new list is written. |
 | `windows_root_test.go` | Windows system directories refused as roots: `windowsSystemDir` and `wslWindowsSystemDir` as pure functions on every OS, and through `validateRoot` on Windows only. |
 | `zz_verify_test.go` | Verification tests: concurrent `Workspace` calls, cancelled contexts, enqueue during a lock retry, recreate while locked, a directory moved out and the forced debounce flush, status read from disk before any run, home symlink guard, `Close` cancelling a blocked run, junk `roots.json`, a files run with only deletions, junk paths, `Ready` remediation text, a failed query embed does not enqueue, recreate absorbing queued files, catch-up with and without `auto_index`, double `Close`, `.git/refs` plus hidden and excluded directories, kernel file systems refused. |
 
@@ -178,9 +179,12 @@ and queues a full run to catch up.
 is rewritten with `index.WriteAtomic` under a mutex and, across server
 processes, the file lock `roots.json.lock` (`index.LockFile`, retried for up
 to 2 s), so two first contacts at once both keep their root. `Resume` reads it at
-start-up; an unreadable or invalid file counts as empty. The
-[tools](../tools/README.md) package also reads it to list known roots in
-`rag_server_info`.
+start-up through `ReadRoots`: a missing or blank file is no roots and a
+leading UTF-8 BOM (Windows PowerShell 5 writes one) is skipped. An invalid
+file is never overwritten: `Resume` logs a WARN and resumes nothing, and the
+next new root moves it to `roots.json.bad` (WARN) before writing a fresh
+list. The [tools](../tools/README.md) package (`rag_server_info`) and the
+uninstaller read it through the same `ReadRoots`.
 
 ---
 
@@ -410,7 +414,7 @@ Keys from [internal/config](../internal/config/README.md):
 
 | Path | Writer |
 |------|--------|
-| `~/.ragcode/roots.json`, `~/.ragcode/roots.json.lock` | `registerRoot` |
+| `~/.ragcode/roots.json`, `~/.ragcode/roots.json.lock`, `~/.ragcode/roots.json.bad` (an unreadable `roots.json`, moved aside) | `registerRoot` |
 | `<root>/.ragcode/RAGCODE.md`, `<root>/.ragcode/.gitignore` | `WriteIDERules` |
 | pointer line in the instruction files above | `WriteIDERules` |
 | `~/.ragcode/index/<collection>/watch.lock` | `startWatcher` (the watching leader holds it) |

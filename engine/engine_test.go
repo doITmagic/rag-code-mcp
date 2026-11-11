@@ -895,3 +895,5 @@ func TestLockedRetrySoon(t *testing.T) {
 	assert.Equal(t, 2*time.Second, lockRetryDelay(0))
 	assert.Equal(t, lockRetry, lockRetryDelay(10), "capped at the old fixed delay")
 }
+
+func readRoots() []string { r, _ := ReadRoots(); return r }

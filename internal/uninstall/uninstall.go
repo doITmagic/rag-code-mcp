@@ -6,7 +6,6 @@ package uninstall
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -63,7 +62,10 @@ func Run(ctx context.Context, o Options) error {
 
 	step(o.Out, "Removing per-workspace data")
 	in := bufio.NewReader(o.In)
-	rs := roots(filepath.Join(home, "roots.json"))
+	rs, err := engine.ReadRoots()
+	if err != nil {
+		warn(o.Out, err.Error()+": per-workspace .ragcode folders are not removed")
+	}
 	for _, root := range rs {
 		for _, p := range engine.PointerFiles(root) {
 			if err := removePointer(p); err != nil {
@@ -125,17 +127,6 @@ func Run(ctx context.Context, o Options) error {
 	}
 	ok(o.Out, "RagCode MCP uninstalled")
 	return nil
-}
-
-// roots reads ~/.ragcode/roots.json, a plain []string.
-func roots(path string) []string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-	var rs []string
-	_ = json.Unmarshal(data, &rs)
-	return rs
 }
 
 // StopProcess terminates every running instance of binary except this

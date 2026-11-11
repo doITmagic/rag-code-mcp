@@ -4,6 +4,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -264,12 +265,26 @@ func samePath(a, b string) bool {
 
 func rootsPath() string { return filepath.Join(config.HomeDir(), "roots.json") }
 
-func readRoots() []string {
-	var roots []string
-	if data, err := os.ReadFile(rootsPath()); err == nil {
-		_ = json.Unmarshal(data, &roots)
+// ReadRoots returns the roots in roots.json. A missing or blank file is no
+// roots; a leading UTF-8 BOM (Windows PowerShell 5 writes one) is skipped;
+// anything else that is not a JSON array of strings is an error.
+func ReadRoots() ([]string, error) {
+	data, err := os.ReadFile(rootsPath())
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
 	}
-	return roots
+	if err != nil {
+		return nil, err
+	}
+	data = bytes.TrimSpace(bytes.TrimPrefix(data, []byte("\xef\xbb\xbf")))
+	if len(data) == 0 {
+		return nil, nil
+	}
+	var roots []string
+	if err := json.Unmarshal(data, &roots); err != nil {
+		return nil, fmt.Errorf("%s: %w", rootsPath(), err)
+	}
+	return roots, nil
 }
 
 func (e *Engine) registerRoot(root string) error {
@@ -292,7 +307,14 @@ func (e *Engine) registerRoot(root string) error {
 		return err
 	}
 	defer unlock()
-	roots := readRoots()
+	roots, err := ReadRoots()
+	if err != nil {
+		// Rewriting it would drop every root it lists: keep it for the user.
+		if rerr := os.Rename(rootsPath(), rootsPath()+".bad"); rerr != nil {
+			return errors.Join(err, rerr)
+		}
+		e.log.Warn("engine: roots.json unreadable, kept as roots.json.bad", "err", err)
+	}
 	if slices.Contains(roots, root) {
 		return nil
 	}
@@ -307,7 +329,11 @@ func (e *Engine) registerRoot(root string) error {
 // the server was down are picked up (the mtime/size diff keeps it cheap). A
 // follower (another server watches the root) skips it.
 func (e *Engine) Resume(ctx context.Context) {
-	for _, root := range readRoots() {
+	roots, err := ReadRoots()
+	if err != nil {
+		e.log.Warn("engine: roots.json unreadable, no known root resumed", "err", err)
+	}
+	for _, root := range roots {
 		if ctx.Err() != nil {
 			return
 		}

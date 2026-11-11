@@ -73,7 +73,7 @@ remove the `ragcode-ollama` container.
 | `~/.ragcode/bin/rag-code-mcp` | the server binary the installer copies |
 | `~/.ragcode/logs/ragcode.log` | the server log; rotated to `ragcode.log.1` |
 | `~/.ragcode/index/<collection>/` | the workspace index: `index.db` (plus SQLite's `index.db-wal` and `index.db-shm`), `state.json`, `index_status.json`, `index.lock`, `watch.lock` |
-| `~/.ragcode/roots.json` | the workspaces the server knows; `roots.json.lock` guards its updates |
+| `~/.ragcode/roots.json` | the workspaces the server knows; `roots.json.lock` guards its updates; an unreadable file is kept as `roots.json.bad` |
 | `~/.ragcode/cache/update.json` | the cached result of the release check |
 | `~/.ragcode/cache/update.lock` | held while one server installs an update |
 | `<workspace>/.ragcode/RAGCODE.md` | the instructions the AI clients read |

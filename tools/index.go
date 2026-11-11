@@ -7,13 +7,11 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/v2/engine"
 	"github.com/doITmagic/rag-code-mcp/v2/index"
-	"github.com/doITmagic/rag-code-mcp/v2/internal/config"
 	"github.com/doITmagic/rag-code-mcp/v2/internal/update"
 	"github.com/doITmagic/rag-code-mcp/v2/parser"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -170,10 +168,7 @@ func (t *tools) update() Update {
 // knownRoots lists roots.json with the persisted status of each root, or the
 // live one for a root this process is indexing or has queued.
 func knownRoots(e *engine.Engine) []KnownRoot {
-	var roots []string
-	if data, err := os.ReadFile(filepath.Join(config.HomeDir(), "roots.json")); err == nil {
-		_ = json.Unmarshal(data, &roots)
-	}
+	roots, _ := engine.ReadRoots() // the engine logs an unreadable file
 	out := make([]KnownRoot, 0, len(roots))
 	for _, r := range roots {
 		k := KnownRoot{Root: r, State: "not_indexed"}

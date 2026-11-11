@@ -103,8 +103,9 @@ flowchart TD
 ### Per-workspace data
 
 The list of workspaces comes from `~/.ragcode/roots.json` (a JSON array of
-paths, maintained by the [engine](../../engine/README.md)); an unreadable or
-invalid file means no workspaces. For each root:
+paths, maintained by the [engine](../../engine/README.md)); read with
+`engine.ReadRoots`, so a UTF-8 BOM is accepted); an invalid file prints a
+warning and no per-workspace folder is removed. For each root:
 
 - **Pointer lines.** For every path in `engine.PointerFiles(root)` (the agent
   instruction files and `.cursor/rules/ragcode.mdc`), lines equal to

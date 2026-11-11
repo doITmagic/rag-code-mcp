@@ -45,6 +45,7 @@ graph LR
 | File | Contents |
 |------|----------|
 | `embed.go` | Package doc, the `Embedder` interface and `ErrUnavailable`. |
+| `mem.go`, `mem_linux.go`, `mem_windows.go`, `mem_other.go` | `ErrLowMemory`, `checkMemory` and the per-platform `availableMB` (see "Low memory") |
 | `ollama.go` | `Ollama`, `NewOllama`, batching in `Embed`, the cached `Dimension` probe, `embedBatch` (request body, one retry), `post`/`do` (HTTP, status handling), `transportError`, `withTimeout`. |
 | `prefix.go` | `QueryText`, `DocText` and the model `family` detection. |
 | `fake.go` | `Fake`, the deterministic test embedder, and compile-time checks that `Fake` and `Ollama` implement `Embedder`. |
@@ -205,6 +206,20 @@ Keys from [internal/config](../internal/config/README.md), applied in
 | `ollama_base_url` | `OLLAMA_BASE_URL` | `http://localhost:11434` | Base URL of Ollama (must be http/https). |
 | `ollama_embed` | `OLLAMA_EMBED` | `embeddinggemma-2:270m` | The embedding model; needs Ollama 0.40 or later. Changing it makes the next index run recreate the collection. |
 | `embed_threads` | none | `max(2, NumCPU/3)` | `Ollama.Threads` -> `options.num_thread`. `0` lets Ollama use every performance core; negative values are rejected by config validation. |
+| `min_free_memory_mb` | none | `1536` | `Ollama.MinFreeMB`. See "Low memory" below. |
+
+### Low memory
+
+Before a request, when Ollama is on this machine (`localhost`, `127.0.0.1`,
+`::1`) and no call succeeded in the last 4 minutes (so the model may have to
+be loaded), `checkMemory` reads the available memory (`mem_linux.go`:
+`MemAvailable` in `/proc/meminfo`; `mem_windows.go`: `GlobalMemoryStatusEx`).
+Below `MinFreeMB` the call returns `ErrLowMemory` with the free and the needed
+megabytes, and Ollama is not called. Seen on a 16 GB Windows laptop with 570 MB
+free: the model load took longer than the 60 s call timeout, the cancelled
+request made Ollama abort the load, and every retry started it again. macOS
+and the BSDs have no reading (`mem_other.go`), so the check never fires there.
+`mem_test.go` covers it.
 
 The package writes no files.
 

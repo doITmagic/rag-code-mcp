@@ -61,6 +61,7 @@ ignored (so a v1 `config.yaml` with Qdrant settings still loads).
 | `ollama_base_url` | `OllamaBaseURL` | `http://localhost:11434` | Ollama URL; must be `http` or `https` with a host. [`embed`](../../embed/README.md), installer, `rag_server_info`. |
 | `ollama_embed` | `OllamaEmbed` | `embeddinggemma-2:270m` | Embedding model; required. Needs Ollama 0.40 or later. |
 | `embed_threads` | `EmbedThreads` | `max(2, NumCPU/3)` | CPU threads Ollama may use for embeddings (`num_thread`). `0` lets Ollama choose (every performance core). Must not be negative. |
+| `min_free_memory_mb` | `MinFreeMemoryMB` | `1536` | Free memory a local Ollama needs to load the model (measured: the model process takes about 0.9 to 1.4 GB). With less, indexing and searches answer `low_memory` and Ollama is not called. `0` turns the check off. Must not be negative. |
 | `log_level` | `LogLevel` | `info` | `debug`, `info`, `warn` or `error`. |
 | `log_max_size_mb` | `LogMaxSizeMB` | `10` | Size at which `ragcode.log` is rotated. Must be positive. |
 | `exclude_patterns` | `ExcludePatterns` | `node_modules`, `vendor`, `target`, `build`, `dist`, `__pycache__` | Directory names skipped while indexing and watching. Hidden directories are always skipped. Setting the key replaces the whole list. |

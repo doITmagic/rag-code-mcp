@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/doITmagic/rag-code-mcp/v2/embed"
 	"github.com/doITmagic/rag-code-mcp/v2/engine"
 	"github.com/doITmagic/rag-code-mcp/v2/internal/config"
 	"github.com/doITmagic/rag-code-mcp/v2/internal/update"
@@ -28,7 +29,7 @@ import (
 
 // Response is the JSON body of every tool answer.
 type Response struct {
-	Status  string     `json:"status"` // ok|not_indexed|indexing|dependency_down|ambiguous|error
+	Status  string     `json:"status"` // ok|not_indexed|indexing|dependency_down|low_memory|ambiguous|error
 	Message string     `json:"message,omitempty"`
 	Data    any        `json:"data,omitempty"`
 	Index   *IndexInfo `json:"index,omitempty"`
@@ -174,7 +175,11 @@ func (t *tools) open(ctx context.Context, req *mcp.CallToolRequest, root string)
 		return nil, res
 	}
 	if ok, msg := w.Ready(ctx); !ok && msg != engine.ErrNotIndexed.Error() {
-		res, _, _ := reply("dependency_down", msg, nil, w)
+		status := "dependency_down"
+		if strings.HasPrefix(msg, embed.ErrLowMemory.Error()) {
+			status = "low_memory"
+		}
+		res, _, _ := reply(status, msg, nil, w)
 		return w, res
 	}
 	return w, nil
@@ -198,6 +203,9 @@ func storeErr(ctx context.Context, w *engine.Workspace, err error) (*mcp.CallToo
 	}
 	if errors.Is(err, engine.ErrNotIndexed) {
 		return notIndexed(w)
+	}
+	if errors.Is(err, embed.ErrLowMemory) {
+		return reply("low_memory", err.Error(), nil, w)
 	}
 	return reply("dependency_down", err.Error()+": check that Ollama is running (rag_server_info)", nil, w)
 }

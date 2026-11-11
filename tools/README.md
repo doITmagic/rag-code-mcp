@@ -88,6 +88,7 @@ type IndexInfo struct {
 | `ok` | every tool | the answer is in `data`. A lookup that finds nothing is still `ok`, with a message such as `no indexed symbol named "X"; try rag_search` |
 | `not_indexed` | search, usages, hierarchy, exports | the workspace has no index yet. `rag_search` still returns fallback results |
 | `indexing` | the same tools, and `rag_index_workspace` | an index run is running or queued; for `rag_index_workspace` it means "run queued". An answer that would be `ok` becomes `indexing`, keeps its `data` and adds `index run in progress: results may be incomplete until it ends` to the message (`rag_read_file_context` parses on the spot and stays `ok`) |
+| `low_memory` | the same tools as `dependency_down` | the machine has less free memory than `min_free_memory_mb` and the embedding model is not loaded; the message gives the free and the needed megabytes. Nothing is run until memory is freed |
 | `dependency_down` | every tool except `rag_read_file_context` and `rag_server_info` | the embedder (Ollama) or the index store cannot be used; the message says what to do |
 | `ambiguous` | `rag_find_usages`, `rag_call_hierarchy` | several symbols match; `data.candidates` lists them |
 
@@ -488,7 +489,7 @@ Output `data`:
 | Key | Content |
 |---|---|
 | `version`, `pid`, `uptime` | this server process |
-| `ollama` | `{url, model, reachable, error}`: `GET <ollama_base_url>/api/tags`; reachable but without the model (with or without `:latest`) sets `error` to `model X not pulled: run ollama pull X` |
+| `ollama` | `{url, model, reachable, error}`: `GET <ollama_base_url>/api/tags`; a probe that times out says Ollama did not answer in time (overloaded or low on memory), any other failure says to start Ollama; reachable but without the model (with or without `:latest`) sets `error` to `model X not pulled: run ollama pull X` |
 | `update` | `{current, latest, available}` (see below) |
 | `languages` | the languages of the registered parsers |
 | `roots` | every root in `~/.ragcode/roots.json` with `{root, state, last_run_files, total?, ended_at}` from its saved index status. A root that no longer exists on disk (its status outlives it under `~/.ragcode`) is reported as `missing`. A status without `ended_at` whose lock nobody holds is reported as `interrupted`. A root this process is indexing or has queued shows its live state instead, as the `index` block does: `queued` or `indexing`, with `last_run_files` the files done so far and `total` the files of the run |

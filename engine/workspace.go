@@ -172,7 +172,9 @@ func (w *Workspace) dimChanged(ctx context.Context) bool {
 // Ready reports whether searches can be answered now; when not, the text
 // says what to do about it.
 func (w *Workspace) Ready(ctx context.Context) (bool, string) {
-	if _, err := w.e.embed.Dimension(ctx); err != nil {
+	if _, err := w.e.embed.Dimension(ctx); errors.Is(err, embed.ErrLowMemory) {
+		return false, err.Error()
+	} else if err != nil {
 		return false, fmt.Sprintf("embedder %s unavailable at %s (%v): start Ollama and pull the model", w.e.embed.Model(), w.e.cfg.OllamaBaseURL, err)
 	}
 	exists, err := w.e.store.CollectionExists(ctx, w.Collection)

@@ -22,6 +22,8 @@ rewrite of v1 that needs no database server. The last v1 release is
   (`-ollama skip`).
 - **Hardware:** at least 4 CPU cores, 8 GB RAM and an SSD; 8 cores and 16 GB
   are recommended. A GPU for Ollama speeds up indexing but is not required.
+  The embedding model needs about 1.5 GB of free memory: with less, the tools
+  answer `low_memory` and say how much to free (`min_free_memory_mb`).
 
 No database server is needed: the index is an embedded SQLite file per
 workspace.

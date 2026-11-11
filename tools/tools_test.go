@@ -603,6 +603,24 @@ func TestDependencyDown(t *testing.T) {
 	assert.Contains(t, r.Message, "Ollama")
 }
 
+type lowMemEmbedder struct{ *embed.Fake }
+
+func (lowMemEmbedder) Dimension(context.Context) (int, error) {
+	return 0, fmt.Errorf("%w: 500 MB free, at least 1536 MB needed", embed.ErrLowMemory)
+}
+
+// Too little free memory is its own status with what to free, not "start Ollama".
+func TestLowMemory(t *testing.T) {
+	v := newEnv(t, true, nil)
+	e := engine.New(v.t.cfg, store.NewMemory(), lowMemEmbedder{&embed.Fake{}}, nil)
+	t.Cleanup(e.Close)
+	v.t.e = e
+	r, _ := v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "Foo"})
+	assert.Equal(t, "low_memory", r.Status)
+	assert.Contains(t, r.Message, "at least 1536 MB needed")
+	assert.NotContains(t, r.Message, "start Ollama")
+}
+
 func TestToolSchemas(t *testing.T) {
 	v := newEnv(t, false, nil)
 	res, err := v.cs.ListTools(context.Background(), nil)

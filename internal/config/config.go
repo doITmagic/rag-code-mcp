@@ -25,6 +25,7 @@ type Config struct {
 	OllamaBaseURL         string        `yaml:"ollama_base_url"`
 	OllamaEmbed           string        `yaml:"ollama_embed"`
 	EmbedThreads          int           `yaml:"embed_threads"`
+	MinFreeMemoryMB       int           `yaml:"min_free_memory_mb"`
 	LogLevel              string        `yaml:"log_level"`
 	LogMaxSizeMB          int           `yaml:"log_max_size_mb"`
 	ExcludePatterns       []string      `yaml:"exclude_patterns"`
@@ -44,6 +45,7 @@ func Default() Config {
 		OllamaEmbed:   "embeddinggemma-2:270m",
 		// A CPU-only Ollama otherwise takes every performance core.
 		EmbedThreads:       max(2, runtime.NumCPU()/3),
+		MinFreeMemoryMB:    1536,
 		LogLevel:           "info",
 		LogMaxSizeMB:       10,
 		ExcludePatterns:    []string{"node_modules", "vendor", "target", "build", "dist", "__pycache__"},
@@ -132,6 +134,9 @@ func (c Config) Validate() error {
 	}
 	if c.EmbedThreads < 0 {
 		return fmt.Errorf("config: embed_threads must not be negative, got %d", c.EmbedThreads)
+	}
+	if c.MinFreeMemoryMB < 0 {
+		return fmt.Errorf("config: min_free_memory_mb must not be negative, got %d", c.MinFreeMemoryMB)
 	}
 	if c.LogMaxSizeMB <= 0 {
 		return fmt.Errorf("config: log_max_size_mb must be positive, got %d", c.LogMaxSizeMB)

@@ -31,6 +31,10 @@ type Ollama struct {
 	// Ollama pick. Set before use. Keep it constant: Ollama reloads the
 	// model whenever it changes.
 	Threads int
+	// MinFreeMB is the free memory a local Ollama needs to load the model;
+	// with less, calls fail with ErrLowMemory. 0 turns the check off.
+	MinFreeMB int
+	lastOK    atomic.Int64 // unix seconds of the last successful call
 }
 
 // NewOllama returns an embedder for model at baseURL. A nil client means http.DefaultClient.
@@ -78,6 +82,9 @@ func (o *Ollama) Dimension(ctx context.Context) (int, error) {
 
 // embedBatch sends one /api/embed request, retrying once on a transport error.
 func (o *Ollama) embedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	if err := o.checkMemory(); err != nil {
+		return nil, err
+	}
 	req := map[string]any{"model": o.model, "input": texts}
 	if o.Threads > 0 {
 		req["options"] = map[string]int{"num_thread": o.Threads}
@@ -113,6 +120,7 @@ func (o *Ollama) embedBatch(ctx context.Context, texts []string) ([][]float32, e
 			return nil, fmt.Errorf("%w: empty embedding for input %d", ErrUnavailable, i)
 		}
 	}
+	o.lastOK.Store(time.Now().Unix())
 	return resp.Embeddings, nil
 }
 

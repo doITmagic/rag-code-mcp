@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -116,6 +117,9 @@ func (t *tools) probeOllama(ctx context.Context) Service {
 	}
 	if err := t.getJSON(ctx, strings.TrimRight(s.URL, "/")+"/api/tags", &body); err != nil {
 		s.Error = err.Error() + ": start Ollama"
+		if errors.Is(err, context.DeadlineExceeded) { // it runs but is slow: not a reason to start it
+			s.Error = err.Error() + ": Ollama did not answer in time; the machine may be overloaded or low on memory"
+		}
 		return s
 	}
 	s.Reachable = true

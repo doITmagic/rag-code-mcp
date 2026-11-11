@@ -52,6 +52,7 @@ func New(o Options) (*App, error) {
 	if o.Embedder == nil {
 		ol := embed.NewOllama(o.Config.OllamaBaseURL, o.Config.OllamaEmbed, nil)
 		ol.Threads = o.Config.EmbedThreads
+		ol.MinFreeMB = o.Config.MinFreeMemoryMB
 		o.Embedder = ol
 	}
 	if o.Store == nil {

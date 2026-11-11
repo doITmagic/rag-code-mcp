@@ -26,7 +26,8 @@ query the index instead of guessing or grepping blindly:
   after editing files when a response's index block has "watch": such a
   root is not watched, so edits are not picked up automatically.
 
-Always pass workspace_root: the absolute path of this project directory.
+Always pass workspace_root: the absolute path of this project's top directory
+(the repository root, the same on every call), never a subdirectory of it.
 `
 
 // IDEPointer is the line WriteIDERules adds to the PointerFiles.

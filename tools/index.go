@@ -21,7 +21,7 @@ import (
 
 // IndexInput is the input of rag_index_workspace.
 type IndexInput struct {
-	WorkspaceRoot string `json:"workspace_root,omitempty" jsonschema:"Absolute path of the project directory (required). Pass it on every call."`
+	WorkspaceRoot string `json:"workspace_root,omitempty" jsonschema:"Absolute path of the top directory of the project the user is working in: the repository root (where .git is), the same on every call (required). Not a subdirectory of the project, not a parent of several projects, not the home or a system directory."`
 	Mode          string `json:"mode,omitempty" jsonschema:"incremental (default: changed files only) or recreate (drop the collection and re-embed everything)."`
 	Confirm       bool   `json:"confirm,omitempty" jsonschema:"Ignored: every call starts the run. Kept so older calls still validate."`
 }

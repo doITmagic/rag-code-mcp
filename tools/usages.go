@@ -192,7 +192,7 @@ func byName(ctx context.Context, w *engine.Workspace, f store.Filter, query stri
 
 // UsagesInput is the input of rag_find_usages.
 type UsagesInput struct {
-	WorkspaceRoot string `json:"workspace_root,omitempty" jsonschema:"Absolute path of the project directory (required). Pass it on every call."`
+	WorkspaceRoot string `json:"workspace_root,omitempty" jsonschema:"Absolute path of the top directory of the project the user is working in: the repository root (where .git is), the same on every call (required). Not a subdirectory of the project, not a parent of several projects, not the home or a system directory."`
 	Symbol        string `json:"symbol" jsonschema:"Name or qualified name of the symbol, e.g. User.find or App\\Models\\User::find."`
 	FilePath      string `json:"file_path,omitempty" jsonschema:"File that defines the symbol, to pick it when several share the name."`
 	Limit         int    `json:"limit,omitempty" jsonschema:"Maximum referencing symbols, default 100."`
@@ -402,7 +402,7 @@ func lineText(lines []string, n int) string {
 
 // HierarchyInput is the input of rag_call_hierarchy.
 type HierarchyInput struct {
-	WorkspaceRoot string `json:"workspace_root,omitempty" jsonschema:"Absolute path of the project directory (required). Pass it on every call."`
+	WorkspaceRoot string `json:"workspace_root,omitempty" jsonschema:"Absolute path of the top directory of the project the user is working in: the repository root (where .git is), the same on every call (required). Not a subdirectory of the project, not a parent of several projects, not the home or a system directory."`
 	Symbol        string `json:"symbol" jsonschema:"Name or qualified name of the function or method."`
 	Direction     string `json:"direction,omitempty" jsonschema:"incoming (callers), outgoing (callees) or both; default incoming."`
 	Depth         int    `json:"depth,omitempty" jsonschema:"Levels to expand, default 2, max 4."`

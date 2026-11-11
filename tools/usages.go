@@ -270,10 +270,36 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 	if ambiguous > 0 {
 		msg += fmt.Sprintf("; %d more relations name %q but could not be resolved to one symbol", ambiguous, sym.Name)
 	}
-	if total == 0 && (sym.Kind == parser.KindConstant || sym.Kind == parser.KindVariable) {
+	if used := usedMembers(ctx, w, sym, total); len(used) > 0 {
+		msg += fmt.Sprintf("; %s itself is not called, but its members are: %s (rag_find_usages on a member lists the calls)", sym.Name, strings.Join(used, ", "))
+	} else if total == 0 && (sym.Kind == parser.KindConstant || sym.Kind == parser.KindVariable) {
 		msg += "; reads of constants and variables are not tracked, only calls, type uses and inheritance (an import is not a usage): try rag_search"
 	}
 	return reply("ok", msg, data, w)
+}
+
+// usedMembers names the members of an unused constant or variable (an object
+// of functions, as "export const api = { list: ... }") that something calls,
+// at most 10: zero usages of the object must not read as dead code.
+func usedMembers(ctx context.Context, w *engine.Workspace, sym *parser.Symbol, total int) (used []string) {
+	if total > 0 || (sym.Kind != parser.KindConstant && sym.Kind != parser.KindVariable) {
+		return nil
+	}
+	hits, err := w.Scroll(ctx, store.Filter{FilePath: sym.FilePath}, store.MaxScroll)
+	if err != nil {
+		return nil
+	}
+	for _, h := range hits {
+		rest, ok := strings.CutPrefix(h.Symbol.QualifiedName, sym.QualifiedName+".")
+		if !ok || len(used) == 10 {
+			continue
+		}
+		if refs, _, err := referrers(ctx, w, &h.Symbol, 1); err == nil && len(refs) > 0 {
+			used = append(used, sym.Name+"."+rest)
+		}
+	}
+	sort.Strings(used)
+	return used
 }
 
 // referrers lists at most limit symbols with a relation to sym, by target

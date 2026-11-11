@@ -603,6 +603,24 @@ func TestDependencyDown(t *testing.T) {
 	assert.Contains(t, r.Message, "Ollama")
 }
 
+// An object of functions with no direct usage is not dead code when its
+// members are called: the answer names them.
+func TestUsagesOfObjectNamesUsedMembers(t *testing.T) {
+	v := newEnv(t, false, nil)
+	require.NoError(t, os.MkdirAll(filepath.Join(v.root, "obj"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(v.root, "obj/a.fk"), []byte("const Api\nfunc Api.list\nfunc Api.drop\nfunc User\n  call m/obj.Api.list\nconst Lonely\n"), 0o644))
+	w, err := v.e.Workspace(v.root)
+	require.NoError(t, err)
+	w.Index(false)
+	require.Eventually(t, func() bool { s := w.Status(); return s.Phase == "done" && !s.Running && !s.Queued }, 10*time.Second, 20*time.Millisecond)
+	r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "Api"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	assert.Contains(t, r.Message, "its members are: Api.list (")
+	assert.NotContains(t, r.Message, "Api.drop")
+	r, _ = v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "Lonely"})
+	assert.Contains(t, r.Message, "reads of constants and variables are not tracked")
+}
+
 type lowMemEmbedder struct{ *embed.Fake }
 
 func (lowMemEmbedder) Dimension(context.Context) (int, error) {

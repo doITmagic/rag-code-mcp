@@ -254,7 +254,10 @@ literal's values are not walked, its methods own their calls.
   matches no symbol, and has no by-name fallback.
 - Top-level expression statements of a plain `.js`/`.ts` file (`describe()` /
   `it()` in tests, side-effect calls) belong to no symbol, so their calls are
-  not usages.
+  not usages. A file whose code all sits in such statements (a jQuery
+  `(function ($) { ... })(jQuery)` IIFE, `$(document).ready(...)`) has no
+  symbol at all, so `rag_search` never returns it; read it with
+  `rag_read_file_context` or grep.
 - Re-exports are read from the imported file when an importer is parsed:
   editing a barrel (`index.ts`) does not re-parse the files that import
   through it, so their targets stay stale until they change or are

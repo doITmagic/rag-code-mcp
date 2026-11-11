@@ -122,6 +122,8 @@ func TestVerifyYAMLTagsSnakeCase(t *testing.T) {
 		"watch_enabled: false",
 		"watch_debounce: 2m",
 		"auto_create_ide_rules: false",
+		"auto_update: false",
+		"update_source: /dist",
 		"",
 	}, "\n")), 0o644))
 	cfg, err := Load(path)
@@ -131,6 +133,7 @@ func TestVerifyYAMLTagsSnakeCase(t *testing.T) {
 		LogLevel: "error", LogMaxSizeMB: 3, ExcludePatterns: []string{"a", "b"},
 		AllowedWorkspacePaths: []string{"/x"}, AutoIndex: false, WatchEnabled: false,
 		WatchDebounce: 2 * time.Minute, AutoCreateIDERules: false,
+		AutoUpdate: false, UpdateSource: "/dist",
 	}, cfg)
 }
 

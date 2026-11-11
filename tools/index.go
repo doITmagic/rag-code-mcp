@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"github.com/doITmagic/rag-code-mcp/v2/engine"
 	"github.com/doITmagic/rag-code-mcp/v2/index"
 	"github.com/doITmagic/rag-code-mcp/v2/internal/config"
+	"github.com/doITmagic/rag-code-mcp/v2/internal/update"
 	"github.com/doITmagic/rag-code-mcp/v2/parser"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -149,75 +149,15 @@ func (t *tools) getJSON(ctx context.Context, url string, out any) error {
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
-type updateCache struct {
-	Latest    string    `json:"latest"`
-	CheckedAt time.Time `json:"checked_at"`
-}
-
-// update returns the latest release tag, from HomeDir()/cache/update.json
-// when checked in the last 24 h (1 h after a failed check, cached with an
-// empty Latest), otherwise from GitHub.
+// update returns the latest release tag (cached for 24 h by update.Latest)
+// and whether it is newer than this server.
 func (t *tools) update(ctx context.Context) Update {
 	u := Update{Current: t.version, Latest: "unknown"}
-	path := filepath.Join(config.HomeDir(), "cache", "update.json")
-	var c updateCache
-	ttl := 24 * time.Hour
-	data, err := os.ReadFile(path)
-	if err == nil && json.Unmarshal(data, &c) == nil && c.Latest == "" {
-		ttl = time.Hour
+	if l := update.Latest(ctx, t.http, t.releases); l != "" {
+		u.Latest = l
+		u.Available = update.Less(t.version, l)
 	}
-	if err == nil && !c.CheckedAt.IsZero() && time.Since(c.CheckedAt) < ttl {
-		if c.Latest != "" {
-			u.Latest = c.Latest
-		}
-	} else {
-		var body struct {
-			TagName string `json:"tag_name"`
-		}
-		if err := t.getJSON(ctx, t.releases, &body); err == nil && body.TagName != "" {
-			u.Latest = body.TagName
-		}
-		// A canceled request says nothing about GitHub; don't cache it.
-		if ctx.Err() == nil {
-			data, _ := json.Marshal(updateCache{Latest: body.TagName, CheckedAt: time.Now()})
-			_ = index.WriteAtomic(path, data)
-		}
-	}
-	u.Available = u.Latest != "unknown" && semverLess(t.version, u.Latest)
 	return u
-}
-
-// semverLess reports a < b for "v1.2.3"-style tags; a pre-release is older
-// than its final release; anything unparsable (dev builds) is never
-// considered outdated.
-func semverLess(a, b string) bool {
-	parse := func(s string) ([3]int, bool) {
-		var v [3]int
-		s, _, _ = strings.Cut(strings.TrimPrefix(s, "v"), "-")
-		parts := strings.Split(s, ".")
-		if len(parts) != 3 {
-			return v, false
-		}
-		for i, p := range parts {
-			n, err := strconv.Atoi(p)
-			if err != nil {
-				return v, false
-			}
-			v[i] = n
-		}
-		return v, true
-	}
-	x, okA := parse(a)
-	y, okB := parse(b)
-	if !okA || !okB {
-		return false
-	}
-	for i := range x {
-		if x[i] != y[i] {
-			return x[i] < y[i]
-		}
-	}
-	return strings.Contains(a, "-") && !strings.Contains(b, "-") // shortcut: two pre-releases of one version compare equal; order them if testers run several
 }
 
 // knownRoots lists roots.json with the persisted status of each root, or the

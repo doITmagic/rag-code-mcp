@@ -33,6 +33,8 @@ type Config struct {
 	WatchEnabled          bool          `yaml:"watch_enabled"`
 	WatchDebounce         time.Duration `yaml:"watch_debounce"`
 	AutoCreateIDERules    bool          `yaml:"auto_create_ide_rules"`
+	AutoUpdate            bool          `yaml:"auto_update"`
+	UpdateSource          string        `yaml:"update_source"`
 }
 
 // Default returns the built-in configuration; default.yaml mirrors it.
@@ -49,6 +51,7 @@ func Default() Config {
 		WatchEnabled:       true,
 		WatchDebounce:      time.Second,
 		AutoCreateIDERules: true,
+		AutoUpdate:         true,
 	}
 }
 
@@ -103,6 +106,7 @@ func (c *Config) applyEnv() {
 	set(&c.OllamaBaseURL, "OLLAMA_BASE_URL")
 	set(&c.OllamaEmbed, "OLLAMA_EMBED")
 	set(&c.LogLevel, "MCP_LOG_LEVEL")
+	set(&c.UpdateSource, "RAGCODE_UPDATE_SOURCE")
 	if v := os.Getenv("RAGCODE_ALLOWED_PATHS"); v != "" {
 		c.AllowedWorkspacePaths = c.AllowedWorkspacePaths[:0]
 		for _, p := range filepath.SplitList(v) {

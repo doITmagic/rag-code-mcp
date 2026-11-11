@@ -37,7 +37,7 @@ graph TD
 
 | File | Contents |
 |:---|:---|
-| `main.go` | Flags, `main`, `run`, `setMemoryLimit`, `httpHandler`, `serveHTTP`, `versionLine` and the build-time `Version` variable. |
+| `main.go` | Flags, `main`, `run` (remembers the installed binary for the restart note), `updateNow` (`-update`), `autoUpdate`, `sameFile`, `setMemoryLimit`, `httpHandler`, `serveHTTP`, `versionLine` and the build-time `Version` variable. |
 
 Tests:
 
@@ -56,6 +56,7 @@ Tests:
 | `-log-level` | empty | `debug`, `info`, `warn` or `error`; overrides `log_level` from the config. |
 | `-version` | `false` | Print `rag-code-mcp <Version>` and exit. |
 | `-uninstall` | `false` | Run the uninstaller (interactive: it asks before deleting each workspace's `.ragcode`) and exit. |
+| `-update` | `false` | Install a newer release from `update_source` (GitHub when empty) over `~/.ragcode/bin/rag-code-mcp`, print the outcome and exit. It skips the daily cache. See [update](../../internal/update/README.md). |
 
 Go's `flag` package accepts both `-flag` and `--flag`; IDE configs use
 `--config`. A positional argument is refused with exit code 2 (the flag parser
@@ -75,6 +76,10 @@ sequenceDiagram
     M->>C: OpenLogFile(~/.ragcode/logs/ragcode.log)
     M->>C: NewLogger(level, file).With("pid", ...)
     M->>A: New(Options{Config, Version, Log})
+    opt this is ~/.ragcode/bin/rag-code-mcp
+        M->>M: update.Remember(installed binary)
+        M->>M: go autoUpdate when auto_update (update.Latest, then update.Run)
+    end
     alt stdio
         M->>E: go Resume(ctx)
         M->>A: Server.Run(ctx, StdioTransport)
@@ -119,6 +124,21 @@ After the server is built, `Engine.Resume` runs in a goroutine. It walks the
 workspaces recorded in `~/.ragcode/roots.json` and, for those that were
 indexed before and when `auto_index` is on, queues an incremental index. See
 the [engine README](../../engine/README.md).
+
+### Automatic update
+
+With `auto_update` on (the default), `autoUpdate` runs in a goroutine after
+the server starts, when the running binary is the installed one
+(`os.SameFile` with `~/.ragcode/bin/rag-code-mcp`). With the default source
+it asks GitHub at most once a day (the `update.json` cache shared with
+`rag_server_info`); a newer release is downloaded, checked against
+`checksums.txt`, run once with `-version` and moved over the installed
+binary. The log says `update: installed; restart the MCP clients to use it`
+or `update: failed`. This process and the other running servers keep the old
+binary until their client restarts them; each remembered the installed binary
+at start, so once it is replaced their tool answers end with "RagCode was
+updated on disk: restart this MCP server ...". Details in
+[internal/update](../../internal/update/README.md).
 
 ### HTTP mode
 

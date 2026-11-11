@@ -37,7 +37,8 @@ graph LR
 | [engine](../engine/README.md) | resolves and validates the workspace root, checks readiness, embeds the query and searches, scrolls, reads the index status, queues index runs and file purges, writes the IDE rules |
 | [store](../store/README.md) | `Filter` and `Hit` types, `MaxScroll` |
 | [parser](../parser/README.md) | parses files on the fly (`rag_read_file_context`, the not-indexed search fallback), normalizes qualified names, lists the registered languages |
-| [index](../index/README.md) | the walk and skip rules (`Walk`, `Skip`, `Secret`, `IsLinkedWorktree`), the per-root state (`LoadState`, `ReadStatus`, `Running`), `WriteAtomic` for the update cache |
+| [index](../index/README.md) | the walk and skip rules (`Walk`, `Skip`, `Secret`, `IsLinkedWorktree`), the per-root state (`LoadState`, `ReadStatus`, `Running`) |
+| [internal/update](../internal/update/README.md) | `Latest` (the cached release check), `Less` (version order), `GitHubLatest` |
 | [internal/config](../internal/config/README.md) | `Config` (Ollama URL and model, exclude patterns, `auto_create_ide_rules`) and `HomeDir()` |
 
 ## Files
@@ -49,7 +50,7 @@ graph LR
 | [`usages.go`](usages.go) | `rag_find_usages` and `rag_call_hierarchy`: `twinKey`/`twinOf`/`mergeTwins` (one entry per qualified name and file, used by every tool), `resolveSymbol` (one symbol, twins merged, an equal qualified name before suffix matches, or an `ambiguous` answer), `referrers`, `exactRel` (by_name or not), `ambiguousByName`, the hierarchy `walker` (`walk` level by level, `next`), `writeTree` |
 | [`exports.go`](exports.go) | `rag_list_package_exports`: `ExportsInput`, `Export`, `moduleSymbols`, `shortModule` for short package names, `dirModules` for a directory or a source file of the workspace |
 | [`readfile.go`](readfile.go) | `rag_read_file_context`: `ReadInput`, `Outline`, line ranges (`lineRange` streams a file over 8 MiB), outline, one symbol; line and signature clipping |
-| [`index.go`](index.go) | `rag_index_workspace` and `rag_server_info`: `IndexInput`, `Service`, `Update`, `KnownRoot`, the Ollama probe, the release check with its cache, `semverLess`, `knownRoots` |
+| [`index.go`](index.go) | `rag_index_workspace` and `rag_server_info`: `IndexInput`, `Service`, `Update`, `KnownRoot`, the Ollama probe, the release check (through `update.Latest`), `knownRoots` |
 
 Tests:
 
@@ -93,6 +94,12 @@ type IndexInfo struct {
 Input errors (empty query, bad mode, unknown `kinds` value, path outside the
 root, missing root, cancelled request) are **tool errors**: `IsError` is set and the content is a
 plain sentence, not JSON.
+
+When the installed binary this server started from was replaced (an
+automatic update or a reinstall), every JSON answer's `message` ends with
+`RagCode was updated on disk: restart this MCP server to use the new version
+(Claude Code: /mcp, then reconnect ragcode)` (`update.RestartNote`, see
+[internal/update](../internal/update/README.md)).
 
 ### The `index` block
 
@@ -485,16 +492,17 @@ Output `data`:
 | `languages` | the languages of the registered parsers |
 | `roots` | every root in `~/.ragcode/roots.json` with `{root, state, last_run_files, total?, ended_at}` from its saved index status. A root that no longer exists on disk (its status outlives it under `~/.ragcode`) is reported as `missing`. A status without `ended_at` whose lock nobody holds is reported as `interrupted`. A root this process is indexing or has queued shows its live state instead, as the `index` block does: `queued` or `indexing`, with `last_run_files` the files done so far and `total` the files of the run |
 
-**Update check.** The latest release tag comes from
+**Update check.** `update.Latest` gives the latest release tag: from
 `$RAGCODE_HOME/cache/update.json` when it was checked in the last 24 hours,
 otherwise from the GitHub API
-(`/repos/doITmagic/rag-code-mcp/releases/latest`); the answer is written back
-to the cache. When the check fails, `latest` is `"unknown"` and `available` is
-`false`; the failure is cached for one hour, so an offline machine does not
-wait on GitHub at every call (a request canceled by the client is not cached). `available` compares `vMAJOR.MINOR.PATCH` tags (the
-leading `v` is optional); a pre-release (`-suffix`) is older than its final
-release, and two pre-releases of one version compare equal; a version that does not parse, such as a dev build, is
-never reported as outdated. Every HTTP request uses a 3-second client timeout,
+(`/repos/doITmagic/rag-code-mcp/releases/latest`), written back to the cache.
+When the check fails, `latest` is `"unknown"` and `available` is `false`; the
+failure is cached for one hour, so an offline machine does not wait on GitHub
+at every call (a request canceled by the client is not cached). `available`
+is `update.Less(version, latest)`: `vMAJOR.MINOR.PATCH` tags, a pre-release
+older than its final release, a dev build never outdated (see
+[internal/update](../internal/update/README.md)). The automatic update of the
+server shares this cache. Every HTTP request uses a 3-second client timeout,
 and the Ollama probe and the update check run in parallel, so two stalled
 endpoints cost one timeout, not two.
 

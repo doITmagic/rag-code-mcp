@@ -4,6 +4,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,6 +23,7 @@ import (
 	"github.com/doITmagic/rag-code-mcp/v2/internal/app"
 	"github.com/doITmagic/rag-code-mcp/v2/internal/config"
 	"github.com/doITmagic/rag-code-mcp/v2/internal/uninstall"
+	"github.com/doITmagic/rag-code-mcp/v2/internal/update"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -38,6 +40,7 @@ func main() {
 	logLevel := flag.String("log-level", "", "debug, info, warn or error (overrides the config)")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	doUninstall := flag.Bool("uninstall", false, "remove RagCode MCP from this machine and exit")
+	doUpdate := flag.Bool("update", false, "install a newer release over the installed binary and exit")
 	flag.Parse()
 	// Parsing stops at the first non-flag argument; flags after it would be ignored silently.
 	if flag.NArg() > 0 {
@@ -58,10 +61,67 @@ func main() {
 		}
 		return
 	}
+	if *doUpdate {
+		if err := updateNow(ctx, *cfgPath); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(ctx, *cfgPath, *httpAddr, *logLevel); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// updateNow is -update: install a newer release from update_source (GitHub
+// when empty) over the installed binary, without the daily cache.
+func updateNow(ctx context.Context, cfgPath string) error {
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return err
+	}
+	src := cmp.Or(cfg.UpdateSource, update.GitHubLatest)
+	v, err := update.Run(ctx, src, uninstall.Binary(config.HomeDir()), Version)
+	switch {
+	case err != nil:
+		return err
+	case v == "":
+		fmt.Println("no newer release than", Version, "at", src)
+	default:
+		fmt.Printf("updated %s -> %s; restart the MCP clients to use it\n", Version, v)
+	}
+	return nil
+}
+
+// autoUpdate installs a newer release when this process is the installed
+// binary (not a dev build, Homebrew or a copy elsewhere). GitHub is asked at
+// most once a day through the update.json cache.
+func autoUpdate(ctx context.Context, source string, log *slog.Logger) {
+	target := uninstall.Binary(config.HomeDir())
+	if exe, err := os.Executable(); err != nil || !sameFile(exe, target) {
+		log.Debug("update: not the installed binary, skipped", "exe", exe, "installed", target)
+		return
+	}
+	if source == "" {
+		source = update.GitHubLatest
+		if l := update.Latest(ctx, &http.Client{Timeout: 3 * time.Second}, source); !update.Less(Version, l) {
+			return
+		}
+	}
+	v, err := update.Run(ctx, source, target, Version)
+	switch {
+	case err != nil && ctx.Err() == nil:
+		log.Warn("update: failed", "source", source, "err", err)
+	case v != "":
+		log.Info("update: installed; restart the MCP clients to use it", "from", Version, "to", v)
+	}
+}
+
+func sameFile(a, b string) bool {
+	fa, errA := os.Stat(a)
+	fb, errB := os.Stat(b)
+	return errA == nil && errB == nil && os.SameFile(fa, fb)
 }
 
 // setMemoryLimit caps the heap at 1 GiB unless GOMEMLIMIT is set: parallel
@@ -106,6 +166,14 @@ func run(ctx context.Context, cfgPath, httpAddr, logLevel string) error {
 		a.Close(cctx)
 	}()
 	log.Info("rag-code-mcp starting", "version", Version, "http", httpAddr)
+	if exe, err := os.Executable(); err == nil {
+		if bin := uninstall.Binary(config.HomeDir()); sameFile(exe, bin) {
+			update.Remember(bin) // tool answers ask for a restart once it is replaced
+		}
+	}
+	if cfg.AutoUpdate {
+		go autoUpdate(ctx, cfg.UpdateSource, log)
+	}
 
 	if httpAddr == "" {
 		go a.Engine.Resume(ctx)

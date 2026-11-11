@@ -69,6 +69,8 @@ ignored (so a v1 `config.yaml` with Qdrant settings still loads).
 | `watch_enabled` | `WatchEnabled` | `true` | Watch indexed workspaces for file changes (only when `auto_index` is also on). |
 | `watch_debounce` | `WatchDebounce` | `1s` | Go duration the watcher waits for changes to settle. Must not be negative. |
 | `auto_create_ide_rules` | `AutoCreateIDERules` | `true` | Let `rag_index_workspace` write `<workspace>/.ragcode/RAGCODE.md` and the IDE pointer lines. |
+| `auto_update` | `AutoUpdate` | `true` | At server start, install a newer release over `~/.ragcode/bin/rag-code-mcp` (GitHub asked at most once a day). See [update](../update/README.md). |
+| `update_source` | `UpdateSource` | empty | Where releases come from: empty is GitHub; a directory with the release archive and `checksums.txt`, or a URL answering like the GitHub latest-release API, for testing. |
 
 `embed_threads` is commented out in `default.yaml` on purpose: the written
 file does not pin a CPU count, so the default keeps following the machine.
@@ -83,6 +85,7 @@ override.
 | `OLLAMA_BASE_URL` | `ollama_base_url` |
 | `OLLAMA_EMBED` | `ollama_embed` |
 | `MCP_LOG_LEVEL` | `log_level` |
+| `RAGCODE_UPDATE_SOURCE` | `update_source` |
 | `RAGCODE_ALLOWED_PATHS` | `allowed_workspace_paths`, as an OS path list (`:` on Linux/macOS, `;` on Windows); blank entries are dropped |
 | `RAGCODE_HOME` | not a key: moves the whole global directory (see `HomeDir`) |
 

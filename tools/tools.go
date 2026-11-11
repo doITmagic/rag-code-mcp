@@ -21,6 +21,7 @@ import (
 
 	"github.com/doITmagic/rag-code-mcp/v2/engine"
 	"github.com/doITmagic/rag-code-mcp/v2/internal/config"
+	"github.com/doITmagic/rag-code-mcp/v2/internal/update"
 	"github.com/doITmagic/rag-code-mcp/v2/store"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -55,7 +56,7 @@ type tools struct {
 // Register adds every rag_* tool to server.
 func Register(server *mcp.Server, e *engine.Engine, cfg config.Config, version string, startedAt time.Time) {
 	t := &tools{e: e, cfg: cfg, version: version, started: startedAt,
-		releases: "https://api.github.com/repos/doITmagic/rag-code-mcp/releases/latest",
+		releases: update.GitHubLatest,
 		http:     &http.Client{Timeout: 3 * time.Second}}
 	t.register(server)
 }
@@ -94,6 +95,9 @@ func answer(status, msg string, data any, w *engine.Workspace, partial bool) (*m
 			}
 			r.Message = fmt.Sprintf("last index run %s%s; run rag_index_workspace to retry", r.Index.State, why)
 		}
+	}
+	if update.Replaced() {
+		r.Message = strings.TrimPrefix(r.Message+"; "+update.RestartNote, "; ")
 	}
 	b, err := json.Marshal(r)
 	if err != nil {

@@ -53,6 +53,13 @@ indexes are not compatible, so projects are indexed again.
 `rag-code-mcp --update` and `brew upgrade` replace only the binary and leave
 the v1 setup (Qdrant, old config, IDE entries) behind.
 
+**Updates:** a server started from `~/.ragcode/bin` installs a newer release
+on its own (at most one GitHub check a day), after checking the archive
+against `checksums.txt`; the MCP clients use it once they restart the server.
+`rag-code-mcp -update` does it at once; `auto_update: false` in
+`config.yaml` turns the automatic update off. See
+[internal/update](internal/update/README.md).
+
 `dist/rag-code-install -uninstall -y` removes everything; add `-docker` to also
 remove the `ragcode-ollama` container.
 
@@ -66,6 +73,7 @@ remove the `ragcode-ollama` container.
 | `~/.ragcode/index/<collection>/` | the workspace index: `index.db` (plus SQLite's `index.db-wal` and `index.db-shm`), `state.json`, `index_status.json`, `index.lock`, `watch.lock` |
 | `~/.ragcode/roots.json` | the workspaces the server knows; `roots.json.lock` guards its updates |
 | `~/.ragcode/cache/update.json` | the cached result of the release check |
+| `~/.ragcode/cache/update.lock` | held while one server installs an update |
 | `<workspace>/.ragcode/RAGCODE.md` | the instructions the AI clients read |
 | `<workspace>/.ragcode/.gitignore` | `*`, so git ignores `.ragcode` |
 | `<workspace>/CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.github/copilot-instructions.md`, `.windsurfrules`, `.clinerules`, `.cursor/rules/ragcode.mdc` | one pointer line to `RAGCODE.md`, added only to files that already exist (`ragcode.mdc` is created when `.cursor/rules` exists) and that git does not track |
@@ -95,6 +103,7 @@ Every package directory has its own README; start here and follow the links.
 | [internal/config](internal/config/README.md) | loads `~/.ragcode/config.yaml` and provides the process logger |
 | [internal/idepaths](internal/idepaths/README.md) | where each supported IDE keeps its MCP config; writes or removes the `ragcode` entry |
 | [internal/install](internal/install/README.md) | sets RagCode up: binary, `config.yaml`, Ollama container, model, IDE configs, PATH |
+| [internal/update](internal/update/README.md) | the release check, and the update that installs a newer release over `~/.ragcode/bin/rag-code-mcp` |
 | [internal/uninstall](internal/uninstall/README.md) | removes processes, IDE entries, per-root `.ragcode` directories, `~/.ragcode` and the PATH line |
 | [engine](engine/README.md) | orchestrates workspaces: root validation, known roots, one index queue per root through a single global slot, a file watcher per root (one watching server per root across processes) |
 | [index](index/README.md) | the indexing pipeline for one root: walk, skip rules, parse, workspace-wide relation resolution, embed, upsert |

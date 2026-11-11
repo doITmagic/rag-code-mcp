@@ -29,3 +29,12 @@ auto_index: true
 watch_enabled: true
 watch_debounce: 1s
 auto_create_ide_rules: true
+
+# Install newer releases over ~/.ragcode/bin/rag-code-mcp when a server starts
+# (checked at most once a day). The running servers keep their binary until
+# the MCP client restarts them.
+auto_update: true
+# Where releases come from. Empty: GitHub. For testing: a directory holding the
+# release archive and checksums.txt, or a URL answering like the GitHub
+# latest-release API.
+# update_source: /path/to/dist

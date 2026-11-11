@@ -22,6 +22,7 @@ The split is simple:
 | [`config`](./config/README.md) | Loads `~/.ragcode/config.yaml` (written from `default.yaml` on first run), applies environment overrides, validates; builds the logger and the rotating log file. | almost everything |
 | [`idepaths`](./idepaths/README.md) | The table of 14 IDE MCP config files and the code that adds or removes the `ragcode` entry in them. | `install`, `uninstall` |
 | [`install`](./install/README.md) | The installer: binary copy, config, Ollama container, model pull, IDE configs, PATH, removal of a RagCode v1 install. | [`cmd/rag-code-install`](../cmd/rag-code-install/README.md) |
+| [`update`](./update/README.md) | The release check (cached a day), version order, and the update that installs a newer release over `~/.ragcode/bin/rag-code-mcp` after checking its SHA-256. | [`cmd/rag-code-mcp`](../cmd/rag-code-mcp/README.md), [`tools`](../tools/README.md) |
 | [`uninstall`](./uninstall/README.md) | The uninstaller: stop running servers, remove IDE entries, per-workspace data, `~/.ragcode`, the PATH line and optionally the Docker containers. | `cmd/rag-code-install -uninstall`, `cmd/rag-code-mcp -uninstall`, `install` (for `Binary` and `StopProcess`) |
 
 ## Dependency graph
@@ -31,6 +32,9 @@ graph TD
     MCP[cmd/rag-code-mcp] --> APP[app]
     MCP --> CFG[config]
     MCP --> UN[uninstall]
+    MCP --> UPD[update]
+    TOOLS --> UPD
+    UPD --> CFG
     INST[cmd/rag-code-install] --> IN[install]
     INST --> UN
     APP --> CFG
@@ -59,7 +63,8 @@ on it without cycles. `uninstall` imports `engine` only for
 |:---|:---|:---|
 | `~/.ragcode/config.yaml` | `config.Load` (when missing) | `uninstall` |
 | `~/.ragcode/logs/ragcode.log`, `ragcode.log.1` | `config.OpenLogFile` | `uninstall` |
-| `~/.ragcode/bin/rag-code-mcp[.exe]` | `install` | `uninstall` |
+| `~/.ragcode/bin/rag-code-mcp[.exe]` | `install`; replaced by `update` | `uninstall` |
+| `~/.ragcode/cache/update.json`, `update.lock`, `bin/rag-code-mcp.exe.old` (Windows) | `update` | `uninstall` |
 | IDE MCP configs (see [idepaths](./idepaths/README.md)) | `install` via `idepaths` | `uninstall` via `idepaths` |
 | `~/.bashrc` or `~/.zshrc` PATH line | `install` | `uninstall` |
 

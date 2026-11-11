@@ -20,6 +20,7 @@ import (
 	"github.com/doITmagic/rag-code-mcp/v2/engine"
 	"github.com/doITmagic/rag-code-mcp/v2/index"
 	"github.com/doITmagic/rag-code-mcp/v2/internal/config"
+	"github.com/doITmagic/rag-code-mcp/v2/internal/update"
 	"github.com/doITmagic/rag-code-mcp/v2/parser"
 	"github.com/doITmagic/rag-code-mcp/v2/store"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -1218,25 +1219,6 @@ func TestExactQualifiedNameWins(t *testing.T) {
 	assert.Equal(t, "ambiguous", r.Status, "neither equals a.Hook: both only end with it")
 }
 
-// A pre-release is older than its final release, so an rc build learns that
-// the final is out; dev builds are never outdated.
-func TestSemverLess(t *testing.T) {
-	for _, c := range []struct {
-		a, b string
-		want bool
-	}{
-		{"2.0.0-rc1", "v2.0.0", true},
-		{"v2.0.0", "v2.0.0-rc1", false},
-		{"v2.0.0", "v2.0.0", false},
-		{"2.0.0", "v2.0.1", true},
-		{"v2.0.0-rc1", "v1.1.21", false},
-		{"v2.0.0-rc1", "v2.0.0-rc2", false},
-		{"dev", "v9.0.0", false},
-	} {
-		assert.Equal(t, c.want, semverLess(c.a, c.b), "%s < %s", c.a, c.b)
-	}
-}
-
 // A documentation heading named like a code symbol does not make the symbol
 // ambiguous: the code symbol wins. Only doc chunks still resolve to a chunk.
 func TestResolveSymbolCodeBeatsDocChunk(t *testing.T) {
@@ -1277,4 +1259,20 @@ func TestSearchEmptyFilteredSaysWhy(t *testing.T) {
 	assert.NotContains(t, r.Message, "Go route")
 	assert.Contains(t, emptyFilterMsg("go", []parser.Kind{parser.KindRoute}), "Go route registrations are not indexed")
 	assert.NotContains(t, emptyFilterMsg("php", []parser.Kind{parser.KindRoute}), "Go route")
+}
+
+// After the installed binary is replaced, every answer asks for a restart.
+func TestAnswerAsksRestartAfterUpdate(t *testing.T) {
+	v := newEnv(t, false, func(c *config.Config) { c.OllamaBaseURL = "http://127.0.0.1:1"; c.AutoIndex = false })
+	bin := filepath.Join(t.TempDir(), "rag-code-mcp")
+	require.NoError(t, os.WriteFile(bin, []byte("old"), 0o755))
+	update.Remember(bin)
+	t.Cleanup(func() { update.Remember("") })
+	r, _ := v.call(t, "rag_server_info", map[string]any{})
+	assert.NotContains(t, r.Message, "restart")
+	tmp := bin + ".new"
+	require.NoError(t, os.WriteFile(tmp, []byte("new"), 0o755))
+	require.NoError(t, os.Rename(tmp, bin))
+	r, _ = v.call(t, "rag_server_info", map[string]any{})
+	assert.Contains(t, r.Message, update.RestartNote)
 }

@@ -621,6 +621,69 @@ func TestUsagesOfObjectNamesUsedMembers(t *testing.T) {
 	assert.Contains(t, r.Message, "reads of constants and variables are not tracked")
 }
 
+// A name the index does not know (a field, a local) comes back with the
+// source lines that hold it as a whole word; a known symbol needs none.
+func TestGrepBesideIndex(t *testing.T) {
+	v := newEnv(t, false, nil)
+	require.NoError(t, os.MkdirAll(filepath.Join(v.root, ".hidden"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(v.root, ".hidden/h.fk"), []byte("  uses fieldX\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(v.root, "pkg/g.fk"), []byte("func Holder\n  uses fieldX here\n  uses fieldXY and myfieldX\nconst Unused\n"), 0o644))
+	w, err := v.e.Workspace(v.root)
+	require.NoError(t, err)
+	w.Index(false)
+	require.Eventually(t, func() bool { s := w.Status(); return s.Phase == "done" && !s.Running && !s.Queued }, 10*time.Second, 20*time.Millisecond)
+
+	var out struct {
+		Grep      []GrepHit `json:"grep"`
+		Truncated bool      `json:"grep_truncated"`
+	}
+	want := []GrepHit{{FilePath: filepath.Join(v.root, "pkg/g.fk"), Line: 2, Text: "uses fieldX here", Match: "grep"}}
+	for tool, args := range map[string]map[string]any{
+		"rag_search":         {"query": "fieldX"},
+		"rag_find_usages":    {"symbol": "fieldX"},
+		"rag_call_hierarchy": {"symbol": "pkg.fieldX"},
+	} {
+		args["workspace_root"] = v.root
+		r, _ := v.call(t, tool, args)
+		require.Equal(t, "ok", r.Status, tool)
+		assert.Contains(t, r.Message, `a text search of the source files finds "fieldX" on 1 lines`, tool)
+		out.Grep = nil
+		data(t, r, &out)
+		assert.Equal(t, want, out.Grep, tool)
+		assert.False(t, out.Truncated, tool)
+	}
+	// Known to the index: no text search in the answer.
+	r, _ := v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "Holder"})
+	assert.NotContains(t, fmt.Sprint(r.Data), "grep:")
+	r, _ = v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "Foo"})
+	assert.NotContains(t, fmt.Sprint(r.Data), "grep:")
+	// A symbol nothing uses: the lines that name it (here its definition).
+	r, _ = v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "Unused"})
+	out.Grep = nil
+	data(t, r, &out)
+	require.Len(t, out.Grep, 1)
+	assert.Equal(t, 4, out.Grep[0].Line)
+}
+
+// The text search stops at grepHits lines and says it was cut short.
+func TestGrepTruncated(t *testing.T) {
+	v := newEnv(t, false, nil)
+	require.NoError(t, os.WriteFile(filepath.Join(v.root, "pkg/many.fk"), []byte("func Many\n"+strings.Repeat("  uses manyField\n", grepHits+5)), 0o644))
+	hits, cut := v.t.grep(context.Background(), v.root, v.root, "manyField")
+	assert.Len(t, hits, grepHits)
+	assert.True(t, cut)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	hits, cut = v.t.grep(ctx, v.root, v.root, "manyField")
+	assert.Empty(t, hits)
+	assert.True(t, cut, "a cancelled search is not a complete one")
+	g := &grepRun{word: "manyField", cancel: func() {}, done: make(chan struct{}), truncated: true}
+	close(g.done)
+	d := map[string]any{}
+	assert.Contains(t, g.add("", d), "was cut short before it found anything")
+	assert.Equal(t, true, d["grep_truncated"])
+}
+
 type lowMemEmbedder struct{ *embed.Fake }
 
 func (lowMemEmbedder) Dimension(context.Context) (int, error) {

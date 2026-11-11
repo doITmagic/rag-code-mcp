@@ -95,7 +95,10 @@ func (t *tools) search(ctx context.Context, req *mcp.CallToolRequest, in SearchI
 		return mergeTwins(live(w, hs), func(h *store.Hit) *parser.Symbol { return &h.Symbol })
 	}
 	msg := ""
+	var g *grepRun
+	defer func() { g.stop() }()
 	if isIdentifier(in.Query) {
+		g = t.startGrep(ctx, w.Root, f.PathPrefix, in.Query)
 		exact, err := byName(ctx, w, f, in.Query, exactLimit)
 		if err != nil {
 			return t.searchErr(ctx, w, in, f, err)
@@ -106,6 +109,10 @@ func (t *tools) search(ctx context.Context, req *mcp.CallToolRequest, in SearchI
 			if st := indexInfo(w).State; st == "indexing" || st == "queued" {
 				msg = fmt.Sprintf("no symbol named %q in the files indexed so far: it may be in a file not indexed yet (grep finds it now); the results are semantic neighbours only", in.Query)
 			}
+		}
+		if len(exact) > 0 { // the index knows the name: no text search needed
+			g.stop()
+			g = nil
 		}
 		for _, h := range exact {
 			seen[twinOf(&h.Symbol)] = true
@@ -138,7 +145,8 @@ func (t *tools) search(ctx context.Context, req *mcp.CallToolRequest, in SearchI
 	if len(hits) == 0 && (len(ks) > 0 || in.Language != "" || in.PathPrefix != "") {
 		msg = emptyFilterMsg(in.Language, ks)
 	}
-	return reply("ok", msg, map[string]any{"query": in.Query, "results": hits, "count": len(hits)}, w)
+	data := map[string]any{"query": in.Query, "results": hits, "count": len(hits)}
+	return reply("ok", g.add(msg, data), data, w)
 }
 
 // searchErr answers a failed store call: the bounded AST fallback while the
@@ -173,31 +181,7 @@ func (t *tools) fallback(ctx context.Context, root string, in SearchInput, f sto
 	if start == "" {
 		start = root
 	}
-	var files []string
-	_ = filepath.WalkDir(start, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || ctx.Err() != nil || len(files) >= fallbackFiles {
-			return fs.SkipAll
-		}
-		if d.IsDir() {
-			if path != start && (strings.HasPrefix(d.Name(), ".") || slices.Contains(t.cfg.ExcludePatterns, d.Name()) || index.IsLinkedWorktree(path)) {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		if parser.ForFile(path) == nil || (len(exts) > 0 && !exts[strings.ToLower(filepath.Ext(path))]) {
-			return nil
-		}
-		// The index rules: no symlink, fifo, secret, lockfile, minified or
-		// file over the index size cap; the binary check runs on the bytes read below.
-		if info, err := d.Info(); err != nil || index.Skip(path, info, nil) != "" {
-			return nil
-		}
-		files = append(files, path)
-		return nil
-	})
-	if ign := index.GitIgnored(root, files); len(ign) > 0 {
-		files = slices.DeleteFunc(files, func(f string) bool { return ign[f] })
-	}
+	files := t.sourceFiles(ctx, root, start, exts, fallbackFiles)
 	words := strings.Fields(strings.ToLower(in.Query))
 	var hits []SearchHit
 	for _, path := range files {
@@ -222,6 +206,38 @@ func (t *tools) fallback(ctx context.Context, root string, in SearchInput, f sto
 		}
 	}
 	return hits
+}
+
+// sourceFiles lists at most max files under start that an analyzer handles
+// (only those with one of exts, when given), by the index rules: no hidden or
+// excluded directory, no linked worktree, nothing Skip or git leaves out.
+func (t *tools) sourceFiles(ctx context.Context, root, start string, exts map[string]bool, max int) []string {
+	var files []string
+	_ = filepath.WalkDir(start, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || ctx.Err() != nil || len(files) >= max {
+			return fs.SkipAll
+		}
+		if d.IsDir() {
+			if path != start && (strings.HasPrefix(d.Name(), ".") || slices.Contains(t.cfg.ExcludePatterns, d.Name()) || index.IsLinkedWorktree(path)) {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if parser.ForFile(path) == nil || (len(exts) > 0 && !exts[strings.ToLower(filepath.Ext(path))]) {
+			return nil
+		}
+		// The index rules: no symlink, fifo, secret, lockfile, minified or
+		// file over the index size cap; the binary check runs on the bytes read below.
+		if info, err := d.Info(); err != nil || index.Skip(path, info, nil) != "" {
+			return nil
+		}
+		files = append(files, path)
+		return nil
+	})
+	if ign := index.GitIgnored(root, files); len(ign) > 0 {
+		files = slices.DeleteFunc(files, func(f string) bool { return ign[f] })
+	}
+	return files
 }
 
 // nameScore ranks a symbol against the query without an index: exact name

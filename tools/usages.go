@@ -36,14 +36,20 @@ func toCandidate(s parser.Symbol) Candidate {
 
 // resolveSymbol finds the one symbol named by query. The result is nil with
 // a non-nil answer when there is none or several (ambiguous).
-func resolveSymbol(ctx context.Context, w *engine.Workspace, query, filePath string) (*parser.Symbol, *mcp.CallToolResult) {
+func resolveSymbol(ctx context.Context, w *engine.Workspace, query, filePath string, g *grepRun) (*parser.Symbol, *mcp.CallToolResult) {
 	hits, err := byName(ctx, w, store.Filter{}, query, candidateLimit)
 	if err != nil {
 		res, _, _ := storeErr(ctx, w, err)
 		return nil, res
 	}
 	if hits = live(w, hits); len(hits) == 0 {
-		res, _, _ := reply("ok", fmt.Sprintf("no indexed symbol named %q; try rag_search", query), nil, w)
+		data := map[string]any{}
+		msg := g.add(fmt.Sprintf("no indexed symbol named %q; try rag_search", query), data)
+		if len(data) == 0 {
+			res, _, _ := reply("ok", msg, nil, w)
+			return nil, res
+		}
+		res, _, _ := reply("ok", msg, data, w)
 		return nil, res
 	}
 	if filePath != "" {
@@ -220,7 +226,9 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 	if res != nil {
 		return res, nil, nil
 	}
-	sym, res := resolveSymbol(ctx, w, in.Symbol, in.FilePath)
+	g := t.startGrep(ctx, w.Root, "", in.Symbol)
+	defer g.stop()
+	sym, res := resolveSymbol(ctx, w, in.Symbol, in.FilePath, g)
 	if res != nil {
 		return res, nil, nil
 	}
@@ -270,6 +278,9 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 	}
 	if ambiguous > 0 {
 		msg += fmt.Sprintf("; %d more relations name %q but could not be resolved to one symbol", ambiguous, sym.Name)
+	}
+	if total == 0 { // nothing in the index: show where the text has the name
+		msg = g.add(msg, data)
 	}
 	if used := usedMembers(ctx, w, sym, total); len(used) > 0 {
 		msg += fmt.Sprintf("; %s itself is not called, but its members are: %s (rag_find_usages on a member lists the calls)", sym.Name, strings.Join(used, ", "))
@@ -432,7 +443,9 @@ func (t *tools) callHierarchy(ctx context.Context, req *mcp.CallToolRequest, in 
 	if res != nil {
 		return res, nil, nil
 	}
-	sym, res := resolveSymbol(ctx, w, in.Symbol, in.FilePath)
+	g := t.startGrep(ctx, w.Root, "", in.Symbol)
+	defer g.stop()
+	sym, res := resolveSymbol(ctx, w, in.Symbol, in.FilePath, g)
 	if res != nil {
 		return res, nil, nil
 	}

@@ -28,8 +28,10 @@ query the index instead of guessing or grepping blindly:
 
 Always pass workspace_root: the absolute path of this project's top directory,
 the same on every call: the folder opened in the editor, or the nearest parent
-that holds .git or, without git, the project file (go.mod, package.json,
-composer.json, pyproject.toml, project.godot). Never a subdirectory of it.
+that holds .git (the repository root, also in a monorepo) or, without git, a
+project file (go.mod, package.json, composer.json, pyproject.toml,
+project.godot); with neither, the smallest directory that holds the files
+being worked on. Never a subdirectory of it, never a parent of other projects.
 `
 
 // IDEPointer is the line WriteIDERules adds to the PointerFiles.

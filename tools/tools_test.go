@@ -166,6 +166,7 @@ func newEnvWith(t *testing.T, em embed.Embedder, index bool, tweak func(*config.
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
 	tl := &tools{e: e, cfg: cfg, version: "v1.0.0", started: time.Now(), releases: "http://127.0.0.1:1/none", http: &http.Client{Timeout: time.Second}}
 	tl.register(server)
+	t.Cleanup(tl.bg.Wait) // a background release check writes under RAGCODE_HOME
 	ct, st := mcp.NewInMemoryTransports()
 	_, err = server.Connect(context.Background(), st, nil)
 	require.NoError(t, err)
@@ -548,7 +549,12 @@ func TestServerInfo(t *testing.T) {
 		Languages []string    `json:"languages"`
 		Roots     []KnownRoot `json:"roots"`
 	}
+	// The first answer does not wait for GitHub: the check lands in the cache.
 	r, _ := v.call(t, "rag_server_info", map[string]any{})
+	data(t, r, &out)
+	assert.Equal(t, "unknown", out.Update.Latest)
+	v.t.bg.Wait()
+	r, _ = v.call(t, "rag_server_info", map[string]any{})
 	require.Equal(t, "ok", r.Status, r.Message)
 	data(t, r, &out)
 	assert.Equal(t, "v1.0.0", out.Version)
@@ -589,6 +595,7 @@ func TestServerInfoCachesFailedUpdateCheck(t *testing.T) {
 		require.Equal(t, "ok", r.Status, r.Message)
 		data(t, r, &out)
 		assert.Equal(t, "unknown", out.Update.Latest)
+		v.t.bg.Wait()
 	}
 	assert.Equal(t, 1, hits)
 }

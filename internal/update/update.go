@@ -74,19 +74,29 @@ func Replaced() bool {
 // RestartNote is the sentence tool answers carry once Replaced is true.
 const RestartNote = "RagCode was updated on disk: restart this MCP server to use the new version (Claude Code: /mcp, then reconnect ragcode)"
 
+// Cached returns the release tag of the last check ("" when it failed or
+// never ran) and whether that check is fresh: under a day old, or under an
+// hour for a failed one.
+func Cached() (latest string, fresh bool) {
+	var ch cache
+	data, err := os.ReadFile(filepath.Join(config.HomeDir(), "cache", "update.json"))
+	if err != nil || json.Unmarshal(data, &ch) != nil || ch.CheckedAt.IsZero() {
+		return "", false
+	}
+	ttl := 24 * time.Hour
+	if ch.Latest == "" {
+		ttl = time.Hour
+	}
+	return ch.Latest, time.Since(ch.CheckedAt) < ttl
+}
+
 // Latest returns the latest release tag at url, from HomeDir()/cache/update.json
 // when checked in the last 24 h (1 h after a failed check, cached with an
 // empty tag), otherwise from url. "" means unknown.
 func Latest(ctx context.Context, c *http.Client, url string) string {
 	path := filepath.Join(config.HomeDir(), "cache", "update.json")
-	var ch cache
-	ttl := 24 * time.Hour
-	data, err := os.ReadFile(path)
-	if err == nil && json.Unmarshal(data, &ch) == nil && ch.Latest == "" {
-		ttl = time.Hour
-	}
-	if err == nil && !ch.CheckedAt.IsZero() && time.Since(ch.CheckedAt) < ttl {
-		return ch.Latest
+	if l, fresh := Cached(); fresh {
+		return l
 	}
 	var rel release
 	if err := getJSON(ctx, c, url, &rel); err != nil {

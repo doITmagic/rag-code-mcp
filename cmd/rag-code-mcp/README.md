@@ -87,7 +87,7 @@ sequenceDiagram
         M->>M: serveHTTP: ListenAndServe + go Resume(ctx)
     end
     Note over M: SIGINT / SIGTERM cancels ctx
-    M->>A: Close (10 s budget)
+    M->>A: Close (waits for the engine)
 ```
 
 ## Behaviour details
@@ -156,8 +156,10 @@ once and the process exits with status 1.
 ### Shutdown
 
 `SIGINT` and `SIGTERM` cancel the root context. The HTTP server gets 10 s
-(`closeTimeout`) to drain; then `app.Close` gets another 10 s to stop the
-engine before the store is closed. A cancelled context is a normal stop, not
+(`closeTimeout`) to drain, because a streaming client never closes its
+connection by itself; then `app.Close` waits for the engine to stop (its
+cancelled run returns; no clock, so a slow disk is not cut off) before the
+store is closed. A cancelled context is a normal stop, not
 an error: the process logs `rag-code-mcp stopped` and exits 0. Any other
 serve error is logged and returned (exit status 1).
 

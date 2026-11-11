@@ -34,6 +34,7 @@ It calls [`index`](../../index/README.md) for `WriteAtomic` (the cache) and
 | Name | Contract |
 |:---|:---|
 | `GitHubLatest` | `https://api.github.com/repos/doITmagic/rag-code-mcp/releases/latest`; GitHub leaves pre-releases out of it |
+| `Cached() (latest, fresh)` | The tag of the last check from the cache and whether it is fresh (same ages as `Latest`); no request. `rag_server_info` answers from it. |
 | `Latest(ctx, client, url) string` | The latest tag at `url`. Read from `$RAGCODE_HOME/cache/update.json` when checked in the last 24 hours (one hour after a failed check, cached with an empty tag); otherwise fetched and written back. A request canceled by the caller is not cached. `""` means unknown |
 | `Less(a, b) bool` | `a < b` for `vMAJOR.MINOR.PATCH` tags (leading `v` optional, `+build` metadata ignored). A pre-release is older than its final release; two pre-releases of one version compare equal; a tag that does not parse (a `dev` build) is never older |
 | `Run(ctx, source, target, current) (string, error)` | `Install` under `$RAGCODE_HOME/cache/update.lock`. Returns `""` without error when another process holds the lock |

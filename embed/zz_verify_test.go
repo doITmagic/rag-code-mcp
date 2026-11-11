@@ -146,21 +146,6 @@ func TestVerifyDimensionReprobeAndConcurrent(t *testing.T) {
 	assert.LessOrEqual(t, calls.Load(), int32(9), "probe not repeated once cached")
 }
 
-func TestVerifyDefaultTimeout(t *testing.T) {
-	ctx, cancel := withTimeout(context.Background())
-	defer cancel()
-	dl, ok := ctx.Deadline()
-	require.True(t, ok, "a ctx without deadline gets the 60 s cap")
-	assert.InDelta(t, 60, time.Until(dl).Seconds(), 1)
-
-	parent, pcancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer pcancel()
-	ctx2, cancel2 := withTimeout(parent)
-	defer cancel2()
-	dl2, _ := ctx2.Deadline()
-	assert.InDelta(t, 5, time.Until(dl2).Seconds(), 1, "caller deadline wins")
-}
-
 func TestVerifyMidBatchFailure(t *testing.T) {
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

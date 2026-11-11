@@ -236,7 +236,7 @@ another embedding model, or the search finds
 nothing while an index run is in progress or queued and the collection is
 still empty (a first run, a recreate or a model change refilling it), the tool
 parses up to 200 files under the root (or
-`path_prefix`) within 5 seconds, applying the index skip rules, and scores
+`path_prefix`; the file cap bounds it, not a clock), applying the index skip rules, and scores
 symbols by name: exact name 1.0, qualified suffix 0.9, substring 0.7,
 otherwise 0.6 × the share of query words found in the name. These hits have
 `match: "fallback"` and the status is `not_indexed` or `indexing`.
@@ -529,9 +529,13 @@ at every call (a request canceled by the client is not cached). `available`
 is `update.Less(version, latest)`: `vMAJOR.MINOR.PATCH` tags, a pre-release
 older than its final release, a dev build never outdated (see
 [internal/update](../internal/update/README.md)). The automatic update of the
-server shares this cache. Every HTTP request uses a 3-second client timeout,
-and the Ollama probe and the update check run in parallel, so two stalled
-endpoints cost one timeout, not two.
+server shares this cache.
+
+No clock decides how long a probe may take. `rag_server_info` never waits for
+GitHub: it answers from the cache (`update.Cached`), and a missing or old
+cache is refreshed in the background for the next answer, so the first
+answer after a day says the old tag, or `unknown` when there is none. The
+Ollama probe is waited for as long as the caller waits.
 
 ```json
 {"name": "rag_server_info", "arguments": {}}

@@ -17,6 +17,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/v2/embed"
@@ -52,13 +54,16 @@ type tools struct {
 	started  time.Time
 	releases string // GitHub latest-release URL; tests point it at a local server
 	http     *http.Client
+
+	refreshing atomic.Bool    // a background release check is running
+	bg         sync.WaitGroup // background work, for tests to wait on
 }
 
 // Register adds every rag_* tool to server.
 func Register(server *mcp.Server, e *engine.Engine, cfg config.Config, version string, startedAt time.Time) {
 	t := &tools{e: e, cfg: cfg, version: version, started: startedAt,
 		releases: update.GitHubLatest,
-		http:     &http.Client{Timeout: 3 * time.Second}}
+		http:     http.DefaultClient}
 	t.register(server)
 }
 

@@ -46,7 +46,7 @@ graph LR
 |------|----------|
 | `embed.go` | Package doc, the `Embedder` interface and `ErrUnavailable`. |
 | `mem.go`, `mem_linux.go`, `mem_windows.go`, `mem_other.go` | `ErrLowMemory`, `checkMemory` and the per-platform `availableMB` (see "Low memory") |
-| `ollama.go` | `Ollama`, `NewOllama`, batching in `Embed`, the cached `Dimension` probe, `embedBatch` (request body, one retry), `post`/`do` (HTTP, status handling), `transportError`, `withTimeout`. |
+| `ollama.go` | `Ollama`, `NewOllama`, batching in `Embed`, the cached `Dimension` probe, `embedBatch` (request body, one retry), `post`/`do` (HTTP, status handling), `transportError`. |
 | `prefix.go` | `QueryText`, `DocText` and the model `family` detection. |
 | `fake.go` | `Fake`, the deterministic test embedder, and compile-time checks that `Fake` and `Ollama` implement `Embedder`. |
 
@@ -57,7 +57,7 @@ graph LR
 | `ollama_test.go` | Embedding through an `httptest` server, batching by count and by size, cached dimension, error cases (HTTP status, bad JSON, wrong count, closed server), `Threads` -> `options.num_thread`, and `TestOllamaLive` against a real Ollama (skipped unless `RAGCODE_TEST_OLLAMA` is set). |
 | `prefix_test.go` | Prefixes per model family, and the hint on HTTP 412 from an Ollama too old for the model. |
 | `fake_test.go` | `Fake` vectors are deterministic and unit-length; `Fail` makes the first N calls fail. |
-| `zz_verify_test.go` | Verification tests: bad response bodies, empty input, exactly one retry, cancel during the retry wait, dimension re-probe after failure and under concurrency, the default 60 s timeout, failure in the middle of a multi-batch call, `Fake` edge cases. |
+| `zz_verify_test.go` | Verification tests: bad response bodies, empty input, exactly one retry, cancel during the retry wait, dimension re-probe after failure and under concurrency, failure in the middle of a multi-batch call, `Fake` edge cases. |
 
 ---
 
@@ -123,7 +123,7 @@ cancelled context.
 flowchart TD
     A[Embed texts] --> B[cut next batch:<br/>up to 16 texts and 8 KiB,<br/>a longer text goes alone]
     B --> C[embedBatch: JSON body<br/>model, input, options.num_thread?]
-    C --> D[POST /api/embed<br/>60 s timeout if ctx has no deadline]
+    C --> D[POST /api/embed<br/>no timeout: the caller context ends it]
     D -->|connection error, first attempt| E[wait 1 s, retry once]
     E --> D
     D -->|non-200| F[ErrUnavailable with status and body;<br/>412 adds 'upgrade Ollama' hint]
@@ -158,8 +158,10 @@ time, each cut to 2000 bytes before the prefix.)
 
 ### Retry and timeouts
 
-- Each request is capped at **60 s** when the caller's context has no
-  deadline; a caller deadline is used as is.
+- A request has **no clock of its own**. It ends when Ollama answers, when
+  the connection drops, when Ollama's own load limit gives up, or when the
+  caller's context ends. A fixed 60 s cap used to cancel a slow model load,
+  which made Ollama abort it and start again on every retry.
 - A **connection-level** failure (`client.Do` error) is retried **once**
   after 1 s, unless the context is done. The wait itself honours the context.
 - HTTP errors (non-200) and bad responses are **not** retried.
@@ -215,7 +217,7 @@ Before a request, when Ollama is on this machine (`localhost`, `127.0.0.1`,
 be loaded), `checkMemory` reads the available memory (`mem_linux.go`:
 `MemAvailable` in `/proc/meminfo`; `mem_windows.go`: `GlobalMemoryStatusEx`).
 Below `MinFreeMB` the call returns `ErrLowMemory` with the free and the needed
-megabytes, and no embed request is sent, unless `GET /api/ps` (2 s) shows the
+megabytes, and no embed request is sent, unless `GET /api/ps` shows the
 model already loaded: another server or client loaded it, so no new memory is
 needed. Seen on a 16 GB Windows laptop with 570 MB
 free: the model load took longer than the 60 s call timeout, the cancelled

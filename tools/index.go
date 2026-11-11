@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/v2/engine"
@@ -85,17 +84,9 @@ type KnownRoot struct {
 }
 
 func (t *tools) serverInfo(ctx context.Context, _ *mcp.CallToolRequest, _ InfoInput) (*mcp.CallToolResult, any, error) {
-	// The probes run together so two stalled endpoints cost one client
-	// timeout, not two.
-	var (
-		ollama Service
-		update Update
-		wg     sync.WaitGroup
-	)
-	wg.Add(2)
-	go func() { defer wg.Done(); ollama = t.probeOllama(ctx) }()
-	go func() { defer wg.Done(); update = t.update(ctx) }()
-	wg.Wait()
+	// Ollama is waited for as long as the caller waits; the release check
+	// never delays the answer (see update).
+	ollama, update := t.probeOllama(ctx), t.update()
 	data := map[string]any{
 		"version":   t.version,
 		"pid":       os.Getpid(),
@@ -155,9 +146,21 @@ func (t *tools) getJSON(ctx context.Context, url string, out any) error {
 
 // update returns the latest release tag (cached for 24 h by update.Latest)
 // and whether it is newer than this server.
-func (t *tools) update(ctx context.Context) Update {
+// update answers from the cached release check. A missing or old cache is
+// refreshed in the background, for the next answer: GitHub may be slow or
+// unreachable, and no clock decides how long that is.
+func (t *tools) update() Update {
 	u := Update{Current: t.version, Latest: "unknown"}
-	if l := update.Latest(ctx, t.http, t.releases); l != "" {
+	l, fresh := update.Cached()
+	if !fresh && t.refreshing.CompareAndSwap(false, true) {
+		t.bg.Add(1)
+		go func() {
+			defer t.bg.Done()
+			defer t.refreshing.Store(false)
+			update.Latest(context.Background(), t.http, t.releases)
+		}()
+	}
+	if l != "" {
 		u.Latest = l
 		u.Available = update.Less(t.version, l)
 	}

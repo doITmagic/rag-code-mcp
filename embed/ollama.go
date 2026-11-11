@@ -14,11 +14,10 @@ import (
 )
 
 const (
-	batchSize   = 16
-	batchBytes  = 8 << 10 // CPU Ollama embeds inputs one by one: a big request only delays a queued query
-	callTimeout = 60 * time.Second
-	retryDelay  = time.Second
-	probeText   = "dimension probe"
+	batchSize  = 16
+	batchBytes = 8 << 10 // CPU Ollama embeds inputs one by one: a big request only delays a queued query
+	retryDelay = time.Second
+	probeText  = "dimension probe"
 )
 
 // Ollama embeds through Ollama's /api/embed endpoint.
@@ -125,8 +124,9 @@ func (o *Ollama) embedBatch(ctx context.Context, texts []string) ([][]float32, e
 }
 
 func (o *Ollama) post(ctx context.Context, body []byte, out any) error {
-	ctx, cancel := withTimeout(ctx)
-	defer cancel()
+	// No clock here: a model load takes what the machine needs, and a timeout
+	// that cancels it makes Ollama start the load again on every retry. The
+	// caller's context, a closed connection and Ollama's own load limit end it.
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.base+"/api/embed", bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrUnavailable, err)
@@ -161,11 +161,3 @@ type transportError struct{ err error }
 
 func (e *transportError) Error() string   { return "embed: embedder unavailable: " + e.err.Error() }
 func (e *transportError) Unwrap() []error { return []error{ErrUnavailable, e.err} }
-
-// withTimeout caps a call at callTimeout when ctx carries no deadline.
-func withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
-	if _, ok := ctx.Deadline(); ok {
-		return context.WithCancel(ctx)
-	}
-	return context.WithTimeout(ctx, callTimeout)
-}

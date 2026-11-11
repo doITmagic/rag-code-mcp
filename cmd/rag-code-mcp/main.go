@@ -105,7 +105,7 @@ func autoUpdate(ctx context.Context, source string, log *slog.Logger) {
 	}
 	if source == "" {
 		source = update.GitHubLatest
-		if l := update.Latest(ctx, &http.Client{Timeout: 3 * time.Second}, source); !update.Less(Version, l) {
+		if l := update.Latest(ctx, http.DefaultClient, source); !update.Less(Version, l) {
 			return
 		}
 	}
@@ -160,11 +160,9 @@ func run(ctx context.Context, cfgPath, httpAddr, logLevel string) error {
 	if err != nil {
 		return err
 	}
-	defer func() {
-		cctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
-		defer cancel()
-		a.Close(cctx)
-	}()
+	// The engine stops when its cancelled run returns: no clock, so a slow
+	// disk is not cut off with its state half written.
+	defer a.Close(context.Background())
 	log.Info("rag-code-mcp starting", "version", Version, "http", httpAddr)
 	if exe, err := os.Executable(); err == nil {
 		if bin := uninstall.Binary(config.HomeDir()); sameFile(exe, bin) {

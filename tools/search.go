@@ -11,7 +11,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"time"
 	"unicode"
 
 	"github.com/doITmagic/rag-code-mcp/v2/engine"
@@ -28,7 +27,6 @@ const (
 	compactAbove   = 4
 	contentCap     = 200 // lines
 	fallbackFiles  = 200
-	fallbackBudget = 5 * time.Second
 )
 
 // SearchInput is the input of rag_search.
@@ -165,10 +163,8 @@ func (t *tools) searchErr(ctx context.Context, w *engine.Workspace, in SearchInp
 }
 
 // fallback parses up to fallbackFiles files under the root (or path prefix)
-// within fallbackBudget and scores their symbols by name.
+// and scores their symbols by name; the file cap bounds it, not a clock.
 func (t *tools) fallback(ctx context.Context, root string, in SearchInput, f store.Filter) []SearchHit {
-	ctx, cancel := context.WithTimeout(ctx, fallbackBudget)
-	defer cancel()
 	exts := map[string]bool{}
 	if a := parser.ForLanguage(in.Language); a != nil {
 		for _, e := range a.Extensions() {

@@ -123,8 +123,8 @@ func TestVerifyCancelledContext(t *testing.T) {
 	assert.Less(t, time.Since(start), 2*time.Second)
 }
 
-// Every dependency probe of rag_server_info runs in sequence with its own
-// 3 s timeout: two stalled endpoints add up.
+// A stalled Ollama is waited for as long as the caller waits (here until it
+// answers); a stalled release URL never delays the answer.
 func TestVerifyServerInfoStalledEndpoints(t *testing.T) {
 	if testing.Short() {
 		t.Skip("takes ~9 s")
@@ -138,7 +138,7 @@ func TestVerifyServerInfoStalledEndpoints(t *testing.T) {
 	defer stall.Close()
 	v := newEnv(t, false, func(c *config.Config) { c.OllamaBaseURL = stall.URL })
 	v.t.releases = stall.URL
-	v.t.http = &http.Client{Timeout: 3 * time.Second} // production client (Register)
+	v.t.http = http.DefaultClient // production client (Register)
 	start := time.Now()
 	r, _ := v.call(t, "rag_server_info", map[string]any{})
 	elapsed := time.Since(start)
@@ -307,6 +307,10 @@ func TestVerifyUpdateCacheExpiry(t *testing.T) {
 		Update Update `json:"update"`
 	}
 	r, _ := v.call(t, "rag_server_info", map[string]any{})
+	data(t, r, &out)
+	assert.Equal(t, "v0.0.1", out.Update.Latest, "the stale value is served while the refresh runs")
+	v.t.bg.Wait()
+	r, _ = v.call(t, "rag_server_info", map[string]any{})
 	data(t, r, &out)
 	assert.Equal(t, "v2.0.0", out.Update.Latest, "stale cache refreshed")
 	assert.True(t, out.Update.Available)

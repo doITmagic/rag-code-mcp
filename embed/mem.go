@@ -36,11 +36,9 @@ func (o *Ollama) checkMemory(ctx context.Context) error {
 }
 
 // loaded asks Ollama whether the model is in memory already (another server
-// or client loaded it): then no new memory is needed. No answer in 2 s counts
-// as not loaded.
+// or client loaded it): then no new memory is needed. It waits as long as
+// the caller does.
 func (o *Ollama) loaded(ctx context.Context) bool {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, o.base+"/api/ps", nil)
 	if err != nil {
 		return false

@@ -132,6 +132,8 @@ to the module that declares the name (`barrel.go`). With
 | `export { Hono as HonoBase }` | `HonoBase` | `<module>.Hono` |
 | `export { x }`, `export { x as y }`, `export default x` of an imported `x` | `x`, `y`, `default` | the import target of `x`, followed further |
 | `export * from './x'` | any | the first `export *` source whose chain reaches a declaration |
+| `export default { f, k: g }`, `const api = { f }` (exported, or later `export default api`) | `default.f`, `default.k`, `api.f` (both `api.f` and `default.f` when `api` is the default export) | `m.f`, `m.g` (or the import target of `g`), followed further |
+| A method of the inline `export default { get() {} }` | `default.get` | `m.<Component>.get`, the symbol the method is emitted as |
 
 Own names win, then named re-exports, then `export *` sources; chains are
 cycle-safe and capped. The target file is read only when the workspace root
@@ -219,7 +221,7 @@ call `fetch` -> `src/services/api.default.fetch`.
 | Source construct | Relation | Target qualified name |
 |------------------|----------|-----------------------|
 | `f()`, `await f<T>()` | `call` | Through the import table or a top-level name in the file; `""` otherwise. |
-| `ns.g()`, `a.b.c()` | `call` | First segment through imports; for a local name only when it is a class or enum (a variable's type is never guessed). |
+| `ns.g()`, `a.b.c()` | `call` | First segment through imports; for a local name only when it is a class or enum (a variable's type is never guessed). `Obj.k()` of a default or named import whose module defines `Obj` as an object literal with `{ k }` or `{ k: f }` targets the declaration of `f`, not `<module>.default.k`. |
 | `this.m()` in a class or component | `call` | `<module>.<Owner>.m` |
 | `new Foo()` | `uses_type` | Same resolution as a name. |
 | `<Comp />`, `<ns.Comp>` in JSX | `uses_type` | Only for capitalized or dotted tag names. |
@@ -264,6 +266,14 @@ literal's values are not walked, its methods own their calls.
   re-indexed (as for Python `__init__.py`). `export * as ns from './x'` is
   not followed, and CommonJS `exports.x` / `module.exports` re-exports are
   not followed.
+- Members of an exported object literal are followed one level only
+  (`A.b.c()` is not). They are not followed through namespace imports
+  (`ns.default.f()`) or `require()`d objects, not inside the declaring file
+  (`api.f()` next to `const api = { f }`), not for quoted or computed keys,
+  `export default Object.freeze({...})`, TS `{...} as const` / `satisfies`,
+  and not when the declaring module is a `.vue` file (the barrel does not
+  read it). Editing the object does not re-parse its importers, the same
+  staleness as for barrels.
 - Vue `<template>` markup is not parsed: a component used as `<StatusCard/>` or a
   handler in `@click="f()"` is not a usage.
 - Nuxt auto-imports (no import statement) resolve by name only.
@@ -286,14 +296,14 @@ literal's values are not walked, its methods own their calls.
 | File | Contents |
 |------|----------|
 | `javascript.go` | The analyzer, grammar choice, the bracket guard, module and component naming, Vue block scanner and name sharing between blocks, pass 1 (imports, `require`, export lists, CommonJS exports, specifier resolution), pass 2 (functions, classes, methods, interfaces, types, enums, variables, options-API objects, `exports.x`), doc and signature extraction, call/type relation collection and resolution. |
-| `barrel.go` | Re-export following: reads the imported module file (pass 1 only, cached by root+path, mtime and size) and maps an imported name to the module that declares it. |
+| `barrel.go` | Re-export following: reads the imported module file (pass 1 only, cached by root+path, mtime and size) and maps an imported name to the module that declares it, and the shorthand / `key: ident` members of top-level object literals (`Obj.k` -> the name they point to). |
 | `alias.go` | Aliased specifiers: nearest `tsconfig.json`/`jsconfig.json` `paths` (JSONC, relative `extends`), the Nuxt/Vite conventions, and the existence check. |
 
 ### Tests
 
 | File | Covers |
 |------|--------|
-| `javascript_test.go` | ESM and CommonJS imports and exports, classes and methods, TypeScript (interfaces, types, enums, abstract classes), TSX, Vue options API, Vue `<script setup lang="ts">`, malformed and unbalanced input, files outside the root, concurrency, registration, default exports and directory (`index`) imports, root-absolute imports, TypeScript type uses, methods of an object literal bound to a const, aliased imports (tsconfig paths, Nuxt conventions), calls in top-level initializers and `export default defineX(...)`, export of object-literal methods, `const C = defineComponent(...)`, barrel re-exports (`export *`, `export { a as b } from`, local alias exports, cycles, cache invalidation, package specifiers never read from disk nor named like a root file of that name, `.`/`..` specifiers), top-level calls of `<script setup>` attributed to `default`, `await f<T>()` calls, top-level variable type annotations, `<script>` and `<script setup>` sharing names, the line of a chained call split over lines, top-level destructuring calls of `<script setup>`. |
+| `javascript_test.go` | ESM and CommonJS imports and exports, classes and methods, TypeScript (interfaces, types, enums, abstract classes), TSX, Vue options API, Vue `<script setup lang="ts">`, malformed and unbalanced input, files outside the root, concurrency, registration, default exports and directory (`index`) imports, root-absolute imports, TypeScript type uses, methods of an object literal bound to a const, aliased imports (tsconfig paths, Nuxt conventions), calls in top-level initializers and `export default defineX(...)`, export of object-literal methods, `const C = defineComponent(...)`, barrel re-exports (`export *`, `export { a as b } from`, local alias exports, cycles, cache invalidation, package specifiers never read from disk nor named like a root file of that name, `.`/`..` specifiers), top-level calls of `<script setup>` attributed to `default`, `await f<T>()` calls, top-level variable type annotations, `<script>` and `<script setup>` sharing names, the line of a chained call split over lines, top-level destructuring calls of `<script setup>`, members of an exported object literal followed as re-exports (shorthand, `key: ident`, methods of an inline `export default {...}`, a const both named and default-exported). |
 | `zz_verify_test.go` | Verification tests: JSX and import forms, TS enums and generics, `defineComponent` and CRLF files, robustness, nested CommonJS, component objects in plain JS, template-first `<script setup>`, statelessness, private TS members and syntax-error recovery, two script blocks, deep nesting, concurrent analysis. |
 
 ## Testing

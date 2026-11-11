@@ -835,3 +835,85 @@ func TestVueScriptSetupDestructuringCalls(t *testing.T) {
 	assert.Equal(t, 3, rel(t, d, parser.RelCall, "useNotifications").Line)
 	rel(t, d, parser.RelCall, "usePair")
 }
+
+// A shorthand (`{ getToken }`) or `key: ident` member of an exported object
+// literal names a function of that module: Obj.key() from an importer
+// targets the function itself, as a re-export would.
+func TestObjectMemberReexports(t *testing.T) {
+	ws := t.TempDir()
+	write := func(rel, body string) {
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(ws, rel)), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(ws, rel), []byte(body), 0o644))
+	}
+	write("src/common/jwt.service.js", "export const getToken = () => 1;\nfunction drop() {}\nexport default { getToken, destroyToken: drop };\n")
+	write("src/common/api.js", "import { fetchAll } from './http';\nconst read = () => 1;\nconst Api = { read, all: fetchAll, get() {} };\nexport default Api;\nexport const named = { read };\n")
+	write("src/common/http.js", "export function fetchAll() {}\n")
+	src := `import JwtService from "./jwt.service";
+import Api, { named } from "./api";
+import React from "react";
+export function run() {
+  JwtService.getToken(); JwtService.destroyToken(); JwtService.missing();
+  Api.read(); Api.all(); Api.get(); named.read(); React.useState();
+}
+`
+	syms, err := analyzer{}.Analyze(parser.File{Path: filepath.Join(ws, "src", "common", "caller.js"), Root: ws, Source: []byte(src)})
+	require.NoError(t, err)
+	run := find(t, syms, "src/common/caller.run")
+	got := map[string]string{}
+	for _, r := range run.Relations {
+		got[r.TargetName+"@"+r.TargetQualifiedName] = r.TargetQualifiedName
+	}
+	for _, want := range []string{
+		"getToken@src/common/jwt.service.getToken",
+		"destroyToken@src/common/jwt.service.drop",
+		"missing@src/common/jwt.service.default.missing", // not a member: unchanged
+		"read@src/common/api.read",
+		"all@src/common/http.fetchAll",    // a member naming an import follows it
+		"get@src/common/api.default.get",  // a method of the object stays its own symbol
+		"useState@react.default.useState", // packages are never read
+	} {
+		assert.Contains(t, got, want)
+	}
+	assert.Equal(t, 2, countTarget(run.Relations, "src/common/api.read"), "Api.read and named.read")
+}
+
+func countTarget(rels []parser.Relation, qn string) (n int) {
+	for _, r := range rels {
+		if r.TargetQualifiedName == qn {
+			n++
+		}
+	}
+	return n
+}
+
+// A method of an inline `export default { get() {} }` is emitted owned by the
+// component (the file stem in PascalCase): A.get() from an importer targets
+// that symbol, not "<module>.default.get".
+func TestObjectMemberAnonDefaultMethod(t *testing.T) {
+	ws := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(ws, "src"), 0o755))
+	anon := "export default { get() { return 1; }, put: () => 2 };\n"
+	require.NoError(t, os.WriteFile(filepath.Join(ws, "src", "anon.js"), []byte(anon), 0o644))
+	decl, err := analyzer{}.Analyze(parser.File{Path: filepath.Join(ws, "src", "anon.js"), Root: ws, Source: []byte(anon)})
+	require.NoError(t, err)
+	find(t, decl, "src/anon.Anon.get")
+	syms, err := analyzer{}.Analyze(parser.File{Path: filepath.Join(ws, "src", "use.js"), Root: ws,
+		Source: []byte("import A from './anon';\nexport function use() { A.get(); A.put(); }\n")})
+	require.NoError(t, err)
+	use := find(t, syms, "src/use.use")
+	assert.Equal(t, "src/anon.Anon.get", rel(t, use, parser.RelCall, "get").TargetQualifiedName)
+	assert.Equal(t, "src/anon.Anon.put", rel(t, use, parser.RelCall, "put").TargetQualifiedName)
+}
+
+// `export const api = { read }; export default api;`: the members are reachable
+// under the raw name (`import { api }`) and under "default".
+func TestObjectMemberNamedAndDefault(t *testing.T) {
+	ws := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(ws, "src"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(ws, "src", "api.js"), []byte("const read = () => 1;\nexport const api = { read };\nexport default api;\n"), 0o644))
+	syms, err := analyzer{}.Analyze(parser.File{Path: filepath.Join(ws, "src", "use.js"), Root: ws,
+		Source: []byte("import Api, { api } from './api';\nexport function a() { api.read(); }\nexport function b() { Api.read(); }\n")})
+	require.NoError(t, err)
+	assert.Equal(t, "src/api.read", rel(t, find(t, syms, "src/use.a"), parser.RelCall, "read").TargetQualifiedName)
+	assert.Equal(t, "src/api.read", rel(t, find(t, syms, "src/use.b"), parser.RelCall, "read").TargetQualifiedName)
+}

@@ -134,6 +134,22 @@ func readBarrel(root, m, p, ext string) *barrel {
 			b.named[name] = m + "." + c.qual(local)
 		}
 	}
+	for k, local := range c.props { // export default { getToken }: "default.getToken" -> "m.getToken"
+		obj, key, _ := strings.Cut(k, ".")
+		t := ""
+		switch {
+		case local == "": // a method of the inline export default {...}, owned by the component
+			t = m + "." + pascal(path.Base(m)) + "." + key
+		case c.imports[local] != "":
+			t = c.imports[local]
+		case c.defs[local] != "":
+			t = m + "." + c.qual(local)
+		default:
+			continue
+		}
+		b.named[obj+"."+key] = t // import { api } of `export const api = {...}; export default api`
+		b.named[c.qual(obj)+"."+key] = t
+	}
 	b.stars, b.bare = c.stars, c.bare
 	return b
 }

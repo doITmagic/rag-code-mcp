@@ -46,12 +46,15 @@ type fileCtx struct {
 	reexp     map[string]string      // export { a as b } from './x': b -> "x.a"
 	stars     []string               // export * from './x': the modules x
 	bare      map[string]bool        // export ... from 'pkg': package modules, not workspace files
+	props     map[string]string      // "obj.key" -> local name of a shorthand / key: ident member of a top-level object literal ("" for a method of an inline export default {...})
+	picked    map[string]bool        // default or named imports of a workspace module: their members are followed
 }
 
 func newCtx(src []byte, lang *gotreesitter.Language, wsRoot, module, dir, component string) *fileCtx {
 	return &fileCtx{src: src, lang: lang, module: module, dir: dir, root: wsRoot, component: component,
 		imports: map[string]string{}, defs: map[string]parser.Kind{}, exported: map[string]bool{},
-		exportAs: map[string]string{}, reexp: map[string]string{}, bare: map[string]bool{}}
+		exportAs: map[string]string{}, reexp: map[string]string{}, bare: map[string]bool{},
+		props: map[string]string{}, picked: map[string]bool{}}
 }
 
 func (analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
@@ -90,7 +93,7 @@ func (analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 			for _, o := range scripts {
 				for k, v := range o.c.imports {
 					if s.c.imports[k] == "" && s.c.defs[k] == "" {
-						s.c.imports[k] = v
+						s.c.imports[k], s.c.picked[k] = v, o.c.picked[k]
 					}
 				}
 				for k, v := range o.c.defs {
@@ -338,6 +341,7 @@ func (c *fileCtx) scan(n *gotreesitter.Node) {
 				c.exportAs["default"] = c.def
 			} else {
 				c.anonDef = true // export default {...} / defineX(...)
+				c.addProps("default", v)
 			}
 		}
 		from := ""
@@ -389,6 +393,7 @@ func (c *fileCtx) scan(n *gotreesitter.Node) {
 			}
 			if name != nil && name.Type(c.lang) == "identifier" {
 				c.defs[parser.Text(name, c.src)] = parser.KindVariable
+				c.addProps(parser.Text(name, c.src), value)
 			}
 		}
 	case "expression_statement":
@@ -405,18 +410,20 @@ func (c *fileCtx) addImport(n *gotreesitter.Node) {
 	}
 	spec := unquote(parser.Text(src, c.src))
 	m := c.resolveSpec(spec)
-	follow := c.follow
-	if isPackage(m, spec) { // a package ('react') or an unresolved path: never read as a workspace file
+	follow, pkg := c.follow, isPackage(m, spec)
+	if pkg { // a package ('react') or an unresolved path: never read as a workspace file
 		follow = func(m, name string) string { return m + "." + name }
 	}
 	parser.Walk(n, func(ch *gotreesitter.Node) bool {
 		switch ch.Type(c.lang) {
 		case "import_clause":
 			if ch.NamedChildCount() > 0 && ch.NamedChild(0).Type(c.lang) == "identifier" {
-				c.imports[parser.Text(ch.NamedChild(0), c.src)] = follow(m, "default")
+				local := parser.Text(ch.NamedChild(0), c.src)
+				c.imports[local], c.picked[local] = follow(m, "default"), !pkg
 			}
 		case "namespace_import":
-			c.imports[parser.Text(ch.NamedChild(0), c.src)] = m
+			local := parser.Text(ch.NamedChild(0), c.src)
+			c.imports[local], c.picked[local] = m, false
 		case "import_specifier":
 			name := parser.Text(parser.Field(ch, c.lang, "name"), c.src)
 			local := name
@@ -425,7 +432,7 @@ func (c *fileCtx) addImport(n *gotreesitter.Node) {
 			} else if ch.NamedChildCount() > 1 { // older grammars: name, alias as plain children
 				local = parser.Text(ch.NamedChild(1), c.src)
 			}
-			c.imports[local] = follow(m, name)
+			c.imports[local], c.picked[local] = follow(m, name), !pkg
 		}
 		return true
 	})
@@ -447,17 +454,46 @@ func (c *fileCtx) requireSpec(v *gotreesitter.Node) string {
 func (c *fileCtx) addRequire(pattern *gotreesitter.Node, m string) {
 	switch pattern.Type(c.lang) {
 	case "identifier":
-		c.imports[parser.Text(pattern, c.src)] = m
+		c.imports[parser.Text(pattern, c.src)], c.picked[parser.Text(pattern, c.src)] = m, false
 	case "object_pattern":
 		for _, p := range parser.NamedChildren(pattern) {
 			switch p.Type(c.lang) {
 			case "shorthand_property_identifier_pattern":
-				c.imports[parser.Text(p, c.src)] = m + "." + parser.Text(p, c.src)
+				c.imports[parser.Text(p, c.src)], c.picked[parser.Text(p, c.src)] = m+"."+parser.Text(p, c.src), false
 			case "pair_pattern":
 				key, val := parser.Field(p, c.lang, "key"), parser.Field(p, c.lang, "value")
 				if val != nil && val.Type(c.lang) == "identifier" {
-					c.imports[parser.Text(val, c.src)] = m + "." + parser.Text(key, c.src)
+					c.imports[parser.Text(val, c.src)], c.picked[parser.Text(val, c.src)] = m+"."+parser.Text(key, c.src), false
 				}
+			}
+		}
+	}
+}
+
+// addProps records the shorthand (`{ f }`) and `key: ident` members of a
+// top-level object literal bound to obj, which the barrel turns into
+// re-exports of the names they point to. For the inline `export default {...}`
+// it also records its methods (value ""), emitted owned by the component.
+func (c *fileCtx) addProps(obj string, o *gotreesitter.Node) {
+	if o == nil || o.Type(c.lang) != "object" {
+		return
+	}
+	for _, p := range parser.NamedChildren(o) {
+		switch p.Type(c.lang) {
+		case "shorthand_property_identifier":
+			c.props[obj+"."+parser.Text(p, c.src)] = parser.Text(p, c.src)
+		case "pair":
+			k, v := parser.Field(p, c.lang, "key"), parser.Field(p, c.lang, "value")
+			switch {
+			case k == nil || v == nil || k.Type(c.lang) != "property_identifier":
+			case v.Type(c.lang) == "identifier":
+				c.props[obj+"."+parser.Text(k, c.src)] = parser.Text(v, c.src)
+			case obj == "default" && isFunc(v.Type(c.lang)):
+				c.props[obj+"."+parser.Text(k, c.src)] = ""
+			}
+		case "method_definition":
+			if k := parser.Field(p, c.lang, "name"); obj == "default" && k != nil && k.Type(c.lang) == "property_identifier" {
+				c.props[obj+"."+parser.Text(k, c.src)] = ""
 			}
 		}
 	}
@@ -1033,6 +1069,11 @@ func (c *fileCtx) resolveDotted(text string) string {
 	first, rest, _ := strings.Cut(text, ".")
 	switch {
 	case c.imports[first] != "":
+		if t := c.imports[first]; c.picked[first] && rest != "" && !strings.Contains(rest, ".") {
+			// Jwt.getToken() of `export default { getToken }`: the member's own declaration.
+			i := strings.LastIndex(t, ".")
+			return c.follow(t[:i], t[i+1:]+"."+rest)
+		}
 		return join(c.imports[first], rest)
 	case c.defs[first] != "" && (rest == "" || c.defs[first] == parser.KindClass):
 		return join(parser.Qualify(c.module, "", c.qual(first)), rest)

@@ -49,7 +49,9 @@ type Entry struct {
 // an HTML void element spans its own tag; JS top-level destructuring calls
 // belong to <script setup>'s default; a GDScript scene's attached script
 // resolves to its class; a Python suffix is never cut inside a package.
-const Format = 11
+// 12: a JS call through a member of an exported object literal
+// (export default { f }, const api = { k: f }) targets the declaration it names.
+const Format = 12
 
 // State is the per-root snapshot stored at Dir(root)/state.json. Only
 // the run goroutine touches it; nothing here locks.

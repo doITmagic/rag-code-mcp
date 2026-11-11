@@ -75,4 +75,3 @@ func TestWalkDoesNotOpenIgnoredFiles(t *testing.T) {
 	}
 	assert.Zero(t, opened, "Walk opened %d of the %d git-ignored files", opened, 2*perDir)
 }
-

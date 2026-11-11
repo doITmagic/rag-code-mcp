@@ -1017,6 +1017,11 @@ func TestStatusIndexingDuringRun(t *testing.T) {
 	t.Cleanup(release)
 	require.Eventually(t, func() bool { return w.Status().Running }, 10*time.Second, 20*time.Millisecond)
 
+	// A name not found yet may sit in a file the run has not reached: not a field.
+	r, _ := v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "N1"})
+	assert.Contains(t, r.Message, "not indexed yet", r.Message)
+	assert.NotContains(t, r.Message, "struct fields", r.Message)
+
 	for name, args := range map[string]map[string]any{
 		"rag_find_usages":          {"symbol": "Foo"},
 		"rag_call_hierarchy":       {"symbol": "Foo"},
@@ -1029,7 +1034,7 @@ func TestStatusIndexingDuringRun(t *testing.T) {
 		assert.Contains(t, r.Message, "may be incomplete", name)
 		assert.NotContains(t, r.Message, "on-the-fly", name)
 	}
-	r, _ := v.call(t, "rag_read_file_context", map[string]any{"workspace_root": v.root, "file_path": "pkg/a.fk"})
+	r, _ = v.call(t, "rag_read_file_context", map[string]any{"workspace_root": v.root, "file_path": "pkg/a.fk"})
 	assert.Equal(t, "ok", r.Status, r.Message)
 
 	release()

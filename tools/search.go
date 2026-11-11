@@ -103,6 +103,9 @@ func (t *tools) search(ctx context.Context, req *mcp.CallToolRequest, in SearchI
 		exact = merge(exact)
 		if len(exact) == 0 { // said plainly: the semantic hits below are not that name
 			msg = fmt.Sprintf("no symbol named %q (struct fields, locals and Go interface methods are not symbols): the results are semantic neighbours only; grep finds field uses", in.Query)
+			if st := indexInfo(w).State; st == "indexing" || st == "queued" {
+				msg = fmt.Sprintf("no symbol named %q in the files indexed so far: it may be in a file not indexed yet (grep finds it now); the results are semantic neighbours only", in.Query)
+			}
 		}
 		for _, h := range exact {
 			seen[twinOf(&h.Symbol)] = true

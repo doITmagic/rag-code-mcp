@@ -26,8 +26,10 @@ query the index instead of guessing or grepping blindly:
   after editing files when a response's index block has "watch": such a
   root is not watched, so edits are not picked up automatically.
 
-Always pass workspace_root: the absolute path of this project's top directory
-(the repository root, the same on every call), never a subdirectory of it.
+Always pass workspace_root: the absolute path of this project's top directory,
+the same on every call: the folder opened in the editor, or the nearest parent
+that holds .git or, without git, the project file (go.mod, package.json,
+composer.json, pyproject.toml, project.godot). Never a subdirectory of it.
 `
 
 // IDEPointer is the line WriteIDERules adds to the PointerFiles.

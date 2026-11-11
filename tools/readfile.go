@@ -24,7 +24,7 @@ const (
 
 // ReadInput is the input of rag_read_file_context.
 type ReadInput struct {
-	WorkspaceRoot string `json:"workspace_root,omitempty" jsonschema:"Absolute path of the top directory of the project the user is working in: the repository root (where .git is), the same on every call (required). Not a subdirectory of the project, not a parent of several projects, not the home or a system directory."`
+	WorkspaceRoot string `json:"workspace_root,omitempty" jsonschema:"Absolute path of the top directory of the project the user is working in (required), the same on every call. Find it as the folder opened in the editor, or the nearest parent directory that holds .git; without git, the one that holds the project file (go.mod, package.json, composer.json, pyproject.toml, project.godot) or, failing that, the top folder of the files being worked on. Not a subdirectory of the project, not a parent of several projects, not the home or a system directory."`
 	FilePath      string `json:"file_path" jsonschema:"File to read, absolute or relative to the root."`
 	Symbol        string `json:"symbol,omitempty" jsonschema:"Return only this symbol (name or qualified name) with its relations."`
 	StartLine     int    `json:"start_line,omitempty" jsonschema:"First line to return (1-based)."`

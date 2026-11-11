@@ -31,7 +31,7 @@ const (
 
 // SearchInput is the input of rag_search.
 type SearchInput struct {
-	WorkspaceRoot string   `json:"workspace_root,omitempty" jsonschema:"Absolute path of the top directory of the project the user is working in: the repository root (where .git is), the same on every call (required). Not a subdirectory of the project, not a parent of several projects, not the home or a system directory."`
+	WorkspaceRoot string   `json:"workspace_root,omitempty" jsonschema:"Absolute path of the top directory of the project the user is working in (required), the same on every call. Find it as the folder opened in the editor, or the nearest parent directory that holds .git; without git, the one that holds the project file (go.mod, package.json, composer.json, pyproject.toml, project.godot) or, failing that, the top folder of the files being worked on. Not a subdirectory of the project, not a parent of several projects, not the home or a system directory."`
 	Query         string   `json:"query" jsonschema:"An identifier or qualified name (exact match) or a natural-language description (semantic)."`
 	Limit         int      `json:"limit,omitempty" jsonschema:"Maximum results, default 10, at most 100."`
 	FilePath      string   `json:"file_path,omitempty" jsonschema:"File being edited; results near it rank higher."`

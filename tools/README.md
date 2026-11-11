@@ -58,6 +58,7 @@ Tests:
 | File | What it covers |
 |---|---|
 | [`grep_walk_test.go`](grep_walk_test.go) | the grep file cap counts only files git keeps; an unreadable directory does not end the walk. |
+| [`go_value_use_test.go`](go_value_use_test.go) | with the real Go analyzer, `rag_find_usages firmaJSON` counts `mux.HandleFunc(p, s.firmaJSON)` in `main.go` for a method declared in another file of the package. |
 | [`js_object_members_test.go`](js_object_members_test.go) | with the real JavaScript analyzer, `rag_find_usages getToken` counts `JwtService.getToken()` calls through `export default { getToken }` in each importer. |
 | [`roots_test.go`](roots_test.go) | an empty `workspace_root` from a client without the `roots` capability is answered at once, `roots/list` is not sent. |
 | [`tools_test.go`](tools_test.go) | an MCP client and server over in-memory transports with a real engine on `store.NewMemory()`, `embed.Fake` and a fake `.fk` analyzer. Missing and bad roots, the root taken from client roots, every tool, the not-indexed and during-recreate fallbacks, dependency down, tool schemas, helpers, fallback skip rules, edits and deletes keeping results right, no Qdrant left in `rag_server_info`, same-name variants, lookup by declared name with `file_path` as a hard filter, `by_name` usages and hierarchy nodes, the live state of a root being indexed in `rag_server_info`, the last run's error kept after a restart, a deleted root reported as `missing`, overloads and get/set pairs resolved as one symbol, twins as one hierarchy node (both directions, every depth), one export (and count) and one search hit, `ambiguous_by_name` not counting calls that name another symbol's qualified name, the module spelling of a barrel file in `rag_list_package_exports`, an equal qualified name winning over suffix matches, a code symbol winning over a doc chunk of the same name, the no-exact-match message of an identifier query (and its not-indexed-yet variant during a run), the message of a filtered search with no hit, a qualified call bound by name only marked `by_name`, short directory names and file paths in `rag_list_package_exports` with one module per file (`.fkm` analyzer), the export-less file message, an unreadable directory reported as such, an excluded directory and file reported as not indexed, the zero-usage note not claiming imports, an unused object constant naming its called members, the text search beside the index (whole word, hidden directories skipped, none when the index knows the name, the 20-line cut), `indexing` (not `ok`, not the fallback) while a run goes over an existing index, `kinds` validation and the no-such-kinds message, `limit` respected exactly with `truncated` in usages and the hierarchy, a binary file with an unknown extension not dumped, also for a line range |
@@ -320,7 +321,10 @@ qualified name of its script's class, the class is taken; when code symbols
 and documentation chunks match (a README heading `### CleanupTask`), the code
 symbols are kept. Zero usages of a
 constant or variable add a note: reads of values are not tracked, only calls,
-type uses and inheritance (an import is not a usage). When the constant is an
+type uses and inheritance (an import is not a usage). A Go function or
+method named as a value (`mux.HandleFunc(p, s.firmaJSON)`) is a usage of
+kind `call` when the index linked it exactly; it also shows as an outgoing
+call in `rag_call_hierarchy`. When the constant is an
 object whose members are symbols (`export const api = { list: ... }`) and
 something calls them through an exact link (not by name only), the note names the called members instead (at most
 10), so the object is not taken for dead code (`usedMembers`).

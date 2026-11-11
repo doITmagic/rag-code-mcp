@@ -1027,7 +1027,7 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 					// <Class>.m) names a qualified suffix: exact there. In other
 					// languages it is a guess (PHP Status::run of a global
 					// \Status), so unique.
-					if len(ids) == 0 && !nameOnly {
+					if len(ids) == 0 && !nameOnly && !rel.Value {
 						if ids = suffix(lang, tqn); len(ids) > 0 && lang != "python" && lang != "gdscript" {
 							resolution = parser.ResolutionUnique
 						}
@@ -1070,7 +1070,7 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 					}
 					// Otherwise fall back to the name. An unknown owner is
 					// external (vendor, stdlib).
-					if dot := strings.LastIndex(tqn, "."); len(ids) == 0 && dot > 0 && rel.TargetName != "" && len(qualified(lang, tqn[:dot])) > 0 {
+					if dot := strings.LastIndex(tqn, "."); len(ids) == 0 && dot > 0 && rel.TargetName != "" && !rel.Value && len(qualified(lang, tqn[:dot])) > 0 {
 						ids, nameOnly, resolution = named(lang, rel.TargetName), true, parser.ResolutionUnique
 					}
 				} else if name := rel.TargetName; name != "" {
@@ -1083,7 +1083,15 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 				case len(ids) > 1:
 					rel.Resolution = parser.ResolutionAmbiguous
 				}
+				// A value use (a Go handler passed, assigned, returned) counts
+				// only as an exact link to a function or method: anything else
+				// read a variable, constant or field, or is unknown.
+				if k := kindOf[rel.TargetID]; rel.Value && (rel.Resolution != parser.ResolutionExact || k != parser.KindFunction && k != parser.KindMethod) {
+					rel.TargetID = ""
+				}
 			}
+			// Dropped, not stored: it would show as an unresolved name.
+			files[i].syms[j].Relations = slices.DeleteFunc(files[i].syms[j].Relations, func(rel parser.Relation) bool { return rel.Value && rel.TargetID == "" })
 		}
 	}
 }

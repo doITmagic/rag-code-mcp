@@ -4,7 +4,8 @@
 
 The `golang` package turns one Go source file into `parser.Symbol` values: one
 symbol per top-level declaration (function, method, type, var, const), with
-call, type-use and embedding relations resolved through the file's own import
+call (including functions and methods named as values), type-use and
+embedding relations resolved through the file's own import
 table and the types it declares.
 
 It uses the tree-sitter `go` grammar (through the shared helpers in
@@ -125,6 +126,7 @@ another); `Start` calls `Stop` ->
 | `pkg.T` in any type position | `uses_type` | `<import path>.T`, or `""` when `pkg` is not imported. |
 | Embedded struct field | `extends` | Same-package type or imported type. |
 | Embedded interface (`fmt.Stringer`) | `extends` | Same rule. |
+| `f`, `recv.M`, `s.M`, `T.M`, `pkg.F` named as a value: a call argument, the right side of `=`, `:=` or `var`, a composite literal value (keyed or not, never the key), a `return` value | `call` with `Value: true` | The target a call on the same expression gets (rows above), plus `s.M` on a local declared with one type (`s *T`, `var s T`, `s := &T{...}`): `<module>.T.M`. Not emitted: an operand of unknown type (no qualified target, so it could never link exactly), and what the file shows is no function (built-ins, locals and parameters, types, top-level vars and consts declared here, a selector named like a struct field declared here and no method here). The index keeps the relation only when it links exactly to a function or method ([index](../../index/README.md#6-resolve)). |
 
 Relations of a `var` or `const` spec are shared by every name in that spec.
 
@@ -132,6 +134,20 @@ Relations of a `var` or `const` spec are shared by every name in that spec.
 
 - No type inference: calls on variables, fields or return values
   (`s.Inner.Do()`, `a.Do()`) keep an empty target qualified name.
+- Function and method values: only the positions in the table count. Not
+  covered: a method value on an operand of unknown type (a local from a
+  function call, `s := newServer(); mux.HandleFunc(p, s.h)`, a package-level
+  var, a field `a.b.h`); a method expression `T.m` / `(*T).m` whose type is
+  declared in another file; a value sent on a channel, put in parentheses or
+  reached through an interface; a function value stored in a variable and
+  called later is a usage where it is named, not where it is called. A file
+  at a workspace root without `go.mod` has an empty module, so its value
+  uses have no qualified target the index can link exactly.
+- A value use whose target is declared in another file is linked only when
+  both files are in the same index run (or the target is already stored):
+  the index drops it otherwise, so a handler file added after the file that
+  registers it shows the usage only once the registering file changes or a
+  full re-index runs.
 - A local variable shadows a package function, an import or the method's
   receiver of the same name across the whole declaration, not only after its
   declaration (marked as a `shortcut:` in `locals`); a call on a shadowed
@@ -161,7 +177,7 @@ Relations of a `var` or `const` spec are shared by every name in that spec.
 
 | File | Covers |
 |------|--------|
-| `golang_test.go` | A fixture with grouped declarations, generics, embedded types, aliased/dot/blank imports: symbol kinds, owners, lines, signatures, docs, IDs, metadata; every relation and its target; module path without `go.mod`, nested `go.mod` stopping at the root; malformed input; analyzing the real `parser.go` of this repo; registration; concurrency; generic calls; `Exported` for test files and unexported owners; calls through local function values; a parameter shadowing an import; a local shadowing the receiver; the line of a chained call split over lines; an external test package as its own module; a renamed module seen without a restart; same-package types declared in another file, type parameters (receiver ones too) and the receiver skipped; blank vars keeping their relations; goimports-style assumed import names. |
+| `golang_test.go` | A fixture with grouped declarations, generics, embedded types, aliased/dot/blank imports: symbol kinds, owners, lines, signatures, docs, IDs, metadata; every relation and its target; module path without `go.mod`, nested `go.mod` stopping at the root; malformed input; analyzing the real `parser.go` of this repo; registration; concurrency; generic calls; `Exported` for test files and unexported owners; calls through local function values; a parameter shadowing an import; a local shadowing the receiver; the line of a chained call split over lines; functions and methods named as values (arguments, assignments, literals, returns), with fields, vars, consts, type switch and select locals skipped; an external test package as its own module; a renamed module seen without a restart; same-package types declared in another file, type parameters (receiver ones too) and the receiver skipped; blank vars keeping their relations; goimports-style assumed import names. |
 | `zz_verify_test.go` | Verification tests: resolution probes, an unclean (non-normalized) root path, robustness on garbage and edge input, a second round of edge cases, very large and deeply nested files. |
 
 ## Testing

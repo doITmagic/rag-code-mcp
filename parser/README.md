@@ -160,12 +160,13 @@ type Relation struct {
 	TargetID            string // set by the indexer
 	Resolution          string // set by the indexer
 	Line                int    // 1-based; for a method call, the line of the method name (a chain split over lines)
+	Value               bool   // a candidate usage, not a call (Go: a function or method named as a value)
 }
 ```
 
 | `RelationKind` | Value | Typical source |
 |----------------|-------|----------------|
-| `RelCall` | `call` | A call expression, a Go template `{{template}}`, a Godot signal connection |
+| `RelCall` | `call` | A call expression, a Go template `{{template}}`, a Godot signal connection, a Go function or method value (`Value`) |
 | `RelImplements` | `implements` | `implements` clauses (PHP, TS) |
 | `RelExtends` | `extends` | Base classes, Go embedded types and embedded interfaces |
 | `RelUsesType` | `uses_type` | `new X`, composite literals, PHP trait `use`, JSX components, scene scripts |
@@ -173,7 +174,19 @@ type Relation struct {
 
 Analyzers resolve `TargetQualifiedName` only from evidence in the file (its
 imports, its own declarations, `self`/`this`). They never guess the type of a
-variable; an unknown receiver leaves the field empty.
+variable; an unknown receiver leaves the field empty. The one exception is
+the Go value use below: a local declared with a single type (`s *T`,
+`var s T`, `s := &T{...}`) gives `s.m` the target `T.m`.
+
+`Value` marks a `RelCall` that is only a candidate: the Go analyzer cannot
+tell a function or method named as a value (`mux.HandleFunc(p, s.handler)`)
+from a variable, constant or field read declared in another file, so it
+emits the name with the target a call on it would get. The indexer's resolve
+step keeps such a relation only when it links `exact` to a function or
+method, and drops every other one before storing (unresolved, ambiguous,
+`unique`, or linked to a variable, constant, type or field), so it never
+shows as a usage or as an unresolved name. A kept one is stored with
+`value: true`.
 
 The indexer then fills `TargetID` and `Resolution` in a workspace-wide pass
 (see [index](../index/README.md)):

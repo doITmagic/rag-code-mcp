@@ -46,6 +46,8 @@ type file struct {
 	module  string
 	imports map[string]string // local name → import path
 	types   map[string]bool   // type names declared in this file
+	values  map[string]bool   // var and const names declared at the top of this file
+	fields  map[string]bool   // struct field names declared in this file, less its method names
 	tparams map[string]bool   // type parameters of the declaration being walked
 	test    bool              // a _test.go file: nothing in it is package API
 }
@@ -64,10 +66,14 @@ func (Analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 		module:  modulePath(f.Root, filepath.Dir(f.Path)),
 		imports: map[string]string{},
 		types:   map[string]bool{},
+		values:  map[string]bool{},
+		fields:  map[string]bool{},
 		test:    strings.HasSuffix(f.Path, "_test.go"),
 	}
 	root := tree.RootNode()
-	// Pass 1: import table and locally declared type names.
+	// Pass 1: import table, locally declared type names, and the names a
+	// value use cannot be a function or method of.
+	methods := map[string]bool{}
 	for _, n := range parser.NamedChildren(root) {
 		switch n.Type(lang) {
 		case "package_clause":
@@ -90,7 +96,26 @@ func (Analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 					fc.types[name] = true
 				}
 			}
+			parser.Walk(n, func(c *gotreesitter.Node) bool {
+				if c.Type(lang) == "field_declaration" {
+					for _, name := range fc.names(c) {
+						fc.fields[name] = true
+					}
+				}
+				return true
+			})
+		case "var_declaration", "const_declaration":
+			for _, spec := range fc.specs(n, "var_spec", "const_spec") {
+				for _, name := range fc.names(spec) {
+					fc.values[name] = true
+				}
+			}
+		case "method_declaration":
+			methods[fc.text(parser.Field(n, lang, "name"))] = true
 		}
+	}
+	for m := range methods {
+		delete(fc.fields, m)
 	}
 	// Pass 2: symbols.
 	var syms []parser.Symbol
@@ -264,12 +289,7 @@ func (fc *file) appendTypes(syms []parser.Symbol, decl *gotreesitter.Node) []par
 func (fc *file) appendValues(syms []parser.Symbol, decl *gotreesitter.Node, specKind string, kind parser.Kind) []parser.Symbol {
 	specs := fc.specs(decl, specKind)
 	for _, spec := range specs {
-		var names []string
-		for i := 0; i < spec.ChildCount(); i++ {
-			if spec.FieldNameForChild(i, fc.lang) == "name" {
-				names = append(names, fc.text(spec.Child(i)))
-			}
-		}
+		names := fc.names(spec)
 		node := spec
 		if len(specs) == 1 {
 			node = decl
@@ -287,19 +307,38 @@ func (fc *file) appendValues(syms []parser.Symbol, decl *gotreesitter.Node, spec
 	return syms
 }
 
+// names lists the children of n in its "name" field: the names of a var,
+// const or field declaration.
+func (fc *file) names(n *gotreesitter.Node) []string {
+	var out []string
+	for i := 0; i < n.ChildCount(); i++ {
+		if n.FieldNameForChild(i, fc.lang) == "name" {
+			out = append(out, fc.text(n.Child(i)))
+		}
+	}
+	return out
+}
+
 // relations collects calls, type uses and embeddings under n. recv is the
 // enclosing method's receiver variable (calls on it resolve to owner), and
 // the returned names are interface method names when n is an interface.
-// locals returns the parameter and variable names declared inside n.
+// locals returns the parameter and variable names declared inside n, and the
+// qualified type of those declared with one type only (s *T, var s T,
+// s := &T{...}), "" for the others.
 // shortcut: one set for the whole declaration, so a local shadows a package
 // function or an import of the same name everywhere in it, not only after its
 // declaration.
-func (fc *file) locals(n *gotreesitter.Node) map[string]bool {
-	out := map[string]bool{}
-	idents := func(c *gotreesitter.Node) {
+func (fc *file) locals(n *gotreesitter.Node) (map[string]bool, map[string]string) {
+	out, types := map[string]bool{}, map[string]string{}
+	idents := func(c, typ *gotreesitter.Node) {
+		_, tqn := fc.resolveType(typ)
 		for _, id := range parser.NamedChildren(c) {
 			if id.Type(fc.lang) == "identifier" {
-				out[fc.text(id)] = true
+				name := fc.text(id)
+				if t, ok := types[name]; ok && t != tqn {
+					tqn = ""
+				}
+				out[name], types[name] = true, tqn
 			}
 		}
 	}
@@ -309,16 +348,39 @@ func (fc *file) locals(n *gotreesitter.Node) map[string]bool {
 			return false
 		}
 		switch c.Type(fc.lang) {
-		case "parameter_declaration", "variadic_parameter_declaration", "var_spec":
-			idents(c)
-		case "short_var_declaration", "range_clause":
-			if l := parser.Field(c, fc.lang, "left"); l != nil {
-				idents(l)
+		case "parameter_declaration", "var_spec":
+			typ := parser.Field(c, fc.lang, "type")
+			if v := parser.NamedChildren(parser.Field(c, fc.lang, "value")); typ == nil && len(v) == 1 {
+				typ = fc.literalType(v[0])
 			}
+			idents(c, typ)
+		case "variadic_parameter_declaration", "const_spec":
+			idents(c, nil)
+		case "short_var_declaration":
+			var typ *gotreesitter.Node
+			if v := parser.NamedChildren(parser.Field(c, fc.lang, "right")); len(v) == 1 {
+				typ = fc.literalType(v[0])
+			}
+			idents(parser.Field(c, fc.lang, "left"), typ)
+		case "range_clause", "receive_statement":
+			idents(parser.Field(c, fc.lang, "left"), nil)
+		case "type_switch_statement":
+			idents(parser.Field(c, fc.lang, "alias"), nil)
 		}
 		return true
 	})
-	return out
+	return out, types
+}
+
+// literalType is the type node of T{...} or &T{...}, nil for anything else.
+func (fc *file) literalType(e *gotreesitter.Node) *gotreesitter.Node {
+	if e.Type(fc.lang) == "unary_expression" && fc.text(parser.Field(e, fc.lang, "operator")) == "&" {
+		e = parser.Field(e, fc.lang, "operand")
+	}
+	if e == nil || e.Type(fc.lang) != "composite_literal" {
+		return nil
+	}
+	return parser.Field(e, fc.lang, "type")
 }
 
 func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []parser.Relation, methods []string) {
@@ -329,7 +391,6 @@ func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []pars
 		line, _ := parser.Lines(at)
 		rels = append(rels, parser.Relation{Kind: kind, TargetName: name, TargetQualifiedName: tqn, Line: line})
 	}
-	locals := fc.locals(n)
 	fc.tparams = map[string]bool{}
 	parser.Walk(n, func(c *gotreesitter.Node) bool {
 		if c.Type(fc.lang) == "type_parameter_declaration" {
@@ -348,9 +409,57 @@ func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []pars
 		}
 		return true
 	})
+	locals, localTypes := fc.locals(n)
+	// value records a function or method named as a value (passed,
+	// assigned, returned, put in a literal: mux.HandleFunc(p, s.h)) with the
+	// target a call on it would get, marked Value: only the index sees the
+	// whole package, so it tells a function from a var, const or field
+	// declared in another file. What it could never link exactly (an operand
+	// of unknown type) and what this file shows is no function are skipped.
+	var value func(e *gotreesitter.Node)
+	value = func(e *gotreesitter.Node) {
+		var name, tqn string
+		switch e.Type(fc.lang) {
+		case "expression_list", "literal_element":
+			for _, x := range parser.NamedChildren(e) {
+				value(x)
+			}
+			return
+		case "keyed_element": // the value, not the field name or map key
+			value(e.NamedChild(1))
+			return
+		case "identifier":
+			if name = fc.text(e); !builtins[name] && !locals[name] && !fc.types[name] && !fc.values[name] {
+				tqn = parser.Qualify(fc.module, "", name)
+			}
+		case "selector_expression":
+			op := parser.Field(e, fc.lang, "operand")
+			if e = parser.Field(e, fc.lang, "field"); e == nil {
+				return
+			}
+			if name = fc.text(e); !fc.fields[name] {
+				tqn = fc.callTarget(op, name, recv, owner, locals)
+				if t := localTypes[fc.text(op)]; tqn == "" && t != "" && op.Type(fc.lang) == "identifier" {
+					tqn = t + "." + name // s := &server{}; HandleFunc(p, s.h)
+				}
+			}
+		}
+		if name != "" && tqn != "" {
+			line, _ := parser.Lines(e)
+			rels = append(rels, parser.Relation{Kind: parser.RelCall, TargetName: name, TargetQualifiedName: tqn, Line: line, Value: true})
+		}
+	}
 	var visit func(c *gotreesitter.Node) bool
 	visit = func(c *gotreesitter.Node) bool {
 		switch c.Type(fc.lang) {
+		case "argument_list", "literal_value", "return_statement":
+			for _, e := range parser.NamedChildren(c) {
+				value(e)
+			}
+		case "short_var_declaration", "assignment_statement":
+			value(parser.Field(c, fc.lang, "right")) // never the left side (x.f = ...)
+		case "var_spec":
+			value(parser.Field(c, fc.lang, "value"))
 		case "parameter_list":
 			if recvList != nil && c.StartByte() == recvList.StartByte() {
 				return false

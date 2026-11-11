@@ -1,6 +1,7 @@
 package golang
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -198,6 +199,7 @@ func TestFixtureRelations(t *testing.T) {
 		}},
 		{mod + ".Server.Start", []parser.Relation{
 			rel(parser.RelCall, "Stop", mod+".Server.Stop", 64),
+			{Kind: parser.RelCall, TargetName: "Start", TargetQualifiedName: mod + ".Server.Start", Line: 65, Value: true}, // h := s.Start
 			rel(parser.RelCall, "Query", "", 67),
 		}},
 		{mod + ".Server.Stop", nil},
@@ -447,7 +449,7 @@ func TestExportedIsPackageAPI(t *testing.T) {
 }
 
 // A call through a parameter or a local variable is not a call to a package
-// function of that name.
+// function of that name; only the value uses of helper (fn := helper) name it.
 func TestCallThroughLocalIsNotPackageFunc(t *testing.T) {
 	src := `package p
 
@@ -466,10 +468,10 @@ func Wrap(next func(), more ...func()) func() {
 	var calls []string
 	for _, r := range syms["p.Wrap"].Relations {
 		if r.Kind == parser.RelCall {
-			calls = append(calls, r.TargetName+"="+r.TargetQualifiedName)
+			calls = append(calls, fmt.Sprintf("%s=%s:%d value=%v", r.TargetName, r.TargetQualifiedName, r.Line, r.Value))
 		}
 	}
-	assert.Equal(t, []string{"helper=p.helper"}, calls)
+	assert.Equal(t, []string{"helper=p.helper:6 value=true", "helper=p.helper:7 value=true", "helper=p.helper:7 value=true", "helper=p.helper:11 value=false"}, calls)
 }
 
 // An unqualified type name is either predeclared, a type parameter, or
@@ -596,4 +598,89 @@ func TestExternalTestPackage(t *testing.T) {
 			assert.Equal(t, extQN, s.Relations[0].TargetQualifiedName)
 		}
 	}
+}
+
+// A function or method named as a value (a handler passed to HandleFunc,
+// assigned, put in a composite literal, returned) is a candidate usage,
+// marked Value, with the target a call on the same expression would get,
+// declared in this file or not. The index keeps it only when it links
+// exactly to a function or method. What the file shows is no function (a
+// local, a parameter, a var, const, type or struct field declared here) or
+// what has no qualified target (an operand of unknown type) is not emitted.
+func TestFuncValueIsCandidateUsage(t *testing.T) {
+	src := `package api
+
+import "net/http"
+
+type cfg struct{ name, Model string }
+
+const route = "/x"
+
+var shared = 1
+
+func (s *server) routes(mux *http.ServeMux, c cfg) {
+	mux.HandleFunc("GET /a", s.firmaJSON)
+	mux.Handle(route, nil)
+	use(shared, c.name, c.Model, mux, http.MethodGet)
+}
+
+func main() {
+	s := &server{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /firma.json", s.firmaJSON)
+	http.HandleFunc(route, handler)
+	h := struct{ f http.HandlerFunc }{f: handler}
+	g := s.firmaJSON
+	var k = handler
+	m := map[string]http.HandlerFunc{"a": handler}
+	list := []func(){helper}
+	x := unknown()
+	use(x.Name, g, k, h, m, list, nil, true, len)
+	s.cb = s.firmaJSON
+}
+
+func pick() http.HandlerFunc { return handler }
+
+func local(v any, ch chan func()) {
+	switch handler := v.(type) {
+	default:
+		use(handler)
+	}
+	select {
+	case helper := <-ch:
+		use(helper)
+	}
+}
+`
+	syms := analyze(t, "/x", "/x/api/main.go", src)
+	values := func(qn string) []parser.Relation {
+		var out []parser.Relation
+		for _, r := range syms[qn].Relations {
+			if r.Value {
+				out = append(out, r)
+			}
+		}
+		return out
+	}
+	val := func(name, tqn string, line int) parser.Relation {
+		r := rel(parser.RelCall, name, tqn, line)
+		r.Value = true
+		return r
+	}
+	assert.Equal(t, []parser.Relation{
+		val("firmaJSON", "api.server.firmaJSON", 12),
+		val("MethodGet", "net/http.MethodGet", 14),
+	}, values("api.server.routes"), "receiver method value; an import's member is left to the index")
+	assert.Equal(t, []parser.Relation{
+		val("firmaJSON", "api.server.firmaJSON", 20),
+		val("handler", "api.handler", 21),
+		val("handler", "api.handler", 22),
+		val("firmaJSON", "api.server.firmaJSON", 23),
+		val("handler", "api.handler", 24),
+		val("handler", "api.handler", 25),
+		val("helper", "api.helper", 26),
+		val("firmaJSON", "api.server.firmaJSON", 29),
+	}, values("api.main"), "argument, keyed and map literal values, :=, var, literal element, assignment")
+	assert.Equal(t, []parser.Relation{val("handler", "api.handler", 32)}, values("api.pick"), "return value")
+	assert.Empty(t, values("api.local"), "a type switch or select local is no package function")
 }

@@ -87,6 +87,10 @@ type Relation struct {
 	TargetID            string       `json:"target_id,omitempty"`
 	Resolution          string       `json:"resolution,omitempty"`
 	Line                int          `json:"line"`
+	// Value marks a candidate usage, not a call: a function or method named
+	// as a value (a handler passed, assigned, returned). The indexer keeps it
+	// only when it links exactly to a function or method.
+	Value bool `json:"value,omitempty"`
 }
 
 // File is the input of an analyzer. Root is the workspace root (absolute);

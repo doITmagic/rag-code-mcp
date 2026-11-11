@@ -51,7 +51,9 @@ type Entry struct {
 // resolves to its class; a Python suffix is never cut inside a package.
 // 12: a JS call through a member of an exported object literal
 // (export default { f }, const api = { k: f }) targets the declaration it names.
-const Format = 12
+// 13: a Go function or method named as a value (a handler passed, assigned,
+// returned) is a usage when it links exactly to its declaration.
+const Format = 13
 
 // State is the per-root snapshot stored at Dir(root)/state.json. Only
 // the run goroutine touches it; nothing here locks.

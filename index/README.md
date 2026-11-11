@@ -77,6 +77,7 @@ graph LR
 | `index_test.go` | The main suite, with a line-based fake analyzer and a hook embedder: full, incremental, delete, recreate, model and `Format` change, embed failure, parse failures and panics, cancel, `ErrHeadChanged`, relation resolution, `Skip`, `Walk`, `.gitignore`, linked worktrees, symlinks in `Files`, byte-budgeted upsert batches, empty collection with stale state, a crash between a recreate's state save and its drop, moved targets, vanished referrers, a file that changed between the two passes, deleted paths counted only when they were indexed, relation target kinds (`TestResolutionTargetKinds`) and inherited members through the owner's bases (`TestResolutionThroughBases`), in full and files runs, Go bases limited to embeddings (`TestResolutionThroughBasesGoEmbeddingOnly`), a run cancelled before it changed anything keeping the previous `done` status (`TestRunCancelledKeepsDoneStatus`), and a run with nothing to do keeping the last run's counters on disk (`TestRunWithoutChangesKeepsLastCounters`), and a model the embedder cannot serve leaving the old index and state untouched (`TestRunModelChangeUnavailableKeepsIndex`), the WARN for an unreadable directory (`TestWalkWarnsUnreadableDir`), RagCode's own home pruned (`TestWalkSkipsOwnHome`), a failed run that changed nothing keeping the last real counters under its error (`TestRunFailedUnchangedKeepsCounters`), a files run skipping a file inside a linked worktree (`TestRunFilesSkipsLinkedWorktree`), a run with nothing to do recording the current branch (`TestRunWithoutChangesRecordsBranch`), a run with nothing to do after one stopped by `ErrHeadChanged` keeping that run's counters (`TestRunAfterHeadChangedKeepsCounters`), and a file deleted between the scan and the parse purged, not counted as failed (`TestRunFileVanishedDuringRun`). Its `TestMain` points `RAGCODE_HOME` at a temp dir. |
 | `js_object_members_test.go` | With the real JavaScript analyzer: `Obj.f()` through a default or named import of an object literal with a shorthand or `key: ident` member (`export default { getToken }`, `export const api = { read }`) resolves exactly to the function the member names. |
 | `budget_test.go` | The parse byte budget is respected, and batches still resolve forward references. |
+| `go_value_use_test.go` | With the real Go analyzer, two files of one package: a method passed as `s.firmaJSON` (on a local `s := &server{}` and on the receiver) and a function passed as `handler` link exactly to their declarations in the other file, in a full run and from the store; a field read (also one named like a method of another type), a constant, a variable and `http.MethodGet` in the same positions leave no relation at all. |
 | `resolve_test.go` | A non-fresh run resolves more than 500 targets through the store; a JS `import { n }` of a default-exported declaration resolves by module and name, in a full run and from the store. |
 | `twins_test.go` | Twins in one file resolve to the widest (then first) by qualified name and by name, in a full run and from the store; a qualified name in two files stays ambiguous; a wider twin added later re-resolves the unchanged caller in a files run; `..delta` resolves by name (unique, then ambiguous), never exact. |
 | `resolve_files_test.go` | A files run sees the stored candidates too: a target ambiguous in a full run stays ambiguous by exact and suffix match; removing one of two candidates (file deleted or symbol edited away) makes the unchanged caller unique. |
@@ -167,7 +168,7 @@ type State struct {
     Files  map[string]Entry `json:"files"`            // absolute path -> entry
 }
 
-const Format = 12
+const Format = 13
 ```
 
 `Format` is the version of what parsers and the indexer store. It is bumped
@@ -204,7 +205,9 @@ declaration belong to the `<script setup>` component; a GDScript scene's
 attached script resolves to the script's class; a Python qualified suffix is
 never cut inside a package. Version 12: a JavaScript call through a member of an exported object
 literal (`export default { f }`, `const api = { k: f }`) targets the
-declaration that member names.
+declaration that member names. Version 13: a Go function or method named as a
+value (a handler passed, assigned or returned) is stored as a usage when it
+links exactly to its declaration.
 
 ---
 
@@ -406,6 +409,17 @@ each relation:
   does not make an `extends` ambiguous, and `->default(0)` does not bind to a
   Blade view named `default`.
 - One ID sets `TargetID`; several set `ResolutionAmbiguous`.
+- A value use (`Value`: a Go function or method named as a value, such as a
+  handler passed to `mux.HandleFunc`) is kept only when it links
+  `ResolutionExact` to a function or method; the suffix and bare-name
+  fallbacks are skipped for it. Every other value use (unresolved,
+  ambiguous, or linked to a variable, constant, type or field) is dropped
+  from the symbol before the upsert: never a usage, never counted as an
+  unresolved name, never stored. `unique` is not enough: a field read
+  `c.Model` falls back to the bare name and would bind to a same-named method
+  of another type. A dropped value use is not seen by `staleReferrers`, so a
+  target added in a later files run links only when the registering file is
+  re-indexed.
 
 Store lookups take up to 20 hits, are cached per key, ignore points of files
 in the run (stale until their upsert) and stop for the rest of the run after

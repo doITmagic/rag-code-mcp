@@ -164,6 +164,46 @@ func (e *Engine) Workspace(root string) (*Workspace, error) {
 // The /usr/* entries are where merged-/usr systems link /bin, /sbin, /lib.
 var broadDirs = []string{"/etc", "/usr", "/var", "/bin", "/sbin", "/lib", "/lib64", "/boot", "/opt", "/srv", "/usr/bin", "/usr/sbin", "/usr/lib", "/usr/lib64"}
 
+// windowsSystemDir reports whether p, a cleaned Windows path, is %SystemRoot%
+// or below it (nothing there is a project), or exactly %ProgramFiles%,
+// %ProgramFiles(x86)% or %ProgramData% (like broadDirs: apps live below them).
+// A client may start the server with a scrubbed environment, so each falls
+// back to the system drive, then C:.
+func windowsSystemDir(p string, getenv func(string) string) bool {
+	env := func(dflt string, keys ...string) string {
+		for _, k := range keys {
+			if v := strings.TrimRight(getenv(k), `\/`); v != "" {
+				return v
+			}
+		}
+		if d := getenv("SystemDrive"); d != "" {
+			return d + dflt
+		}
+		return "C:" + dflt
+	}
+	sys := env(`\Windows`, "SystemRoot", "windir")
+	if len(p) >= len(sys) && strings.EqualFold(p[:len(sys)], sys) && (len(p) == len(sys) || p[len(sys)] == '\\') {
+		return true
+	}
+	return slices.ContainsFunc([]string{env(`\Program Files`, "ProgramFiles"), env(`\Program Files (x86)`, "ProgramFiles(x86)"), env(`\ProgramData`, "ProgramData")},
+		func(d string) bool { return strings.EqualFold(p, d) })
+}
+
+// wslWindowsSystemDir is windowsSystemDir for a Windows drive mounted in WSL
+// (/mnt/c/Windows): the Linux server meets the same directories there.
+func wslWindowsSystemDir(p string) bool {
+	if len(p) < 7 || !strings.HasPrefix(p, "/mnt/") || p[6] != '/' {
+		return false
+	}
+	drive := strings.ToUpper(p[5:6]) + ":"
+	return windowsSystemDir(drive+strings.ReplaceAll(p[6:], "/", `\`), func(k string) string {
+		if k == "SystemDrive" {
+			return drive
+		}
+		return ""
+	})
+}
+
 // validateRoot returns the cleaned, symlink-resolved root or a *RootError.
 func validateRoot(cfg config.Config, root string) (string, error) {
 	root = strings.TrimSpace(root)
@@ -197,6 +237,9 @@ func validateRoot(cfg config.Config, root string) (string, error) {
 	case runtime.GOOS != "windows" && slices.ContainsFunc([]string{"/proc", "/sys", "/dev"}, func(p string) bool {
 		return real == p || strings.HasPrefix(real, p+"/")
 	}):
+		reason = "is a system directory (" + real + ")"
+	case runtime.GOOS == "windows" && (windowsSystemDir(real, os.Getenv) || windowsSystemDir(filepath.Clean(root), os.Getenv)),
+		runtime.GOOS == "linux" && wslWindowsSystemDir(real):
 		reason = "is a system directory (" + real + ")"
 	case len(cfg.AllowedWorkspacePaths) > 0 && !slices.ContainsFunc(cfg.AllowedWorkspacePaths, func(p string) bool {
 		ap, err := filepath.EvalSymlinks(filepath.Clean(p))

@@ -1,0 +1,73 @@
+package engine
+
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// F1b: %SystemRoot% and everything below it, and exactly %ProgramFiles%,
+// %ProgramFiles(x86)% and %ProgramData%, are refused as roots on Windows,
+// case-insensitively. Pure logic: runs on every OS.
+func TestWindowsSystemDir(t *testing.T) {
+	env := map[string]string{
+		"SystemRoot":        `C:\WINDOWS`,
+		"SystemDrive":       `C:`,
+		"ProgramFiles":      `C:\Program Files`,
+		"ProgramFiles(x86)": `C:\Program Files (x86)`,
+		"ProgramData":       `C:\ProgramData\`, // a trailing separator is ignored
+	}
+	getenv := func(k string) string { return env[k] }
+	for _, p := range []string{
+		`C:\Windows`, `c:\windows`, `C:\WINDOWS\System32`, `C:\Windows\WinSxS\x86_foo`,
+		`C:\Program Files`, `c:\program files (x86)`, `C:\ProgramData`,
+	} {
+		assert.True(t, windowsSystemDir(p, getenv), p)
+	}
+	for _, p := range []string{
+		`C:\Windows.old`, `C:\WindowsApps2`, `C:\Program Files\MyApp`, `C:\ProgramData\proj`,
+		`D:\Windows`, `C:\Users\me\proj`, `C:\src`,
+	} {
+		assert.False(t, windowsSystemDir(p, getenv), p)
+	}
+
+	// A client that starts the server with a scrubbed environment: fall back
+	// to windir, then to the system drive, then to C:.
+	env = map[string]string{"windir": `E:\Win`}
+	assert.True(t, windowsSystemDir(`E:\Win\System32`, getenv))
+	env = map[string]string{"SystemDrive": `D:`}
+	assert.True(t, windowsSystemDir(`D:\Windows`, getenv))
+	assert.True(t, windowsSystemDir(`D:\Program Files`, getenv))
+	assert.False(t, windowsSystemDir(`C:\Windows`, getenv), "the system drive comes from the environment")
+	env = map[string]string{}
+	assert.True(t, windowsSystemDir(`C:\Windows\System32`, getenv))
+	assert.True(t, windowsSystemDir(`C:\ProgramData`, getenv))
+}
+
+func TestWSLWindowsSystemDir(t *testing.T) {
+	for _, p := range []string{"/mnt/c/Windows", "/mnt/c/windows/System32", "/mnt/d/Program Files", "/mnt/c/ProgramData"} {
+		assert.True(t, wslWindowsSystemDir(p), p)
+	}
+	for _, p := range []string{"/mnt/c", "/mnt/c/Users/me/proj", "/mnt/c/ProgramData/proj", "/mnt/data/Windows", "/home/me/Windows", "/mnt/c/Windows.old"} {
+		assert.False(t, wslWindowsSystemDir(p), p)
+	}
+}
+
+// The same through validateRoot on a real Windows machine (not run on Linux).
+func TestValidateRootRefusesWindowsSystemDirs(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows paths")
+	}
+	cfg := testConfig(t)
+	sys := os.Getenv("SystemRoot")
+	for _, root := range []string{sys, filepath.Join(sys, "System32"), os.Getenv("ProgramFiles"), os.Getenv("ProgramData")} {
+		_, err := validateRoot(cfg, root)
+		var re *RootError
+		require.ErrorAs(t, err, &re, root)
+		assert.Contains(t, re.Reason, "system directory", root)
+	}
+}

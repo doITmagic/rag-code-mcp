@@ -182,6 +182,13 @@ flowchart TD
    directory (`%SystemRoot%` and below, exactly `%ProgramFiles%`,
    `%ProgramFiles(x86)%`, `%ProgramData%`; also under `/mnt/<drive>` in WSL), or outside
    `allowed_workspace_paths` when that is set.
+4. A root no server has opened before is also refused when it does not look
+   like the top of one project (a subdirectory of a git repository or of a
+   known root, or a directory without a project file that holds several
+   projects): the tool error names the candidates and tells the model to
+   ask the user, then to call again with the chosen path, or with
+   `rag_index_workspace` `confirm: true` for exactly this directory (engine
+   README, root validation).
 
 Resolving a root through `engine.Workspace` also registers it: the first call
 for a root adds it to `~/.ragcode/roots.json` and, when `watch_enabled` and
@@ -506,7 +513,7 @@ Indexes the workspace.
 |---|---|---|
 | `workspace_root` | string | absolute project path |
 | `mode` | string | `incremental` (default, changed files only) or `recreate` (drop the collection and re-embed everything) |
-| `confirm` | bool | ignored; every call starts the run (kept so older calls still validate) |
+| `confirm` | bool | records `workspace_root` as confirmed by the user (`engine.ConfirmRoot`); set only after a tool answered that the root is doubtful and the user chose exactly this directory |
 
 - When `auto_create_ide_rules` is on, writes the IDE rules
   (`<root>/.ragcode/RAGCODE.md` and the pointers, see

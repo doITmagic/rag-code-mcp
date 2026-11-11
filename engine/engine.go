@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
@@ -56,6 +57,86 @@ type RootError struct{ Root, Reason string }
 
 func (e *RootError) Error() string {
 	return fmt.Sprintf("engine: workspace root %q %s; pass the absolute path of the project directory as workspace_root", e.Root, e.Reason)
+}
+
+// UnsureRootError refuses a valid directory that does not look like the top of
+// one project; the caller asks the user instead of guessing.
+type UnsureRootError struct {
+	Root, Why  string
+	Candidates []string
+}
+
+func (e *UnsureRootError) Error() string {
+	return fmt.Sprintf("engine: workspace root %q %s. Nothing was indexed. Do not guess: ask the user which directory is the project (candidates: %s), then call again with that path. Only if the user answers that they want exactly this directory, call rag_index_workspace with confirm: true. Never set confirm without the user's answer.",
+		e.Root, e.Why, strings.Join(e.Candidates, ", "))
+}
+
+// projectFiles mark the top directory of a project (the list the tools name).
+var projectFiles = []string{".git", "go.mod", "package.json", "composer.json", "pyproject.toml", "project.godot"}
+
+func hasProjectFile(dir string) bool {
+	return slices.ContainsFunc(projectFiles, func(f string) bool { _, err := os.Lstat(filepath.Join(dir, f)); return err == nil })
+}
+
+// unsureRoot says why real, a valid root no server has opened before, may not
+// be the top directory of one project, and what to offer instead: a
+// subdirectory of a git repository or of a known root, or a directory with no
+// project file that holds several projects (looked for two levels down).
+func unsureRoot(cfg config.Config, real string, known []string) (string, []string) {
+	if out, err := exec.Command("git", "-C", real, "rev-parse", "--show-toplevel").Output(); err == nil {
+		top, err := filepath.EvalSymlinks(filepath.FromSlash(strings.TrimSpace(string(out))))
+		if err != nil || samePath(top, real) {
+			return "", nil
+		}
+		// A repository at a refused directory (dotfiles in the home) is not the project.
+		if _, err := validateRoot(cfg, top); err == nil {
+			return "is a subdirectory of the git repository " + top, []string{top}
+		}
+	}
+	if hasProjectFile(real) {
+		return "", nil
+	}
+	for _, k := range known {
+		if strings.HasPrefix(real, k+string(filepath.Separator)) {
+			return "is inside the project " + k + ", which is already indexed", []string{k}
+		}
+	}
+	var found []string
+	subdirs := func(dir string) []string {
+		var out []string
+		es, _ := os.ReadDir(dir)
+		for _, e := range es {
+			if e.IsDir() && !strings.HasPrefix(e.Name(), ".") && !slices.Contains(cfg.ExcludePatterns, e.Name()) {
+				out = append(out, filepath.Join(dir, e.Name()))
+			}
+		}
+		return out
+	}
+	for _, d := range subdirs(real) {
+		if hasProjectFile(d) {
+			found = append(found, d)
+			continue
+		}
+		for _, dd := range subdirs(d) {
+			if hasProjectFile(dd) {
+				found = append(found, dd)
+			}
+		}
+	}
+	if len(found) >= 2 {
+		return "has no project file of its own and holds several projects", found[:min(len(found), 8)]
+	}
+	return "", nil
+}
+
+// ConfirmRoot records root as a known root: the user confirmed it, so
+// Workspace no longer questions it.
+func (e *Engine) ConfirmRoot(root string) error {
+	real, err := validateRoot(e.cfg, root)
+	if err != nil {
+		return err
+	}
+	return e.registerRoot(real)
 }
 
 // Engine owns every workspace of the process and the one indexing slot.
@@ -110,6 +191,17 @@ func (e *Engine) Workspace(root string) (*Workspace, error) {
 	real, err := validateRoot(e.cfg, root)
 	if err != nil {
 		return nil, err
+	}
+	e.mu.Lock()
+	_, seen := e.ws[real]
+	e.mu.Unlock()
+	if !seen { // first contact in this process: a root no server knows is checked once
+		known, _ := ReadRoots()
+		if !slices.ContainsFunc(known, func(k string) bool { return samePath(k, real) }) {
+			if why, cands := unsureRoot(e.cfg, real, known); why != "" {
+				return nil, &UnsureRootError{Root: real, Why: why, Candidates: cands}
+			}
+		}
 	}
 	e.mu.Lock()
 	w, ok := e.ws[real]

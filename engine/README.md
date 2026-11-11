@@ -79,6 +79,7 @@ graph TD
 | `watch_linux_test.go` | All roots share one inotify instance (nested roots both see an event, `Close` releases it); a watcher that cannot start is retried; an event overflow re-walks the tree so new directories are watched again. |
 | `prefix_test.go` | `Search` adds the model's query prefix. |
 | `roots_bom_test.go` | A `roots.json` with a UTF-8 BOM is read and kept; an invalid one is moved to `roots.json.bad` before the new list is written. |
+| `unsure_root_test.go` | A subdirectory of a repository, a directory holding several projects and a subdirectory of a known root are refused with candidates; a confirmed or known root is not asked again. |
 | `windows_root_test.go` | Windows system directories refused as roots: `windowsSystemDir` and `wslWindowsSystemDir` as pure functions on every OS, and through `validateRoot` on Windows only. |
 | `zz_verify_test.go` | Verification tests: concurrent `Workspace` calls, cancelled contexts, enqueue during a lock retry, recreate while locked, a directory moved out and the forced debounce flush, status read from disk before any run, home symlink guard, `Close` cancelling a blocked run, junk `roots.json`, a files run with only deletions, junk paths, `Ready` remediation text, a failed query embed does not enqueue, recreate absorbing queued files, catch-up with and without `auto_index`, double `Close`, `.git/refs` plus hidden and excluded directories, kernel file systems refused. |
 
@@ -165,6 +166,21 @@ refuses it with a `*RootError` when it:
 | contains the home directory | a parent of `os.UserHomeDir()` (`/home`, `/Users`) |
 | is a system directory | `/proc`, `/sys`, `/dev` and below; exactly `/etc`, `/usr`, `/var`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/boot`, `/opt`, `/srv` and the `/usr/bin`, `/usr/sbin`, `/usr/lib`, `/usr/lib64` that merged-`/usr` systems link the first ones to, checked before and after resolving symlinks (projects below them, such as `/var/www/site`, are accepted). On Windows: `%SystemRoot%` and below, exactly `%ProgramFiles%`, `%ProgramFiles(x86)%` and `%ProgramData%` (each falls back to `%SystemDrive%`, then `C:`), compared case-insensitively; the Linux server refuses the same directories on a WSL drive mount (`/mnt/c/Windows`, ...). A known root that is now refused is skipped at start but stays in `roots.json` |
 | is outside `allowed_workspace_paths` | only when that list is set; an entry matches itself and everything below it |
+
+A valid root that no server has opened before (not in `roots.json`) goes
+through one more check, `unsureRoot`, and is refused with an
+`UnsureRootError` naming the directories to offer the user when it is:
+
+| Why | Candidates offered |
+|---|---|
+| a subdirectory of a git repository (`git rev-parse --show-toplevel` differs; ignored when that top is itself a refused root, such as a dotfiles repository in the home) | the repository top |
+| inside a known root, with no project file of its own | that root |
+| without a project file (`.git`, `go.mod`, `package.json`, `composer.json`, `pyproject.toml`, `project.godot`) and with two or more directories that have one, up to two levels down | those directories (at most 8) |
+
+Nothing is indexed, watched or written to `roots.json` for a refused root.
+`ConfirmRoot` (the `confirm: true` of `rag_index_workspace`, set after the
+user's answer) records the root in `roots.json`; a known root is never asked
+about again, in any server.
 
 On Windows the home, temp and exact `allowed_workspace_paths` matches compare
 case-insensitively; the "everything below it" match of an

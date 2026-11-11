@@ -23,7 +23,7 @@ import (
 type IndexInput struct {
 	WorkspaceRoot string `json:"workspace_root,omitempty" jsonschema:"Absolute path of the top directory of the project the user is working in (required), the same on every call. Find it as the folder opened in the editor, or the nearest parent directory that holds .git (in a monorepo that is the repository root, not a package inside it); without git, the nearest parent that holds a project file (go.mod, package.json, composer.json, pyproject.toml, project.godot); with neither, the smallest directory that holds the files being worked on. Never go up to a directory that holds other projects, the home or a system directory, and never pass a subdirectory of the project."`
 	Mode          string `json:"mode,omitempty" jsonschema:"incremental (default: changed files only) or recreate (drop the collection and re-embed everything)."`
-	Confirm       bool   `json:"confirm,omitempty" jsonschema:"Ignored: every call starts the run. Kept so older calls still validate."`
+	Confirm       bool   `json:"confirm,omitempty" jsonschema:"Set true only when a tool answered that workspace_root is doubtful and the user then confirmed, in this conversation, that they want exactly this directory. Never set it on your own."`
 }
 
 func (t *tools) indexWorkspace(ctx context.Context, req *mcp.CallToolRequest, in IndexInput) (*mcp.CallToolResult, any, error) {
@@ -33,6 +33,9 @@ func (t *tools) indexWorkspace(ctx context.Context, req *mcp.CallToolRequest, in
 	case "incremental", "recreate":
 	default:
 		return fail("mode must be incremental or recreate")
+	}
+	if in.Confirm && strings.TrimSpace(in.WorkspaceRoot) != "" {
+		_ = t.e.ConfirmRoot(in.WorkspaceRoot) // a refused root is reported by open below
 	}
 	w, res := t.open(ctx, req, in.WorkspaceRoot)
 	if res != nil {

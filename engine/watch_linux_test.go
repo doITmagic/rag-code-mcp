@@ -42,6 +42,7 @@ func TestWatchersShareOneInotifyInstance(t *testing.T) {
 	require.NoError(t, os.Mkdir(inner, 0o755))
 	var roots []*Workspace
 	for _, r := range []string{outer, inner, t.TempDir(), t.TempDir()} {
+		require.NoError(t, e.ConfirmRoot(r)) // inner lies inside a known root: the user confirmed it
 		w, err := e.Workspace(r)
 		require.NoError(t, err)
 		require.NotNil(t, w.watch)

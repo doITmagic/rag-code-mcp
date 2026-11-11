@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -294,7 +295,12 @@ func usedMembers(ctx context.Context, w *engine.Workspace, sym *parser.Symbol, t
 		if !ok || len(used) == 10 {
 			continue
 		}
-		if refs, _, err := referrers(ctx, w, &h.Symbol, 1); err == nil && len(refs) > 0 {
+		refs, _, _ := referrers(ctx, w, &h.Symbol, 20)
+		if slices.ContainsFunc(refs, func(c parser.Symbol) bool { // a call bound by name only may be another symbol's
+			return slices.ContainsFunc(c.Relations, func(r parser.Relation) bool {
+				return (r.TargetID == h.Symbol.ID || r.TargetQualifiedName == h.Symbol.QualifiedName) && exactRel(r, h.Symbol.QualifiedName)
+			})
+		}) {
 			used = append(used, sym.Name+"."+rest)
 		}
 	}

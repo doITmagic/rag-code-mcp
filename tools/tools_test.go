@@ -608,7 +608,7 @@ func TestDependencyDown(t *testing.T) {
 func TestUsagesOfObjectNamesUsedMembers(t *testing.T) {
 	v := newEnv(t, false, nil)
 	require.NoError(t, os.MkdirAll(filepath.Join(v.root, "obj"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(v.root, "obj/a.fk"), []byte("const Api\nfunc Api.list\nfunc Api.drop\nfunc User\n  call m/obj.Api.list\nconst Lonely\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(v.root, "obj/a.fk"), []byte("const Api\nfunc Api.list\nfunc Api.drop\nfunc User\n  call m/obj.Api.list\n  call drop\nconst Lonely\n"), 0o644))
 	w, err := v.e.Workspace(v.root)
 	require.NoError(t, err)
 	w.Index(false)

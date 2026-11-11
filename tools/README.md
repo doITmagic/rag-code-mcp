@@ -282,7 +282,7 @@ symbols are kept. Zero usages of a
 constant or variable add a note: reads of values are not tracked, only calls,
 type uses and inheritance (an import is not a usage). When the constant is an
 object whose members are symbols (`export const api = { list: ... }`) and
-something calls them, the note names the called members instead (at most
+something calls them through an exact link (not by name only), the note names the called members instead (at most
 10), so the object is not taken for dead code (`usedMembers`).
 `ambiguous_by_name` counts relations that name the symbol but were left
 unresolved because several symbols share the name, and that cannot be

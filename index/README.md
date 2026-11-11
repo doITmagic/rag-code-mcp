@@ -47,7 +47,7 @@ graph LR
 | Direction | Package | What for |
 |-----------|---------|----------|
 | Called by | [engine](../engine/README.md) | Runs `index.Run` for each queued job; uses `ReadStatus`, `IsLinkedWorktree`, `LinkedWorktreeOf`, `WriteAtomic`, `LockFile` (for `roots.json.lock`), `StateModel` (model check before a search), `ErrLocked`, `ErrHeadChanged`. |
-| Called by | [tools](../tools/README.md) | `Walk` for the file estimate of `rag_index_workspace`, `Skip`/`Secret` before reading a file, `ReadStatus`/`Running` for server info, `WriteAtomic` for the update-check cache, `LoadState` for package exports; the fallback text search of `rag_search` walks with `IsLinkedWorktree`, `Skip` and `GitIgnored`. |
+| Called by | [tools](../tools/README.md) | `Skip`/`Secret` before reading a file, `ReadStatus`/`Running` for server info, `WriteAtomic` for the update-check cache, `LoadState` for package exports; the fallback text search of `rag_search` walks with `IsLinkedWorktree`, `Skip` and `GitIgnored`. |
 | Calls | [parser](../parser/README.md) | `parser.ForFile`, `parser.Analyze`, `parser.Normalize`, `parser.MatchQualified`, `parser.ReleaseParsers`. |
 | Calls | [embed](../embed/README.md) | `Embedder.Embed`, `Dimension`, `Model`, and `embed.DocText` for the per-model document prefix. |
 | Calls | [store](../store/README.md) | Collection lifecycle, `Upsert`, `DeleteByFile`, `Scroll` (lookups), `CollectionName`. |
@@ -85,6 +85,7 @@ graph LR
 | `lock_unix_test.go` | A second run on a locked root gets `ErrLocked`. Build tag `unix`. |
 | `lock_test.go` | Two holders of `index.lock` exclude each other, on every platform. |
 | `fifo_unix_test.go` | A binary file and a fifo in `Files` are skipped without blocking. Build tag `unix`. |
+| `walk_ignored_linux_test.go` | `Walk` opens no file of a git-ignored directory (counted with inotify). Build tag `linux`. |
 | `walk_unix_test.go` | `IsLinkedWorktree` refuses a `.git` that is a FIFO, device or oversized file. Build tag `linux`. |
 | `zz_verify_test.go` | Verification tests: edge inputs, unreachable store, wrong vector count, pre-cancelled context, explicit files and directory rules, progress cadence, lock release, batch sizes and purge order, lookups stopping on a store error, no WARN for a lookup failed by a cancelled run (`TestLookupCancelledNoWarn`), repos without commits. |
 
@@ -134,7 +135,7 @@ to `index_status.json`:
 | Function | Purpose |
 |----------|---------|
 | `Run(ctx, Options) (Status, error)` | Index one root. The returned error is also in `Status.Error`. |
-| `Walk(root, exclude)` | List indexable files, sorted. Used by `Run` and by the index tool's estimate. |
+| `Walk(root, exclude)` | List indexable files, sorted. Used by `Run`. |
 | `Skip(path, info, head)` | Why a file is left out, or `""` when indexed. |
 | `Secret(path)` | Whether a file name marks credentials. |
 | `IsLinkedWorktree(dir)` | Whether `dir` is a linked git worktree (pruned everywhere). |
@@ -481,7 +482,7 @@ Files must have an analyzer (`parser.ForFile`) and pass `Skip`:
 | `lockfile` | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `composer.lock`, `go.sum`, `cargo.lock`, `poetry.lock`. |
 | `secret` | `Secret(path)`: `.env`, `.env.*`, `id_rsa*`, `.npmrc`, `.pypirc`, `.netrc`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, and `credentials`/`secrets` with no extension or a data extension (`.json`, `.yaml`, `.yml`, `.toml`, `.ini`, `.xml`, `.properties`, `.conf`, `.cfg`, `.txt`). `credentials.go` is code and is kept. A secret inside an ordinarily named file is not caught. |
 | `no analyzer` | No registered parser for the extension. |
-| `binary` | A NUL byte in the first 8 KiB. |
+| `binary` | A NUL byte in the first 8 KiB. `Walk` checks it last, after the `.gitignore` filter, so a file git ignores is listed but never opened (on Windows every open costs an antivirus scan). |
 
 ### .gitignore handling
 
@@ -550,7 +551,7 @@ go test -race ./index/
 ```
 
 No build tags are needed to run the suite; `lock_unix_test.go` and
-`fifo_unix_test.go` only build on Unix and `walk_unix_test.go` only on Linux. The tests use `store.NewMemory()`
+`fifo_unix_test.go` only build on Unix and `walk_unix_test.go` and `walk_ignored_linux_test.go` only on Linux. The tests use `store.NewMemory()`
 and `embed.Fake`, need the `git` binary, and never touch the real
 `~/.ragcode` (`TestMain` sets `RAGCODE_HOME` to a temp directory).
 

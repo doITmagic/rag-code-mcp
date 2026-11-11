@@ -67,11 +67,7 @@ func Walk(root string, exclude []string) ([]string, error) {
 		if err != nil {
 			return nil
 		}
-		var head []byte
-		if info.Mode().IsRegular() { // never open a fifo or device
-			head = readHead(path)
-		}
-		if Skip(path, info, head) == "" {
+		if Skip(path, info, nil) == "" { // regular files only: a fifo or device is never opened below
 			out = append(out, path)
 		}
 		return nil
@@ -79,6 +75,9 @@ func Walk(root string, exclude []string) ([]string, error) {
 	if ign := GitIgnored(root, out); len(ign) > 0 {
 		out = slices.DeleteFunc(out, func(f string) bool { return ign[f] })
 	}
+	// The binary check opens the file, which on Windows costs an antivirus
+	// scan: only files git keeps are opened, never those of ignored directories.
+	out = slices.DeleteFunc(out, func(f string) bool { return bytes.IndexByte(readHead(f), 0) >= 0 })
 	return out, err
 }
 

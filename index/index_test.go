@@ -511,13 +511,13 @@ func TestResolutionThroughBases(t *testing.T) {
 // embedded type (extends) is a base.
 func TestResolutionThroughBasesGoEmbeddingOnly(t *testing.T) {
 	e := newEnv(t)
-	a := e.write(t, "a.go", "class C : t.T ~u.U\nfunc C.go -> a.C.acum\n")
-	tf := e.write(t, "t.go", "func T.acum\n")
-	e.write(t, "u.go", "func U.acum\n")
+	a := e.write(t, "a.go", "class C : t.T ~u.U\nfunc C.go -> a.C.now\n")
+	tf := e.write(t, "t.go", "func T.now\n")
+	e.write(t, "u.go", "func U.now\n")
 	_, err := e.run(t, nil)
 	require.NoError(t, err)
 	r := e.symbols(t, a)["C.go"].Relations[0]
-	assert.Equal(t, e.symbols(t, tf)["T.acum"].ID, r.TargetID)
+	assert.Equal(t, e.symbols(t, tf)["T.now"].ID, r.TargetID)
 	assert.Equal(t, parser.ResolutionExact, r.Resolution)
 }
 

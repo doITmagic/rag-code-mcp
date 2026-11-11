@@ -65,7 +65,7 @@ ignored (so a v1 `config.yaml` with Qdrant settings still loads).
 | `log_level` | `LogLevel` | `info` | `debug`, `info`, `warn` or `error`. |
 | `log_max_size_mb` | `LogMaxSizeMB` | `10` | Size at which `ragcode.log` is rotated. Must be positive. |
 | `exclude_patterns` | `ExcludePatterns` | `node_modules`, `vendor`, `target`, `build`, `dist`, `__pycache__` | Directory names skipped while indexing and watching. Hidden directories are always skipped. Setting the key replaces the whole list. |
-| `max_files` | `MaxFiles` | `20000` | A workspace whose full walk finds more indexable files is not indexed: the run fails with the count and the tools show it as `index.last_error`, so a wrong root (a folder of many projects) does not cost hours of embedding. Watcher runs on an indexed workspace are not counted. `0` = no limit. Must not be negative. Read at server start. |
+| `max_files` | `MaxFiles` | `20000` | A workspace whose full walk finds more indexable files is not indexed: the run fails with the count and the tools show it as `index.error`, so a wrong root (a folder of many projects) does not cost hours of embedding. Watcher runs on an indexed workspace are not counted. `0` = no limit. Must not be negative. Read at server start. |
 | `allowed_workspace_paths` | `AllowedWorkspacePaths` | empty | When set, only workspaces under one of these directories can be used. Entries must be absolute. Checked by the [`engine`](../../engine/README.md). |
 | `auto_index` | `AutoIndex` | `true` | Index a workspace on its own (first use, catch-up at start, watcher). `false` leaves indexing to an explicit `rag_index_workspace`, and no watcher starts. |
 | `watch_enabled` | `WatchEnabled` | `true` | Watch indexed workspaces for file changes (only when `auto_index` is also on). |
@@ -127,6 +127,7 @@ Errors are prefixed `config:`: `create dir`, `write default`, `read <path>`,
 
 Returns the first invalid field: `ollama_base_url` not an http(s) URL with a
 host, empty `ollama_embed`, unknown `log_level`, negative `embed_threads`,
+negative `max_files`, negative `min_free_memory_mb`,
 non-positive `log_max_size_mb`, negative `watch_debounce`, or a relative
 `allowed_workspace_paths` entry.
 

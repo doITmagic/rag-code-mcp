@@ -225,8 +225,8 @@ A view outside any `views` folder has module `""`.
 
 | File | Covers |
 |------|--------|
-| `php_test.go` | Registration of both extensions; a controller fixture with group/function/const `use`, attributes, traits, enums, promoted properties, closures, anonymous classes, routes and hooks (kinds, owners, lines, docs, signatures, metadata, relation targets); `define()` inside a namespace is global; hook and route names only from a plain string literal in the name position; a plugin with braced namespaces and parse-error recovery; malformed input; global-namespace function calls; concurrency; parameter and return type uses. |
-| `blade_test.go` | A Blade view with sections, components and includes; a view outside a `views` folder; the file symbol's end line with a trailing newline; a `@component` nested in a `@section`; a class named with a reserved word (`class Object extends Base`) keeping its name and base; the line of a `->` chain call split over lines. |
+| `php_test.go` | Registration of both extensions; a controller fixture with group/function/const `use`, attributes, traits, enums, promoted properties, closures, anonymous classes, routes and hooks (kinds, owners, lines, docs, signatures, metadata, relation targets); `define()` inside a namespace is global; hook and route names only from a plain string literal in the name position; a plugin with braced namespaces and parse-error recovery; malformed input; global-namespace function calls; concurrency; parameter and return type uses; a class named with a reserved word (`class Object extends Base`) keeping its name and base (`TestReservedClassName`); the line of a `->` chain call split over lines (`TestChainedCallLine`). |
+| `blade_test.go` | A Blade view with sections, components and includes; a view outside a `views` folder; the file symbol's end line with a trailing newline; a `@component` nested in a `@section`. |
 | `zz_verify_test.go` | Verification tests: name resolution, global-namespace WordPress code, robustness, a routes file, multiple namespaces in one file, Blade layouts, no shared state between calls. |
 
 ## Testing

@@ -21,7 +21,7 @@ line that tells AI agents to use the RagCode tools.
 - **No lost requests**: requests made during a run are merged and run right
   after it; a failed run keeps its request and retries it.
 - **Stay current**: a file watcher queues small "files" runs on edits and full
-  runs on branch switches; on start-up every known root gets a catch-up run.
+  runs on branch switches; on start-up every known root that was indexed before gets a catch-up run.
 - **Clean shutdown**: `Close` stops watchers and timers, cancels the running
   job and waits for every goroutine; once it has begun, no catch-up run or
   watcher starts, and watches failing because the instance closed are not
@@ -63,7 +63,7 @@ graph TD
 
 | File | Contents |
 |------|----------|
-| `engine.go` | Package doc, `Engine`, `New`, errors (`ErrNotIndexed`, `ErrLocked`, `ErrClosed`), `RootError`, `Loaded`, `Workspace`, `validateRoot`, `roots.json` (`registerRoot`, `ReadRoots`), `Resume`, `Close`, and the job queue (`enqueue`, `merge`, `kick`, `runJobs`, `runOne`, `retryDelay`). |
+| `engine.go` | Package doc, `Engine`, `New`, errors (`ErrNotIndexed`, `ErrLocked`, `ErrClosed`), `RootError`, `UnsureRootError`, `ConfirmRoot`, `Loaded`, `Workspace`, `validateRoot`, `roots.json` (`registerRoot`, `ReadRoots`), `Resume`, `Close`, and the job queue (`enqueue`, `merge`, `kick`, `runJobs`, `runOne`, `retryDelay`). |
 | `workspace.go` | `Workspace` and its job fields, `Status`, `Index`, `IndexFiles`, `Search`, `Scroll`, `mapErr`/`dimChanged` (the `ErrNotIndexed` mapping), `resyncIfReopened`, `Ready`. |
 | `watch.go` | The per-root `watcher`: `startWatcher` (leader lock `watch.lock`), `follow`/`takeOver` (a follower's takeover poll, `takeoverPoll`), `addTree`, `watchGit`, event `handle`, `dropDir`, debounce (`add`, `flush`), `full`, `Stop`. |
 | `nonotify_linux.go`, `nonotify_other.go` | `noNotify`: names a root whose file system reports no changes to inotify (9p, the WSL2 `/mnt` drives); always empty off Linux. |
@@ -143,6 +143,7 @@ cleared when a new run starts.
 | Error | When |
 |-------|------|
 | `*RootError` | `Workspace` refused the path; the message says why and asks for the absolute project path as `workspace_root`. |
+| `*UnsureRootError` | `Workspace` refused a new root that does not look like the top of one project; it carries the candidates to ask the user about. `ConfirmRoot` records the root after the user's answer. |
 | `ErrNotIndexed` | `Search`/`Scroll` found no collection, or one with another vector size; `Search` also when the index was made with another model. |
 | `ErrLocked` | Wraps `index.ErrLocked`; shown in `Status.LastError` while another process indexes the root. |
 | `ErrClosed` | `Workspace` after `Close`. |
@@ -191,7 +192,8 @@ The first call for a root creates the `Workspace`, adds the root to
 `roots.json` and, when both `watch_enabled` and `auto_index` are on, starts
 its watcher. Later calls return the same workspace. If the watcher had
 stopped because the root was removed or renamed, a later call restarts it
-and queues a full run to catch up.
+and queues a full run to catch up (in the server that holds `watch.lock`; a
+follower only waits to take over).
 
 ### roots.json
 

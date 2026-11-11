@@ -199,7 +199,8 @@ and otherwise returns no hits.
 index and tools tests, and by `internal/app` tests through `app.Options`.
 
 - Safe for concurrent use (one `sync.RWMutex`).
-- Every method returns `ctx.Err()` first when the context is cancelled.
+- Methods return `ctx.Err()` when the context is cancelled; `Search` with
+  `limit <= 0` and `DeleteByFile` with an empty path answer before that check.
 - `Search` is a brute-force cosine scan over the matching points, sorted by
   score then id; a zero vector scores 0.
 - `Upsert` and `Search` check the vector size against the collection.

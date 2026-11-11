@@ -22,7 +22,7 @@ graph LR
     T -->|Workspace, Ready, Search, Scroll, Status, Index, IndexFiles| E[engine]
     T -->|Filter, Hit, MaxScroll| S[store]
     T -->|Analyze, Normalize, MatchQualified| P[parser]
-    T -->|Walk, Skip, Secret, LoadState, ReadStatus| I[index]
+    T -->|Skip, Secret, GitIgnored, LoadState, ReadStatus| I[index]
     E --> EM[embed]
     E --> S
     S --> V[vecdb]
@@ -37,9 +37,9 @@ graph LR
 | [engine](../engine/README.md) | resolves and validates the workspace root, checks readiness, embeds the query and searches, scrolls, reads the index status, queues index runs and file purges, writes the IDE rules |
 | [store](../store/README.md) | `Filter` and `Hit` types, `MaxScroll` |
 | [parser](../parser/README.md) | parses files on the fly (`rag_read_file_context`, the not-indexed search fallback), normalizes qualified names, lists the registered languages |
-| [index](../index/README.md) | the walk and skip rules (`Walk`, `Skip`, `Secret`, `IsLinkedWorktree`), the per-root state (`LoadState`, `ReadStatus`, `Running`) |
+| [index](../index/README.md) | the skip rules of its own walk (`Skip`, `Secret`, `GitIgnored`, `IsLinkedWorktree`), the per-root state (`LoadState`, `ReadStatus`, `Running`) |
 | [internal/update](../internal/update/README.md) | `Latest` (the cached release check), `Less` (version order), `GitHubLatest` |
-| [internal/config](../internal/config/README.md) | `Config` (Ollama URL and model, exclude patterns, `auto_create_ide_rules`) and `HomeDir()` |
+| [internal/config](../internal/config/README.md) | `Config` (Ollama URL and model, exclude patterns, `auto_create_ide_rules`) |
 
 ## Files
 
@@ -83,6 +83,7 @@ type IndexInfo struct {
     Branch string `json:"branch,omitempty"`
     Age    string `json:"age,omitempty"`   // time since the last finished run
     Error  string `json:"error,omitempty"`
+    Watch  string `json:"watch,omitempty"` // set when this root is not watched
 }
 ```
 

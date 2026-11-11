@@ -114,7 +114,7 @@ func Run(ctx context.Context, o Options) error {
 		if err := exec.CommandContext(ctx, "docker", "pull", "-q", ollamaImage).Run(); err != nil {
 			warn(o.Out, "docker pull "+ollamaImage+" failed, using the local image: "+err.Error())
 		}
-		mount :="ragcode-ollama:/root/.ollama"
+		mount := "ragcode-ollama:/root/.ollama"
 		if o.ModelsDir != "" {
 			if err := os.MkdirAll(o.ModelsDir, 0o755); err != nil {
 				return fmt.Errorf("install: models dir: %w", err)

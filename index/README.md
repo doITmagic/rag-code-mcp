@@ -64,7 +64,7 @@ graph LR
 | `index.go` | Package doc, `ErrLocked`, `ErrHeadChanged`, `ErrTooManyFiles`, `Options`, `Status`, `ReadStatus`, `Run` and the whole run: scan, two-pass parse, `staleReferrers`, the name index and `resolve`, `embedUpsert`, `record`, progress ticks, `gitHead`, `embedText`. |
 | `state.go` | `Entry`, `Format`, `State`, `LoadState`, `StateModel`, `State.Save`, `WriteAtomic`, and `readIndexFile` (the guarded reader for index files). |
 | `walk.go` | Size and batch constants, `Walk`, `GitIgnored`, `IsLinkedWorktree`, `LinkedWorktreeOf`, `Skip`, `Secret`, the lockfile list and `readHead`. |
-| `dir.go` | `Dir(root)`: the per-root index directory under the global home. |
+| `dir.go` | `Dir(root)`: the per-root index directory under the global home; `OwnHome` and `InOwnHome`: RagCode's own home, never indexed or watched. |
 | `running.go` | `Running(root)`: non-blocking probe of the run lock; `LockFile(path)`: the same cross-process lock on any path (the engine uses it for `roots.json`). |
 | `lock_unix.go` | `lock` on Unix: exclusive, non-blocking `flock`; returns `ErrLocked` when held. Build tag `unix`. |
 | `lock_windows.go` | `lock` on Windows: exclusive, non-blocking `LockFileEx`; returns `ErrLocked` when held. Build tag `windows`. |
@@ -144,6 +144,7 @@ to `index_status.json`:
 | `IsLinkedWorktree(dir)` | Whether `dir` is a linked git worktree (pruned everywhere). |
 | `LinkedWorktreeOf(root, path, known)` | The linked worktree below `root` that contains `path`, or `""`; `known` caches `IsLinkedWorktree` per directory (nil: no cache). Used by files runs and the watcher. |
 | `Dir(root)` | `config.HomeDir()/index/<store.CollectionName(root)>`. |
+| `OwnHome()`, `InOwnHome(path)` | The resolved global home, and whether a path lies inside it; `Walk` and the engine's watcher prune it. |
 | `ReadStatus(root)` | The last persisted `Status`, `false` when missing or unreadable. |
 | `LoadState(root)` | The persisted `State`; a missing file is an empty state. |
 | `Running(root)` | Whether a run holds the lock right now. |
@@ -234,10 +235,10 @@ flowchart TD
     I -->|yes| I1[fresh: empty state, Files = nil]
     I -->|no| J
     I1 --> J[scan: changed + gone files]
-    J --> K[purge gone files]
-    K --> M[pass 1: parse changed files, keep names only]
+    J --> M[pass 1: parse changed files, keep names only]
     M --> N[staleReferrers: files outside the run<br/>whose relations go stale]
-    N --> N1[pass 1 for those files too]
+    N --> K[purge gone files]
+    K --> N1[pass 1 for the stale referrers too]
     N1 --> O[build name index of the run]
     O --> P[pass 2, batch by batch of ~4 MiB source:<br/>parse, resolve, embed, upsert]
     P --> Q{HEAD still the same?}
@@ -323,7 +324,8 @@ failure: it is logged at debug level, left out of `Total`, and purged as gone
 when that happens in pass 1 (see 7. for pass 2).
 
 - **Pass 1** parses every changed file but keeps only `ID`, `QualifiedName`,
-  `Name`, `Language`, `Kind`, `Module` and `Owner` of each symbol, plus the
+  `Name`, `Language`, `Kind`, `Module`, `Owner`, `FilePath`, `StartLine` and
+  `EndLine` of each symbol, plus the
   `extends` / `implements` / `uses_type` targets of a class or interface:
   enough for `staleReferrers` and the name index.
 - **Pass 2** parses again, in batches of about 4 MiB of source, and each batch

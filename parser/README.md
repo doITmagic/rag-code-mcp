@@ -67,8 +67,8 @@ type File struct {
 Implementations must be stateless and safe for concurrent use; any cache must
 be keyed and concurrency-safe. All analyzers in this tree keep their
 per-file state in a struct created inside `Analyze`; the only process-wide
-state is two `sync.Map` caches (Go `go.mod` module lines, Python
-`__init__.py` import tables).
+state is three `sync.Map` caches (Go `go.mod` module lines, Python
+`__init__.py` import tables, JavaScript re-export reads).
 
 ## Registry
 

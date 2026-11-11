@@ -54,8 +54,8 @@ graph TD
 `config` imports nothing from the module, so any package (including
 [`engine`](../engine/README.md) and [`tools`](../tools/README.md)) can depend
 on it without cycles. `uninstall` imports `engine` only for
-`engine.PointerFiles` and `engine.IDEPointer`, so it removes exactly what
-`engine.WriteIDERules` added.
+`engine.ReadRoots` (the workspaces to clean), `engine.PointerFiles` and
+`engine.IDEPointer`, so it removes exactly what `engine.WriteIDERules` added.
 
 ## Files on disk owned by these packages
 

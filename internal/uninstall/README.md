@@ -33,14 +33,14 @@ graph LR
   [`cmd/rag-code-mcp`](../../cmd/rag-code-mcp/README.md),
   [`install`](../install/README.md).
 - **Calls:** [`config`](../config/README.md), [`idepaths`](../idepaths/README.md),
-  [`engine`](../../engine/README.md) (only to know which instruction files
-  carry the RagCode pointer line), OS process tools and the `docker` CLI.
+  [`engine`](../../engine/README.md) (only for the known roots, `ReadRoots`, and the
+  instruction files that carry the RagCode pointer line), OS process tools and the `docker` CLI.
 
 ## Files
 
 | File | Contents |
 |:---|:---|
-| `uninstall.go` | `Options`, `Binary`, `Run`, `StopProcess`, and the helpers `roots`, `removePointer`, `stripPath` and the coloured `step`/`ok`/`warn` printers. |
+| `uninstall.go` | `Options`, `Binary`, `Run`, `StopProcess`, and the helpers `removePointer`, `stripPath` and the coloured `step`/`ok`/`warn` printers. |
 
 Tests:
 

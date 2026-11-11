@@ -11,7 +11,7 @@ ollama_embed: embeddinggemma-2:270m   # needs Ollama 0.40 or later
 # Free memory (MB) a local Ollama needs to load the embedding model. With
 # less, indexing and searches stop with status low_memory instead of loading
 # a model that cannot start. 0 turns the check off.
-min_free_memory_mb: 1536
+min_free_memory_mb: 1024
 
 log_level: info      # debug | info | warn | error
 log_max_size_mb: 10

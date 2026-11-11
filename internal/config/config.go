@@ -45,7 +45,7 @@ func Default() Config {
 		OllamaEmbed:   "embeddinggemma-2:270m",
 		// A CPU-only Ollama otherwise takes every performance core.
 		EmbedThreads:       max(2, runtime.NumCPU()/3),
-		MinFreeMemoryMB:    1536,
+		MinFreeMemoryMB:    1024,
 		LogLevel:           "info",
 		LogMaxSizeMB:       10,
 		ExcludePatterns:    []string{"node_modules", "vendor", "target", "build", "dist", "__pycache__"},

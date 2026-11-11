@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 const (
@@ -95,25 +98,40 @@ func (t *tools) grep(ctx context.Context, root, start, word string) (hits []Grep
 	re := regexp.MustCompile(`(?:^|[^A-Za-z0-9_$])` + regexp.QuoteMeta(word) + `(?:$|[^A-Za-z0-9_])`)
 	files := t.sourceFiles(ctx, root, start, nil, grepFiles)
 	truncated = len(files) >= grepFiles || ctx.Err() != nil // a cancelled walk is not a complete one
-	for _, path := range files {
-		if ctx.Err() != nil {
-			return hits, true
+	// Files are read in parallel: on a slow file system (9p under WSL) the
+	// time is the per-file open, not the CPU. Lines are kept per file and
+	// joined in file order, so the answer is the same as a sequential read.
+	per := make([][]GrepHit, len(files))
+	var found atomic.Int32
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, runtime.GOMAXPROCS(0))
+	for i, path := range files {
+		if ctx.Err() != nil || int(found.Load()) > grepHits { // later files cannot reach the first grepHits lines
+			break
 		}
-		src, err := os.ReadFile(path)
-		if err != nil || bytes.IndexByte(src, 0) >= 0 || !bytes.Contains(src, []byte(word)) {
-			continue
-		}
-		sc := bufio.NewScanner(bytes.NewReader(src))
-		sc.Buffer(nil, len(src)+1)
-		for n := 1; sc.Scan(); n++ {
-			if !re.Match(sc.Bytes()) {
-				continue
+		sem <- struct{}{}
+		wg.Go(func() {
+			defer func() { <-sem }()
+			src, err := os.ReadFile(path)
+			if err != nil || bytes.IndexByte(src, 0) >= 0 || !bytes.Contains(src, []byte(word)) {
+				return
 			}
-			if len(hits) == grepHits {
-				return hits, true
+			sc := bufio.NewScanner(bytes.NewReader(src))
+			sc.Buffer(nil, len(src)+1)
+			for n := 1; sc.Scan() && len(per[i]) <= grepHits; n++ {
+				if re.Match(sc.Bytes()) {
+					per[i] = append(per[i], GrepHit{FilePath: path, Line: n, Text: lineText([]string{sc.Text()}, 1), Match: "grep"})
+					found.Add(1)
+				}
 			}
-			hits = append(hits, GrepHit{FilePath: path, Line: n, Text: lineText([]string{sc.Text()}, 1), Match: "grep"})
-		}
+		})
 	}
-	return hits, truncated
+	wg.Wait()
+	for _, h := range per {
+		hits = append(hits, h...)
+	}
+	if len(hits) > grepHits {
+		return hits[:grepHits], true
+	}
+	return hits, truncated || ctx.Err() != nil
 }

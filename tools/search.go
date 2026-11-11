@@ -31,7 +31,7 @@ const (
 
 // SearchInput is the input of rag_search.
 type SearchInput struct {
-	WorkspaceRoot string   `json:"workspace_root,omitempty" jsonschema:"Absolute path of the project directory (required). Pass it on every call."`
+	WorkspaceRoot string   `json:"workspace_root,omitempty" jsonschema:"Absolute path of the top directory of the project the user is working in: the repository root (where .git is), the same on every call (required). Not a subdirectory of the project, not a parent of several projects, not the home or a system directory."`
 	Query         string   `json:"query" jsonschema:"An identifier or qualified name (exact match) or a natural-language description (semantic)."`
 	Limit         int      `json:"limit,omitempty" jsonschema:"Maximum results, default 10, at most 100."`
 	FilePath      string   `json:"file_path,omitempty" jsonschema:"File being edited; results near it rank higher."`
@@ -209,9 +209,24 @@ func (t *tools) fallback(ctx context.Context, root string, in SearchInput, f sto
 // excluded directory, no linked worktree, nothing Skip or git leaves out.
 func (t *tools) sourceFiles(ctx context.Context, root, start string, exts map[string]bool, max int) []string {
 	var files []string
+	kept := 0 // files[:kept] went through git already
+	gitFilter := func() {
+		tail := files[kept:]
+		if ign := index.GitIgnored(root, tail); len(ign) > 0 {
+			tail = slices.DeleteFunc(tail, func(f string) bool { return ign[f] })
+		}
+		files = files[:kept+len(tail)]
+		kept = len(files)
+	}
 	_ = filepath.WalkDir(start, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || ctx.Err() != nil || len(files) >= max {
+		if len(files) >= max {
+			gitFilter() // the cap counts the files git keeps
+		}
+		if ctx.Err() != nil || len(files) >= max {
 			return fs.SkipAll
+		}
+		if err != nil {
+			return nil // unreadable entry: skip it, keep walking (as index.Walk does)
 		}
 		if d.IsDir() {
 			if path != start && (strings.HasPrefix(d.Name(), ".") || slices.Contains(t.cfg.ExcludePatterns, d.Name()) || index.IsLinkedWorktree(path)) {
@@ -230,9 +245,7 @@ func (t *tools) sourceFiles(ctx context.Context, root, start string, exts map[st
 		files = append(files, path)
 		return nil
 	})
-	if ign := index.GitIgnored(root, files); len(ign) > 0 {
-		files = slices.DeleteFunc(files, func(f string) bool { return ign[f] })
-	}
+	gitFilter()
 	return files
 }
 

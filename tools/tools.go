@@ -145,6 +145,11 @@ func indexInfo(w *engine.Workspace) *IndexInfo {
 // roots when it lists exactly one.
 func (t *tools) resolveRoot(ctx context.Context, req *mcp.CallToolRequest, root string) (*engine.Workspace, error) {
 	if strings.TrimSpace(root) == "" {
+		missing := errors.New("workspace_root is missing: pass the absolute path of the project directory")
+		// A client that did not declare roots need not answer roots/list: asking would hang the call.
+		if p := req.Session.InitializeParams(); p == nil || p.Capabilities == nil || p.Capabilities.RootsV2 == nil {
+			return nil, missing
+		}
 		res, err := req.Session.ListRoots(ctx, nil)
 		if err != nil || len(res.Roots) != 1 {
 			n := 0
@@ -152,7 +157,7 @@ func (t *tools) resolveRoot(ctx context.Context, req *mcp.CallToolRequest, root 
 				n = len(res.Roots)
 			}
 			slog.Debug("tools: no usable client root", "err", err, "roots", n)
-			return nil, errors.New("workspace_root is missing: pass the absolute path of the project directory")
+			return nil, missing
 		}
 		u, err := url.Parse(res.Roots[0].URI)
 		if err != nil || u.Scheme != "file" {

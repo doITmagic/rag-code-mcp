@@ -82,7 +82,7 @@ func (o *Ollama) Dimension(ctx context.Context) (int, error) {
 
 // embedBatch sends one /api/embed request, retrying once on a transport error.
 func (o *Ollama) embedBatch(ctx context.Context, texts []string) ([][]float32, error) {
-	if err := o.checkMemory(); err != nil {
+	if err := o.checkMemory(ctx); err != nil {
 		return nil, err
 	}
 	req := map[string]any{"model": o.model, "input": texts}

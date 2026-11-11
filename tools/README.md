@@ -88,7 +88,7 @@ type IndexInfo struct {
 | `ok` | every tool | the answer is in `data`. A lookup that finds nothing is still `ok`, with a message such as `no indexed symbol named "X"; try rag_search` |
 | `not_indexed` | search, usages, hierarchy, exports | the workspace has no index yet. `rag_search` still returns fallback results |
 | `indexing` | the same tools, and `rag_index_workspace` | an index run is running or queued; for `rag_index_workspace` it means "run queued". An answer that would be `ok` becomes `indexing`, keeps its `data` and adds `index run in progress: results may be incomplete until it ends` to the message (`rag_read_file_context` parses on the spot and stays `ok`) |
-| `low_memory` | the same tools as `dependency_down` | the machine has less free memory than `min_free_memory_mb` and the embedding model is not loaded; the message gives the free and the needed megabytes. Nothing is run until memory is freed |
+| `low_memory` | the same tools as `dependency_down` | the machine has less free memory than `min_free_memory_mb` and the embedding model is not loaded; the message gives the free and the needed megabytes. Nothing is run until memory is freed (or the model is loaded) |
 | `dependency_down` | every tool except `rag_read_file_context` and `rag_server_info` | the embedder (Ollama) or the index store cannot be used; the message says what to do |
 | `ambiguous` | `rag_find_usages`, `rag_call_hierarchy` | several symbols match; `data.candidates` lists them |
 

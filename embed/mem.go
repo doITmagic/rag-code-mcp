@@ -1,9 +1,12 @@
 package embed
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -21,15 +24,41 @@ var freeMB = availableMB
 
 // checkMemory returns ErrLowMemory when a local Ollama would have to load the
 // model with less than MinFreeMB of memory available.
-func (o *Ollama) checkMemory() error {
+func (o *Ollama) checkMemory(ctx context.Context) error {
 	if o.MinFreeMB <= 0 || !o.local() || time.Since(time.Unix(o.lastOK.Load(), 0)) < warmFor {
 		return nil
 	}
 	free, ok := freeMB()
-	if !ok || free >= o.MinFreeMB {
+	if !ok || free >= o.MinFreeMB || o.loaded(ctx) {
 		return nil
 	}
 	return fmt.Errorf("%w: %d MB free, at least %d MB needed (min_free_memory_mb): close applications to free memory, then retry", ErrLowMemory, free, o.MinFreeMB)
+}
+
+// loaded asks Ollama whether the model is in memory already (another server
+// or client loaded it): then no new memory is needed. No answer in 2 s counts
+// as not loaded.
+func (o *Ollama) loaded(ctx context.Context) bool {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, o.base+"/api/ps", nil)
+	if err != nil {
+		return false
+	}
+	var ps struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if o.do(req, &ps) != nil {
+		return false
+	}
+	for _, m := range ps.Models {
+		if m.Name == o.model || strings.TrimSuffix(m.Name, ":latest") == o.model {
+			return true
+		}
+	}
+	return false
 }
 
 // local reports whether Ollama runs on this machine, where its memory is ours.

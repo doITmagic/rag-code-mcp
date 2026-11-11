@@ -215,7 +215,9 @@ Before a request, when Ollama is on this machine (`localhost`, `127.0.0.1`,
 be loaded), `checkMemory` reads the available memory (`mem_linux.go`:
 `MemAvailable` in `/proc/meminfo`; `mem_windows.go`: `GlobalMemoryStatusEx`).
 Below `MinFreeMB` the call returns `ErrLowMemory` with the free and the needed
-megabytes, and Ollama is not called. Seen on a 16 GB Windows laptop with 570 MB
+megabytes, and no embed request is sent, unless `GET /api/ps` (2 s) shows the
+model already loaded: another server or client loaded it, so no new memory is
+needed. Seen on a 16 GB Windows laptop with 570 MB
 free: the model load took longer than the 60 s call timeout, the cancelled
 request made Ollama abort the load, and every retry started it again. macOS
 and the BSDs have no reading (`mem_other.go`), so the check never fires there.

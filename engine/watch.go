@@ -108,7 +108,7 @@ func (e *Engine) startWatcher(w *Workspace) (leader bool, err error) {
 		wt.Stop()
 		return true, nil
 	}
-	w.watch = wt
+	w.watch, w.watchErr = wt, "" // a later failure is a new episode: warned again
 	return true, nil
 }
 
@@ -146,10 +146,7 @@ func (e *Engine) takeOver(w *Workspace) {
 	switch {
 	case errors.Is(err, ErrClosed):
 	case err != nil:
-		e.log.Warn("engine: watcher not taken over, retrying on the next call", "root", w.Root, "err", err)
-		e.mu.Lock()
-		w.gone = true
-		e.mu.Unlock()
+		e.watchFailed(w, err)
 	case leader:
 		e.log.Info("engine: watcher taken over", "root", w.Root)
 		w.Index(false)

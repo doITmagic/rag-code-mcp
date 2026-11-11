@@ -45,6 +45,7 @@ type IndexInfo struct {
 	Branch string `json:"branch,omitempty"`
 	Age    string `json:"age,omitempty"` // time since the last finished run
 	Error  string `json:"error,omitempty"`
+	Watch  string `json:"watch,omitempty"` // set when edits are not indexed automatically
 }
 
 type tools struct {
@@ -132,6 +133,9 @@ func indexInfo(w *engine.Workspace) *IndexInfo {
 		info.State = "not_indexed"
 	default:
 		info.State = s.Phase
+	}
+	if s.Unwatched != "" {
+		info.Watch = "off (" + s.Unwatched + "): run rag_index_workspace after editing files"
 	}
 	if !s.EndedAt.IsZero() {
 		info.Age = time.Since(s.EndedAt).Round(time.Second).String()

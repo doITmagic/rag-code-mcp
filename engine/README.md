@@ -66,6 +66,7 @@ graph TD
 | `engine.go` | Package doc, `Engine`, `New`, errors (`ErrNotIndexed`, `ErrLocked`, `ErrClosed`), `RootError`, `Loaded`, `Workspace`, `validateRoot`, `roots.json` (`registerRoot`, `ReadRoots`), `Resume`, `Close`, and the job queue (`enqueue`, `merge`, `kick`, `runJobs`, `runOne`, `retryDelay`). |
 | `workspace.go` | `Workspace` and its job fields, `Status`, `Index`, `IndexFiles`, `Search`, `Scroll`, `mapErr`/`dimChanged` (the `ErrNotIndexed` mapping), `resyncIfReopened`, `Ready`. |
 | `watch.go` | The per-root `watcher`: `startWatcher` (leader lock `watch.lock`), `follow`/`takeOver` (a follower's takeover poll, `takeoverPoll`), `addTree`, `watchGit`, event `handle`, `dropDir`, debounce (`add`, `flush`), `full`, `Stop`. |
+| `nonotify_linux.go`, `nonotify_other.go` | `noNotify`: names a root whose file system reports no changes to inotify (9p, the WSL2 `/mnt` drives); always empty off Linux. |
 | `iderules.go` | `WriteIDERules`, `IDEPointer`, `PointerFiles`, the list of agent instruction files, `tracked`, `within`, `appendPointer`. |
 
 ### Tests
@@ -74,6 +75,7 @@ graph TD
 |------|--------|
 | `engine_test.go` | Root validation, auto-index on first contact, request coalescing, `ErrHeadChanged` re-queue, retry of failed runs, a failed recreate that resumes without dropping again, no watcher without `auto_index`, recreate, embedding model change, concurrent root registration from several engines, a search refused on an index of another model with the same vector size, a lock held by another engine, `Resume`, no goroutines left after `Close`, `WriteIDERules` (tracked files, symlinks, symlinked parent directories, continuing after a refused file), backoff, a run waiting for the slot counts as queued, the end of a run logged with its counts and duration, another process's run shown as running and a dead run's phase shown as `interrupted` (`TestStatusOfAnotherProcessRun`), the first retry after another process's lock within seconds (`TestLockedRetrySoon`), parents of home and broad system directories refused as roots (`TestValidateRootRefusesBroadDirs`), the watcher's full run logged once while queued, a request queued while the runner exits is still picked up, a run failing because the root was deleted is not retried and the root is caught up when it is back, a query after the store reopened a replaced collection file queues an incremental run (`TestQueryAfterReopenQueuesResync`). `TestMain` points `RAGCODE_HOME` at a temp dir. |
 | `watch_test.go` | The watcher end to end, a `.gitignore` edit queues a full run, a directory that becomes a linked worktree after it was watched is dropped with a full run (`TestWatcherLinkedWorktreeAdded`), a `.git` created after start queues a full run and is watched with its refs (`TestWatcherGitInitAfterStart`), a ref moved through its `.lock` file queues one full run (`TestWatcherRefUpdateQueuesOneFullRun`), RagCode's own home inside a root neither watched nor accepted as a root (`TestWatcherIgnoresOwnHome`), root removed, root that comes back, unreadable subdirectory, watcher restart retried, `Close` beginning during `Resume`'s watcher setup (no catch-up, no warning), only one of two servers on a root watches and indexes a save (`TestWatcherOneLeaderPerRoot`), the follower takes over with a catch-up run when the leader exits (`TestWatcherFollowerTakesOver`), `Resume` in a follower queues no catch-up (`TestResumeFollowerSkipsCatchUp`). |
+| `nonotify_linux_test.go` | A root on 9p is named by `noNotify`, warned once per process and reported in `Status.Unwatched`; other file systems are not. Build: Linux. |
 | `watch_linux_test.go` | All roots share one inotify instance (nested roots both see an event, `Close` releases it); a watcher that cannot start is retried; an event overflow re-walks the tree so new directories are watched again. |
 | `prefix_test.go` | `Search` adds the model's query prefix. |
 | `roots_bom_test.go` | A `roots.json` with a UTF-8 BOM is read and kept; an invalid one is moved to `roots.json.bad` before the new list is written. |
@@ -124,7 +126,9 @@ func (w *Workspace) Status() Status
 
 `Status` embeds `index.Status` and adds `Queued` (a run is waiting, including
 a runner waiting for the slot), `Running` (a run holds the slot) and
-`LastError`. Before any run in this process, and after a run that found
+`LastError`, and `Unwatched` (why edits are not indexed automatically: the
+watcher's start error, or a 9p file system; empty when a watcher sees them).
+Before any run in this process, and after a run that found
 nothing to do (no file indexed, failed or deleted), the index part comes from
 `index_status.json` on disk, so the counters stay those of the last run that
 changed the index (the branch is still the current run's). While another process's run holds `index.lock`, `Running`
@@ -281,8 +285,12 @@ warning that the watcher did not start.
 One watcher per root (only when `watch_enabled` and `auto_index` are both
 on), all sharing one `fsnotify` instance per process: the per-user inotify
 instance limit is small (128 by default on Linux) and every client starts its
-own server. A watcher that cannot start is logged and retried, with a
-catch-up run, on the next call for that root. It watches the root and every directory below it, except
+own server. A watcher that cannot start is retried, with a
+catch-up run, on every later call for that root, and warned once per distinct
+error (`engine: root not watched, edits are indexed only by rag_index_workspace
+or the catch-up run at the next server start; retrying on later calls`): a
+`\\wsl.localhost` share opened by the Windows binary fails every time with
+`ReadDirectoryChanges: Incorrect function.` It watches the root and every directory below it, except
 hidden directories, directories named in `exclude_patterns` and linked git
 worktrees; it also watches `.git` and the `.git/refs` tree, from start or from
 the moment they are created (`git init` after start). A subdirectory
@@ -428,6 +436,17 @@ Keys from [internal/config](../internal/config/README.md):
 
 Found in the test rounds; none gives a wrong symbol, they delay or blur a
 status.
+
+- Two WSL placements have no working watcher, so edits reach the index only
+  through `rag_index_workspace` or the catch-up run of the next server start:
+  a Windows drive under `/mnt` seen by the Linux server (9p: inotify reports
+  nothing; detected with `statfs`, one WARN per root per process) and a
+  `\\wsl.localhost` share seen by the Windows server (the watcher cannot
+  start). Both are reported as `Status.Unwatched`, which the tools show as
+  `index.watch`. Other network file systems (NFS, SMB) are not detected.
+- Catch-up runs of known roots are queued at start in `roots.json` order and
+  share the one global slot with every other run, first come first served: a
+  request made right after start waits for the catch-up runs queued before it.
 
 - The watcher follows `.git/HEAD` and `.git/refs/**` of the root only. A HEAD
   kept elsewhere is not watched: a linked worktree's (`.git/worktrees/<n>/HEAD`

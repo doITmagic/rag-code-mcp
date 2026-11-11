@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -454,4 +455,32 @@ func TestWatcherRefUpdateQueuesOneFullRun(t *testing.T) {
 	require.Eventually(t, func() bool { return fullRuns(rec) > n }, 2*time.Second, 10*time.Millisecond)
 	time.Sleep(500 * time.Millisecond)
 	assert.Equal(t, n+1, fullRuns(rec))
+}
+func TestWatcherStartFailureWarnedOnce(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.WatchEnabled = true
+	fail := true
+	newFSWatcher = func() (*fsnotify.Watcher, error) {
+		if fail {
+			return nil, errors.New("ReadDirectoryChanges: Incorrect function.")
+		}
+		return fsnotify.NewWatcher()
+	}
+	t.Cleanup(func() { newFSWatcher = fsnotify.NewWatcher })
+	var logBuf safeBuf
+	e := New(cfg, store.NewMemory(), &embed.Fake{}, slog.New(slog.NewTextHandler(&logBuf, nil)))
+	defer e.Close()
+	e.run = (&runRecorder{}).run
+	root := t.TempDir()
+	for range 5 { // first contact, then four more tool calls
+		w, err := e.Workspace(root)
+		require.NoError(t, err)
+		require.Nil(t, w.watch)
+	}
+	assert.Equal(t, 1, strings.Count(logBuf.String(), "level=WARN"), logBuf.String())
+
+	fail = false // still retried after the warning
+	w, err := e.Workspace(root)
+	require.NoError(t, err)
+	assert.NotNil(t, w.watch)
 }

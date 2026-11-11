@@ -120,6 +120,12 @@ message becomes `last index run <state> (<error>); run rag_index_workspace
 to retry`. After a restart the error comes from the saved
 index status; with none, the parentheses are left out.
 
+`index.watch` is present only when edits to the root are not indexed
+automatically: `off (<reason>): run rag_index_workspace after editing files`.
+The reason is the watcher's start error (a `\\wsl.localhost` root opened by
+the Windows server) or `the 9p file system reports no changes` (a Windows
+drive under `/mnt` in WSL).
+
 ### The `grep` lines
 
 `rag_search` (for an identifier query), `rag_find_usages` and

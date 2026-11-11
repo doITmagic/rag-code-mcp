@@ -22,7 +22,9 @@ query the index instead of guessing or grepping blindly:
 - rag_call_hierarchy: callers and callees of a function.
 - rag_list_package_exports: the public surface of a package.
 - rag_read_file_context: a file with its symbols and relations.
-- rag_index_workspace: (re)index when a search comes back empty or stale.
+- rag_index_workspace: (re)index when a search comes back empty or stale, and
+  after editing files when a response's index block has "watch": such a
+  root is not watched, so edits are not picked up automatically.
 
 Always pass workspace_root: the absolute path of this project directory.
 `

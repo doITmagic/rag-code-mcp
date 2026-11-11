@@ -132,10 +132,7 @@ func (e *Engine) Workspace(root string) (*Workspace, error) {
 			if leader, err := e.startWatcher(w); errors.Is(err, ErrClosed) {
 				return nil, err
 			} else if err != nil {
-				e.log.Warn("engine: watcher not restarted", "root", real, "err", err)
-				e.mu.Lock()
-				w.gone = true // retry on the next call
-				e.mu.Unlock()
+				e.watchFailed(w, err)
 			} else if leader {
 				w.Index(false) // catch up on what changed while it was gone
 			}
@@ -148,16 +145,37 @@ func (e *Engine) Workspace(root string) (*Workspace, error) {
 	// auto_index: false leaves indexing to an explicit rag_index_workspace, so
 	// no watcher may start one.
 	if e.cfg.WatchEnabled && e.cfg.AutoIndex {
+		if fs := noNotify(real); fs != "" { // first contact: once per root per process
+			e.log.Warn("engine: "+notWatched, "root", real, "fs", fs)
+			e.mu.Lock()
+			w.noEvents = "the " + fs + " file system reports no changes"
+			e.mu.Unlock()
+		}
 		if _, err := e.startWatcher(w); errors.Is(err, ErrClosed) {
 			return nil, err
 		} else if err != nil {
-			e.log.Warn("engine: watcher not started, retrying on the next call", "root", real, "err", err)
-			e.mu.Lock()
-			w.gone = true // the next Workspace call retries, with a catch-up run
-			e.mu.Unlock()
+			e.watchFailed(w, err)
 		}
 	}
 	return w, nil
+}
+
+// notWatched tells the user how edits reach the index of a root without a
+// working watcher.
+const notWatched = "root not watched, edits are indexed only by rag_index_workspace or the catch-up run at the next server start"
+
+// watchFailed marks w for a watcher retry on the next Workspace call (with a
+// catch-up run) and warns once per distinct error: a file system that cannot
+// be watched (\\wsl.localhost on Windows) fails the same way on every call.
+func (e *Engine) watchFailed(w *Workspace, err error) {
+	e.mu.Lock()
+	w.gone = true
+	again := w.watchErr == err.Error()
+	w.watchErr = err.Error()
+	e.mu.Unlock()
+	if !again {
+		e.log.Warn("engine: "+notWatched+"; retrying on later calls", "root", w.Root, "err", err)
+	}
 }
 
 // broadDirs are refused only when given exactly: projects often live below

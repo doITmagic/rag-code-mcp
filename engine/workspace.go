@@ -33,6 +33,8 @@ type Workspace struct {
 	watch     *watcher
 	takeover  *time.Timer // a follower's poll of watch.lock; nil when leading or not watching
 	gone      bool        // the root was removed or renamed; the next Workspace call re-watches it
+	noEvents  string      // why the watcher of this root sees no edits (noNotify); "" when it does
+	watchErr  string      // the watcher start error last warned; "" once a watcher runs
 
 	modelOK atomic.Bool   // the index was made with the embedder's model (fixed for the process)
 	reopens atomic.Uint64 // store.SQLite.Reopens last seen; a change queues a resync
@@ -44,6 +46,7 @@ type Status struct {
 	Queued    bool   // a run is waiting
 	Running   bool   // a run is in progress (or waiting for the slot)
 	LastError string // error of the last run, "" when it succeeded
+	Unwatched string // why edits to this root are not indexed automatically; "" when a watcher sees them
 }
 
 // Status returns the current status. While another process's run holds the
@@ -55,6 +58,9 @@ func (w *Workspace) Status() Status {
 	s := Status{Status: w.status, Queued: w.queued != kindNone || (w.running && !w.active), Running: w.active}
 	if w.lastErr != nil {
 		s.LastError = w.lastErr.Error()
+	}
+	if s.Unwatched = w.noEvents; s.Unwatched == "" {
+		s.Unwatched = w.watchErr
 	}
 	w.e.mu.Unlock()
 	switch {

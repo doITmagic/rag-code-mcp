@@ -118,7 +118,7 @@ func TestVerifyCancelledContext(t *testing.T) {
 	res, _, err = v.t.listExports(ctx, nil, ExportsInput{WorkspaceRoot: v.root, Package: "m/pkg"})
 	require.NoError(t, err)
 	t.Logf("exports with cancelled ctx: isError=%v text=%s", res.IsError, res.Content[0].(*mcp.TextContent).Text)
-	res, _, err = v.t.serverInfo(ctx, nil, InfoInput{})
+	_, _, err = v.t.serverInfo(ctx, nil, InfoInput{})
 	require.NoError(t, err)
 	assert.Less(t, time.Since(start), 2*time.Second)
 }

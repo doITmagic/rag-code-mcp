@@ -189,7 +189,7 @@ func (d *doc) toml() []parser.Symbol {
 	type item struct {
 		name, owner string
 		table       bool
-		start, end  int
+		start       int
 	}
 	var items []item
 	table := ""

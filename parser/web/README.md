@@ -127,7 +127,7 @@ that leave the workspace root give an empty target.
 
 | File | Contents |
 |------|----------|
-| `web.go` | Package doc, limits (2000 symbols per file, 400 content lines), registration, shared helpers: module and reference resolution (`moduleName`, `refModule`), comment trimming, line capping, a byte-offset-to-line index. Also holds `capRunes` and `exportedName`, which nothing calls. |
+| `web.go` | Package doc, limits (2000 symbols per file, 400 content lines), registration, shared helpers: module and reference resolution (`moduleName`, `refModule`), comment trimming, line capping, a byte-offset-to-line index. |
 | `html.go` | The HTML analyzer: document and part symbols, element walk with sectional ownership, start-tag attribute parsing, script/stylesheet imports, and the Go template action scanner (`goTemplates`). |
 
 ### Tests

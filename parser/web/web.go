@@ -67,14 +67,6 @@ func capLines(s string, n int) string {
 	return s
 }
 
-// capRunes keeps at most n runes of s.
-func capRunes(s string, n int) string {
-	if r := []rune(s); len(r) > n {
-		return string(r[:n])
-	}
-	return s
-}
-
 // trimComment strips HTML and CSS comment markers and per-line "*" / "//"
 // prefixes.
 func trimComment(s string) string {
@@ -119,10 +111,4 @@ func (l lineIndex) text(src []byte, from, to int) string {
 		end = l[to]
 	}
 	return strings.TrimRight(string(src[l[from-1]:end]), "\n")
-}
-
-// exportedName is false for the "_name" / "-name" private convention.
-func exportedName(name string) bool {
-	name = strings.TrimLeft(name, "$-")
-	return !strings.HasPrefix(name, "_")
 }

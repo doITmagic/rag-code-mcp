@@ -205,13 +205,14 @@ const maxWrap = 3
 // `$(function () {...})`, `addEventListener('DOMContentLoaded', () => {...})`,
 // and on the statements of wrappers inside those, up to maxWrap levels. A
 // module (imports, require, exports) is not descended: there wrappers are
-// test suites (`describe(() => {...})`) and hooks, whose locals are no API.
+// test suites (`describe(() => {...})`) and hooks, whose locals are no API;
+// nor are those suites and hooks in a test file without imports.
 func (c *fileCtx) wrapped(n *gotreesitter.Node, depth int, fn func(*gotreesitter.Node)) {
 	if !c.classic || depth >= maxWrap || n.Type(c.lang) != "expression_statement" || n.NamedChildCount() == 0 {
 		return
 	}
 	e := c.unwrap(n.NamedChild(0))
-	if e.Type(c.lang) != "call_expression" {
+	if e.Type(c.lang) != "call_expression" || testWrapper(parser.Text(parser.Field(e, c.lang, "function"), c.src)) {
 		return
 	}
 	funcs := []*gotreesitter.Node{c.unwrap(parser.Field(e, c.lang, "function"))}
@@ -227,6 +228,19 @@ func (c *fileCtx) wrapped(n *gotreesitter.Node, depth int, fn func(*gotreesitter
 			}
 		}
 	}
+}
+
+// testWrapper tells a test suite or hook of Jest/Mocha globals (`describe(`,
+// `it.only(`, `describe.each([...])(`, `beforeEach(`) by the callee's first
+// name: a test file without imports is no browser script, its locals no API.
+func testWrapper(callee string) bool {
+	name, _, _ := strings.Cut(callee, ".")
+	name, _, _ = strings.Cut(name, "(")
+	switch name = strings.TrimSpace(name); name {
+	case "describe", "it", "test", "suite", "context":
+		return true
+	}
+	return strings.HasPrefix(name, "before") || strings.HasPrefix(name, "after")
 }
 
 // unwrap strips the parentheses and unary operators around an IIFE.

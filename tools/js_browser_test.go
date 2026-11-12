@@ -45,3 +45,18 @@ func TestUsagesOfBrowserGlobals(t *testing.T) {
 	assert.ElementsMatch(t, []string{filepath.Join(v.root, "public", "js", "other.js"), filepath.Join(v.root, "templates", "errors", "index.html")}, files, r.Message)
 	assert.Equal(t, 2, out.Total, r.Message)
 }
+
+// A Jest test file relying on the global describe/test (no imports): the
+// helper inside the suite is no indexed symbol.
+func TestJestGlobalSuiteHelperNoSymbol(t *testing.T) {
+	v := newEnv(t, false, nil)
+	v.addFiles(t, map[string]string{
+		"src/sum.test.js": `describe('sum', () => {
+  function renderCart() { return 1; }
+  test('adds', () => { expect(renderCart()).toBe(1); });
+});
+`,
+	})
+	r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "renderCart"})
+	assert.Contains(t, r.Message, `no indexed symbol named "renderCart"`)
+}

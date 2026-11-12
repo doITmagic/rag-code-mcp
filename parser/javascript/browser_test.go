@@ -72,3 +72,28 @@ window.count = 1;
 	assert.Equal(t, "js/filter-toggle.toggleFilters", rel(t, find(t, syms, "js/filter-toggle.sync"), parser.RelCall, "toggleFilters").TargetQualifiedName)
 	assert.Equal(t, parser.KindVariable, find(t, syms, "js/filter-toggle.count").Kind)
 }
+
+// A test file without imports (Jest/Mocha globals) is still no browser
+// script: functions inside describe/it/test/hook callbacks are no symbols,
+// while an IIFE or a ready callback in the same file still counts.
+func TestGlobalTestSuiteNotDescended(t *testing.T) {
+	src := `describe('sum', () => {
+  function renderCart() { return 1; }
+  beforeEach(function () { function setupCart() {} });
+  test('adds', () => { function inner() {} expect(renderCart()).toBe(1); });
+});
+describe.each([[1]])('each %i', () => { function eachHelper() {} });
+it.only('x', () => { function onlyHelper() {} });
+afterAll(() => { function teardown() {} });
+context('c', function () { function ctxHelper() {} });
+suite('s', function () { function suiteHelper() {} });
+(function () { function realGlobal() {} })();
+`
+	syms := analyze(t, "src/sum.test.js", src)
+	for _, s := range syms {
+		if s.QualifiedName != "src/sum.test.realGlobal" {
+			t.Errorf("unexpected symbol %s", s.QualifiedName)
+		}
+	}
+	find(t, syms, "src/sum.test.realGlobal")
+}

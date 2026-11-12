@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -223,4 +224,46 @@ func TestInstallStartsNoQdrant(t *testing.T) {
 		}
 	}
 	assert.Contains(t, string(log), "ragcode-ollama")
+}
+
+// RAGCODE_HOME set to the v1 directory: the v1 cleanup must not delete the new install.
+func TestInstallIntoV1DirKeepsItself(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake docker is a shell script")
+	}
+	home := t.TempDir()
+	legacy := filepath.Join(home, ".local", "share", "ragcode")
+	t.Setenv("HOME", home)
+	t.Setenv("RAGCODE_HOME", legacy)
+	t.Setenv("SHELL", "/bin/bash")
+	t.Setenv("OLLAMA_BASE_URL", "http://localhost:11434")
+	t.Setenv("MCP_LOG_LEVEL", "info")
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	if err := Run(context.Background(), Options{Ollama: "skip", Yes: true, SkipIDE: true, Out: io.Discard, srcDir: src(t)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(legacy, "bin", "rag-code-mcp")); err != nil {
+		t.Fatal("installer returned success but v1 cleanup deleted the newly installed binary")
+	}
+}
+
+// A password in OLLAMA_BASE_URL is not printed.
+func TestInstallHidesOllamaPassword(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("RAGCODE_HOME", filepath.Join(home, ".ragcode"))
+	t.Setenv("SHELL", "/bin/bash")
+	t.Setenv("MCP_LOG_LEVEL", "info")
+	t.Setenv("OLLAMA_BASE_URL", "https://alice:private-ollama-password@ollama.example.test")
+	var output bytes.Buffer
+	if err := Run(context.Background(), Options{Ollama: "skip", Yes: true, SkipIDE: true, Out: &output, srcDir: src(t)}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "private-ollama-password") {
+		t.Fatal("installer printed the Ollama URL password in its summary")
+	}
 }

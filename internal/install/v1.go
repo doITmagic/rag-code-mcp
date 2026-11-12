@@ -3,6 +3,7 @@ package install
 import (
 	"context"
 	"errors"
+	"github.com/doITmagic/rag-code-mcp/v2/internal/config"
 	"io"
 	"io/fs"
 	"os"
@@ -26,6 +27,10 @@ func removeV1(ctx context.Context, home string, out io.Writer) {
 	share := filepath.Join(home, ".local", "share")
 	installDir := filepath.Join(share, "ragcode")
 	if _, err := os.Stat(installDir); err != nil {
+		return
+	}
+	if rel, err := filepath.Rel(installDir, config.HomeDir()); err == nil && !strings.HasPrefix(rel, "..") {
+		warn(out, "RAGCODE_HOME is inside the v1 directory "+installDir+": v1 is not removed")
 		return
 	}
 	step(out, "Removing RagCode v1 (its indexes are not compatible with v2; projects are indexed again)")

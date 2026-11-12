@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -101,6 +102,10 @@ func Run(ctx context.Context, o Options) error {
 		removeV1(ctx, userHome, o.Out)
 	}
 
+	shown := cfg.OllamaBaseURL // printed without a password in the URL
+	if u, err := url.Parse(shown); err == nil {
+		shown = u.Redacted()
+	}
 	if o.Ollama == "docker" {
 		if _, err := exec.LookPath("docker"); err != nil {
 			warn(o.Out, "docker not found in PATH; container not started")
@@ -138,12 +143,12 @@ func Run(ctx context.Context, o Options) error {
 		}
 	}
 	if o.Ollama != "skip" {
-		step(o.Out, "Waiting for Ollama at "+cfg.OllamaBaseURL)
+		step(o.Out, "Waiting for Ollama at "+shown)
 		if err := waitHTTP(ctx, cfg.OllamaBaseURL+"/api/tags", readyWait); err != nil {
 			warn(o.Out, "Ollama: "+err.Error()+"; run manually: ollama pull "+cfg.OllamaEmbed)
 		} else {
 			if ollamaFailed {
-				ok(o.Out, "Using the Ollama already running at "+cfg.OllamaBaseURL)
+				ok(o.Out, "Using the Ollama already running at "+shown)
 			}
 			step(o.Out, "Pulling model "+cfg.OllamaEmbed)
 			if err := pullModel(ctx, o.Out, cfg.OllamaBaseURL, cfg.OllamaEmbed); err != nil {
@@ -180,7 +185,7 @@ func Run(ctx context.Context, o Options) error {
 		"ragcode": map[string]any{"command": binary, "args": []string{"--config", cfgPath}},
 	}}, "", "  ")
 	fmt.Fprintf(o.Out, "\nBinary:  %s\nConfig:  %s\nOllama:  %s (model %s)\nIndex:   %s\n\nmcp.json entry for any other client:\n%s\n",
-		binary, cfgPath, cfg.OllamaBaseURL, cfg.OllamaEmbed, filepath.Join(home, "index"), snippet)
+		binary, cfgPath, shown, cfg.OllamaEmbed, filepath.Join(home, "index"), snippet)
 	ok(o.Out, "RagCode MCP installed")
 	return nil
 }

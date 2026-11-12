@@ -129,7 +129,7 @@ type Symbol struct {
 | `KindType` | `type` | Type aliases, typedefs, other named types |
 | `KindVariable` | `variable` | Variables, properties, GDScript signals |
 | `KindConstant` | `constant` | Constants, enum cases |
-| `KindRoute` | `route` | Laravel and Go (Echo, Gin, Chi) route registrations |
+| `KindRoute` | `route` | Laravel and Go (Echo, Gin, Chi, `net/http`) route registrations |
 | `KindHook` | `hook` | WordPress `add_action` / `add_filter` |
 | `KindTemplate` | `template` | Blade views and sections, Vue `<template>`, HTML documents/elements, Go template `define`/`block` |
 | `KindScene` | `scene` | Godot scene nodes |
@@ -275,7 +275,7 @@ output) and by the [index](../index/README.md) tests for relation resolution.
 
 | Package | Languages | Approach |
 |---------|-----------|----------|
-| [golang](golang/README.md) | Go | tree-sitter `go`; module from `go.mod`; Echo, Gin and Chi routes |
+| [golang](golang/README.md) | Go | tree-sitter `go`; module from `go.mod`; Echo, Gin, Chi and `net/http` routes |
 | [python](python/README.md) | Python, stubs | tree-sitter `python`; import table, `__init__.py` re-exports |
 | [javascript](javascript/README.md) | JS, TS, JSX, TSX, Vue SFC | tree-sitter `javascript` / `typescript` / `tsx`; ESM + CommonJS imports |
 | [php](php/README.md) | PHP, Blade | tree-sitter `php`; Laravel routes, WordPress hooks; Blade line scanner |

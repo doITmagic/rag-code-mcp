@@ -44,6 +44,13 @@ func main() {
 	r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "firmaJSON"})
 	require.Equal(t, "ok", r.Status, r.Message)
 	data(t, r, &out)
-	require.Equal(t, 1, out.Total, r.Message)
+	// main names it, and so does the route symbol of the registration.
+	require.Equal(t, 2, out.Total, r.Message)
+	require.Len(t, out.Files, 1, r.Message)
 	assert.Equal(t, filepath.Join(v.root, "cmd", "api", "main.go"), out.Files[0].FilePath, r.Message)
+	var callers []string
+	for _, u := range out.Files[0].Usages {
+		callers = append(callers, u.Caller)
+	}
+	assert.ElementsMatch(t, []string{"example.com/app/cmd/api.main", "example.com/app/cmd/api.main./firma.json"}, callers)
 }

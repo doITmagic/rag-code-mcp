@@ -189,6 +189,45 @@ func adminRouter() http.Handler { return nil }
 	}, routeList(t, "api/r.go", src))
 }
 
+func TestNetHTTPRoutes(t *testing.T) {
+	src := `package main
+
+import (
+	"net/http"
+
+	"github.com/acme/app/handlers"
+)
+
+type server struct{}
+
+func (s *server) item(w http.ResponseWriter, r *http.Request) {}
+
+func health(w http.ResponseWriter, r *http.Request) {}
+
+func main() {
+	s := &server{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /items/{id}", s.item)
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("."))))
+	mux.HandleFunc("POST  /login", handlers.Login)
+	mux.HandleFunc("example.com/", health)
+	http.HandleFunc("/health", health)
+	http.HandleFunc("/inline", func(w http.ResponseWriter, r *http.Request) {})
+	w := http.Header{}
+	w.Add("X-Key", "v")
+	_ = http.ListenAndServe(":8080", mux)
+}
+`
+	assert.Equal(t, []string{
+		"net/http GET main.main./items/{id} -> main.server.item",
+		"net/http Handle main.main./static/ ->",
+		"net/http POST main.main./login -> github.com/acme/app/handlers.Login",
+		"net/http HandleFunc main.main.example.com/ -> main.health",
+		"net/http HandleFunc main.main./health -> main.health",
+		"net/http HandleFunc main.main./inline ->",
+	}, routeList(t, "main/main.go", src))
+}
+
 func TestGinRoutes(t *testing.T) {
 	src := `package api
 

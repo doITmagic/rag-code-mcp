@@ -19,6 +19,7 @@ type framework struct {
 	group   string          // method returning a sub-router prefixed by its path argument
 	last    bool            // the handler is the last argument (after middleware), not the one after the path
 	inline  map[string]bool // methods returning a router with the receiver's prefix (chi With, Group)
+	pattern bool            // the path may be a Go 1.22 pattern: "GET /items/{id}", "host.com/x"
 }
 
 var frameworks = []framework{
@@ -34,6 +35,7 @@ var frameworks = []framework{
 		"Get": 0, "Post": 0, "Put": 0, "Delete": 0, "Patch": 0, "Options": 0, "Head": 0, "Connect": 0, "Trace": 0,
 		"Handle": 0, "HandleFunc": 0, "Method": 1, "MethodFunc": 1, "Mount": 0,
 	}},
+	{name: "net/http", module: "net/http", pattern: true, methods: map[string]int{"Handle": 0, "HandleFunc": 0}},
 }
 
 // noHandler are registration methods whose argument after the path is not a
@@ -46,8 +48,12 @@ func (fc *file) addFramework(path string) {
 		path = path[:i]
 	}
 	for i := range frameworks {
-		if frameworks[i].module == path {
+		switch {
+		case frameworks[i].module != path:
+		case frameworks[i].pattern: // net/http last: a chi or gin Handle in a file importing both is theirs
 			fc.routers = append(fc.routers, &frameworks[i])
+		default:
+			fc.routers = append([]*framework{&frameworks[i]}, fc.routers...)
 		}
 	}
 }
@@ -176,9 +182,13 @@ func (fc *file) route(call, fn *gotreesitter.Node, args []*gotreesitter.Node, gr
 		if !ok || idx >= len(args) {
 			continue
 		}
-		path, ok := fc.pathLiteral(args[idx])
+		path, ok := fc.pathLiteral(args[idx], fw.pattern)
 		if !ok {
 			continue
+		}
+		verb := method
+		if v, rest, cut := strings.Cut(path, " "); cut && fw.pattern {
+			verb, path = v, strings.TrimLeft(rest, " ")
 		}
 		var handler *gotreesitter.Node
 		if !noHandler[method] {
@@ -198,7 +208,7 @@ func (fc *file) route(call, fn *gotreesitter.Node, args []*gotreesitter.Node, gr
 		}
 		s := fc.base(call, name, parser.KindRoute, sym.Name)
 		s.Exported = !fc.test
-		s.Metadata = map[string]string{"framework": fw.name, "method": method}
+		s.Metadata = map[string]string{"framework": fw.name, "method": verb}
 		if r, ok := fc.handlerRelation(handler, sym.Relations); ok {
 			s.Relations = []parser.Relation{r}
 		}
@@ -247,7 +257,7 @@ func (fc *file) groupPrefix(e *gotreesitter.Node, groups map[string]string) (str
 		if len(args) == 0 {
 			continue
 		}
-		if path, ok := fc.pathLiteral(args[0]); ok {
+		if path, ok := fc.pathLiteral(args[0], false); ok {
 			return fc.prefix(parser.Field(fn, fc.lang, "operand"), groups) + path, true
 		}
 	}
@@ -273,13 +283,24 @@ func (fc *file) prefix(recv *gotreesitter.Node, groups map[string]string) string
 	return groups[fc.text(recv)]
 }
 
-// pathLiteral unquotes a string literal that is "" or starts with "/".
-func (fc *file) pathLiteral(n *gotreesitter.Node) (string, bool) {
+// pathLiteral unquotes a string literal that is "" or starts with "/"; a
+// pattern may also be "[METHOD ][host]/path" (net/http since Go 1.22).
+func (fc *file) pathLiteral(n *gotreesitter.Node, pattern bool) (string, bool) {
 	if !strings.HasSuffix(n.Type(fc.lang), "string_literal") {
 		return "", false
 	}
 	s, err := strconv.Unquote(fc.text(n))
-	if err != nil || s != "" && s[0] != '/' {
+	if err != nil {
+		return "", false
+	}
+	p := s
+	if v, rest, cut := strings.Cut(s, " "); pattern && cut && v != "" && strings.ToUpper(v) == v {
+		p = strings.TrimLeft(rest, " ")
+	}
+	if host, _, ok := strings.Cut(p, "/"); pattern && ok && strings.Contains(host, ".") {
+		p = "/" // a host pattern: example.com/x
+	}
+	if s != "" && (p == "" || p[0] != '/') {
 		return "", false
 	}
 	return s, true

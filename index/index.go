@@ -282,10 +282,13 @@ func Run(ctx context.Context, o Options) (Status, error) {
 	}
 	if len(extra) > 0 {
 		live := extra[:0]
+		ex, known := set(r.Exclude), map[string]bool{}
 		for _, f := range extra {
-			if _, err := os.Lstat(f); errors.Is(err, fs.ErrNotExist) {
+			if info, err := os.Lstat(f); errors.Is(err, fs.ErrNotExist) || err == nil && skipExplicit(r.root, ex, known, f, info) {
 				// Deleted since its points were stored (a files-only run after a
-				// branch switch): purge it, it is not a parse failure.
+				// branch switch), or no longer a file the index takes (replaced by
+				// a symlink, which may point out of the root): purge it, it is
+				// not a parse failure.
 				if err := purge(f); err != nil {
 					return r.finish(ctx, err)
 				}

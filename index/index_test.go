@@ -1325,3 +1325,40 @@ func TestRunMaxFiles(t *testing.T) {
 	require.ErrorIs(t, err, ErrTooManyFiles)
 	assert.Equal(t, 2, e.count(t, store.Filter{}))
 }
+
+// A referrer re-indexed because its target moved is not read once it became a
+// symlink: the link may point out of the root.
+func TestReferrerTurnedSymlinkIsPurged(t *testing.T) {
+	e := newEnv(t)
+	target := e.write(t, "a.go", "func Target\n")
+	caller := e.write(t, "b.go", "func Caller -> a.Target\n")
+	if _, err := e.run(t, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.symbols(t, caller)["Caller"].Relations[0].TargetID; got == "" {
+		t.Fatal("setup: caller did not resolve")
+	}
+	secret := filepath.Join(t.TempDir(), "secrets.txt")
+	if err := os.WriteFile(secret, []byte("func PRIVATE_TOKEN_12345\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(caller); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, caller); err != nil {
+		t.Fatal(err)
+	}
+	e.write(t, "a.go", "\nfunc Target\n")
+	if _, err := e.run(t, func(o *Options) { o.Files = []string{target} }); err != nil {
+		t.Fatal(err)
+	}
+	hits, err := e.store.Scroll(context.Background(), "c", store.Filter{}, store.MaxScroll)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range hits {
+		if strings.Contains(h.Symbol.Content, "PRIVATE_TOKEN_12345") {
+			t.Fatal("outside-root secret was embedded and stored through a stale referrer symlink")
+		}
+	}
+}

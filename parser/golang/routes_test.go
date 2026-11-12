@@ -138,6 +138,57 @@ func TestX(e *echo.Echo) { e.GET("/t", h) }
 	assert.Empty(t, routeList(t, "web/x_test.go", test))
 }
 
+func TestChiRoutes(t *testing.T) {
+	src := `package api
+
+import (
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/acme/app/handlers"
+)
+
+type articles struct{}
+
+func (a articles) List(w http.ResponseWriter, r *http.Request) {}
+
+func show(w http.ResponseWriter, r *http.Request) {}
+
+func Router(auth func(http.Handler) http.Handler) http.Handler {
+	r := chi.NewRouter()
+	a := articles{}
+	r.Get("/", show)
+	r.Route("/articles", func(r chi.Router) {
+		r.Get("/", a.List)
+		r.With(auth).Post("/{id}", handlers.Save)
+		r.Route("/{id}/comments", func(c chi.Router) {
+			c.Delete("/{cid}", show)
+		})
+	})
+	r.Group(func(g chi.Router) {
+		g.Use(auth)
+		g.Method(http.MethodPut, "/put", http.HandlerFunc(show))
+		g.HandleFunc("/hf", func(w http.ResponseWriter, r *http.Request) {})
+	})
+	r.Mount("/admin", adminRouter())
+	r.Get("/after", show) // the outer r again, no prefix
+	return r
+}
+
+func adminRouter() http.Handler { return nil }
+`
+	assert.Equal(t, []string{
+		"chi Get api.Router./ -> api.show",
+		"chi Get api.Router./articles/ -> api.articles.List",
+		"chi Post api.Router./articles/{id} -> github.com/acme/app/handlers.Save",
+		"chi Delete api.Router./articles/{id}/comments/{cid} -> api.show",
+		"chi Method api.Router./put ->",
+		"chi HandleFunc api.Router./hf ->",
+		"chi Mount api.Router./admin ->",
+		"chi Get api.Router./after -> api.show",
+	}, routeList(t, "api/r.go", src))
+}
+
 func TestGinRoutes(t *testing.T) {
 	src := `package api
 

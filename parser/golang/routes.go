@@ -2,6 +2,7 @@ package golang
 
 import (
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 
@@ -13,10 +14,11 @@ import (
 // that imports it: a method named GET on another type is no route elsewhere.
 type framework struct {
 	name    string
-	module  string         // import path without a /vN suffix
-	methods map[string]int // registration method -> index of its path argument
-	group   string         // method returning a sub-router prefixed by its path argument
-	last    bool           // the handler is the last argument (after middleware), not the one after the path
+	module  string          // import path without a /vN suffix
+	methods map[string]int  // registration method -> index of its path argument
+	group   string          // method returning a sub-router prefixed by its path argument
+	last    bool            // the handler is the last argument (after middleware), not the one after the path
+	inline  map[string]bool // methods returning a router with the receiver's prefix (chi With, Group)
 }
 
 var frameworks = []framework{
@@ -27,6 +29,10 @@ var frameworks = []framework{
 	{name: "gin", module: "github.com/gin-gonic/gin", group: "Group", last: true, methods: map[string]int{
 		"GET": 0, "POST": 0, "PUT": 0, "DELETE": 0, "PATCH": 0, "OPTIONS": 0, "HEAD": 0,
 		"Any": 0, "Match": 1, "Handle": 1, "Static": 0, "StaticFile": 0, "StaticFS": 0,
+	}},
+	{name: "chi", module: "github.com/go-chi/chi", group: "Route", inline: map[string]bool{"With": true, "Group": true}, methods: map[string]int{
+		"Get": 0, "Post": 0, "Put": 0, "Delete": 0, "Patch": 0, "Options": 0, "Head": 0, "Connect": 0, "Trace": 0,
+		"Handle": 0, "HandleFunc": 0, "Method": 1, "MethodFunc": 1, "Mount": 0,
 	}},
 }
 
@@ -84,41 +90,80 @@ func (fc *file) declRoutes(decl *gotreesitter.Node, sym *parser.Symbol, params m
 			i++
 		}
 	}
-	parser.Walk(parser.Field(decl, fc.lang, "body"), func(c *gotreesitter.Node) bool {
-		switch c.Type(fc.lang) {
-		case "short_var_declaration", "assignment_statement":
-			l := parser.NamedChildren(parser.Field(c, fc.lang, "left"))
-			r := parser.NamedChildren(parser.Field(c, fc.lang, "right"))
-			if len(l) == 1 && len(r) == 1 {
-				if p, ok := fc.groupPrefix(r[0], groups); ok {
-					groups[fc.text(l[0])] = p
+	var walk func(n *gotreesitter.Node, groups map[string]string)
+	walk = func(n *gotreesitter.Node, groups map[string]string) {
+		parser.Walk(n, func(c *gotreesitter.Node) bool {
+			switch c.Type(fc.lang) {
+			case "short_var_declaration", "assignment_statement":
+				l := parser.NamedChildren(parser.Field(c, fc.lang, "left"))
+				r := parser.NamedChildren(parser.Field(c, fc.lang, "right"))
+				if len(l) == 1 && len(r) == 1 {
+					if p, ok := fc.groupPrefix(r[0], groups); ok {
+						groups[fc.text(l[0])] = p
+					}
+				}
+			case "call_expression":
+				fn := parser.Field(c, fc.lang, "function")
+				args := parser.NamedChildren(parser.Field(c, fc.lang, "arguments"))
+				switch fn.Type(fc.lang) {
+				case "identifier": // f(g): g's prefix reaches f's parameter
+					name := fc.text(fn)
+					for j, a := range args {
+						p := fc.prefix(a, groups) // "" for anything that is no group
+						if seen[name] == nil {
+							seen[name] = map[int]string{}
+						}
+						if q, dup := seen[name][j]; dup && q != p {
+							p = "" // calls disagree: the path stays as written
+						}
+						seen[name][j] = p
+					}
+				case "selector_expression":
+					if body, param, p, ok := fc.scope(c, fn, args, groups); ok {
+						inner := maps.Clone(groups) // the closure's parameter shadows an outer router
+						inner[param] = p
+						walk(body, inner)
+						return false
+					}
+					if s, ok := fc.route(c, fn, args, groups, sym); ok {
+						out = append(out, s)
+					}
 				}
 			}
-		case "call_expression":
-			fn := parser.Field(c, fc.lang, "function")
-			args := parser.NamedChildren(parser.Field(c, fc.lang, "arguments"))
-			switch fn.Type(fc.lang) {
-			case "identifier": // f(g): g's prefix reaches f's parameter
-				name := fc.text(fn)
-				for j, a := range args {
-					p := fc.prefix(a, groups) // "" for anything that is no group
-					if seen[name] == nil {
-						seen[name] = map[int]string{}
-					}
-					if q, dup := seen[name][j]; dup && q != p {
-						p = "" // calls disagree: the path stays as written
-					}
-					seen[name][j] = p
-				}
-			case "selector_expression":
-				if s, ok := fc.route(c, fn, args, groups, sym); ok {
-					out = append(out, s)
-				}
-			}
-		}
-		return true
-	})
+			return true
+		})
+	}
+	walk(parser.Field(decl, fc.lang, "body"), groups)
 	return out
+}
+
+// scope matches chi's r.Route("/x", func(r chi.Router) {...}) and
+// r.Group(func(r chi.Router) {...}): the closure body, its router
+// parameter's name and that router's prefix.
+func (fc *file) scope(call, fn *gotreesitter.Node, args []*gotreesitter.Node, groups map[string]string) (*gotreesitter.Node, string, string, bool) {
+	if len(args) == 0 || args[len(args)-1].Type(fc.lang) != "func_literal" {
+		return nil, "", "", false
+	}
+	lit := args[len(args)-1]
+	var param string
+	if pds := parser.NamedChildren(parser.Field(lit, fc.lang, "parameters")); len(pds) > 0 {
+		if names := fc.names(pds[0]); len(names) > 0 {
+			param = names[0]
+		}
+	}
+	method := fc.text(parser.Field(fn, fc.lang, "field"))
+	for _, fw := range fc.routers {
+		if fw.inline == nil || param == "" {
+			continue
+		}
+		if fw.inline[method] {
+			return parser.Field(lit, fc.lang, "body"), param, fc.prefix(parser.Field(fn, fc.lang, "operand"), groups), true
+		}
+		if p, ok := fc.groupPrefix(call, groups); ok {
+			return parser.Field(lit, fc.lang, "body"), param, p, true
+		}
+	}
+	return nil, "", "", false
 }
 
 // route builds the symbol of "recv.Method(path, handler, ...)" when Method
@@ -215,6 +260,15 @@ func (fc *file) groupPrefix(e *gotreesitter.Node, groups map[string]string) (str
 func (fc *file) prefix(recv *gotreesitter.Node, groups map[string]string) string {
 	if p, ok := fc.groupPrefix(recv, groups); ok {
 		return p
+	}
+	if recv.Type(fc.lang) == "call_expression" { // r.With(mw).Get(...)
+		if fn := parser.Field(recv, fc.lang, "function"); fn.Type(fc.lang) == "selector_expression" {
+			for _, fw := range fc.routers {
+				if fw.inline[fc.text(parser.Field(fn, fc.lang, "field"))] {
+					return fc.prefix(parser.Field(fn, fc.lang, "operand"), groups)
+				}
+			}
+		}
 	}
 	return groups[fc.text(recv)]
 }

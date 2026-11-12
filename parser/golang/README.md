@@ -143,6 +143,7 @@ evidence: a method named `GET` in a file that imports no router is no route.
 |-----------|--------|-------------------------------------|-------|
 | Echo | `github.com/labstack/echo` (any `/vN`) | `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `OPTIONS`, `HEAD`, `CONNECT`, `TRACE`, `Any`, `Static`, `File` (first); `Match`, `Add` (second) | `Group(prefix, ...)` |
 | Gin | `github.com/gin-gonic/gin` | `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `OPTIONS`, `HEAD`, `Any`, `Static`, `StaticFile`, `StaticFS` (first); `Match`, `Handle` (second) | `Group(prefix, ...)` |
+| Chi | `github.com/go-chi/chi` (any `/vN`) | `Get`, `Post`, `Put`, `Delete`, `Patch`, `Options`, `Head`, `Connect`, `Trace`, `Handle`, `HandleFunc`, `Mount` (first); `Method`, `MethodFunc` (second) | `Route(prefix, func(r chi.Router) {...})`: the closure's router parameter gets the prefix inside the closure only; `Group(func(r chi.Router) {...})` and `With(mw...)` keep the receiver's prefix |
 
 - The path argument must be a string literal that is `""` or starts with
   `/`, and the argument after it must not be a string literal (except for
@@ -164,8 +165,8 @@ evidence: a method named `GET` in a file that imports no router is no route.
 - **Metadata**: `framework=<the Framework column, lower case>`,
   `method=<the call's method name>`.
   Content is the call expression, signature its first line, `Exported` true.
-- **Relation**: the handler argument (Echo: the one after the path, the rest
-  are middleware; Gin: the last one, middleware come first) gets the `call`
+- **Relation**: the handler argument (Echo and Chi: the one after the path,
+  the rest are middleware; Gin: the last one, middleware come first) gets the `call`
   relation with
   `Value: true` that the enclosing function already has for it (a function
   name, a method value on the receiver or on a local of known type, a
@@ -220,14 +221,14 @@ evidence: a method named `GET` in a file that imports no router is no route.
 | File | Contents |
 |------|----------|
 | `golang.go` | `Analyzer` (`Language`, `Extensions`, `Analyze`), the per-file context, symbol builders (`appendFunc`, `appendTypes`, `appendValues`), relation collection (`relations`, `callTarget`, `genericCall`, `resolveType`), doc comment extraction and the cached `go.mod` module-path lookup. |
-| `routes.go` | The router table by import path (`frameworks`), `routes` / `declRoutes` (group prefixes per declaration, carried into same-file functions), `route` (one registration call), `handlerRelation`. |
+| `routes.go` | The router table by import path (`frameworks`), `routes` / `declRoutes` (group prefixes per declaration, carried into same-file functions), `scope` (chi closures), `route` (one registration call), `handlerRelation`. |
 
 ### Tests
 
 | File | Covers |
 |------|--------|
 | `golang_test.go` | A fixture with grouped declarations, generics, embedded types, aliased/dot/blank imports: symbol kinds, owners, lines, signatures, docs, IDs, metadata; every relation and its target; module path without `go.mod`, nested `go.mod` stopping at the root; malformed input; analyzing the real `parser.go` of this repo; registration; concurrency; generic calls; `Exported` for test files and unexported owners; calls through local function values; a parameter shadowing an import; a local shadowing the receiver; the line of a chained call split over lines; functions and methods named as values (arguments, assignments, literals, returns), with fields, vars, consts, type switch and select locals skipped; an external test package as its own module; a renamed module seen without a restart; same-package types declared in another file, type parameters (receiver ones too) and the receiver skipped; blank vars keeping their relations; goimports-style assumed import names; a `go.mod` symlinked out of the root ignored, one symlinked inside it read. |
-| `routes_test.go` | Gin routes (nested groups in `{}` blocks, `Handle`, middleware before the handler, static files); Echo routes: nested and inline groups, a group in a struct field, a group passed to a function (and the prefix left out when two calls disagree), each handler form (function, method value, package function, inline closure), `Match` / `Add` / `Static` / `File`; no route in a file without a router import, in a test file, or for `Header().Add` / `time.Now().Add`. |
+| `routes_test.go` | Chi routes (nested `Route` closures shadowing the outer router, `With`, `Group`, `Method`, `HandleFunc`, `Mount`); Gin routes (nested groups in `{}` blocks, `Handle`, middleware before the handler, static files); Echo routes: nested and inline groups, a group in a struct field, a group passed to a function (and the prefix left out when two calls disagree), each handler form (function, method value, package function, inline closure), `Match` / `Add` / `Static` / `File`; no route in a file without a router import, in a test file, or for `Header().Add` / `time.Now().Add`. |
 | `zz_verify_test.go` | Verification tests: resolution probes, an unclean (non-normalized) root path, robustness on garbage and edge input, a second round of edge cases, very large and deeply nested files. |
 
 ## Testing

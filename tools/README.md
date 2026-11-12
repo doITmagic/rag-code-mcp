@@ -260,9 +260,7 @@ How it works:
    locals and Go interface methods are not symbols), so semantic neighbours
    are not taken for that name. While a run is indexing or queued it says
    instead that the name may be in a file not indexed yet (grep finds it now). A search with `language`, `path_prefix` or
-   `kinds` that finds nothing says the filters left nothing; with
-   `language=go` and `kinds` holding `route` it adds that Go route
-   registrations are not indexed.
+   `kinds` that finds nothing says the filters left nothing.
    A qualified query with no exact match is then looked up by its last
    segment alone (`Base.Data` -> `Data`): the caller guessed the owner. The
    symbols of that name come first with `match: "name"`, score 1, and the

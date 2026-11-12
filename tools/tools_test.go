@@ -1360,16 +1360,15 @@ func TestSearchIdentifierWithoutExactMatchSaysSo(t *testing.T) {
 	assert.NotContains(t, r.Message, "no symbol named")
 }
 
-// A filtered search with no hit says the filters left nothing; Go routes,
-// which are not indexed, are named.
+// A filtered search with no hit says the filters left nothing.
 func TestSearchEmptyFilteredSaysWhy(t *testing.T) {
 	v := newEnv(t, true, nil)
 	r, _ := v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "router setup", "kinds": []string{"route"}})
 	require.Equal(t, "ok", r.Status, r.Message)
 	assert.Contains(t, r.Message, "no symbol matches these filters")
-	assert.NotContains(t, r.Message, "Go route")
-	assert.Contains(t, emptyFilterMsg("go", []parser.Kind{parser.KindRoute}), "Go route registrations are not indexed")
-	assert.NotContains(t, emptyFilterMsg("php", []parser.Kind{parser.KindRoute}), "Go route")
+	r, _ = v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "router setup", "kinds": []string{"route"}, "language": "go"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	assert.Equal(t, emptyFilterMsg, r.Message)
 }
 
 // After the installed binary is replaced, every answer asks for a restart.

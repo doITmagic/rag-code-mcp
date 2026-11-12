@@ -154,7 +154,7 @@ func (t *tools) search(ctx context.Context, req *mcp.CallToolRequest, in SearchI
 		}
 	}
 	if len(hits) == 0 && (len(ks) > 0 || in.Language != "" || in.PathPrefix != "") {
-		msg = emptyFilterMsg(in.Language, ks)
+		msg = emptyFilterMsg
 	}
 	data := map[string]any{"query": in.Query, "results": hits, "count": len(hits)}
 	return reply("ok", g.add(msg, data), data, w)
@@ -395,12 +395,5 @@ func kinds(ss []string) ([]parser.Kind, error) {
 	return out, nil
 }
 
-// emptyFilterMsg explains a filtered search with no hit, naming the gap
-// behind a Go route filter.
-func emptyFilterMsg(lang string, ks []parser.Kind) string {
-	msg := "no symbol matches these filters: widen or drop language, path_prefix or kinds"
-	if lang == "go" && slices.Contains(ks, parser.KindRoute) {
-		msg += "; Go route registrations are not indexed (known limitation): grep the router setup"
-	}
-	return msg
-}
+// emptyFilterMsg explains a filtered search with no hit.
+const emptyFilterMsg = "no symbol matches these filters: widen or drop language, path_prefix or kinds"

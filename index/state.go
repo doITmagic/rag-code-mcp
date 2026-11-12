@@ -60,6 +60,8 @@ type Entry struct {
 // (one used to overwrite the other); a malformed Python assignment gives no
 // nameless symbol; points carry the owner of every relation target
 // (rel_target_owner), which the stale-referrer lookup filters on.
+// Go route registrations (Echo, Gin, Chi, net/http) are route symbols with a
+// handler relation.
 const Format = 15
 
 // State is the per-root snapshot stored at Dir(root)/state.json. Only

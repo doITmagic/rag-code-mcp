@@ -49,6 +49,7 @@ type file struct {
 	fields  map[string]bool   // struct field names declared in this file, less its method names
 	tparams map[string]bool   // type parameters of the declaration being walked
 	test    bool              // a _test.go file: nothing in it is package API
+	routers []*framework      // HTTP routers this file imports
 }
 
 // Analyze parses one Go file. Malformed input yields whatever declarations
@@ -118,14 +119,19 @@ func (Analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 	}
 	// Pass 2: symbols.
 	var syms []parser.Symbol
+	var decls []*gotreesitter.Node // functions and methods, syms[at[i]] is decls[i]
+	var at []int
 	for _, n := range parser.NamedChildren(root) {
 		switch n.Type(lang) {
-		case "function_declaration":
-			syms = fc.appendFunc(syms, n, parser.KindFunction, "", "")
-		case "method_declaration":
-			recv, owner := fc.receiver(n)
-			if owner != "" {
+		case "function_declaration", "method_declaration":
+			k := len(syms)
+			if n.Type(lang) == "function_declaration" {
+				syms = fc.appendFunc(syms, n, parser.KindFunction, "", "")
+			} else if recv, owner := fc.receiver(n); owner != "" {
 				syms = fc.appendFunc(syms, n, parser.KindMethod, recv, owner)
+			}
+			if len(syms) > k {
+				decls, at = append(decls, n), append(at, k)
 			}
 		case "type_declaration":
 			syms = fc.appendTypes(syms, n)
@@ -134,6 +140,9 @@ func (Analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 		case "const_declaration":
 			syms = fc.appendValues(syms, n, "const_spec", parser.KindConstant)
 		}
+	}
+	if len(fc.routers) > 0 && !fc.test { // a test's router setup is no route of the app
+		syms = append(syms, fc.routes(decls, at, syms)...)
 	}
 	return parser.Finalize(f, syms), nil
 }
@@ -148,6 +157,7 @@ func (fc *file) addImport(spec *gotreesitter.Node) {
 	if path == "" {
 		return
 	}
+	fc.addFramework(path)
 	name := assumedName(path)
 	if n := parser.Field(spec, fc.lang, "name"); n != nil {
 		switch n.Type(fc.lang) {

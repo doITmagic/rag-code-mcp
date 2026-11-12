@@ -6,7 +6,8 @@ The `golang` package turns one Go source file into `parser.Symbol` values: one
 symbol per top-level declaration (function, method, type, var, const), with
 call (including functions and methods named as values), type-use and
 embedding relations resolved through the file's own import
-table and the types it declares.
+table and the types it declares, plus one `route` symbol per HTTP route
+registration in a file that imports a router ([Routes](#routes)).
 
 It uses the tree-sitter `go` grammar (through the shared helpers in
 [`parser/ts.go`](../README.md#tree-sitter-helpers-tsgo)), not `go/ast` or
@@ -131,6 +132,43 @@ another); `Start` calls `Stop` ->
 
 Relations of a `var` or `const` spec are shared by every name in that spec.
 
+## Routes
+
+A file that imports an HTTP router gets one `route` symbol per registration
+call in its functions and methods, as PHP does for Laravel. The import is the
+evidence: a method named `GET` in a file that imports no router is no route.
+`_test.go` files produce none (a test's router setup is not the app's).
+
+| Framework | Import | Registration calls (path argument) | Group |
+|-----------|--------|-------------------------------------|-------|
+| Echo | `github.com/labstack/echo` (any `/vN`) | `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `OPTIONS`, `HEAD`, `CONNECT`, `TRACE`, `Any`, `Static`, `File` (first); `Match`, `Add` (second) | `Group(prefix, ...)` |
+
+- The path argument must be a string literal that is `""` or starts with
+  `/`, and the argument after it must not be a string literal (except for
+  `Static` / `File`, whose second argument is a directory or file), so
+  `Header().Add("X-Key", "v")` and `time.Now().Add(d)` are no routes.
+- **Name** is the full path: the group prefixes the file shows joined in front
+  (`g := e.Group("/admin")`, `v1 := g.Group("/v1")`, `s.api = e.Group("/api")`,
+  `e.Group("/u").Static("/", dir)`); an empty result is `/`. A group variable
+  passed to a function of the same file gives that function's parameter its
+  prefix when every call in the file passes the same one; otherwise, and for
+  any router whose prefix the file does not show (a parameter, a field set
+  elsewhere), the path stays as written.
+- **Owner** is the enclosing function or method name (as PHP routes take
+  the enclosing symbol's name), so `admin.GET("/users", h)` in `func Load`
+  of `example.com/app/routes` is `example.com/app/routes.Load./admin/users`.
+  A `GET` and a `POST` of one path in one function share the qualified name
+  (twins, one target).
+- **Metadata**: `framework=echo`, `method=<the call's method name>`.
+  Content is the call expression, signature its first line, `Exported` true.
+- **Relation**: the handler argument gets the `call` relation with
+  `Value: true` that the enclosing function already has for it (a function
+  name, a method value on the receiver or on a local of known type, a
+  package function), so `rag_find_usages` of the handler lists the route.
+  An inline `func(c echo.Context) error {...}`, a method value on an operand
+  of unknown type (`c := NewController(); e.GET(p, c.Index)`) and
+  `Static` / `File` have no handler relation.
+
 ## Known limitations visible in the code
 
 - No type inference: calls on variables, fields or return values
@@ -159,8 +197,10 @@ Relations of a `var` or `const` spec are shared by every name in that spec.
   out of the workspace root is ignored, so the module falls back to the
   directory path.
 - Methods whose receiver type cannot be read produce no symbol.
-- Route registrations (Echo/Gin/Chi `r.GET("/path", h)`, `http.HandleFunc`)
-  are not `route` symbols: `rag_search` with `kinds=route` finds no Go route.
+- Routes: only the frameworks in [Routes](#routes) are read. Routes
+  registered through a project's own helper or a table of structs, a group
+  passed to a method (`s.register(g)`) and a path built at run time
+  (`"/v" + n`) produce no route or keep the path as written.
 - Interface methods are not symbols of their own: they are only listed in the
   interface's `Metadata["methods"]`. `rag_find_usages` on a method declared
   only in an interface (no implementation) answers "no indexed symbol named";
@@ -175,12 +215,14 @@ Relations of a `var` or `const` spec are shared by every name in that spec.
 | File | Contents |
 |------|----------|
 | `golang.go` | `Analyzer` (`Language`, `Extensions`, `Analyze`), the per-file context, symbol builders (`appendFunc`, `appendTypes`, `appendValues`), relation collection (`relations`, `callTarget`, `genericCall`, `resolveType`), doc comment extraction and the cached `go.mod` module-path lookup. |
+| `routes.go` | The router table by import path (`frameworks`), `routes` / `declRoutes` (group prefixes per declaration, carried into same-file functions), `route` (one registration call), `handlerRelation`. |
 
 ### Tests
 
 | File | Covers |
 |------|--------|
 | `golang_test.go` | A fixture with grouped declarations, generics, embedded types, aliased/dot/blank imports: symbol kinds, owners, lines, signatures, docs, IDs, metadata; every relation and its target; module path without `go.mod`, nested `go.mod` stopping at the root; malformed input; analyzing the real `parser.go` of this repo; registration; concurrency; generic calls; `Exported` for test files and unexported owners; calls through local function values; a parameter shadowing an import; a local shadowing the receiver; the line of a chained call split over lines; functions and methods named as values (arguments, assignments, literals, returns), with fields, vars, consts, type switch and select locals skipped; an external test package as its own module; a renamed module seen without a restart; same-package types declared in another file, type parameters (receiver ones too) and the receiver skipped; blank vars keeping their relations; goimports-style assumed import names; a `go.mod` symlinked out of the root ignored, one symlinked inside it read. |
+| `routes_test.go` | Echo routes: nested and inline groups, a group in a struct field, a group passed to a function (and the prefix left out when two calls disagree), each handler form (function, method value, package function, inline closure), `Match` / `Add` / `Static` / `File`; no route in a file without a router import, in a test file, or for `Header().Add` / `time.Now().Add`. |
 | `zz_verify_test.go` | Verification tests: resolution probes, an unclean (non-normalized) root path, robustness on garbage and edge input, a second round of edge cases, very large and deeply nested files. |
 
 ## Testing

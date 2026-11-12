@@ -150,3 +150,14 @@ import * as widgets from './widgets';
 		t.Fatalf("component usages = %q; want only widgets.Button", used)
 	}
 }
+
+// Every .vue with a script has the default symbol `import X from './X.vue'`
+// names: a <script setup> without top-level statements, a plain <script>.
+func TestVueComponentDefaultSymbol(t *testing.T) {
+	setup := "<script setup>\nconst props = defineProps(['title'])\nfunction openCard() { return props.title }\n</script>\n<template><b/></template>\n"
+	d := find(t, analyze(t, "src/StatusCard.vue", setup), "src/StatusCard.default")
+	assert.Equal(t, parser.KindFunction, d.Kind)
+	assert.Equal(t, 1, d.StartLine)
+	plain := "<template><b/></template>\n<script>\nexport const size = 1\n</script>\n"
+	assert.Equal(t, 2, find(t, analyze(t, "src/Plain.vue", plain), "src/Plain.default").StartLine)
+}

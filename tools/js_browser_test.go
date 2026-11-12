@@ -73,6 +73,24 @@ window.resolveError = handleResolve;
 	}
 }
 
+// A <script setup> without top-level statements had no default symbol, so
+// the <StatusCard /> of an importer was a usage of nothing.
+func TestUsagesOfVueSetupComponent(t *testing.T) {
+	v := newEnv(t, false, nil)
+	v.addFiles(t, map[string]string{
+		"src/StatusCard.vue": "<script setup>\nconst props = defineProps(['title']);\nfunction openCard() { return props.title; }\n</script>\n<template>\n  <button @click=\"openCard\">{{ title }}</button>\n</template>\n",
+		"src/Dashboard.vue":  "<script setup>\nimport StatusCard from './StatusCard.vue';\n</script>\n<template>\n  <StatusCard title=\"ok\" />\n</template>\n",
+	})
+	var out struct {
+		Files []FileUsages `json:"files"`
+	}
+	r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "src/StatusCard.default"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	data(t, r, &out)
+	require.Len(t, out.Files, 1, r.Message)
+	assert.Equal(t, filepath.Join(v.root, "src", "Dashboard.vue"), out.Files[0].FilePath)
+}
+
 // A Jest test file relying on the global describe/test (no imports): the
 // helper inside the suite is no indexed symbol.
 func TestJestGlobalSuiteHelperNoSymbol(t *testing.T) {

@@ -111,14 +111,19 @@ func (analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 				}
 			}
 		}
-		var setup *parser.Symbol // the component: top-level statements of <script setup>
+		// The component, what `import X from './X.vue'` names: the <script setup>
+		// block with its top-level statements, else the first script.
+		var setup *parser.Symbol
 		for _, sc := range scripts {
 			out, rels := sc.c.emit(sc.tree)
 			if len(out) == 0 && sc.c.hidden(sc.tree.RootNode(), false) {
 				return nil, fmt.Errorf("parser: %s: not parsed: syntax errors left no declaration", sc.b.grammar)
 			}
 			syms = append(syms, out...)
-			if sc.b.setup && len(rels) > 0 {
+			if sc.b.setup || setup == nil {
+				if !sc.b.setup {
+					rels = nil // shortcut: top-level statements of a plain <script> stay unattributed
+				}
 				start, end := lineSpan(f.Source, sc.b.start, sc.b.end)
 				setup = &parser.Symbol{Name: "default", Kind: parser.KindFunction, Module: module, Exported: true,
 					Content: string(f.Source[sc.b.start:sc.b.end]), StartLine: start, EndLine: end, Relations: rels}

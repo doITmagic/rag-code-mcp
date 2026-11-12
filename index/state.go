@@ -53,7 +53,10 @@ type Entry struct {
 // (export default { f }, const api = { k: f }) targets the declaration it names.
 // 13: a Go function or method named as a value (a handler passed, assigned,
 // returned) is a usage when it links exactly to its declaration.
-const Format = 13
+// 14: a go.mod module line with a tab or a trailing comment gives the module
+// path; a JS named import of a declaration that is also the default export
+// targets it; a JS re-exported namespace import no longer fails its importers.
+const Format = 14
 
 // State is the per-root snapshot stored at Dir(root)/state.json. Only
 // the run goroutine touches it; nothing here locks.

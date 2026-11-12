@@ -171,7 +171,7 @@ type State struct {
     Files  map[string]Entry `json:"files"`            // absolute path -> entry
 }
 
-const Format = 13
+const Format = 14
 ```
 
 `Format` is the version of what parsers and the indexer store. It is bumped

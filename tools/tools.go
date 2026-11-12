@@ -169,6 +169,12 @@ func (t *tools) resolveRoot(ctx context.Context, req *mcp.CallToolRequest, root 
 			return nil, errors.New("the client root is not a file:// URI: pass workspace_root, the absolute path of the project directory")
 		}
 		root = u.Path
+		if h := u.Host; h != "" && !strings.EqualFold(h, "localhost") {
+			if runtime.GOOS != "windows" {
+				return nil, fmt.Errorf("the client root %s is on host %s, not a local path: pass workspace_root, the absolute path of the project directory on this machine", res.Roots[0].URI, h)
+			}
+			root = "//" + h + root // file://wsl.localhost/Ubuntu/x is the UNC path \\wsl.localhost\Ubuntu\x
+		}
 		if runtime.GOOS == "windows" && len(root) > 2 && root[0] == '/' && root[2] == ':' {
 			root = root[1:] // file:///c:/x parses to /c:/x
 		}

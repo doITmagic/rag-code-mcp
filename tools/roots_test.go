@@ -2,6 +2,8 @@ package tools
 
 import (
 	"context"
+	"path/filepath"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -53,4 +55,39 @@ func TestEmptyRootClientWithoutRootsCapability(t *testing.T) {
 		assert.Contains(t, res.Content[0].(*mcp.TextContent).Text, "workspace_root is missing", name)
 	}
 	assert.Zero(t, asked.Load(), "roots/list was sent to a client that did not declare roots")
+}
+
+// A client root file://<host>/path names a path on another machine: outside
+// Windows (where it is a UNC path) it is refused with an error naming the URI
+// and asking for workspace_root, never opened as the local path. A root on
+// file://localhost/ is local.
+func TestClientRootFileURIHost(t *testing.T) {
+	v := newEnv(t, true, nil)
+	call := func(uri string) *mcp.CallToolResult {
+		server := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
+		v.t.register(server)
+		ct, st := mcp.NewInMemoryTransports()
+		_, err := server.Connect(context.Background(), st, nil)
+		require.NoError(t, err)
+		client := mcp.NewClient(&mcp.Implementation{Name: "c", Version: "0"}, nil)
+		client.AddRoots(&mcp.Root{URI: uri})
+		cs, err := client.Connect(context.Background(), ct, &mcp.ClientSessionOptions{ProtocolVersion: "2025-11-25"})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = cs.Close() })
+		res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "rag_search", Arguments: map[string]any{"query": "Foo"}})
+		require.NoError(t, err)
+		return res
+	}
+
+	assert.False(t, call("file://localhost"+filepath.ToSlash(v.root)).IsError, "file://localhost/ is this machine")
+
+	if runtime.GOOS == "windows" {
+		return // file://host/share/x is the UNC path \\host\share\x there
+	}
+	remote := "file://remote-host.example" + filepath.ToSlash(v.root)
+	res := call(remote)
+	require.True(t, res.IsError, "a root on another host must not open the local %s", v.root)
+	msg := res.Content[0].(*mcp.TextContent).Text
+	assert.Contains(t, msg, remote)
+	assert.Contains(t, msg, "workspace_root")
 }

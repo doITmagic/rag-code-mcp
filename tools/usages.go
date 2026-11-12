@@ -122,8 +122,12 @@ func resolveSymbol(ctx context.Context, w *engine.Workspace, query, filePath str
 			cands[i] = toCandidate(h.Symbol)
 		}
 		sort.Slice(cands, func(i, j int) bool { return cands[i].QualifiedName < cands[j].QualifiedName })
-		res, _, _ := reply("ambiguous", fmt.Sprintf("%d symbols match %q: pass the full qualified name or file_path", len(hits), query),
-			map[string]any{"candidates": cands}, w)
+		msg := fmt.Sprintf("%d symbols match %q: pass the full qualified name or file_path", len(hits), query)
+		if c := cands[0]; c.QualifiedName == cands[len(cands)-1].QualifiedName && !slices.ContainsFunc(cands, func(o Candidate) bool { return o.FilePath != c.FilePath }) {
+			// neither a longer name nor file_path tells them apart (routes of one path, doc sections with one heading)
+			msg = fmt.Sprintf("%d symbols in %s share the qualified name %q: data.candidates lists each with its line", len(hits), c.FilePath, c.QualifiedName)
+		}
+		res, _, _ := reply("ambiguous", msg, map[string]any{"candidates": cands}, w)
 		return nil, res
 	}
 	s := hits[0].Symbol
@@ -132,11 +136,11 @@ func resolveSymbol(ctx context.Context, w *engine.Workspace, query, filePath str
 
 // twinKey groups twins: overload signatures, a get/set pair or a merged
 // declaration share a qualified name and a file. Doc chunks (two sections
-// with one heading) are never twins.
+// with one heading) and routes (GET and DELETE of one path) are never twins.
 type twinKey struct{ qn, file string }
 
 func twinOf(s *parser.Symbol) twinKey {
-	if s.Kind == parser.KindChunk {
+	if s.Kind == parser.KindChunk || s.Kind == parser.KindRoute {
 		return twinKey{s.ID, ""}
 	}
 	return twinKey{s.QualifiedName, s.FilePath}

@@ -139,3 +139,61 @@ func users(w http.ResponseWriter, r *http.Request) {}
 	assert.Equal(t, "example.com/app/routes.Load./users", found.Results[0].QualifiedName)
 	assert.Equal(t, "exact", found.Results[0].Match)
 }
+
+// GET /users and DELETE /users registered in one function share a qualified
+// name and a file, but they are two routes, never twins: both are exports
+// and search hits, each keeps only its own handler, and a lookup by their
+// qualified name lists both without advising a name or file that cannot
+// tell them apart.
+func TestGoRoutesOfOnePathAreNotTwins(t *testing.T) {
+	v := newEnv(t, false, nil)
+	v.addFiles(t, map[string]string{
+		"go.mod": "module acme.test/app\n\ngo 1.26\n",
+		"web/routes.go": `package web
+
+import "github.com/gin-gonic/gin"
+
+func ListUsers(c *gin.Context)  {}
+func DeleteUser(c *gin.Context) {}
+
+func Register(r *gin.Engine) {
+	r.GET("/users", ListUsers)
+	r.DELETE("/users", DeleteUser)
+}
+`,
+	})
+	const qn = "acme.test/app/web.Register./users"
+
+	r, _ := v.call(t, "rag_list_package_exports", map[string]any{"workspace_root": v.root, "package": "acme.test/app/web", "kinds": []string{"route"}})
+	require.Equal(t, "ok", r.Status, r.Message)
+	var exp struct{ Exports map[string][]Export }
+	data(t, r, &exp)
+	var sigs []string
+	for _, e := range exp.Exports["route"] {
+		sigs = append(sigs, e.Signature)
+	}
+	assert.ElementsMatch(t, []string{`r.GET("/users", ListUsers)`, `r.DELETE("/users", DeleteUser)`}, sigs)
+
+	r, _ = v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": qn, "kinds": []string{"route"}})
+	require.Equal(t, "ok", r.Status, r.Message)
+	var found struct {
+		Results []SearchHit `json:"results"`
+	}
+	data(t, r, &found)
+	assert.Len(t, found.Results, 2, r.Message)
+
+	r, _ = v.call(t, "rag_call_hierarchy", map[string]any{"workspace_root": v.root, "symbol": qn, "direction": "outgoing"})
+	require.Equal(t, "ambiguous", r.Status, r.Message)
+	assert.NotContains(t, r.Message, "file_path")
+	var amb struct{ Candidates []Candidate }
+	data(t, r, &amb)
+	assert.Len(t, amb.Candidates, 2)
+
+	r, _ = v.call(t, "rag_call_hierarchy", map[string]any{"workspace_root": v.root, "symbol": "acme.test/app/web.ListUsers", "direction": "incoming"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	var tree struct{ Text string }
+	data(t, r, &tree)
+	assert.Contains(t, tree.Text, qn+" (")
+	assert.Contains(t, tree.Text, "routes.go:9)", "the GET route on line 9 calls ListUsers")
+	assert.NotContains(t, tree.Text, "routes.go:10)", "the DELETE route on line 10 does not call ListUsers")
+}

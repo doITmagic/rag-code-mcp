@@ -271,7 +271,7 @@ function boot(): void {
 
 func TestVerifyRoutesFile(t *testing.T) {
 	syms := analyze(t, "/root/routes/web.php", routesSrc)
-	for name, line := range map[string]int{"/users": 9, "/mixed": 10, "posts": 14} {
+	for name, line := range map[string]int{"/users": 9, "/mixed": 10, "/posts": 14} {
 		s, ok := syms["route "+name]
 		require.True(t, ok, "route %s; have %v", name, keys(syms))
 		assert.Equal(t, "", s.Module)

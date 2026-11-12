@@ -135,6 +135,7 @@ class RouteServiceProvider {
     public function map() {
         Route::get('/', 'HomeController@index');
         Route::get('/about', 'HomeController@about');
+        Route::get('users', 'HomeController@users');
     }
 }
 `,
@@ -153,6 +154,13 @@ class RouteServiceProvider {
 	require.Len(t, found.Results, 1, r.Message)
 	assert.Equal(t, `App\Providers.map./about`, found.Results[0].QualifiedName)
 	assert.Equal(t, "exact", found.Results[0].Match)
+
+	// A path without a leading slash is the route Laravel registers: /users.
+	r, _ = v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "/users", "kinds": []string{"route"}})
+	require.Equal(t, "ok", r.Status, r.Message)
+	data(t, r, &found)
+	require.Len(t, found.Results, 1, r.Message)
+	assert.Equal(t, `App\Providers.map./users`, found.Results[0].QualifiedName)
 }
 
 // A property and a method of one name are two symbols: the call

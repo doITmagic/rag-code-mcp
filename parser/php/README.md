@@ -183,10 +183,12 @@ free_fn()` becomes `<namespace>.free_fn.init`.
 
 A route inside `Route::group(['prefix' => 'admin', 'namespace' => 'Backend'], fn)`
 or `Route::prefix('admin')->namespace('Backend')->...->group(fn)` (nested
-groups too) is named with the group prefixes joined by `/` before its URI,
-keeping the URI's own leading `/` or its absence: `Route::get('/users', ...)`
-inside the `admin` group is the route `/admin/users`, `Route::post('x', ...)`
-is `admin/x`. A route outside any prefixed group keeps its URI as written.
+groups too) is named with the group prefixes joined by `/` before its URI.
+The name is the path Laravel registers: each prefix and the URI trimmed of
+`/`, joined with one `/`, a leading `/` added, the root is `/`.
+`Route::get('/users', ...)` and `Route::get('users', ...)` inside the `admin`
+group are both the route `/admin/users`, and outside any group both are
+`/users`.
 
 The argument after the URI gives the route one relation to its handler:
 

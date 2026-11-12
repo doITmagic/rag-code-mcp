@@ -140,7 +140,7 @@ func TestController(t *testing.T) {
 		{"function " + ns + ".free_fn", "", true, 59, 59, "", "function free_fn(array $a = [])"},
 		{"hook " + ns + ".free_fn.init", "free_fn", true, 59, 59, "", "add_action('init', 'cb')"},
 		{"route " + ns + "./users", "", true, 62, 62, "", "Route::post('/users', fn() => 1)"},
-		{"route " + ns + ".admin/photos", "", true, 63, 63, "", "Route::resource('photos', PhotoController::class)"},
+		{"route " + ns + "./admin/photos", "", true, 63, 63, "", "Route::resource('photos', PhotoController::class)"},
 		{"hook " + ns + ".init", "", true, 64, 64, "", "add_action('init', 'my_init', 10, 2)"},
 		{"hook " + ns + ".the_content", "", true, 65, 65, "", "add_filter('the_content', [$this, 'filter'])"},
 	}

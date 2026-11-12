@@ -26,6 +26,10 @@ Route::prefix('api')->middleware('auth')->group(function () {
     Route::apiResource('photos', PhotoController::class);
 });
 Route::get('/', 'Main\MainController@index');
+Route::get('users', 'Main\UserListController@index');
+Route::prefix('panel/')->group(function () {
+    Route::get('users', 'Main\PanelController@users');
+});
 Route::post('/invoke', UserController::class);
 Route::view('/about', 'pages.about');
 `
@@ -35,11 +39,13 @@ func TestLaravelRouteGroupsAndHandlers(t *testing.T) {
 	want := map[string]map[string]string{
 		"/admin/sesiune": {"call getSession": `Backend.StatisticsController.getSession`},
 		"/admin/users":   {"uses_type UsersController": `Backend.UsersController`},
-		"admin/deep/x":   {"call store": `App\Other.XController.store`},
+		"/admin/deep/x":  {"call store": `App\Other.XController.store`},
 		"/admin":         {"call index": `Backend.StatisticsController.index`},
 		"/api/me":        {"call me": `App\Http\Controllers.UserController.me`},
-		"api/photos":     {"uses_type PhotoController": `PhotoController`},
+		"/api/photos":    {"uses_type PhotoController": `PhotoController`},
 		"/":              {"call index": `Main.MainController.index`},
+		"/users":         {"call index": `Main.UserListController.index`},
+		"/panel/users":   {"call users": `Main.PanelController.users`},
 		"/invoke":        {"uses_type UserController": `App\Http\Controllers.UserController`},
 		"/about":         {"imports pages.about": `pages.about`},
 	}
@@ -48,7 +54,7 @@ func TestLaravelRouteGroupsAndHandlers(t *testing.T) {
 		require.True(t, ok, "route %s; have %v", name, keys(syms))
 		assert.Equal(t, rels, targets(s), name)
 	}
-	assert.Equal(t, "apiResource", syms["route api/photos"].Metadata["method"])
+	assert.Equal(t, "apiResource", syms["route /api/photos"].Metadata["method"])
 }
 
 const laravelViewSrc = `<?php

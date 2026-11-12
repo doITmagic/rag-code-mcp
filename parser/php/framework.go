@@ -61,7 +61,8 @@ func frameworkSymbols(calls []rawCall) []parser.Symbol {
 	return out
 }
 
-// route returns the route's URI with the prefixes of the groups around it
+// route returns the route's URI with the prefixes of the groups around it,
+// normalized as Laravel registers it (Route::get('users') is /users)
 // and the relation to its handler: a call to the controller method, a
 // uses_type to a resource or invokable controller, an import of a view.
 func route(call rawCall, groups []rawCall) (string, []parser.Relation) {
@@ -76,17 +77,11 @@ func route(call rawCall, groups []rawCall) (string, []parser.Relation) {
 			}
 		}
 	}
-	uri := call.arg
-	if len(prefixes) > 0 {
-		if u := strings.Trim(uri, "/"); u != "" {
-			prefixes = append(prefixes, u)
-		}
-		lead := ""
-		if strings.HasPrefix(uri, "/") {
-			lead = "/"
-		}
-		uri = lead + strings.Join(prefixes, "/")
+	// As Laravel registers it: prefix and uri trimmed of slashes, joined, a leading slash.
+	if u := strings.Trim(call.arg, "/"); u != "" {
+		prefixes = append(prefixes, u)
 	}
+	uri := "/" + strings.Join(prefixes, "/")
 	r, line := call.route, call.start
 	fqn := r.ctrlFQN
 	switch {

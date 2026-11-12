@@ -1190,7 +1190,14 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 				var ids []string
 				nameOnly := false
 				resolution := parser.ResolutionUnique
-				if tqn := rel.TargetQualifiedName; tqn != "" {
+				if name, ok := strings.CutPrefix(rel.TargetQualifiedName, "window."); ok && lang == "html" {
+					// An html inline handler (onclick="f()") calls the browser
+					// global window.f: a JavaScript function of that name that
+					// is a global (top level of a classic script, or window.f),
+					// never a method, a function of an ES module, nor a symbol
+					// whose qualified name is window.f (a module called window).
+					ids, nameOnly = slices.DeleteFunc(slices.Clone(named("javascript", name)), func(id string) bool { return !idx.global[id] }), true
+				} else if tqn := rel.TargetQualifiedName; tqn != "" {
 					resolution = parser.ResolutionExact
 					ids = exact(lang, tqn)
 					// A TQN that normalizes to a bare name ("..delta") is
@@ -1243,13 +1250,6 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 								}
 							}
 						}
-					}
-					// An html inline handler (onclick="f()") calls the browser
-					// global window.f: a JavaScript function of that name that
-					// is a global (top level of a classic script, or window.f),
-					// never a method nor a function of an ES module.
-					if name, ok := strings.CutPrefix(tqn, "window."); len(ids) == 0 && ok && lang == "html" {
-						ids, nameOnly, resolution = slices.DeleteFunc(slices.Clone(named("javascript", name)), func(id string) bool { return !idx.global[id] }), true, parser.ResolutionUnique
 					}
 					// Otherwise fall back to the name. An unknown owner is
 					// external (vendor, stdlib).

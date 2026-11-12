@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/doITmagic/rag-code-mcp/v2/parser"
+	_ "github.com/doITmagic/rag-code-mcp/v2/parser/web"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -94,4 +95,27 @@ func TestResolveHTMLHandlerToJavaScriptGlobal(t *testing.T) {
 	_, err = e.run(t, nil)
 	require.NoError(t, err)
 	assert.Equal(t, target, e.symbols(t, h2)["page2"].Relations[0].TargetID, "from the store")
+}
+
+// onclick="toggle()" names window.toggle, but a Go package or a JavaScript
+// module called window holding a toggle is not the browser global.
+func TestResolveHTMLHandlerIgnoresModuleNamedWindow(t *testing.T) {
+	parser.Register(realGo)
+	parser.Register(realJS)
+	t.Cleanup(func() {
+		parser.Register(lineAnalyzer{"go", ".go"})
+		parser.Register(lineAnalyzer{"javascript", ".js"})
+	})
+	e := newEnv(t)
+	e.write(t, "go.mod", "module acme.test/app\n\ngo 1.26\n")
+	e.write(t, "window/win.go", "package window\n\nfunc toggle() {}\n")
+	e.write(t, "ui/window.js", "export const toggle = false;\n")
+	js := e.write(t, "web/app.js", "function toggle() {}\n")
+	html := e.write(t, "web/page.html", "<button onclick=\"toggle()\">Toggle</button>\n")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	rels := e.symbols(t, html)["page"].Relations
+	require.Len(t, rels, 1)
+	assert.Equal(t, e.symbols(t, js)["toggle"].ID, rels[0].TargetID)
+	assert.Equal(t, parser.ResolutionUnique, rels[0].Resolution)
 }

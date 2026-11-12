@@ -177,13 +177,16 @@ func analyzeScript(grammar string, src []byte, wsRoot, module, dir, component st
 // export lists, so calls resolve forward references. The caller releases
 // the tree.
 func scanScript(grammar string, src []byte, wsRoot, module, dir, component string) (*fileCtx, *gotreesitter.Tree, error) {
-	if unbalanced(src) {
-		// an error, so the file counts as failed instead of indexed as empty
-		return nil, nil, fmt.Errorf("parser: %s: not parsed: more than %d unclosed brackets", grammar, maxUnclosed)
-	}
 	tree, lang, err := parser.ParseTree(grammar, src)
 	if err != nil {
 		return nil, nil, err
+	}
+	// The parse comes first, bounded by parser.ParseTree's timeout and memory
+	// budget: only it tells an apostrophe in JSX text (Don't) from a string.
+	if tree.RootNode().HasError() && unbalanced(src) {
+		tree.Release()
+		// an error, so the file counts as failed instead of indexed as empty
+		return nil, nil, fmt.Errorf("parser: %s: not parsed: syntax errors and more than %d unclosed brackets", grammar, maxUnclosed)
 	}
 	c := newCtx(src, lang, wsRoot, module, dir, component)
 	for _, nc := range parser.NamedChildren(tree.RootNode()) {
@@ -307,14 +310,17 @@ func (c *fileCtx) markGlobal(s *parser.Symbol, top bool) {
 	}
 }
 
-// maxUnclosed is the most brackets a file may leave open before it is
-// treated as garbage: tree-sitter error recovery is quadratic in the number
-// of lines with an unclosed "(", so a 100 KB file of them takes minutes.
+// maxUnclosed is the most brackets a file whose parse has errors may leave
+// open before it is treated as garbage: error recovery then returns a tree
+// without the file's declarations. The parse runs first, bounded by
+// parser.ParseTree's timeout and memory budget (a 100 KB file of unclosed "("
+// stops at the 3 s timeout, about 330 MB of heap at peak).
 const maxUnclosed = 256
 
 // unbalanced reports whether src ends with more than maxUnclosed brackets
-// left open, in one linear pass that skips strings and comments. Deep but
-// closed nesting is valid code and parses fast.
+// left open, in one linear pass that skips strings and comments. It is asked
+// only about a tree with errors: an apostrophe in JSX text (<p>Don't</p>)
+// reads as a string start, so on its own it would refuse valid files.
 // shortcut: regex literals are not skipped; a "(" inside one counts as open.
 func unbalanced(src []byte) bool {
 	depth := 0

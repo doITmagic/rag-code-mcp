@@ -50,17 +50,22 @@ graph TD
     B --> T[template symbol named<br/>after the component]
     B --> S
     V -->|no| S[analyzeScript]
-    S --> U{more than 256 brackets<br/>still open at the end?}
-    U -->|yes| X[no symbols]
-    U -->|no| P[ParseTree]
-    P --> C[Pass 1 scan: imports, require,<br/>top-level names, export lists]
+    S --> P[ParseTree]
+    P --> U{syntax errors and more than<br/>256 brackets still open at the end?}
+    U -->|yes| X[error: no symbols]
+    U -->|no| C[Pass 1 scan: imports, require,<br/>top-level names, export lists]
     C --> D[Pass 2 topLevel: symbols<br/>+ call relations]
     D --> F[parser.Finalize]
 ```
 
-1. **Bracket guard.** A file that ends with more than 256 brackets still open
-   (strings and comments skipped) is treated as garbage and yields no
-   symbols, because tree-sitter error recovery is quadratic on it. Deep
+1. **Bracket guard.** A file whose parse has syntax errors and that ends with
+   more than 256 brackets still open (strings and comments skipped) is
+   treated as garbage and refused with an error: error recovery on it
+   returns a tree without the file's declarations. The parse runs first,
+   bounded by `parser.ParseTree`'s 3 s timeout and memory budget (a 100 KB
+   file of unclosed `(` stops at the timeout, about 330 MB of heap at peak),
+   because only the parse tells an apostrophe in JSX text (`<p>Don't</p>`)
+   from a string start; a file that parses clean is never refused. Deep
    nesting that closes (300 nested arrays) is valid and parsed.
 2. **Pass 1** records the import table, top-level declared names and what
    they are, `export { ... }` lists and re-exports (`export ... from`), the
@@ -323,8 +328,9 @@ literal's values are not walked, its methods own their calls.
   a config or re-exporting module outside the workspace root (through `..` or
   a symlink): its import stays `<module>.<name>`.
 - The bracket guard does not skip regex literals, so a `(` inside one counts
-  as open. A script it rejects (more than 256 brackets left open) is an
-  error, so the file counts as failed; it is not indexed as an empty file.
+  as open. A script it rejects (syntax errors and more than 256 brackets left
+  open) is an error, so the file counts as failed; it is not indexed as an
+  empty file. A barrel it rejects exports nothing to its importers.
 - Vue blocks are found by plain string scanning (`<script`, `</script`,
   `<template`, last `</template>`).
 - The `javascript` grammar's parse time grows with the square of the number

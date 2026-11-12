@@ -356,10 +356,20 @@ func TestUnbalanced(t *testing.T) {
 	strs := "export function f() { return '" + strings.Repeat("(", 300) + "'; } // " + strings.Repeat("[", 300) + "\n/* " + strings.Repeat("{", 300) + " */\n"
 	assert.False(t, unbalanced([]byte(strs)))
 	assert.Len(t, analyze(t, "strs.js", strs), 1)
-	deep := strings.Repeat("export function f"+strings.Repeat("(", 2000)+"\n", 50)
+	deep := strings.Repeat("f(\n", 900)
 	assert.True(t, unbalanced([]byte(deep)))
 	_, err := analyzer{}.Analyze(parser.File{Path: "/ws/deep.js", Root: "/ws", Source: []byte(deep)})
 	assert.ErrorContains(t, err, "unclosed brackets", "a refused file is a failed file, not an empty one")
+}
+
+func TestJSXTextApostrophesAreNoStrings(t *testing.T) {
+	// The apostrophe of Don't opens no string: each pair of lines would leak one "{".
+	item := "      {ok && <p>Don't close this window</p>}\n      <p>It's still saving</p>\n"
+	src := "export function FaqPage({ ok }: { ok: boolean }) {\n  return (\n    <div>\n" +
+		strings.Repeat(item, 260) + "    </div>\n  );\n}\n"
+	syms, err := analyzer{}.Analyze(parser.File{Path: "/ws/src/FaqPage.tsx", Root: "/ws", Source: []byte(src)})
+	require.NoError(t, err, "a valid component is never refused")
+	assert.Len(t, syms, 1)
 }
 
 func TestOutsideRoot(t *testing.T) {

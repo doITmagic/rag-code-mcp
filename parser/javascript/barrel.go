@@ -115,7 +115,7 @@ func (c *fileCtx) barrel(m string) *barrel {
 func readBarrel(root, m, p, ext string) *barrel {
 	b := &barrel{own: map[string]bool{}, named: map[string]string{}}
 	src, err := os.ReadFile(p)
-	if err != nil || unbalanced(src) {
+	if err != nil {
 		return b
 	}
 	grammar := map[string]string{".ts": "typescript", ".tsx": "tsx"}[ext]
@@ -124,6 +124,9 @@ func readBarrel(root, m, p, ext string) *barrel {
 		return b
 	}
 	defer tree.Release()
+	if tree.RootNode().HasError() && unbalanced(src) {
+		return b
+	}
 	c := newCtx(src, lang, root, m, path.Dir(m), "")
 	c.noFollow = true
 	for _, nc := range parser.NamedChildren(tree.RootNode()) {

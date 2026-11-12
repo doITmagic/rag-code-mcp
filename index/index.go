@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -298,7 +299,7 @@ func Run(ctx context.Context, o Options) (Status, error) {
 		live := extra[:0]
 		ex, known := set(r.Exclude), map[string]bool{}
 		for _, f := range extra {
-			if info, err := os.Lstat(f); errors.Is(err, fs.ErrNotExist) || err == nil && skipExplicit(r.root, ex, known, f, info) {
+			if info, err := os.Lstat(f); vanishedErr(err) || err == nil && skipExplicit(r.root, ex, known, f, info) {
 				// Deleted since its points were stored (a files-only run after a
 				// branch switch), or no longer a file the index takes (replaced by
 				// a symlink, which may point out of the root): purge it, it is
@@ -601,7 +602,7 @@ func (r *run) parse(ctx context.Context, files []string) []parsed {
 	}()
 	byPath := make(map[string]parsed, len(files))
 	for p := range results {
-		if errors.Is(p.err, fs.ErrNotExist) {
+		if vanishedErr(p.err) {
 			// Deleted by git mid-run: the caller purges it, it is not a failure.
 			r.Log.Debug("index: file vanished during the run", "file", p.path)
 			r.vanished = append(r.vanished, p.path)
@@ -1438,4 +1439,11 @@ func embedText(s *parser.Symbol) string {
 		cut--
 	}
 	return t[:cut]
+}
+
+// vanishedErr is true for the error of a file that is no longer there: deleted, or
+// under a path whose parent became a file (chain.go/x.go after a checkout
+// made chain.go a file again).
+func vanishedErr(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
 }

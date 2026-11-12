@@ -90,6 +90,7 @@ graph LR
 | `prefix_test.go` | `Run` adds the model's document prefix before embedding. |
 | `lock_unix_test.go` | A second run on a locked root gets `ErrLocked`. Build tag `unix`. |
 | `lock_test.go` | Two holders of `index.lock` exclude each other, on every platform. |
+| `notdir_test.go` | A file of a files run whose parent directory became a file is purged, not counted as failed. |
 | `fifo_unix_test.go` | A binary file and a fifo in `Files` are skipped without blocking. Build tag `unix`. |
 | `walk_ignored_linux_test.go` | `Walk` opens no file of a git-ignored directory (counted with inotify). Build tag `linux`. |
 | `walk_unix_test.go` | `IsLinkedWorktree` refuses a `.git` that is a FIFO, device or oversized file. Build tag `linux`. |
@@ -355,7 +356,8 @@ A panic in an analyzer is recovered and counted as a parse failure. The file
 is `stat`ed before it is read, so a write in between leaves a newer mtime on
 disk than in the state and the next run picks it up again. A file that grew
 past 256 KiB since the walk is indexed as empty. A file that no longer exists
-when it is parsed (git deleted it during a checkout or rebase) is not a parse
+when it is parsed (git deleted it during a checkout or rebase, or its parent
+directory became a file again: `not a directory`) is not a parse
 failure: it is logged at debug level, left out of `Total`, and purged as gone
 when that happens in pass 1 (see 7. for pass 2).
 

@@ -138,6 +138,10 @@ Relations: `UserController` extends `Controller` ->
 | `use TraitA, TraitB;` inside a class | `uses_type` | Same. |
 | `new Foo()` | `uses_type` | Same; `new $cls` and `new class {}` are skipped. |
 | Parameter and return type declarations (`Webpage $m`, `?\App\User`, `A\|B`, `): View`) of functions and methods | `uses_type` | Same; scalar types and `self` / `static` / `parent` are skipped. |
+| A property's type (`private ?Dispatcher $d`), on the property symbol | `uses_type` | Same. |
+| `Foo::class` in a function or method body or a property's default value (`$casts`, `$middleware`) | `uses_type` | Same; `self::class`, `static::class` and `parent::class` are skipped. |
+| `$this->hasMany('App\Post')` and the other Eloquent relations (`hasOne`, `belongsTo`, `belongsToMany`, `morphOne`, `morphMany`, `morphToMany`, `morphedByMany`, and the second model of `hasOneThrough` / `hasManyThrough`) naming the model as a string | `uses_type` (besides the `call`) | The string, read as fully qualified as PHP does. |
+| Strings naming classes in a `$listen` property (`'App\Events\E' => ['App\Listeners\L']`, Laravel's event map) | `uses_type` | Same; only strings with a `\`. |
 | `Foo::bar()`, `self::bar()`, `static::bar()` | `call` | `<class FQN>.bar`; `parent::bar()` has an empty target. |
 | `$this->m()` / `$this?->m()` | `call` | `<namespace>.<Owner>.m`; when the class does not define `m`, the indexer looks in the classes and traits it declares (`extends`, `implements`, `use`), one level. |
 | `$obj->m()` | `call` | `""` (receiver type unknown) |
@@ -202,8 +206,11 @@ A view outside any `views` folder has module `""`.
 
 ## Known limitations visible in the code
 
-- A class used only as a property type (`private ?Dispatcher $d`) or as
-  `X::class` is not a usage.
+- `X::class` and class-name strings in file-level code (`config/app.php`
+  provider lists, a `database/` seeder array outside a method) are not
+  usages, because a relation needs an owning symbol (see below). A class
+  named in a string anywhere else (`app('App\Svc')`, a `$routeMiddleware`
+  string) is not a usage either.
 - Blade `@component('x.y')` makes no `imports` relation to the component view,
   and `<x-alert />` tag components produce nothing.
 - `define('X', ...)` becomes a constant only at file level (also in a
@@ -254,7 +261,7 @@ A view outside any `views` folder has module `""`.
 |------|--------|
 | `php_test.go` | Registration of both extensions; a controller fixture with group/function/const `use`, attributes, traits, enums, promoted properties, closures, anonymous classes, routes and hooks (kinds, owners, lines, docs, signatures, metadata, relation targets); `define()` inside a namespace is global; hook and route names only from a plain string literal in the name position; a plugin with braced namespaces and parse-error recovery; malformed input; global-namespace function calls; concurrency; parameter and return type uses; a class named with a reserved word (`class Object extends Base`) keeping its name and base (`TestReservedClassName`); the line of a `->` chain call split over lines (`TestChainedCallLine`). |
 | `blade_test.go` | A Blade view with sections, components and includes; a view outside a `views` folder; the file symbol's end line with a trailing newline; a `@component` nested in a `@section`. |
-| `laravel_test.go` | Laravel route groups (array and fluent, nested, namespace) and handler relations (`C@m`, `uses`, `[C::class, m]`, invokable, resource, `Route::view`); `view()` / `View::make()` importing the template, not for a dynamic or package view name. |
+| `laravel_test.go` | Laravel route groups (array and fluent, nested, namespace) and handler relations (`C@m`, `uses`, `[C::class, m]`, invokable, resource, `Route::view`); `view()` / `View::make()` importing the template, not for a dynamic or package view name; `X::class`, property types, Eloquent relation strings and the `$listen` map as `uses_type` (`TestLaravelClassReferences`). |
 | `zz_verify_test.go` | Verification tests: name resolution, global-namespace WordPress code, robustness, a routes file, multiple namespaces in one file, Blade layouts, no shared state between calls. |
 
 ## Testing

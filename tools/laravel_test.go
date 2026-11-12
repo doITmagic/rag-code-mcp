@@ -44,6 +44,34 @@ Route::group(['prefix' => 'admin', 'namespace' => 'Backend'], function () {
 	assert.Empty(t, usagesOf(t, v, `App\Http\Controllers\Main\UsersController::index`))
 }
 
+// An Eloquent relation naming its model as a string and the event map of
+// the event provider are usages of those classes.
+func TestUsagesOfLaravelModelAndListener(t *testing.T) {
+	v := newEnv(t, false, nil)
+	v.addFiles(t, map[string]string{
+		"app/Lawyer.php": "<?php\nnamespace App;\nclass Lawyer {}\n",
+		"app/Listeners/SendEmailListener.php": "<?php\nnamespace App\\Listeners;\nclass SendEmailListener {}\n",
+		"app/Mandate.php": `<?php
+namespace App;
+class Mandate {
+    public function lawyer() { return $this->belongsTo('App\Lawyer'); }
+}
+`,
+		"app/Providers/EventServiceProvider.php": `<?php
+namespace App\Providers;
+class EventServiceProvider {
+    protected $listen = ['App\Events\SendEmail' => ['App\Listeners\SendEmailListener']];
+}
+`,
+	})
+	files := usagesOf(t, v, `App\Lawyer`)
+	require.Len(t, files, 1)
+	assert.Equal(t, `App.Mandate.lawyer`, files[0].Usages[0].Caller)
+	files = usagesOf(t, v, `App\Listeners\SendEmailListener`)
+	require.Len(t, files, 1)
+	assert.Equal(t, `App\Providers.EventServiceProvider.listen`, files[0].Usages[0].Caller)
+}
+
 // The controller method returning view('users.show') is a usage of the
 // template resources/views/users/show.blade.php.
 func TestUsagesOfBladeTemplateFromController(t *testing.T) {

@@ -133,6 +133,8 @@ func (c *collector) walkBody(body *gotreesitter.Node, sym *parser.Symbol, owner 
 		case "function_call_expression", "scoped_call_expression", "member_call_expression",
 			"nullsafe_member_call_expression", "object_creation_expression":
 			c.call(n, sym, owner)
+		case "class_constant_access_expression":
+			c.classRef(n, sym, owner)
 		case "function_definition", "class_declaration", "trait_declaration", "enum_declaration",
 			"interface_declaration", "anonymous_class":
 			return false
@@ -358,27 +360,32 @@ func (c *collector) function(n *gotreesitter.Node) {
 // and return type declarations (nullable and union types included); scalar
 // types and self/static/parent are skipped.
 func (c *collector) signatureTypes(n *gotreesitter.Node, s *parser.Symbol) {
-	for _, part := range []*gotreesitter.Node{c.field(n, "parameters"), c.field(n, "return_type")} {
-		parser.Walk(part, func(t *gotreesitter.Node) bool {
-			if t.Type(c.lang) != "named_type" {
-				return true
+	c.typeUses(c.field(n, "parameters"), s)
+	c.typeUses(c.field(n, "return_type"), s)
+}
+
+// typeUses adds a uses_type relation per class named in the type
+// declarations under n.
+func (c *collector) typeUses(n *gotreesitter.Node, s *parser.Symbol) {
+	parser.Walk(n, func(t *gotreesitter.Node) bool {
+		if t.Type(c.lang) != "named_type" {
+			return true
+		}
+		for _, ch := range parser.NamedChildren(t) {
+			if k := ch.Type(c.lang); k != "name" && k != "qualified_name" {
+				continue
 			}
-			for _, ch := range parser.NamedChildren(t) {
-				if k := ch.Type(c.lang); k != "name" && k != "qualified_name" {
-					continue
-				}
-				raw := c.text(ch)
-				switch strings.ToLower(raw) {
-				case "self", "static", "parent":
-					continue
-				}
-				line, _ := parser.Lines(ch)
-				s.Relations = append(s.Relations, parser.Relation{Kind: parser.RelUsesType, TargetName: short(raw),
-					TargetQualifiedName: qualified(c.resolve(raw, c.classes, "")), Line: line})
+			raw := c.text(ch)
+			switch strings.ToLower(raw) {
+			case "self", "static", "parent":
+				continue
 			}
-			return false
-		})
-	}
+			line, _ := parser.Lines(ch)
+			s.Relations = append(s.Relations, parser.Relation{Kind: parser.RelUsesType, TargetName: short(raw),
+				TargetQualifiedName: qualified(c.resolve(raw, c.classes, "")), Line: line})
+		}
+		return false
+	})
 }
 
 func (c *collector) classLike(n *gotreesitter.Node) {
@@ -462,10 +469,52 @@ func (c *collector) properties(n *gotreesitter.Node, owner string) {
 		if el.Type(c.lang) != "property_element" {
 			continue
 		}
-		if name := strings.TrimPrefix(c.text(c.field(el, "name")), "$"); name != "" {
-			c.syms = append(c.syms, c.symbol(n, name, parser.KindVariable, owner, exported))
+		name := strings.TrimPrefix(c.text(c.field(el, "name")), "$")
+		if name == "" {
+			continue
 		}
+		s := c.symbol(n, name, parser.KindVariable, owner, exported)
+		c.typeUses(n, &s)
+		parser.Walk(el, func(v *gotreesitter.Node) bool {
+			switch v.Type(c.lang) {
+			case "class_constant_access_expression":
+				c.classRef(v, &s, owner)
+			case "string":
+				// Laravel's event map names its classes as strings:
+				// $listen = ['App\Events\E' => ['App\Listeners\L']].
+				if lit := c.literal(v); name == "listen" && strings.Contains(lit, `\`) && className(lit) {
+					c.classString(v, lit, &s)
+				}
+			}
+			return true
+		})
+		c.syms = append(c.syms, s)
 	}
+}
+
+// classRef adds a uses_type relation for X::class; self, static and parent
+// name the enclosing class and are skipped.
+func (c *collector) classRef(n *gotreesitter.Node, s *parser.Symbol, owner string) {
+	fqn := c.classConst(n, owner)
+	if fqn == "" {
+		return
+	}
+	switch strings.ToLower(c.text(n.NamedChild(0))) {
+	case "self", "static", "parent":
+		return
+	}
+	line, _ := parser.Lines(n)
+	s.Relations = append(s.Relations, parser.Relation{Kind: parser.RelUsesType, TargetName: short(fqn),
+		TargetQualifiedName: qualified(fqn), Line: line})
+}
+
+// classString adds a uses_type relation for a class named by a string
+// literal, which PHP always reads as fully qualified.
+func (c *collector) classString(n *gotreesitter.Node, lit string, s *parser.Symbol) {
+	fqn := strings.TrimPrefix(lit, `\`)
+	line, _ := parser.Lines(n)
+	s.Relations = append(s.Relations, parser.Relation{Kind: parser.RelUsesType, TargetName: short(fqn),
+		TargetQualifiedName: qualified(fqn), Line: line})
 }
 
 func (c *collector) method(n *gotreesitter.Node, owner string) {
@@ -565,6 +614,15 @@ func (c *collector) call(n *gotreesitter.Node, sym *parser.Symbol, owner string)
 		})
 		// view('users.show'): the Blade template's qualified name; a package
 		// view (mail::message) is not in the workspace.
+		// $this->hasMany('App\Post'): an Eloquent relation naming its model
+		// as a string (C::class is handled by the walk).
+		if eloquentRelations[name] && target != "" && c.typ(n) == "member_call_expression" { // target set: on $this
+			for i, a := range c.args(n) {
+				if lit := c.literal(a); i < 2 && className(lit) && (i == 0 || strings.HasSuffix(name, "Through")) {
+					c.classString(a, lit, sym)
+				}
+			}
+		}
 		if v := c.viewName(n, viewCall); v != "" {
 			sym.Relations = append(sym.Relations, parser.Relation{
 				Kind: parser.RelImports, TargetName: v, TargetQualifiedName: v, Line: line,

@@ -31,15 +31,15 @@ Route::view('/about', 'pages.about');
 func TestLaravelRouteGroupsAndHandlers(t *testing.T) {
 	syms := analyze(t, "/root/routes/web.php", laravelRoutesSrc)
 	want := map[string]map[string]string{
-		"/admin/sesiune":  {"call getSession": `Backend.StatisticsController.getSession`},
-		"/admin/users":    {"uses_type UsersController": `Backend.UsersController`},
-		"admin/deep/x":    {"call store": `App\Other.XController.store`},
-		"/admin":          {"call index": `Backend.StatisticsController.index`},
-		"/api/me":         {"call me": `App\Http\Controllers.UserController.me`},
-		"api/photos":      {"uses_type PhotoController": `PhotoController`},
-		"/":               {"call index": `Main.MainController.index`},
-		"/invoke":         {"uses_type UserController": `App\Http\Controllers.UserController`},
-		"/about":          {"imports pages.about": `pages.about`},
+		"/admin/sesiune": {"call getSession": `Backend.StatisticsController.getSession`},
+		"/admin/users":   {"uses_type UsersController": `Backend.UsersController`},
+		"admin/deep/x":   {"call store": `App\Other.XController.store`},
+		"/admin":         {"call index": `Backend.StatisticsController.index`},
+		"/api/me":        {"call me": `App\Http\Controllers.UserController.me`},
+		"api/photos":     {"uses_type PhotoController": `PhotoController`},
+		"/":              {"call index": `Main.MainController.index`},
+		"/invoke":        {"uses_type UserController": `App\Http\Controllers.UserController`},
+		"/about":         {"imports pages.about": `pages.about`},
 	}
 	for name, rels := range want {
 		s, ok := syms["route "+name]
@@ -70,6 +70,54 @@ class UserController extends Controller
     }
 }
 `
+
+const laravelModelSrc = `<?php
+namespace App;
+
+use Illuminate\Database\Eloquent\Model;
+use App\Models\Tag;
+
+class Post extends Model
+{
+    private ?Dispatcher $events;
+
+    protected $casts = ['state' => \App\Casts\State::class];
+
+    public function author() { return $this->belongsTo('App\Lawyer'); }
+    public function comments() { return $this->hasMany(Comment::class, 'post_id'); }
+    public function tags() { return $this->belongsToMany('\App\Models\Tag'); }
+    public function through() { return $this->hasManyThrough('App\Deal', 'App\Lawyer'); }
+    public function me() { return [self::class, static::class, $this->hasMany($cls), $this->hasMany('posts table')]; }
+}
+
+class EventServiceProvider extends ServiceProvider
+{
+    protected $listen = [
+        'App\Events\SendEmail' => ['App\Listeners\SendEmailListener'],
+        Registered::class => [SendWelcome::class],
+    ];
+}
+`
+
+// X::class, Eloquent relations naming the model as a string and the $listen
+// map of an event provider are usages of those classes.
+func TestLaravelClassReferences(t *testing.T) {
+	syms := analyze(t, "/root/app/Post.php", laravelModelSrc)
+	m := func(n string) map[string]string { return targets(syms["method App.Post."+n]) }
+	assert.Equal(t, map[string]string{"call belongsTo": "App.Post.belongsTo", "uses_type Lawyer": "App.Lawyer"}, m("author"))
+	assert.Equal(t, map[string]string{"call hasMany": "App.Post.hasMany", "uses_type Comment": "App.Comment"}, m("comments"))
+	assert.Equal(t, map[string]string{"call belongsToMany": "App.Post.belongsToMany", "uses_type Tag": "App\\Models.Tag"}, m("tags"))
+	assert.Equal(t, map[string]string{"call hasManyThrough": "App.Post.hasManyThrough", "uses_type Deal": "App.Deal", "uses_type Lawyer": "App.Lawyer"}, m("through"))
+	assert.Equal(t, map[string]string{"call hasMany": "App.Post.hasMany"}, m("me"), "self/static::class, a dynamic or non-class string are no usage")
+	assert.Equal(t, map[string]string{"uses_type Dispatcher": "App.Dispatcher"}, targets(syms["variable App.Post.events"]))
+	assert.Equal(t, map[string]string{"uses_type State": "App\\Casts.State"}, targets(syms["variable App.Post.casts"]))
+	assert.Equal(t, map[string]string{
+		"uses_type SendEmail":         "App\\Events.SendEmail",
+		"uses_type SendEmailListener": "App\\Listeners.SendEmailListener",
+		"uses_type Registered":        "App.Registered",
+		"uses_type SendWelcome":       "App.SendWelcome",
+	}, targets(syms["variable App.EventServiceProvider.listen"]))
+}
 
 // view('x.y') and View::make('x.y') name the template a controller renders.
 func TestLaravelViewCallImportsTemplate(t *testing.T) {

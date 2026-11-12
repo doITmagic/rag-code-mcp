@@ -13,6 +13,14 @@ var routeMethods = map[string]bool{
 	"view": true, "redirect": true,
 }
 
+// eloquentRelations are the Eloquent methods whose first argument (and second
+// for the *Through ones) is a model class.
+var eloquentRelations = map[string]bool{
+	"hasOne": true, "hasMany": true, "belongsTo": true, "belongsToMany": true,
+	"hasOneThrough": true, "hasManyThrough": true, "morphOne": true, "morphMany": true,
+	"morphToMany": true, "morphedByMany": true,
+}
+
 func isRouteRecv(recv, recvFQN string) bool {
 	return recv == "Route" || recvFQN == `Illuminate\Support\Facades\Route`
 }

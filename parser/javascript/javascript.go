@@ -527,7 +527,9 @@ func templateRels(src []byte, b vueBlock, c *fileCtx, syms []parser.Symbol, comp
 		}
 		qn := ""
 		if c != nil {
-			qn = c.resolveDotted(name)
+			if qn = c.resolveDotted(name); qn == "" && name == component {
+				qn = c.module + ".default" // a recursive component names itself by its file name
+			}
 		}
 		rels = append(rels, parser.Relation{Kind: parser.RelUsesType, TargetName: name[strings.LastIndex(name, ".")+1:], TargetQualifiedName: qn, Line: lineAt(m[0])})
 	}

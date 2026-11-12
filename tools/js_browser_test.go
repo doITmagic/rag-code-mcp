@@ -135,3 +135,20 @@ export function load() {}
 		assert.Equal(t, 0, out.Total, name+": "+r.Message)
 	}
 }
+
+// A recursive component renders itself by its file name, without an import:
+// that tag is a usage too.
+func TestUsagesOfRecursiveVueComponent(t *testing.T) {
+	v := newEnv(t, false, nil)
+	v.addFiles(t, map[string]string{
+		"src/TreeNode.vue": "<script setup>\ndefineProps(['node']);\n</script>\n<template>\n  <li><TreeNode v-for=\"c in node.children\" :node=\"c\" /></li>\n</template>\n",
+		"src/Tree.vue":     "<script setup>\nimport TreeNode from './TreeNode.vue';\n</script>\n<template>\n  <ul><TreeNode :node=\"root\" /></ul>\n</template>\n",
+	})
+	var out struct {
+		Files []FileUsages `json:"files"`
+	}
+	r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "TreeNode"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	data(t, r, &out)
+	assert.Len(t, out.Files, 2, r.Message)
+}

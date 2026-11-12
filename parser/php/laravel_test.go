@@ -187,3 +187,30 @@ func TestLaravelViewCallImportsTemplate(t *testing.T) {
 		assert.NotEqual(t, "imports", string(r.Kind), "a dynamic or namespaced view name is not a template of the workspace")
 	}
 }
+
+// A closure or arrow function parameter shadows the outer variable of the
+// same name, typed or not; use() and an arrow function bring the outer one in.
+func TestClosureReceiverScope(t *testing.T) {
+	syms := analyze(t, "/root/app.php", `<?php
+namespace App;
+class Mailer { public function a() {} public function b() {} public function c() {} public function d() {} public function e() {} public function f() {} }
+class Sms { public function a() {} public function b() {} }
+function outer(Mailer $service) {
+    $x = function (Sms $service) { $service->a(); };
+    $y = fn(Sms $service) => $service->b();
+    $z = function ($service) { $service->c(); };
+    $w = fn($service) => $service->d();
+    $v = function () use ($service) { $service->e(); };
+    $u = fn() => $service->f();
+}
+`)
+	assert.Equal(t, map[string]string{
+		"call a":           "App.Sms.a",
+		"call b":           "App.Sms.b",
+		"call c":           "",
+		"call d":           "",
+		"call e":           "App.Mailer.e",
+		"call f":           "App.Mailer.f",
+		"uses_type Mailer": "App.Mailer",
+	}, targets(syms["function App.outer"]))
+}

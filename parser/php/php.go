@@ -137,12 +137,47 @@ func (c *collector) walkBody(body *gotreesitter.Node, sym *parser.Symbol, owner 
 			c.call(n, sym, owner)
 		case "class_constant_access_expression":
 			c.classRef(n, sym, owner)
+		case "anonymous_function", "arrow_function":
+			c.closure(n, sym, owner)
+			return false
 		case "function_definition", "class_declaration", "trait_declaration", "enum_declaration",
 			"interface_declaration", "anonymous_class":
 			return false
 		}
 		return true
 	})
+}
+
+// closure walks a closure or arrow function body into sym with its own
+// receiver scope: its parameters shadow outer variables, typed or not; a
+// closure sees only $this properties and its use() variables, an arrow
+// function every outer variable it does not redeclare.
+func (c *collector) closure(n *gotreesitter.Node, sym *parser.Symbol, owner string) {
+	outer, inner := c.vars, map[string]string{}
+	arrow := n.Type(c.lang) == "arrow_function"
+	for k, v := range outer {
+		if arrow || strings.HasPrefix(k, "$this->") {
+			inner[k] = v
+		}
+	}
+	for _, ch := range parser.NamedChildren(n) {
+		if ch.Type(c.lang) == "anonymous_function_use_clause" {
+			parser.Walk(ch, func(v *gotreesitter.Node) bool {
+				if v.Type(c.lang) == "variable_name" {
+					inner[c.text(v)] = outer[c.text(v)]
+				}
+				return true
+			})
+		}
+	}
+	params := c.field(n, "parameters")
+	c.walkBody(params, sym, owner) // default values: new X(), X::class
+	for _, p := range parser.NamedChildren(params) {
+		inner[c.text(c.field(p, "name"))] = c.declType(c.field(p, "type"), owner)
+	}
+	c.vars = inner
+	c.walkBody(c.field(n, "body"), sym, owner)
+	c.vars = outer
 }
 
 // ---- imports and name resolution ----

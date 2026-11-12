@@ -150,7 +150,12 @@ Relations: `UserController` extends `Controller` ->
 | `view('users.show', ...)`, `View::make('users.show')` | `imports` (besides the `call`) | The view name as written, which is the qualified name of `resources/views/users/show.blade.php`; a dynamic name or a package view (`mail::message`) gives none. |
 
 Calls inside closures and arrow functions count toward the enclosing function
-or method. Dynamic calls (`$fn()`) are skipped.
+or method. For receiver types, a closure or arrow function parameter shadows
+the outer variable of the same name, typed or not (`function (Sms $s)` inside
+`f(Mailer $s)` calls `Sms` methods; an untyped `$s` is unknown); a closure
+sees the outer variables it lists in `use (...)` and `$this` properties, an
+arrow function every outer variable it does not redeclare. Dynamic calls
+(`$fn()`) are skipped.
 
 ## Framework handling
 
@@ -269,7 +274,7 @@ A view outside any `views` folder has module `""`.
 |------|--------|
 | `php_test.go` | Registration of both extensions; a controller fixture with group/function/const `use`, attributes, traits, enums, promoted properties, closures, anonymous classes, routes and hooks (kinds, owners, lines, docs, signatures, metadata, relation targets); `define()` inside a namespace is global; hook and route names only from a plain string literal in the name position; a plugin with braced namespaces and parse-error recovery; malformed input; global-namespace function calls; concurrency; parameter and return type uses; a class named with a reserved word (`class Object extends Base`) keeping its name and base (`TestReservedClassName`); the line of a `->` chain call split over lines (`TestChainedCallLine`). |
 | `blade_test.go` | A Blade view with sections, components and includes; `<x-...>` tag components and directives inside `{{-- --}}` comments (`TestBladeTagComponentsAndComments`); a view outside a `views` folder; the file symbol's end line with a trailing newline; a `@component` nested in a `@section`. |
-| `laravel_test.go` | Laravel route groups (array and fluent, nested, namespace) and handler relations (`C@m`, `uses`, `[C::class, m]`, invokable, resource, `Route::view`); `view()` / `View::make()` importing the template, not for a dynamic or package view name; `X::class`, property types, Eloquent relation strings and the `$listen` map as `uses_type` (`TestLaravelClassReferences`); calls on typed parameters, typed, promoted and constructor-assigned properties (`TestTypedReceivers`). |
+| `laravel_test.go` | Laravel route groups (array and fluent, nested, namespace) and handler relations (`C@m`, `uses`, `[C::class, m]`, invokable, resource, `Route::view`); `view()` / `View::make()` importing the template, not for a dynamic or package view name; `X::class`, property types, Eloquent relation strings and the `$listen` map as `uses_type` (`TestLaravelClassReferences`); calls on typed parameters, typed, promoted and constructor-assigned properties (`TestTypedReceivers`); closure and arrow function parameters shadowing an outer typed parameter, `use (...)` and arrow functions seeing it (`TestClosureReceiverScope`). |
 | `zz_verify_test.go` | Verification tests: name resolution, global-namespace WordPress code, robustness, a routes file, multiple namespaces in one file, Blade layouts, no shared state between calls. |
 
 ## Testing

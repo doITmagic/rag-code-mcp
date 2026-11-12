@@ -328,27 +328,38 @@ func usedMembers(ctx context.Context, w *engine.Workspace, sym *parser.Symbol, t
 
 // referrers lists at most limit symbols with a relation to sym, by target
 // id and by target qualified name, deduplicated; cut says there were more.
+// The limit counts live symbols: when files gone from disk took rows of a
+// full scroll, it scrolls again up to MaxScroll.
 func referrers(ctx context.Context, w *engine.Workspace, sym *parser.Symbol, limit int) (out []parser.Symbol, cut bool, err error) {
 	limit = min(limit, store.MaxScroll-1) // one more than limit must fit a Scroll, or cut is never seen
-	byID, err := w.Scroll(ctx, store.Filter{TargetIDs: []string{sym.ID}}, limit+1)
-	if err != nil {
-		return nil, false, err
-	}
-	byQN, err := w.Scroll(ctx, store.Filter{TargetQualifiedNames: []string{sym.QualifiedName}}, limit+1)
-	if err != nil {
-		return nil, false, err
-	}
-	seen := map[string]bool{}
-	for _, h := range live(w, append(byID, byQN...)) {
-		if !seen[h.Symbol.ID] {
-			seen[h.Symbol.ID] = true
-			out = append(out, h.Symbol)
+	for n := limit + 1; ; n = store.MaxScroll {
+		byID, err := w.Scroll(ctx, store.Filter{TargetIDs: []string{sym.ID}}, n)
+		if err != nil {
+			return nil, false, err
 		}
+		byQN, err := w.Scroll(ctx, store.Filter{TargetQualifiedNames: []string{sym.QualifiedName}}, n)
+		if err != nil {
+			return nil, false, err
+		}
+		hits := append(byID, byQN...)
+		alive := live(w, hits)
+		// rows past a full scroll were not seen: dropped ones leave room for them
+		unseen := (len(byID) == n || len(byQN) == n) && len(alive) < len(hits)
+		if unseen && n < store.MaxScroll {
+			continue
+		}
+		seen := map[string]bool{}
+		for _, h := range alive {
+			if !seen[h.Symbol.ID] {
+				seen[h.Symbol.ID] = true
+				out = append(out, h.Symbol)
+			}
+		}
+		if len(out) > limit {
+			return out[:limit], true, nil
+		}
+		return out, unseen, nil
 	}
-	if len(out) > limit {
-		return out[:limit], true, nil
-	}
-	return out, false, nil
 }
 
 // ambiguousByName counts the relations that name the symbol but were left

@@ -96,16 +96,41 @@ func (fc *file) declRoutes(decl *gotreesitter.Node, sym *parser.Symbol, params m
 			i++
 		}
 	}
-	var walk func(n *gotreesitter.Node, groups map[string]string)
-	walk = func(n *gotreesitter.Node, groups map[string]string) {
+	// declared holds the names declared with := in the scope n opens, so an
+	// inner api := r.Group("/x") ends with its block.
+	var walk func(n *gotreesitter.Node, groups map[string]string, declared map[string]bool)
+	walk = func(n *gotreesitter.Node, groups map[string]string, declared map[string]bool) {
 		parser.Walk(n, func(c *gotreesitter.Node) bool {
 			switch c.Type(fc.lang) {
+			case "block", "if_statement", "for_statement", "expression_switch_statement", "type_switch_statement", "select_statement":
+				if c == n {
+					return true
+				}
+				inner, innerDeclared := maps.Clone(groups), map[string]bool{}
+				walk(c, inner, innerDeclared)
+				for k, v := range inner { // an assignment to an outer variable outlives the block
+					if !innerDeclared[k] {
+						groups[k] = v
+					}
+				}
+				return false
 			case "short_var_declaration", "assignment_statement":
+				short := c.Type(fc.lang) == "short_var_declaration"
 				l := parser.NamedChildren(parser.Field(c, fc.lang, "left"))
 				r := parser.NamedChildren(parser.Field(c, fc.lang, "right"))
+				p, ok := "", false
 				if len(l) == 1 && len(r) == 1 {
-					if p, ok := fc.groupPrefix(r[0], groups); ok {
-						groups[fc.text(l[0])] = p
+					p, ok = fc.groupPrefix(r[0], groups)
+				}
+				for _, v := range l {
+					switch name := fc.text(v); {
+					case ok:
+						groups[name] = p
+					case short: // a new variable that is no group shadows an outer one
+						delete(groups, name)
+					}
+					if short {
+						declared[fc.text(v)] = true
 					}
 				}
 			case "call_expression":
@@ -128,7 +153,7 @@ func (fc *file) declRoutes(decl *gotreesitter.Node, sym *parser.Symbol, params m
 					if body, param, p, ok := fc.scope(c, fn, args, groups); ok {
 						inner := maps.Clone(groups) // the closure's parameter shadows an outer router
 						inner[param] = p
-						walk(body, inner)
+						walk(body, inner, map[string]bool{})
 						return false
 					}
 					if s, ok := fc.route(c, fn, args, groups, sym); ok {
@@ -139,7 +164,7 @@ func (fc *file) declRoutes(decl *gotreesitter.Node, sym *parser.Symbol, params m
 			return true
 		})
 	}
-	walk(parser.Field(decl, fc.lang, "body"), groups)
+	walk(parser.Field(decl, fc.lang, "body"), groups, map[string]bool{})
 	return out
 }
 

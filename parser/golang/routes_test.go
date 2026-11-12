@@ -268,3 +268,27 @@ func Setup() *gin.Engine {
 		"gin StaticFile api.Setup./favicon.ico ->",
 	}, routeList(t, "api/r.go", src))
 }
+
+// A group variable shadowed inside a block must not change the prefix of the
+// outer variable after the block ends.
+func TestShadowedGroupKeepsOuterPrefix(t *testing.T) {
+	src := `package web
+
+import "github.com/gin-gonic/gin"
+
+func list(c *gin.Context) {}
+
+func Load(r *gin.Engine) {
+	api := r.Group("/api")
+	if true {
+		api := r.Group("/internal")
+		api.GET("/stats", list)
+	}
+	api.GET("/users", list)
+}
+`
+	assert.Equal(t, []string{
+		"gin GET Load./internal/stats -> list",
+		"gin GET Load./api/users -> list",
+	}, routeList(t, "r.go", src))
+}

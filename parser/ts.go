@@ -17,6 +17,13 @@ import (
 // indexer's binary check could otherwise run for minutes.
 const parseTimeoutMicros = 3 * 1000 * 1000
 
+// parseMemoryBudget bounds the memory of one parse; the library default is
+// 512 MiB. A valid 134 KB PHP data table (symfony polyfill-iconv) peaked at
+// 744 MB of heap and 1.4 s under the default, 207 MB and 0.3 s under this
+// one, and 32,000 files of real projects give the same symbols. A parse the
+// budget stops keeps the tree built so far.
+const parseMemoryBudget = 128 << 20
+
 // maxNesting is how deep the brackets of a file may nest. Error recovery on
 // a cascade of unclosed ones, and the parse of 5000 closed ones, takes
 // hundreds of MB (570 MB for a 12 KB file) and returns a tree without the
@@ -64,7 +71,8 @@ func pool(name string) (*gotreesitter.ParserPool, *gotreesitter.Language, error)
 	defer poolMu.Unlock()
 	p, ok := pools[name]
 	if !ok {
-		p = gotreesitter.NewParserPool(e.Language(), gotreesitter.WithParserPoolTimeoutMicros(parseTimeoutMicros))
+		p = gotreesitter.NewParserPool(e.Language(), gotreesitter.WithParserPoolTimeoutMicros(parseTimeoutMicros),
+			gotreesitter.WithParserPoolMemoryBudgetBytes(parseMemoryBudget))
 		pools[name] = p
 	}
 	return p, p.Language(), nil
@@ -84,9 +92,10 @@ func ParseTree(grammar string, src []byte) (*gotreesitter.Tree, *gotreesitter.La
 	if err != nil {
 		return nil, nil, fmt.Errorf("parser: %s: %w", grammar, err)
 	}
-	// A parse cut short holds part of the file at best: an error, so the file
-	// counts as failed instead of being indexed as empty.
-	if r := t.ParseStopReason(); r == gotreesitter.ParseStopTimeout || r == gotreesitter.ParseStopMemoryBudget {
+	// A parse the timeout cut short holds part of the file at best: an error,
+	// so the file counts as failed and is tried again, instead of being
+	// indexed as empty.
+	if r := t.ParseStopReason(); r == gotreesitter.ParseStopTimeout {
 		return nil, nil, fmt.Errorf("parser: %s: parse stopped: %s", grammar, r)
 	}
 	return t, lang, nil

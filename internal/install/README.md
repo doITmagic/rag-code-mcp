@@ -51,7 +51,7 @@ Tests:
 
 | File | Covers |
 |:---|:---|
-| `install_test.go` | Full run with a fake `docker` (GPU start fails, CPU retry) and an `httptest` Ollama: binary mode `0755`, config written, exact Docker commands, model pulled with progress, PATH line once, Cursor entry and summary snippet; a second run with `-ollama skip` keeps the config and does no Docker or model work; `-ollama local` and `-models-dir`; a relative `-models-dir` is mounted as the absolute host directory (`TestRunRelativeModelsDirMountsHostDir`); errors (bad `-ollama`, binary missing, user answers no); `pullModel` errors and the 412 "Ollama too old" message; a failed container still pulls from an Ollama already on the port; the Ollama image is pulled before the container starts and a failed pull keeps the local image (`TestOllamaImagePulledFirst`); no Qdrant is started. |
+| `install_test.go` | Full run with a fake `docker` (GPU start fails, CPU retry) and an `httptest` Ollama: binary mode `0755`, config written, exact Docker commands, model pulled with progress, PATH line once, Cursor entry and summary snippet; a second run with `-ollama skip` keeps the config and does no Docker or model work; `-ollama local` and `-models-dir`; a relative `-models-dir` is mounted as the absolute host directory (`TestRunRelativeModelsDirMountsHostDir`); errors (bad `-ollama`, binary missing, user answers no); `pullModel` errors and the 412 "Ollama too old" message; a failed container still pulls from an Ollama already on the port; the Ollama image is pulled before the container starts and a failed pull keeps the local image (`TestOllamaImagePulledFirst`); no Qdrant is started; a password in `OLLAMA_BASE_URL` is printed neither in the summary nor in the Ollama wait timeout (`TestInstallHidesOllamaPassword`, `TestWaitHTTPHidesPassword`). |
 | `v1_test.go` | A v1 install is removed (install dir, `~/.local/share/qdrant` when it holds only ragcode collections, PATH line, the `ragcode` entry in `~/.cursor/mcp.config.json`, Docker `rm -f`); answering no to "Replace?", a failed copy or an invalid config leaves v1 untouched; a collection RagCode did not create, or an unreadable collections directory, is kept; a running v1 server is stopped; `RAGCODE_HOME` reaching the v1 directory through a symlink or a relative path keeps the new install (`TestInstallIntoV1DirViaSymlinkOrRelativePathKeepsItself`); on Windows the v1 entries under `%APPDATA%` (Claude Desktop, VS Code) are removed (`TestRemoveV1IDEWindowsAppData`, runs on every OS). |
 | `zz_verify_test.go` | Verification tests: `-ollama local` without Docker still waits and pulls; a cancelled context does not hang `Run`; `waitHTTP` on an unreachable URL returns an error; a reinstall replaces the binary, leaves no temp file and writes `.zshrc` when `SHELL` is zsh. |
 
@@ -128,7 +128,7 @@ Ollama URL and model the next steps use. An invalid config stops the run.
 | `skip` | Nothing: no wait, no pull. |
 
 The wait polls `<ollama_base_url>/api/tags` every 500 ms (3 s per request)
-for up to 60 s. Then the model is pulled with streaming `POST /api/pull`,
+for up to 60 s; a timeout prints the URL without its password. Then the model is pulled with streaming `POST /api/pull`,
 showing progress on one line. HTTP 412 is reported as "this model needs a
 newer Ollama, 0.40 or later". On any failure the installer prints
 `run manually: ollama pull <model>` and carries on.

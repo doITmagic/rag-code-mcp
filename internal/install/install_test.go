@@ -7,11 +7,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -296,4 +298,22 @@ func TestInstallHidesOllamaPassword(t *testing.T) {
 	if strings.Contains(output.String(), "private-ollama-password") {
 		t.Fatal("installer printed the Ollama URL password in its summary")
 	}
+}
+
+// The wait for Ollama times out without printing the password of a
+// basic-auth ollama_base_url.
+func TestWaitHTTPHidesPassword(t *testing.T) {
+	t.Setenv("RAGCODE_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+
+	u, err := url.Parse(srv.URL)
+	require.NoError(t, err)
+	u.User = url.UserPassword("raguser", "superSecretPass99")
+
+	err = waitHTTP(context.Background(), u.String()+"/api/tags", 1*time.Millisecond)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "superSecretPass99")
 }

@@ -257,7 +257,7 @@ func waitHTTP(ctx context.Context, url string, max time.Duration) error {
 			}
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("%s not ready after %s", url, max)
+			return fmt.Errorf("%s not ready after %s", req.URL.Redacted(), max) // no password in the message
 		}
 		select {
 		case <-ctx.Done():

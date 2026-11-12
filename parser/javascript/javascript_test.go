@@ -959,3 +959,25 @@ func TestNamedImportOfDefaultExportedClass(t *testing.T) {
 	}
 	t.Fatal("missing save call relation")
 }
+
+// `import * as ns from './x'; export { ns }` in a barrel: the importer is analyzed, not failed.
+func TestReexportedNamespaceImportDoesNotPanic(t *testing.T) {
+	ws := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(ws, "util.js"), []byte("export function g() {}\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(ws, "barrel.js"), []byte("import * as util from './util';\nexport { util };\n"), 0o644))
+
+	src := "import { util } from './barrel';\nexport function run() { util.g(); }\n"
+	syms, err := analyzer{}.Analyze(parser.File{
+		Path:   filepath.Join(ws, "main.js"),
+		Root:   ws,
+		Source: []byte(src),
+	})
+	require.NoError(t, err)
+	var targets []string
+	for _, s := range syms {
+		for _, r := range s.Relations {
+			targets = append(targets, r.TargetQualifiedName)
+		}
+	}
+	require.Contains(t, targets, "util.g")
+}

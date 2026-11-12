@@ -1072,6 +1072,9 @@ func (c *fileCtx) resolveDotted(text string) string {
 		if t := c.imports[first]; c.picked[first] && rest != "" && !strings.Contains(rest, ".") {
 			// Jwt.getToken() of `export default { getToken }`: the member's own declaration.
 			i := strings.LastIndex(t, ".")
+			if i < 0 { // a picked name that is a re-exported module namespace
+				return join(t, rest)
+			}
 			return c.follow(t[:i], t[i+1:]+"."+rest)
 		}
 		return join(c.imports[first], rest)

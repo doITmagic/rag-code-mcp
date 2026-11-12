@@ -54,6 +54,9 @@ func (c *fileCtx) declarer(m, name string, seen map[string]bool) string {
 	case b.named[name] != "":
 		t := b.named[name]
 		i := strings.LastIndex(t, ".")
+		if i < 0 { // `import * as ns from './x'; export { ns }`: the target is the module itself
+			return t
+		}
 		if b.bare[t[:i]] {
 			return t
 		}

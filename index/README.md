@@ -80,7 +80,7 @@ graph LR
 | `go_value_use_test.go` | With the real Go analyzer, two files of one package: a method passed as `s.firmaJSON` (on a local `s := &server{}` and on the receiver) and a function passed as `handler` link exactly to their declarations in the other file, in a full run and from the store; a field read (also one named like a method of another type), a constant, a variable and `http.MethodGet` in the same positions leave no relation at all. |
 | `resolve_test.go` | A non-fresh run resolves more than 500 targets through the store; a JS `import { n }` of a default-exported declaration resolves by module and name, in a full run and from the store. |
 | `twins_test.go` | Twins in one file resolve to the widest (then first) by qualified name and by name, in a full run and from the store; a qualified name in two files stays ambiguous; a wider twin added later re-resolves the unchanged caller in a files run; `..delta` resolves by name (unique, then ambiguous), never exact. |
-| `resolve_files_test.go` | A files run sees the stored candidates too: a target ambiguous in a full run stays ambiguous by exact and suffix match; removing one of two candidates (file deleted or symbol edited away) makes the unchanged caller unique. |
+| `resolve_files_test.go` | A files run sees the stored candidates too: a target ambiguous in a full run stays ambiguous by exact and suffix match; removing one of two candidates (file deleted, symbol edited away, or one of two same-named methods of one file) makes the unchanged caller unique. |
 | `resolve_fix_test.go` | Name and qualified resolution stay within one language (html may cross), targets defined later, inherited-member fallback, a files run after a failed run widens to a full walk, symlinked `.ragcode` directories and device files are refused, an exact suffix match (Python) turned ambiguous by a new symbol with that suffix, a PHP suffix match only `unique`, a Python suffix never cut inside a package (`json.dumps` vs `src.flask.json.dumps`). |
 | `gdscript_test.go` | `extends "res://x.gd"` resolves to the script's class, named by `class_name` or after the file, in full and files runs; `super.run()` in a `class_name` hierarchy (`BaseTrigger.run`, defined in the base's base `Cutscene`) resolves exactly through the bases, and by name when the owner is only in the store; a scene node's attached script resolves to the script's class. |
 | `prefix_test.go` | `Run` adds the model's document prefix before embedding. |
@@ -354,9 +354,12 @@ re-parsed and re-resolved in the same run:
    `TargetQualifiedNames`, and for points with a matching `TargetName` whose
    relation was resolved by name or not at all, or by a qualified suffix that
    a new symbol also has (`pkg.Svc` with a new `lib.pkg.Svc`: no longer unique).
-5. Read the names of the vanished IDs; for a `(language, name)` no symbol of
-   the run still has, query for points with that `TargetName` whose relation
-   is ambiguous: one candidate fewer may make it unique. The points of gone
+5. Read the names of the vanished IDs; for a vanished candidate that is not
+   still in its own file under the same qualified name (it only moved), query
+   for points with that `TargetName` and language whose relation is
+   ambiguous: one candidate fewer may make it unique. The same name left on
+   another owner in that file (`Alpha.Close` after `Beta.Close` is deleted)
+   or in another file of the run does not count as kept. The points of gone
    files are purged only after this step, so their names can still be read.
 
 Lookups are batched: 500 values per query, and a batch whose hits reach

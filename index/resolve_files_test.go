@@ -59,3 +59,22 @@ func TestResolutionRemovedCandidateRepairsAmbiguity(t *testing.T) {
 		})
 	}
 }
+
+// Removing one of two same-named methods of one file (Beta.Close next to
+// Alpha.Close) also repairs the ambiguity: the name survives in the file, the
+// candidate does not.
+func TestResolutionRemovedSameFileCandidateRepairsAmbiguity(t *testing.T) {
+	e := newEnv(t)
+	caller := e.write(t, "caller.go", "func Use -> Close\n")
+	models := e.write(t, "models.go", "method Alpha.Close\nmethod Beta.Close\n")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	require.Equal(t, parser.ResolutionAmbiguous, e.symbols(t, caller)["Use"].Relations[0].Resolution)
+
+	e.write(t, "models.go", "method Alpha.Close\n")
+	_, err = e.run(t, nil)
+	require.NoError(t, err)
+	rel := e.symbols(t, caller)["Use"].Relations[0]
+	assert.Equal(t, parser.ResolutionUnique, rel.Resolution)
+	assert.Equal(t, e.symbols(t, models)["Close"].ID, rel.TargetID)
+}

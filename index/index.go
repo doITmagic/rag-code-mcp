@@ -754,18 +754,20 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 		}
 	}
 	ok := query(gone, func(v []string) store.Filter { return store.Filter{TargetIDs: v} }, add(all))
-	// A name the run removes for good can turn an ambiguous call unique. Kept
-	// means still in its own file (it only moved there): the same name in
-	// another file of the run does not replace a deleted candidate.
-	kept := map[[3]string]bool{}
+	// A candidate the run removes for good can turn an ambiguous call unique.
+	// Kept means still in its own file under its qualified name (it only
+	// moved there): the same name in another file of the run, or on another
+	// owner in the same file (Alpha.Close for a deleted Beta.Close), does not
+	// replace a deleted candidate.
+	kept := map[[4]string]bool{}
 	for _, p := range files {
 		for _, s := range p.syms {
-			kept[[3]string{p.path, s.Language, s.Name}] = true
+			kept[[4]string{p.path, s.Language, s.Name, parser.Normalize(s.QualifiedName)}] = true
 		}
 	}
 	lost := map[string]map[string]bool{} // language -> names
 	ok = ok && query(gone, func(v []string) store.Filter { return store.Filter{IDs: v} }, func(h store.Hit) {
-		if l, n := h.Symbol.Language, h.Symbol.Name; !kept[[3]string{h.Symbol.FilePath, l, n}] {
+		if l, n := h.Symbol.Language, h.Symbol.Name; !kept[[4]string{h.Symbol.FilePath, l, n, parser.Normalize(h.Symbol.QualifiedName)}] {
 			if lost[l] == nil {
 				lost[l] = map[string]bool{}
 			}

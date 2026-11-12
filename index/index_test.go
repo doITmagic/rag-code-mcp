@@ -24,7 +24,8 @@ import (
 
 // lineAnalyzer is a self-contained stand-in for a language analyzer. Each
 // "func NAME [-> TARGET]" line is a function in module <basename>; a TARGET
-// with a dot is a qualified name, without one a bare name. A line "panic"
+// with a dot is a qualified name, without one a bare name. "method O.NAME"
+// is a method of owner O; "class C : base.QN" a class with bases. A line "panic"
 // panics, a line "error" fails. "func NAME +N" spans N more lines.
 type lineAnalyzer struct{ lang, ext string }
 
@@ -53,6 +54,9 @@ func (a lineAnalyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 				s.Relations = append(s.Relations, parser.Relation{Kind: kind, TargetName: b[strings.LastIndex(b, ".")+1:], TargetQualifiedName: b, Line: i + 1})
 			}
 			syms = append(syms, s)
+		case strings.HasPrefix(line, "method "): // method Owner.Name
+			owner, name, _ := strings.Cut(strings.TrimPrefix(line, "method "), ".")
+			syms = append(syms, parser.Symbol{Name: name, Owner: owner, Kind: parser.KindMethod, Module: module, Content: line, StartLine: i + 1})
 		case strings.HasPrefix(line, "tpl "), strings.HasPrefix(line, "var "), strings.HasPrefix(line, "scene "):
 			kind, name, _ := strings.Cut(line, " ")
 			k := map[string]parser.Kind{"tpl": parser.KindTemplate, "var": parser.KindVariable, "scene": parser.KindScene}[kind]

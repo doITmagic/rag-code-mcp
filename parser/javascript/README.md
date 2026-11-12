@@ -103,7 +103,8 @@ exists:
   `jsconfig.json` above the importing file (comments and trailing commas
   allowed; relative `extends` followed until one defines `paths`; targets
   relative to that config's `baseUrl`, else its directory; at most 4
-  `extends` hops). The longest
+  `extends` hops; a config whose real path, symlinks resolved, is outside the
+  workspace root is not read). The longest
   matching prefix wins and, as in TypeScript, no other pattern is tried;
 - when no `paths` pattern matches, through the bundler conventions, relative
   to the nearest `package.json` directory (the workspace root when there is
@@ -139,7 +140,9 @@ to the module that declares the name (`barrel.go`). With
 Own names win, then named re-exports, then `export *` sources; chains are
 cycle-safe and capped. The target file is read only when the workspace root
 is known and the module is a regular `.ts .tsx .js .mjs .cjs .jsx` file under
-it within 4 MiB; its pass 1 is cached process-wide by root and path, checked
+it within 4 MiB (the file itself not a symlink, and its real path inside the
+root: a `..` specifier or a symlinked directory leading out of the root makes
+it absent); its pass 1 is cached process-wide by root and path, checked
 against mtime and size, and does not itself follow imports. When nothing
 declares the name, the import stays `<module>.<name>`. A named re-export
 whose source cannot be read still maps to that source (`x.a`). A package specifier (`react`, `@scope/pkg`, or a path that resolved to
@@ -280,7 +283,9 @@ literal's values are not walked, its methods own their calls.
 - Nuxt auto-imports (no import statement) resolve by name only.
 - tsconfig `paths` targets are relative to the `baseUrl` of the config that
   defines `paths` (or its directory), not to a `baseUrl` inherited through
-  `extends`; package `extends` (`@tsconfig/node20`) are not followed.
+  `extends`; package `extends` (`@tsconfig/node20`) are not followed, nor is
+  a config or re-exporting module outside the workspace root (through `..` or
+  a symlink): its import stays `<module>.<name>`.
 - The bracket guard does not skip regex literals, so a `(` inside one counts
   as open.
 - Vue blocks are found by plain string scanning (`<script`, `</script`,
@@ -306,6 +311,7 @@ literal's values are not walked, its methods own their calls.
 |------|--------|
 | `javascript_test.go` | ESM and CommonJS imports and exports, classes and methods, TypeScript (interfaces, types, enums, abstract classes), TSX, Vue options API, Vue `<script setup lang="ts">`, malformed and unbalanced input, files outside the root, concurrency, registration, default exports and directory (`index`) imports, root-absolute imports, TypeScript type uses, methods of an object literal bound to a const, aliased imports (tsconfig paths, Nuxt conventions), calls in top-level initializers and `export default defineX(...)`, export of object-literal methods, `const C = defineComponent(...)`, barrel re-exports (`export *`, `export { a as b } from`, local alias exports, cycles, cache invalidation, package specifiers never read from disk nor named like a root file of that name, `.`/`..` specifiers), top-level calls of `<script setup>` attributed to `default`, `await f<T>()` calls, top-level variable type annotations, `<script>` and `<script setup>` sharing names, the line of a chained call split over lines, top-level destructuring calls of `<script setup>`, members of an exported object literal followed as re-exports (shorthand, `key: ident`, methods of an inline `export default {...}`, a const both named and default-exported). |
 | `zz_verify_test.go` | Verification tests: JSX and import forms, TS enums and generics, `defineComponent` and CRLF files, robustness, nested CommonJS, component objects in plain JS, template-first `<script setup>`, statelessness, private TS members and syntax-error recovery, two script blocks, deep nesting, concurrent analysis. |
+| `root_test.go` | A re-exporting module reached through `..` or a symlinked directory outside the root, and a tsconfig `extends` through such a symlink, are not read; a symlink inside the root and a parent-directory `extends` still inside it keep working. |
 | `fifo_unix_test.go` | A `tsconfig.json` that is a FIFO is not read (Linux only). |
 
 ## Testing

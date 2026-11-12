@@ -96,6 +96,9 @@ func (c *fileCtx) barrel(m string) *barrel {
 				return e.b
 			}
 		}
+		if !parser.InRoot(c.root, p) { // `..` or a symlinked directory leading out of the workspace
+			continue
+		}
 		b := readBarrel(c.root, m, p, ext)
 		barrelCache.Store(key, barrelEntry{info.ModTime(), info.Size(), b})
 		return b

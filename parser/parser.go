@@ -7,6 +7,7 @@ package parser
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -259,4 +260,25 @@ func RelModule(root, p string) (string, bool) {
 		return strings.TrimSuffix(b, filepath.Ext(b)), false
 	}
 	return strings.TrimSuffix(filepath.ToSlash(rel), filepath.Ext(rel)), true
+}
+
+// InRoot reports whether p is a regular file whose real path (every symlink
+// resolved) lies inside root, resolved too. An analyzer calls it before
+// reading a project file other than the one it parses (go.mod, a tsconfig, a
+// re-exporting module, an __init__.py), so a ".." or a symlink cannot pull a
+// file from outside the workspace into the index; false means "absent".
+func InRoot(root, p string) bool {
+	rp, err := filepath.EvalSymlinks(p) // first: an absent file costs one failed lookup
+	if root == "" || err != nil {
+		return false
+	}
+	rr, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return false
+	}
+	if _, ok := RelModule(rr, rp); !ok {
+		return false
+	}
+	fi, err := os.Stat(rp)
+	return err == nil && fi.Mode().IsRegular()
 }

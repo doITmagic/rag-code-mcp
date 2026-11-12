@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/doITmagic/rag-code-mcp/v2/parser"
 )
 
 // aliases is one file's import-alias table: the "paths" of the nearest
@@ -132,7 +134,10 @@ type tsconfig struct {
 // (e.g. "@tsconfig/node20") are not followed. Upgrade if a repo needs either.
 func readPaths(root, cfg string, depth int) []pathAlias {
 	p := filepath.Join(root, filepath.FromSlash(cfg))
-	if info, err := os.Stat(p); err != nil || !info.Mode().IsRegular() || info.Size() > 4<<20 { // a FIFO would block the read
+	if !parser.InRoot(root, p) { // also keeps a FIFO, `..` and symlinks out of the workspace from being read
+		return nil
+	}
+	if info, err := os.Stat(p); err != nil || info.Size() > 4<<20 {
 		return nil
 	}
 	raw, err := os.ReadFile(p)

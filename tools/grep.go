@@ -99,6 +99,9 @@ func (g *grepRun) add(msg string, data map[string]any) string {
 func (t *tools) grep(ctx context.Context, root, start, word string) (hits []GrepHit, truncated bool) {
 	// Compared without diacritics on both sides: "Salveaza" finds "Salvează".
 	plain := unaccent([]byte(word))
+	if len(plain) == 0 { // only combining marks: an empty pattern would match every line
+		return nil, false
+	}
 	re := regexp.MustCompile(`(?:^|[^A-Za-z0-9_$])` + regexp.QuoteMeta(string(plain)) + `(?:$|[^A-Za-z0-9_])`)
 	files := t.sourceFiles(ctx, root, start, nil, grepFiles)
 	truncated = len(files) >= grepFiles || ctx.Err() != nil // a cancelled walk is not a complete one

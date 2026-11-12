@@ -58,6 +58,7 @@ Tests:
 | File | What it covers |
 |---|---|
 | [`grep_walk_test.go`](grep_walk_test.go) | the grep file cap counts only files git keeps; an unreadable directory does not end the walk; a word without diacritics finds the text written with them, and the reverse. |
+| [`grep_marks_test.go`](grep_marks_test.go) | a symbol made only of combining marks finds no line. |
 | [`go_value_use_test.go`](go_value_use_test.go) | with the real Go analyzer, `rag_find_usages firmaJSON` counts `mux.HandleFunc(p, s.firmaJSON)` in `main.go` for a method declared in another file of the package. |
 | [`js_object_members_test.go`](js_object_members_test.go) | with the real JavaScript analyzer, `rag_find_usages getToken` counts `JwtService.getToken()` calls through `export default { getToken }` in each importer. |
 | [`roots_test.go`](roots_test.go) | an empty `workspace_root` from a client without the `roots` capability is answered at once, `roots/list` is not sent. |

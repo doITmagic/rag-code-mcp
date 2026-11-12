@@ -58,6 +58,38 @@ func (e *env) byID(t *testing.T, id string) parser.Symbol {
 
 var realPython = parser.ForLanguage("python")
 
+// A function owns members too: Repo.save() on a JavaScript function Repo
+// falls back to the bare name util.save. Deleting Repo, then adding it back,
+// in incremental runs must unlink, then relink, the caller as a full run does.
+func TestFilesRunFunctionOwnerDeletedAndAdded(t *testing.T) {
+	parser.Register(realJS)
+	e := newEnv(t)
+	repo := e.write(t, "repo.js", "export default function Repo() {}\n")
+	e.write(t, "util.js", "export function save() {}\n")
+	caller := e.write(t, "caller.js", "import Repo from './repo';\nexport function run() {\n  Repo.save();\n}\n")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	last := func() parser.Relation {
+		rel := e.symbols(t, caller)["run"].Relations
+		return rel[len(rel)-1]
+	}
+	require.Equal(t, "repo.default.save", last().TargetQualifiedName)
+	require.Equal(t, parser.ResolutionUnique, last().Resolution, "precondition: the by-name fallback")
+	linked := last().TargetID
+
+	require.NoError(t, os.Remove(repo))
+	_, err = e.run(t, func(o *Options) { o.Files = []string{}; o.Deleted = []string{repo} })
+	require.NoError(t, err)
+	assert.Empty(t, last().TargetID, "a full run leaves Repo.save() unresolved once Repo is gone")
+	assert.Empty(t, last().Resolution)
+
+	e.write(t, "repo.js", "export default function Repo() {}\n")
+	_, err = e.run(t, func(o *Options) { o.Files = []string{repo} })
+	require.NoError(t, err)
+	assert.Equal(t, linked, last().TargetID)
+	assert.Equal(t, parser.ResolutionUnique, last().Resolution)
+}
+
 // Repo.save() names an owner that exists but does not define save, so
 // resolve falls back to the bare name: util.save (unique). Once the owner
 // class is deleted, a full run leaves the call unresolved (an unknown owner

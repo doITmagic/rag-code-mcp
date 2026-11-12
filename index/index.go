@@ -723,11 +723,17 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 	var oldOfClasses []string // old ids of the files that hold a class now
 	var owners []string       // names an owner-qualified target may start with, whose resolution the run changes
 	addOwner := func(s parser.Symbol) {
+		n := parser.Normalize(s.QualifiedName)
+		// A function owns members too (a JS constructor function, Repo.save()).
+		// shortcut: a function or method adds only its full qualified name, a
+		// third of the lookups of every suffix; add its suffixes if callers
+		// name a function owner by a short name.
 		if s.Kind == parser.KindFunction || s.Kind == parser.KindMethod {
+			owners = append(owners, n)
 			return
 		}
 		// every suffix: a target may name its owner by a short name
-		for n, i := parser.Normalize(s.QualifiedName), 0; i < len(n); i++ {
+		for i := 0; i < len(n); i++ {
 			if i == 0 || n[i-1] == '.' {
 				owners = append(owners, n[i:])
 			}

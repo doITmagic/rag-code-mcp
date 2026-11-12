@@ -33,6 +33,17 @@ restart the server to index it anyway.
 No database server is needed: the index is an embedded SQLite file per
 workspace.
 
+### Tested on
+
+First full indexing of a real project, model `embeddinggemma-2:270m`:
+
+| Machine | Ollama | Project | Files | Time |
+|---|---|---|---|---|
+| Ubuntu 24.04, Intel i9-14900K, 62 GB RAM, NVIDIA RTX 4060 Ti 16 GB, NVMe SSD | Docker, GPU | Go + PHP + JS | 2,790 | 2 min 29 s |
+| Windows 11, Intel i9-12900H, 16 GB RAM, NVIDIA RTX 3050 Ti 4 GB, SSD | native 0.40.16, GPU | PHP + JS | 1,663 | about 10 min |
+
+Later runs index only the files that changed.
+
 ## Install
 
 Download the archive for your platform from the
@@ -43,6 +54,10 @@ the installer from it:
 curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz
 ./rag-code-install -y               # add -ollama local|skip, -skip-ide, -gpu=false
 ```
+
+While v2 is a pre-release (`v2.0.0-rc…`), `latest` in the link above is
+still v1: take the archive from the v2 pre-release on the releases page, or
+put its tag in the link (`releases/download/<tag>/…`).
 
 Or build from source:
 

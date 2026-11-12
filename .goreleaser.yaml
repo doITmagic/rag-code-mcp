@@ -127,13 +127,13 @@ release:
     
     **Linux (amd64):**
     ```bash
-    curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_linux_amd64.tar.gz | tar xz
+    curl -L https://github.com/doITmagic/rag-code-mcp/releases/download/{{.Tag}}/rag-code-mcp_linux_amd64.tar.gz | tar xz
     ./rag-code-install -y
     ```
     
     **macOS (Apple Silicon):**
     ```bash
-    curl -L https://github.com/doITmagic/rag-code-mcp/releases/latest/download/rag-code-mcp_darwin_arm64.tar.gz | tar xz
+    curl -L https://github.com/doITmagic/rag-code-mcp/releases/download/{{.Tag}}/rag-code-mcp_darwin_arm64.tar.gz | tar xz
     ./rag-code-install -y
     ```
     
@@ -153,6 +153,8 @@ brews:
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     
     directory: Formula
+    # A pre-release (v2.0.0-rc1) never reaches the tap: brew users stay on the last final release.
+    skip_upload: auto
     homepage: "https://github.com/doITmagic/rag-code-mcp"
     description: "Local semantic code search for AI assistants over MCP (Go, PHP, Python, JS/TS, GDScript, HTML, docs)."
     license: "MIT"

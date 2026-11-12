@@ -155,6 +155,7 @@ to `index_status.json`:
 | `ErrLocked` | Another run holds `index.lock`. |
 | `ErrHeadChanged` | Git HEAD moved during the run; the caller should queue a full run. |
 | `ErrTooManyFiles` | A full walk found more indexable files than `Options.MaxFiles`; nothing was parsed or embedded. |
+| `ErrNewerFormat` | `state.json` has a higher `Format` than this binary: the index was written by a newer RagCode (a server left running after an update). Nothing is changed; the run fails until the server is restarted. |
 
 ### State and Format
 

@@ -38,6 +38,10 @@ var (
 	// ErrTooManyFiles means a full walk found more indexable files than
 	// Options.MaxFiles: nothing was parsed or embedded.
 	ErrTooManyFiles = errors.New("index: too many files")
+	// ErrNewerFormat means the index was written by a newer RagCode: this
+	// process must not re-index it down to its own Format, the newer servers
+	// would re-index it back up at every change.
+	ErrNewerFormat = errors.New("index: written by a newer RagCode")
 )
 
 const (
@@ -150,6 +154,9 @@ func Run(ctx context.Context, o Options) (Status, error) {
 	r.state, err = LoadState(root)
 	if err != nil {
 		o.Log.Warn("index: state.json unreadable, starting fresh", "root", root, "err", err)
+	}
+	if r.state.Format > Format {
+		return r.finish(ctx, fmt.Errorf("%w (index format %d, this server writes %d): restart this server to run the installed version", ErrNewerFormat, r.state.Format, Format))
 	}
 	// Probed before the state or collection change: a model the embedder
 	// cannot serve (a typo, not pulled) must not drop the index of the old one.

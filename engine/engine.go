@@ -507,7 +507,8 @@ const (
 // enqueue merges a request into the workspace queue and starts its runner
 // when idle; false once Close has begun. A request that is not explicit (the
 // watcher, a tool call on a missing index) is dropped while w.refuse covers
-// its kind: it would walk the whole tree only to be refused again.
+// its kind: it would walk the whole tree only to be refused again (max_files),
+// or the index belongs to a newer RagCode (index.ErrNewerFormat).
 func (e *Engine) enqueue(w *Workspace, kind queueKind, files, deleted []string, explicit bool) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -596,7 +597,9 @@ func (e *Engine) runJobs(w *Workspace) {
 		st, err := e.runOne(w, kind, files, deleted)
 		<-e.slot
 		refuse := kindNone
-		if errors.Is(err, index.ErrTooManyFiles) {
+		if errors.Is(err, index.ErrNewerFormat) {
+			refuse = kindFiles // nothing this process indexes may be written
+		} else if errors.Is(err, index.ErrTooManyFiles) {
 			refuse = kindFull // an index from before the limit still takes file runs
 			if ok, _ := e.store.CollectionExists(e.ctx, w.Collection); !ok {
 				refuse = kindFiles // no index: a file run would walk the tree too
@@ -640,7 +643,7 @@ func (e *Engine) runJobs(w *Workspace) {
 				wt.Stop()
 			}
 			return
-		case errors.Is(err, index.ErrTooManyFiles):
+		case errors.Is(err, index.ErrTooManyFiles), errors.Is(err, index.ErrNewerFormat):
 			// Only a config change helps: no retry. rag_index_workspace scans again.
 			e.log.Warn("engine: index run refused, not retrying", "root", w.Root, "err", err)
 		case err != nil && e.ctx.Err() == nil:

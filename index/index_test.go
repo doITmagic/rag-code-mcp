@@ -1459,3 +1459,23 @@ func TestAmbiguityClearedWhenOtherCandidateDeleted(t *testing.T) {
 		t.Fatalf("caller remains %q with target_id=%q after ambiguity disappeared; want unique surviving target", rel.Resolution, rel.TargetID)
 	}
 }
+
+// An index written by a newer RagCode is left alone: re-indexing it down would
+// make the two versions rebuild it in turns.
+func TestNewerFormatIsNotReindexed(t *testing.T) {
+	e := newEnv(t)
+	f := e.write(t, "a.go", "func A\n")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	st, err := LoadState(e.root)
+	require.NoError(t, err)
+	st.Format = Format + 1
+	require.NoError(t, st.Save())
+	e.write(t, "a.go", "\nfunc A\n")
+	_, err = e.run(t, nil)
+	require.ErrorIs(t, err, ErrNewerFormat)
+	st, err = LoadState(e.root)
+	require.NoError(t, err)
+	assert.Equal(t, Format+1, st.Format)
+	assert.Len(t, e.symbols(t, f), 1, "the newer index keeps its points")
+}

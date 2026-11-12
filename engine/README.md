@@ -280,6 +280,10 @@ process's lock nor an embedder or store outage drops its files.
   dropped, since each would walk the whole tree only to be refused again;
   when the refusal left no index, the watcher's file runs are dropped too.
   Only `Workspace.Index` (`rag_index_workspace`) scans the root again.
+- **Newer index**: a run that ends with `index.ErrNewerFormat` (a server left
+  running after an update, on an index the new version already rebuilt) is
+  handled the same way, and every automatic request is dropped: this process
+  writes nothing to that index until it is restarted.
 - **The root is gone**: when the root is no longer a directory after a failed
   run (deleted while the server runs), nothing is retried. One warning
   ("workspace root is gone, not retrying") is logged, the watcher is stopped

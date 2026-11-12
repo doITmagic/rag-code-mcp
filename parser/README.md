@@ -253,7 +253,7 @@ Every analyzer passes its output through `Finalize(f, syms)`, which:
 
 | Function | Purpose |
 |----------|---------|
-| `ParseTree(grammar, src)` | Parses with a named grammar (`go`, `python`, `php`, `javascript`, `typescript`, `tsx`, `gdscript`, `html`, ...). Returns the tree and the `*gotreesitter.Language` needed for `Node.Type`. A parse stopped by the 3 s timeout is an error (`parse stopped: timeout`), so the file counts as failed instead of being indexed without symbols; one stopped by the 128 MiB memory budget keeps the tree built so far; so is a file whose brackets nest more than 1000 deep (`not parsed: brackets nested N deep`), which is not parsed at all: error recovery on such a cascade takes hundreds of MB. |
+| `ParseTree(grammar, src)` | Parses with a named grammar (`go`, `python`, `php`, `javascript`, `typescript`, `tsx`, `gdscript`, `html`, ...). Returns the tree and the `*gotreesitter.Language` needed for `Node.Type`. A parse stopped by the 3 s timeout is an error (`parse stopped: timeout`), so the file counts as failed instead of being indexed without symbols; one stopped by the 128 MiB memory budget keeps the tree built so far; a file of a code grammar (`go`, `php`, `python`, `javascript`, `typescript`, `tsx`, `gdscript`) whose brackets nest more than 1000 deep is an error too (`not parsed: brackets nested N deep`) and is not parsed at all: error recovery on such a cascade takes hundreds of MB. `html` has no such limit, since brackets mean nothing to it (5000 unclosed ones parse in milliseconds). |
 | `Walk(n, fn)` | Depth-first visit of named nodes; returning `false` skips the children. |
 | `NamedChildren(n)` | Named children in order. For a root whose only child is an `ERROR` node (error recovery wrapped a whole broken file), the children of that node, so the declarations parsed before the broken part are still read. Use it instead of `NamedChildCount`/`NamedChild` loops, which are quadratic in gotreesitter. |
 | `Field`, `Text`, `Lines` | Child by field name, source text of a node, 1-based start/end lines. |
@@ -269,9 +269,10 @@ error recovery can be quadratic on garbage input.
 |------|----------|
 | `parser.go` | `Kind`, `RelationKind`, resolution constants, `Symbol`, `Relation`, `File`, `Analyzer`; `Qualify`, `Normalize` (also turns a Go method expression `(*T).M` into `T.M`), `MatchQualified`, `SymbolID`, `Finalize`; the registry (`Register`, `ForFile`, `ForLanguage`, `Languages`, `Analyze`); `RelModule`; `InRoot`, the check every analyzer makes before reading a project file other than the one it parses (regular file, real path inside the root). |
 | `normalize_test.go` | `TestNormalizeMethodExpression`: `Normalize` on Go method expressions and PHP separators. |
+| `nesting_test.go` | The nesting guard leaves `html` alone: a page with 1001 `(` in a script string still parses. |
 | `ts.go` | Pooled tree-sitter parsers with a parse timeout, `ParseTree`, `Walk`, `NamedChildren`, `Field`, `Text`, `Lines`, `ReleaseParsers`. |
 
-The only test file here is `normalize_test.go`. The rest of the contract is
+The test files here are `normalize_test.go`, `nesting_test.go`, `finalize_test.go` and `broken_test.go`. The rest of the contract is
 exercised by every analyzer's tests (which check IDs, qualified names and line clamping on their
 output) and by the [index](../index/README.md) tests for relation resolution.
 

@@ -31,6 +31,13 @@ const parseMemoryBudget = 128 << 20
 // inside strings counted: the deepest of 33,000 files of real projects is 100.
 const maxNesting = 1000
 
+// nestingGuarded are the grammars the blow-up was measured on. Brackets mean
+// nothing to the others (html), where a real 563 KB page nests 742 deep.
+var nestingGuarded = map[string]bool{
+	"go": true, "php": true, "python": true, "javascript": true,
+	"typescript": true, "tsx": true, "gdscript": true,
+}
+
 // nesting is the deepest count of (, [ and { open at once while reading src,
 // strings and comments included.
 func nesting(src []byte) int {
@@ -85,7 +92,7 @@ func ParseTree(grammar string, src []byte) (*gotreesitter.Tree, *gotreesitter.La
 	if err != nil {
 		return nil, nil, err
 	}
-	if n := nesting(src); n > maxNesting {
+	if n := nesting(src); nestingGuarded[grammar] && n > maxNesting {
 		return nil, nil, fmt.Errorf("parser: %s: not parsed: brackets nested %d deep (limit %d)", grammar, n, maxNesting)
 	}
 	t, err := p.Parse(src)

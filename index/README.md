@@ -80,6 +80,7 @@ graph LR
 | `go_value_use_test.go` | With the real Go analyzer, two files of one package: a method passed as `s.firmaJSON` (on a local `s := &server{}` and on the receiver) and a function passed as `handler` link exactly to their declarations in the other file, in a full run and from the store; a field read (also one named like a method of another type), a constant, a variable and `http.MethodGet` in the same positions leave no relation at all. |
 | `resolve_test.go` | A non-fresh run resolves more than 500 targets through the store; an html call to `window.f` resolves by name to the JavaScript function `f` (never a variable, a Go symbol, nor from a JS caller), in a full run and from the store; a JS `import { n }` of a default-exported declaration resolves by module and name, in a full run and from the store. |
 | `owners_test.go` | Files runs that must match a full run: both twins shifted by one line keep the caller on the first twin; with the real Python analyzer, `Repo.save()` loses its by-name link when class `Repo` is deleted and gains it when `Repo` is added, and `Child.save()` follows `Child` to its new base. |
+| `cross_language_referrers_test.go` | Files runs that must match a full run for `html` and `docs` callers of JavaScript symbols (line analyzers for `.js`, `.fkh`, `.fkd`): removing one of two definitions of `f` turns `onclick`-style `window.f` and `util.f` callers from ambiguous to the remaining one; adding a second definition makes them ambiguous. |
 | `twins_test.go` | Twins in one file resolve to the widest (then first) by qualified name and by name, in a full run and from the store; a qualified name in two files stays ambiguous; a wider twin added later re-resolves the unchanged caller in a files run; `..delta` resolves by name (unique, then ambiguous), never exact. |
 | `resolve_files_test.go` | A files run sees the stored candidates too: a target ambiguous in a full run stays ambiguous by exact and suffix match; removing one of two candidates (file deleted, symbol edited away, or one of two same-named methods of one file) makes the unchanged caller unique. |
 | `resolve_fix_test.go` | Name and qualified resolution stay within one language (html may cross), targets defined later, inherited-member fallback, an ambiguous `self.m()` made exact by a base method added in a later run, a files run after a failed run widens to a full walk, symlinked `.ragcode` directories and device files are refused, an exact suffix match (Python) turned ambiguous by a new symbol with that suffix, a PHP suffix match only `unique`, a Python suffix never cut inside a package (`json.dumps` vs `src.flask.json.dumps`). |
@@ -375,10 +376,13 @@ re-parsed and re-resolved in the same run:
    `uses_type`) `TargetQualifiedName` is its module: `extends
    "res://x/y.gd"` and a scene node's attached script name the script, and
    resolve takes its one top-level class.
+   The `TargetName` lookups here and in step 5 keep referrers of the symbol's
+   own language plus `html` and `docs` ones, which resolve into code of any
+   language (`onclick="f()"` names a JavaScript `f`), as resolve does.
 5. Read the names of the vanished IDs; for a vanished candidate that is not
    still in its own file under the same qualified name (it only moved), query
-   for points with that `TargetName` and language whose relation is
-   ambiguous: one candidate fewer may make it unique. The same name left on
+   for points with that `TargetName` whose relation is ambiguous: one
+   candidate fewer may make it unique. The same name left on
    another owner in that file (`Alpha.Close` after `Beta.Close` is deleted)
    or in another file of the run does not count as kept. The points of gone
    files are purged only after this step, so their names can still be read.

@@ -789,6 +789,12 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 			kept[[4]string{p.path, s.Language, s.Name, parser.Normalize(s.QualifiedName)}] = true
 		}
 	}
+	// callerOf reports whether h, which names a symbol of language lang,
+	// may resolve to it: same language, or html and docs, which link into
+	// code of any language (resolve's keep)
+	callerOf := func(lang string, h parser.Symbol) bool {
+		return h.Language == lang || h.Language == "html" || h.Language == "docs"
+	}
 	lost := map[string]map[string]bool{} // language -> names
 	ok = ok && query(gone, func(v []string) store.Filter { return store.Filter{IDs: v} }, func(h store.Hit) {
 		if l, n := h.Symbol.Language, h.Symbol.Name; !kept[[4]string{h.Symbol.FilePath, l, n, parser.Normalize(h.Symbol.QualifiedName)}] {
@@ -804,11 +810,11 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 			break
 		}
 		ambiguous := func(h parser.Symbol) bool {
-			return slices.ContainsFunc(h.Relations, func(rel parser.Relation) bool {
+			return callerOf(lang, h) && slices.ContainsFunc(h.Relations, func(rel parser.Relation) bool {
 				return names[rel.TargetName] && rel.Resolution == parser.ResolutionAmbiguous
 			})
 		}
-		ok = query(slices.Collect(maps.Keys(names)), func(v []string) store.Filter { return store.Filter{TargetNames: v, Language: lang} }, add(ambiguous))
+		ok = query(slices.Collect(maps.Keys(names)), func(v []string) store.Filter { return store.Filter{TargetNames: v} }, add(ambiguous))
 	}
 	for lang, syms := range byLang {
 		if !ok {
@@ -837,7 +843,7 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 		// one of the added symbols also has; an ambiguous one only with an
 		// owner (self.m()), which may now find m on the owner's base
 		guessed := func(h parser.Symbol) bool {
-			return slices.ContainsFunc(h.Relations, func(rel parser.Relation) bool {
+			return callerOf(lang, h) && slices.ContainsFunc(h.Relations, func(rel parser.Relation) bool {
 				if !names[rel.TargetName] {
 					return false
 				}
@@ -855,7 +861,7 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 		}
 		ok = query(qns, func(v []string) store.Filter { return store.Filter{TargetQualifiedNames: v} }, add(all)) &&
 			query(mods, func(v []string) store.Filter { return store.Filter{TargetQualifiedNames: v} }, add(script)) &&
-			query(nameList, func(v []string) store.Filter { return store.Filter{TargetNames: v, Language: lang} }, add(guessed))
+			query(nameList, func(v []string) store.Filter { return store.Filter{TargetNames: v} }, add(guessed))
 	}
 	// X.m() on an owner X resolves through X: by name when X exists without
 	// m, through X's bases when it inherits m. A class the run adds, removes

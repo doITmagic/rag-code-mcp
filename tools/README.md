@@ -261,7 +261,9 @@ How it works:
    `rag_find_usages`) are one hit, here and in the semantic step. With no
    exact hit the message says `no symbol named "<query>"` (struct fields,
    locals and Go interface methods are not symbols), so semantic neighbours
-   are not taken for that name. While a run is indexing or queued it says
+   are not taken for that name; with `language`, `path_prefix` or `kinds` set
+   it says instead that no symbol of that name matches them (the name may
+   exist outside the filters). While a run is indexing or queued it says
    instead that the name may be in a file not indexed yet (grep finds it now). A search with `language`, `path_prefix` or
    `kinds` that finds nothing says the filters left nothing.
    A qualified query with no exact match is then looked up by its last

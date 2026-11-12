@@ -281,13 +281,13 @@ func TestVerifyRoutesFile(t *testing.T) {
 		assert.True(t, s.Exported)
 	}
 	// group has no string-literal argument of its own: the nested delete is
-	// the route, owned by nothing (top-level closure).
-	d, ok := syms["route /users/{id}"]
+	// the route, owned by nothing (top-level closure), with the group prefix.
+	d, ok := syms["route /admin/users/{id}"]
 	require.True(t, ok, "nested route; have %v", keys(syms))
 	assert.Equal(t, "", d.Owner)
 	assert.Equal(t, "delete", d.Metadata["method"])
 	_, ok = syms["route /about"]
-	assert.False(t, ok, "Route::view is not in the spec's method list")
+	assert.True(t, ok, "Route::view is a route")
 
 	boot, ok := syms["function boot"]
 	require.True(t, ok)

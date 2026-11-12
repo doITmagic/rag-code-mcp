@@ -157,13 +157,34 @@ produce no symbol, so the callback string never becomes a hook or route name.
 
 | Framework | Call shape | Kind | Metadata |
 |-----------|-----------|------|----------|
-| Laravel | `Route::get/post/put/patch/delete/any/match/resource/group(...)`, where the receiver is written `Route` or resolves to `Illuminate\Support\Facades\Route` | `route` | `framework=laravel`, `method=<name>` |
+| Laravel | `Route::get/post/put/patch/delete/options/any/match/resource/apiResource/view/redirect/group(...)`, where the receiver is written `Route` or resolves to `Illuminate\Support\Facades\Route` | `route` | `framework=laravel`, `method=<name>` |
 | WordPress | `add_action(...)` / `add_filter(...)` as plain function calls | `hook` | `framework=wordpress`, `kind=action` or `filter` |
 
 The symbol's content is the call expression and its signature is the call's
 first line. Its owner is the `Name` of the function or method the call sits
 in (`""` at top level), so `add_action('init', ...)` inside `function
 free_fn()` becomes `<namespace>.free_fn.init`.
+
+### Route groups and handlers
+
+A route inside `Route::group(['prefix' => 'admin', 'namespace' => 'Backend'], fn)`
+or `Route::prefix('admin')->namespace('Backend')->...->group(fn)` (nested
+groups too) is named with the group prefixes joined by `/` before its URI,
+keeping the URI's own leading `/` or its absence: `Route::get('/users', ...)`
+inside the `admin` group is the route `/admin/users`, `Route::post('x', ...)`
+is `admin/x`. A route outside any prefixed group keeps its URI as written.
+
+The argument after the URI gives the route one relation to its handler:
+
+| Handler | Relation | Target qualified name |
+|---------|----------|-----------------------|
+| `'C@m'`, `['as' => ..., 'uses' => 'C@m']` | `call` `m` | `<group namespaces>\C` + `.m`, without the application's controller namespace (`App\Http\Controllers`, set in another file), so the indexer links it as a qualified suffix (`by_name` in the tools, but only that controller). A leading `\` makes `C` fully qualified. |
+| `[C::class, 'm']`, also under `'uses'` | `call` `m` | `C` resolved through the import table, `.m` (exact) |
+| `C::class` or `'C'` (invokable controller, `resource`, `apiResource`) | `uses_type` `C` | the class, as above |
+| `Route::view('/about', 'pages.about')` | `imports` | the view name, which is the template's qualified name |
+
+A closure handler, `Route::redirect` and a string that is not a class name
+(`'/home'`) give no relation.
 
 ## Blade views
 
@@ -187,8 +208,12 @@ A view outside any `views` folder has module `""`.
 - `define('X', ...)` becomes a constant only at file level (also in a
   namespace or a top-level closure); inside a named function or method it
   produces no symbol.
-- Routes inside `Route::group(['prefix' => ...])` are stored without the
-  prefix, and a route is not linked to its `'uses' => 'Ctrl@m'` handler.
+- A route group's `'as' => 'admin.'` name prefix and a route's name
+  (`'as' => 'x'`, `->name('x')`) are not stored, so `route('x')` is not a
+  usage of the route. Routes registered inside a method (a
+  `RouteServiceProvider` mapping) are not placed in the groups of another
+  file, and `Route::controller(C::class)->group(...)` does not give the
+  routes inside it their controller.
 - A static call to a member a class inherits from outside the workspace
   (`Authority::all()` on an Eloquent model) is not a usage of the class.
 - Receiver types are not inferred, so `$obj->method()` stays unresolved.
@@ -198,7 +223,8 @@ A view outside any `views` folder has module `""`.
   not the class.
 - `do_action` / `apply_filters` and chained route calls (`->name(...)`,
   `->middleware(...)`) are not turned into symbols.
-- `Route::group([...], fn)` has no string argument and produces no symbol.
+- `Route::group([...], fn)` has no string argument and produces no symbol
+  of its own; it only prefixes the routes inside it.
 - The Blade scanner does not skip `{{-- --}}` comments, and a closing
   directive ends the innermost open block whatever its kind.
 - File-level code is never a usage, because a relation needs an owning
@@ -218,7 +244,7 @@ A view outside any `views` folder has module `""`.
 | File | Contents |
 |------|----------|
 | `php.go` | The analyzer and registration, the collector (namespace, import tables, symbols, raw calls), `use` handling, PHP name resolution, declarations (classes, interfaces, traits, enums, functions, methods, properties, constants, promoted parameters, `define()`), signature and doc extraction, call relations. |
-| `framework.go` | `frameworkSymbols`: Laravel route and WordPress hook symbols from the collected calls. |
+| `framework.go` | `frameworkSymbols`: Laravel route and WordPress hook symbols from the collected calls; route group prefixes and namespaces (`routeInfo`, `fluentGroup`) and the route handler relation (`route`, `handler`). |
 | `blade.go` | The Blade line scanner (`blade`) and the view module rule (`viewModule`). |
 
 ### Tests
@@ -227,6 +253,7 @@ A view outside any `views` folder has module `""`.
 |------|--------|
 | `php_test.go` | Registration of both extensions; a controller fixture with group/function/const `use`, attributes, traits, enums, promoted properties, closures, anonymous classes, routes and hooks (kinds, owners, lines, docs, signatures, metadata, relation targets); `define()` inside a namespace is global; hook and route names only from a plain string literal in the name position; a plugin with braced namespaces and parse-error recovery; malformed input; global-namespace function calls; concurrency; parameter and return type uses; a class named with a reserved word (`class Object extends Base`) keeping its name and base (`TestReservedClassName`); the line of a `->` chain call split over lines (`TestChainedCallLine`). |
 | `blade_test.go` | A Blade view with sections, components and includes; a view outside a `views` folder; the file symbol's end line with a trailing newline; a `@component` nested in a `@section`. |
+| `laravel_test.go` | Laravel route groups (array and fluent, nested, namespace) and handler relations (`C@m`, `uses`, `[C::class, m]`, invokable, resource, `Route::view`). |
 | `zz_verify_test.go` | Verification tests: name resolution, global-namespace WordPress code, robustness, a routes file, multiple namespaces in one file, Blade layouts, no shared state between calls. |
 
 ## Testing

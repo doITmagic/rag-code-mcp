@@ -57,6 +57,18 @@ type rawCall struct {
 	arg        string // name argument when a plain string literal, "" otherwise
 	content    string
 	start, end int
+	from, to   uint32 // byte range, to place a route inside its groups
+	route      routeInfo
+}
+
+// routeInfo is what a Laravel route call says beyond its URI: for a group,
+// the URI prefix and controller namespace it adds; for a route, its handler.
+type routeInfo struct {
+	prefix, ns string
+	ctrl       string // controller of a string handler as written ("Backend\C"), joined to the group namespaces
+	ctrlFQN    string // controller resolved from C::class
+	action     string // controller method, "" for a resource or an invokable controller
+	view       string // Route::view template name
 }
 
 func (c *collector) resetImports() {
@@ -527,6 +539,9 @@ func (c *collector) call(n *gotreesitter.Node, sym *parser.Symbol, owner string)
 		if c.text(c.field(n, "object")) == "$this" && owner != "" {
 			target = parser.Qualify(c.ns, owner, name)
 		}
+		if name == "group" {
+			c.fluentGroup(n)
+		}
 	case "object_creation_expression":
 		kind = parser.RelUsesType
 		cls := n.NamedChild(0)
@@ -555,10 +570,15 @@ func (c *collector) call(n *gotreesitter.Node, sym *parser.Symbol, owner string)
 		if name == "match" { // Route::match(methods, uri, action)
 			pos = 1
 		}
-		c.calls = append(c.calls, rawCall{
+		rc := rawCall{
 			ns: c.ns, owner: ownerName, recv: recv, recvFQN: recvFQN, name: name,
 			arg: c.stringArg(n, pos), content: c.text(n), start: start, end: end,
-		})
+			from: n.StartByte(), to: n.EndByte(),
+		}
+		if isRouteRecv(recv, recvFQN) {
+			rc.route = c.routeInfo(n, name, pos, owner)
+		}
+		c.calls = append(c.calls, rc)
 	}
 }
 
@@ -577,16 +597,27 @@ func (c *collector) define(n *gotreesitter.Node) {
 // stringArg returns argument pos without quotes when it is a plain string
 // literal (no concatenation or interpolation), "" otherwise.
 func (c *collector) stringArg(n *gotreesitter.Node, pos int) string {
-	var args []*gotreesitter.Node
-	for _, nc := range parser.NamedChildren(c.field(n, "arguments")) {
-		if nc.Type(c.lang) == "argument" {
-			args = append(args, nc)
-		}
-	}
+	args := c.args(n)
 	if pos >= len(args) {
 		return ""
 	}
-	v := args[pos].NamedChild(0)
+	return c.literal(args[pos])
+}
+
+// args returns the expressions of the call's arguments.
+func (c *collector) args(n *gotreesitter.Node) []*gotreesitter.Node {
+	var out []*gotreesitter.Node
+	for _, nc := range parser.NamedChildren(c.field(n, "arguments")) {
+		if nc.Type(c.lang) == "argument" {
+			out = append(out, nc.NamedChild(0))
+		}
+	}
+	return out
+}
+
+// literal returns a plain string literal (no concatenation or
+// interpolation) without quotes, "" for anything else.
+func (c *collector) literal(v *gotreesitter.Node) string {
 	s := c.text(v)
 	if t := c.typ(v); len(s) < 2 || t != "string" && (t != "encapsed_string" || strings.ContainsRune(s, '$')) {
 		return ""

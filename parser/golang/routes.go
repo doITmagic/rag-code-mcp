@@ -3,6 +3,7 @@ package golang
 import (
 	"fmt"
 	"maps"
+	"path"
 	"strconv"
 	"strings"
 
@@ -39,6 +40,20 @@ var frameworks = []framework{
 	}, types: map[string]bool{"Router": true, "Mux": true}, ctors: map[string]bool{"NewRouter": true, "NewMux": true}},
 	{name: "net/http", module: "net/http", pattern: true, methods: map[string]int{"Handle": 0, "HandleFunc": 0},
 		types: map[string]bool{"ServeMux": true}, ctors: map[string]bool{"NewServeMux": true}},
+}
+
+// join is the path of rel registered on a group at prefix: gin cleans the
+// joined path as path.Join does and keeps a trailing slash (its joinPaths),
+// so Group("/") + GET("/x") is /x; the others concatenate.
+func (fw *framework) join(prefix, rel string) string {
+	if fw.name != "gin" || rel == "" || prefix == "" {
+		return prefix + rel
+	}
+	p := path.Join(prefix, rel)
+	if strings.HasSuffix(rel, "/") && !strings.HasSuffix(p, "/") {
+		p += "/"
+	}
+	return p
 }
 
 // noHandler are registration methods whose argument after the path is not a
@@ -256,7 +271,8 @@ func (fc *file) route(call, fn *gotreesitter.Node, args []*gotreesitter.Node, gr
 			}
 		}
 		var handler *gotreesitter.Node
-		if !noHandler[method] {
+		// gin takes any number of handlers: g.OPTIONS("/*any") is served by the group's middleware
+		if !noHandler[method] && (idx+1 < len(args) || !fw.last) {
 			if idx+1 >= len(args) {
 				continue
 			}
@@ -267,7 +283,7 @@ func (fc *file) route(call, fn *gotreesitter.Node, args []*gotreesitter.Node, gr
 				handler = args[len(args)-1]
 			}
 		}
-		name := prefix + path
+		name := fw.join(prefix, path)
 		if name == "" {
 			name = "/"
 		}
@@ -318,7 +334,7 @@ func (fc *file) groupPrefix(e *gotreesitter.Node, groups map[string]string) (str
 		}
 		if path, ok := fc.pathLiteral(args[0], false); ok {
 			if p, ok := fc.router(parser.Field(fn, fc.lang, "operand"), groups); ok {
-				return p + path, true
+				return fw.join(p, path), true
 			}
 		}
 	}

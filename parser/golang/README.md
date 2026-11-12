@@ -164,7 +164,10 @@ evidence: a method named `GET` in a file that imports no router is no route.
   gives no route either.
 - **Name** is the full path: the group prefixes the file shows joined in front
   (`g := e.Group("/admin")`, `v1 := g.Group("/v1")`, `s.api = e.Group("/api")`,
-  `e.Group("/u").Static("/", dir)`); an empty result is `/`. A group variable
+  `e.Group("/u").Static("/", dir)`); an empty result is `/`. Gin cleans the
+  joined path as its `joinPaths` does (`Group("/")` + `GET("/x")` is `/x`,
+  `Group("/p/")` + `GET("/:id")` is `/p/:id`, a trailing slash is kept); Echo
+  and Chi paths are concatenated as written. A group variable
   passed to a function of the same file gives that function's parameter its
   prefix when every call in the file passes the same one; otherwise, and for
   any router whose prefix the file does not show (a parameter, a field set
@@ -176,7 +179,8 @@ evidence: a method named `GET` in a file that imports no router is no route.
   the enclosing symbol's name), so `admin.GET("/users", h)` in `func Load`
   of `example.com/app/routes` is `example.com/app/routes.Load./admin/users`.
   A `GET` and a `POST` of one path in one function share the qualified name
-  (twins, one target).
+  and stay two symbols: the tools never merge routes (a lookup by that name
+  is `ambiguous` and lists both).
 - **Metadata**: `framework=<the Framework column, lower case>`,
   `method=<the call's method name>` (the pattern's method for a net/http
   pattern that has one). In a file that imports a router and `net/http`, a
@@ -190,6 +194,8 @@ evidence: a method named `GET` in a file that imports no router is no route.
   package function), so `rag_find_usages` of the handler lists the route.
   It is the relation read from that argument itself, so `a.Handle` and
   `b.Handle` of different types registered on one line each keep their own.
+  A Gin route without a handler argument (`g.OPTIONS("/*any")`, served by the
+  group's middleware) is a route without a relation.
   An inline `func(c echo.Context) error {...}`, a method value on an operand
   of unknown type (`c := NewController(); e.GET(p, c.Index)`) and the static
   file calls have no handler relation.

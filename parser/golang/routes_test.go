@@ -271,6 +271,39 @@ func Setup() *gin.Engine {
 	}, routeList(t, "api/r.go", src))
 }
 
+// Gin cleans the joined path of a group and a route (no double slash, a
+// trailing slash kept), and a route without a handler argument is served by
+// the group's middleware: still a route.
+func TestGinJoinedPathsAndRoutesWithoutHandler(t *testing.T) {
+	src := `package api
+
+import "github.com/gin-gonic/gin"
+
+func h(c *gin.Context) {}
+
+func Load() {
+	g := gin.New()
+	g.Use(h)
+	root := g.Group("/")
+	root.GET("/index.html", h)
+	p := g.Group("/plugin/")
+	p.GET("/:id/config", h)
+	p.GET("/list/", h)
+	p.Group("/deep").GET("", h)
+	g.OPTIONS("/*any")
+	g.HEAD("/ping")
+}
+`
+	assert.Equal(t, []string{
+		"gin GET api.Load./index.html -> api.h",
+		"gin GET api.Load./plugin/:id/config -> api.h",
+		"gin GET api.Load./plugin/list/ -> api.h",
+		"gin GET api.Load./plugin/deep -> api.h",
+		"gin OPTIONS api.Load./*any ->",
+		"gin HEAD api.Load./ping ->",
+	}, routeList(t, "api/r.go", src))
+}
+
 // A group variable shadowed inside a block must not change the prefix of the
 // outer variable after the block ends.
 func TestShadowedGroupKeepsOuterPrefix(t *testing.T) {

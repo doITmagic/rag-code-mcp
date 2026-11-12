@@ -402,7 +402,8 @@ func referrers(ctx context.Context, w *engine.Workspace, sym *parser.Symbol, lim
 
 // ambiguousByName counts the relations of the symbol's language that name it
 // but were left unresolved because several symbols share the name; 0 on a
-// store error.
+// store error. For a JavaScript browser global it also counts the html
+// inline handlers that call that name.
 // Those naming its qualified name (its twins too) are already listed as
 // usages; those naming another indexed symbol's qualified name are that
 // symbol's.
@@ -414,12 +415,20 @@ func ambiguousByName(ctx context.Context, w *engine.Workspace, sym *parser.Symbo
 	known := map[string]bool{} // qualified name -> some indexed symbol has it
 	n := 0
 	for _, h := range hits {
-		if h.Symbol.Language != sym.Language { // the index looks a name up in its own language only
+		// An html inline handler (onclick="f()") looks f up among the JavaScript browser globals.
+		handler := h.Symbol.Language == "html" && sym.Language == "javascript" && sym.Metadata["global"] == "true"
+		if h.Symbol.Language != sym.Language && !handler { // otherwise the index looks a name up in its own language only
 			continue
 		}
 		for _, r := range h.Symbol.Relations {
 			qn := r.TargetQualifiedName
 			if r.TargetName != sym.Name || r.Resolution != parser.ResolutionAmbiguous || qn == sym.QualifiedName {
+				continue
+			}
+			if handler {
+				if qn == "window."+sym.Name {
+					n++
+				}
 				continue
 			}
 			if _, ok := known[qn]; !ok && qn != "" {

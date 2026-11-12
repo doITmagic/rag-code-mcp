@@ -152,3 +152,32 @@ func TestUsagesOfRecursiveVueComponent(t *testing.T) {
 	data(t, r, &out)
 	assert.Len(t, out.Files, 2, r.Message)
 }
+
+// Two classic scripts declare the global toggle; a page calls it from
+// onclick. The handlers bind to neither, and each toggle says so in
+// ambiguous_by_name instead of "0 usages" alone. A module function of that
+// name is not what a handler reaches: it reports none.
+func TestInlineHandlerOfAmbiguousGlobalIsCounted(t *testing.T) {
+	v := newEnv(t, false, nil)
+	v.addFiles(t, map[string]string{
+		"public/a.js":   "function toggle() {}\n",
+		"public/b.js":   "function toggle() {}\n",
+		"src/module.js": "export function toggle() {}\n",
+		"templates/page.html": `<div id="list">
+  <button onclick="toggle()">A</button>
+  <button onclick="toggle()">B</button>
+</div>
+`,
+	})
+	for file, want := range map[string]int{"public/a.js": 2, "public/b.js": 2, "src/module.js": 0} {
+		var out struct {
+			Total     int `json:"total"`
+			Ambiguous int `json:"ambiguous_by_name"`
+		}
+		r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "toggle", "file_path": file})
+		require.Equal(t, "ok", r.Status, r.Message)
+		data(t, r, &out)
+		assert.Equal(t, 0, out.Total, file+": "+r.Message)
+		assert.Equal(t, want, out.Ambiguous, file+": "+r.Message)
+	}
+}

@@ -26,6 +26,7 @@ type Workspace struct {
 	files     map[string]bool
 	deleted   map[string]bool
 	lastErr   error
+	refuse    queueKind   // after a max_files refusal: automatic requests of this kind and above are dropped
 	retry     *time.Timer // pending lock retry
 	fails     int         // consecutive failed runs; sets the retry delay
 	lockFails int         // consecutive ErrLocked results; sets lockRetryDelay
@@ -82,21 +83,25 @@ func (w *Workspace) Status() Status {
 }
 
 // Index queues a walk of the whole tree (incremental against the state);
-// recreate drops the collection first so everything is re-embedded.
+// recreate drops the collection first so everything is re-embedded. It is the
+// user's request (rag_index_workspace): it runs even after a max_files refusal.
 func (w *Workspace) Index(recreate bool) {
 	kind := kindFull
 	if recreate {
 		kind = kindRecreate
 	}
-	w.e.enqueue(w, kind, nil, nil)
+	w.e.enqueue(w, kind, nil, nil, true)
 }
+
+// catchUp queues the walk the engine itself wants.
+func (w *Workspace) catchUp() { w.e.enqueue(w, kindFull, nil, nil, false) }
 
 // IndexFiles queues a run over the given files only.
 func (w *Workspace) IndexFiles(changed, deleted []string) {
 	if len(changed)+len(deleted) == 0 {
 		return
 	}
-	w.e.enqueue(w, kindFiles, changed, deleted)
+	w.e.enqueue(w, kindFiles, changed, deleted, false)
 }
 
 // Search embeds query once and returns the nearest symbols.
@@ -110,7 +115,7 @@ func (w *Workspace) Search(ctx context.Context, query string, f store.Filter, li
 		case "":
 		default:
 			if w.e.cfg.AutoIndex {
-				w.Index(false)
+				w.catchUp()
 			}
 			return nil, ErrNotIndexed
 		}
@@ -144,7 +149,7 @@ func (w *Workspace) resyncIfReopened() {
 		return
 	}
 	if n := r.Reopens(w.Collection); w.reopens.Swap(n) != n && w.e.cfg.AutoIndex {
-		w.Index(false)
+		w.catchUp()
 	}
 }
 
@@ -159,7 +164,7 @@ func (w *Workspace) mapErr(ctx context.Context, err error) error {
 		return err
 	}
 	if w.e.cfg.AutoIndex {
-		w.Index(false)
+		w.catchUp()
 	}
 	return ErrNotIndexed
 }

@@ -149,7 +149,7 @@ func (e *Engine) takeOver(w *Workspace) {
 		e.watchFailed(w, err)
 	case leader:
 		e.log.Info("engine: watcher taken over", "root", w.Root)
-		w.Index(false)
+		w.catchUp()
 	}
 }
 
@@ -383,7 +383,7 @@ func (wt *watcher) full(reason string) {
 	if !queued {
 		e.log.Info("engine: watcher queues a full run", "root", wt.ws.Root, "reason", reason)
 	}
-	wt.ws.Index(false)
+	wt.ws.catchUp()
 }
 
 // Stop cancels the pending batch and releases the leader lock; idempotent. The engine stops handing

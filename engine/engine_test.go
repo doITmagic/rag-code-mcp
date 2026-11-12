@@ -921,4 +921,26 @@ func TestMaxFilesRefusedWithoutRetry(t *testing.T) {
 	assert.Equal(t, kindNone, queued)
 	_, err = w.Scroll(context.Background(), store.Filter{}, 10)
 	require.ErrorIs(t, err, ErrNotIndexed)
+
+	// Automatic requests do not walk the tree again; an explicit one does.
+	e.mu.Lock()
+	queued = w.queued
+	e.mu.Unlock()
+	assert.Equal(t, kindNone, queued, "a tool call after the refusal queued a scan")
+	w.IndexFiles([]string{filepath.Join(root, "a.go")}, nil)
+	e.mu.Lock()
+	running := w.running
+	e.mu.Unlock()
+	assert.False(t, running, "a watcher event after the refusal started a scan")
+	assert.Contains(t, w.Status().LastError, "max_files (1)")
+
+	require.NoError(t, os.Remove(filepath.Join(root, "b.go")))
+	w.Index(false)
+	require.Eventually(t, func() bool {
+		s := w.Status()
+		return !s.Running && s.LastError == ""
+	}, 2*time.Second, 10*time.Millisecond)
+	hits, err := w.Scroll(context.Background(), store.Filter{}, 10)
+	require.NoError(t, err)
+	assert.NotEmpty(t, hits)
 }

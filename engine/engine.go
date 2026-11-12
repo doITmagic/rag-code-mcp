@@ -226,7 +226,7 @@ func (e *Engine) Workspace(root string) (*Workspace, error) {
 			} else if err != nil {
 				e.watchFailed(w, err)
 			} else if leader {
-				w.Index(false) // catch up on what changed while it was gone
+				w.catchUp() // catch up on what changed while it was gone
 			}
 		}
 		return w, nil
@@ -458,7 +458,7 @@ func (e *Engine) Resume(ctx context.Context) {
 		e.mu.Lock()
 		follower := w.takeover != nil // the leader keeps the index current
 		e.mu.Unlock()
-		if _, ok := index.ReadStatus(root); ok && e.cfg.AutoIndex && !follower && e.enqueue(w, kindFull, nil, nil) {
+		if _, ok := index.ReadStatus(root); ok && e.cfg.AutoIndex && !follower && e.enqueue(w, kindFull, nil, nil, false) {
 			e.log.Info("engine: catch-up index", "root", root)
 		}
 	}
@@ -505,10 +505,15 @@ const (
 )
 
 // enqueue merges a request into the workspace queue and starts its runner
-// when idle; false once Close has begun.
-func (e *Engine) enqueue(w *Workspace, kind queueKind, files, deleted []string) bool {
+// when idle; false once Close has begun. A request that is not explicit (the
+// watcher, a tool call on a missing index) is dropped while w.refuse covers
+// its kind: it would walk the whole tree only to be refused again.
+func (e *Engine) enqueue(w *Workspace, kind queueKind, files, deleted []string, explicit bool) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if !explicit && w.refuse != kindNone && kind >= w.refuse {
+		return !e.closed
+	}
 	if !e.closed {
 		w.fails = 0 // a new request gets a fresh backoff
 		e.merge(w, kind, files, deleted)
@@ -590,9 +595,16 @@ func (e *Engine) runJobs(w *Workspace) {
 		e.mu.Unlock()
 		st, err := e.runOne(w, kind, files, deleted)
 		<-e.slot
+		refuse := kindNone
+		if errors.Is(err, index.ErrTooManyFiles) {
+			refuse = kindFull // an index from before the limit still takes file runs
+			if ok, _ := e.store.CollectionExists(e.ctx, w.Collection); !ok {
+				refuse = kindFiles // no index: a file run would walk the tree too
+			}
+		}
 
 		e.mu.Lock()
-		w.active = false
+		w.active, w.refuse = false, refuse
 		w.lastErr = err
 		if errors.Is(err, index.ErrLocked) {
 			w.lastErr = ErrLocked // nothing ran: the status stays
@@ -629,7 +641,7 @@ func (e *Engine) runJobs(w *Workspace) {
 			}
 			return
 		case errors.Is(err, index.ErrTooManyFiles):
-			// Only a config change helps: no retry. The next call scans again.
+			// Only a config change helps: no retry. rag_index_workspace scans again.
 			e.log.Warn("engine: index run refused, not retrying", "root", w.Root, "err", err)
 		case err != nil && e.ctx.Err() == nil:
 			// Keep the request and retry it after a pause, so neither another

@@ -275,7 +275,11 @@ process's lock nor an embedder or store outage drops its files.
 - **Too many files**: a run that ends with `index.ErrTooManyFiles` (more
   indexable files than `max_files`) is not retried: only a config change
   helps. One warning ("index run refused, not retrying") is logged and the
-  error stays in `Status.LastError`. A later request scans the root again.
+  error stays in `Status.LastError`. Until the next run, the engine's own
+  requests (a tool call on the missing index, the watcher's full runs) are
+  dropped, since each would walk the whole tree only to be refused again;
+  when the refusal left no index, the watcher's file runs are dropped too.
+  Only `Workspace.Index` (`rag_index_workspace`) scans the root again.
 - **The root is gone**: when the root is no longer a directory after a failed
   run (deleted while the server runs), nothing is retried. One warning
   ("workspace root is gone, not retrying") is logged, the watcher is stopped

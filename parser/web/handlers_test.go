@@ -50,3 +50,20 @@ func TestInlineHandlerStringNoCall(t *testing.T) {
 		{"keep", "window.keep", 4},
 	}, rels(syms["t/page.bar"], parser.RelCall))
 }
+
+// A handler in markup that is commented out is no call.
+func TestInlineHandlerInCommentNoCall(t *testing.T) {
+	src := `<html><body>
+<div id="bar">
+  <!-- <button onclick="old()">O</button>
+       <button onclick="older()">O</button> -->
+  <button onclick="live()">L</button> <!-- note --> <button onclick="also()">A</button>
+</div>
+</body></html>
+`
+	syms := byQN(analyze(t, "/ws/t/page.html", src))
+	assert.Equal(t, []rel{
+		{"live", "window.live", 5},
+		{"also", "window.also", 5},
+	}, rels(syms["t/page.bar"], parser.RelCall))
+}

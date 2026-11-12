@@ -2,6 +2,7 @@ package web
 
 import (
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -68,6 +69,7 @@ func (htmlAnalyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 var (
 	reHandler  = regexp.MustCompile(`(?i)\son[a-z]+\s*=\s*(?:"([^"]*)"|'([^']*)')`)
 	reCall     = regexp.MustCompile(`(?:^|[^\w$.])([A-Za-z_$][\w$]*)\s*\(`)
+	reComment  = regexp.MustCompile(`(?s)<!--.*?-->`)
 	reGoAction = regexp.MustCompile(`\{\{.*?\}\}`)
 	// reString is a JavaScript string literal: the words in it are no calls.
 	reString = regexp.MustCompile(`'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|` + "`(?:[^`\\\\]|\\\\.)*`")
@@ -79,9 +81,14 @@ var (
 // on the narrowest symbol spanning its line: the code runs in the page's
 // global scope, where the index finds the script function f by name.
 // shortcut: scanned with a regex over the raw source, like the Go template
-// actions; `ns.f()` and handlers in inline scripts are not tracked.
+// actions; `ns.f()` and handlers in inline scripts are not tracked. A handler
+// inside an HTML comment is skipped.
 func (c *htmlCtx) handlers() {
+	comments := reComment.FindAllIndex(c.f.Source, -1)
 	for _, m := range reHandler.FindAllSubmatchIndex(c.f.Source, -1) {
+		if slices.ContainsFunc(comments, func(s []int) bool { return s[0] < m[0] && m[0] < s[1] }) {
+			continue // markup commented out does not run
+		}
 		from, to := m[2], m[3]
 		if from < 0 {
 			from, to = m[4], m[5]

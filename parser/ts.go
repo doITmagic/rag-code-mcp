@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"bytes"
 	"fmt"
 	"slices"
 	"sync"
@@ -92,6 +93,11 @@ func ParseTree(grammar string, src []byte) (*gotreesitter.Tree, *gotreesitter.La
 	p, lang, err := pool(grammar)
 	if err != nil {
 		return nil, nil, err
+	}
+	// The lexer ends the file at a raw NUL byte, which is valid inside a regex
+	// or a template literal: parse a copy with spaces instead, offsets unchanged.
+	if bytes.IndexByte(src, 0) >= 0 {
+		src = bytes.ReplaceAll(src, []byte{0}, []byte{' '})
 	}
 	t, err := p.Parse(src)
 	if err != nil {

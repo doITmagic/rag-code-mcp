@@ -57,7 +57,7 @@ Tests:
 
 | File | What it covers |
 |---|---|
-| [`grep_walk_test.go`](grep_walk_test.go) | the grep file cap counts only files git keeps; an unreadable directory does not end the walk; a word without diacritics finds the text written with them, and the reverse; a qualified name with a wrong owner lists the symbols of its last name (`match: "name"`). |
+| [`grep_walk_test.go`](grep_walk_test.go) | the grep file cap counts only files git keeps; an unreadable directory does not end the walk; a word without diacritics finds the text written with them, and the reverse; a file with a NUL byte past its first 8 KiB is searched; a qualified name with a wrong owner lists the symbols of its last name (`match: "name"`). |
 | [`grep_marks_test.go`](grep_marks_test.go) | a symbol made only of combining marks finds no line. |
 | [`go_routes_test.go`](go_routes_test.go) | with the real Go analyzer, an Echo route is found by `rag_search` with `kinds: ["route"]` and is a usage of its handler; the function registering the route `/` (`routes.Load./`) is the one symbol named `routes.Load` in `rag_find_usages`, `rag_call_hierarchy` and `rag_search` (one `exact` hit), a function `users` is not confused with the route `/users`, and `/users` is still found by its path; `GET /users` and `DELETE /users` of one function are two exports and two search hits, an `ambiguous` lookup without the `file_path` advice, and only the GET route calls `ListUsers`. |
 | [`go_value_use_test.go`](go_value_use_test.go) | with the real Go analyzer, `rag_find_usages firmaJSON` counts `mux.HandleFunc(p, s.firmaJSON)` in `main.go` for a method declared in another file of the package. |
@@ -146,7 +146,7 @@ drive under `/mnt` in WSL).
 lookup (`grep.go`, `startGrep`). It looks for the last segment of the name
 (`pkg.Foo` -> `Foo`) as a whole word, case-sensitive and without regard to diacritics on
 either side (`Salveaza` finds `Salvează` and the reverse; Latin letters only, `unaccent`),
-in the files an analyzer handles, by the
+in the files an analyzer handles (not one with a NUL byte in its first 8 KiB, binary to the index too), by the
 index skip rules (`sourceFiles`, shared with the not-indexed fallback: no hidden,
 excluded or linked-worktree directory, not RagCode's own home), under
 `path_prefix` when `rag_search` has one (nothing when that directory is itself one the index skips). It is bounded by work, not by a

@@ -201,7 +201,7 @@ func (t *tools) fallback(ctx context.Context, root string, in SearchInput, f sto
 			break
 		}
 		src, err := os.ReadFile(path)
-		if err != nil || bytes.IndexByte(src, 0) >= 0 {
+		if err != nil || bytes.IndexByte(src[:min(len(src), 8<<10)], 0) >= 0 { // binary as the index sees it
 			continue
 		}
 		syms, err := parser.Analyze(parser.File{Path: path, Root: root, Source: src})

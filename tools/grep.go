@@ -120,7 +120,7 @@ func (t *tools) grep(ctx context.Context, root, start, word string) (hits []Grep
 		wg.Go(func() {
 			defer func() { <-sem }()
 			src, err := os.ReadFile(path)
-			if err != nil || bytes.IndexByte(src, 0) >= 0 || !bytes.Contains(unaccent(src), plain) {
+			if err != nil || bytes.IndexByte(src[:min(len(src), 8<<10)], 0) >= 0 || !bytes.Contains(unaccent(src), plain) {
 				return
 			}
 			sc := bufio.NewScanner(bytes.NewReader(src))

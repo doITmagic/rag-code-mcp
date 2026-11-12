@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -101,4 +102,15 @@ func TestSearchWrongOwnerListsSymbolsOfThatName(t *testing.T) {
 	require.NotEmpty(t, out.Results)
 	assert.Equal(t, "exact", out.Results[0].Match)
 	assert.Empty(t, r.Message)
+}
+
+// A text file with a NUL byte past the first 8 KiB (a sentinel in a regex) is
+// text to the index, so the text search reads it too.
+func TestGrepReadsFileWithLateNULByte(t *testing.T) {
+	v := newEnv(t, false, nil)
+	body := "func N\n" + strings.Repeat("  label padding padding padding\n", 400) + "  label late\x00sentinel Zebra\n"
+	require.NoError(t, os.WriteFile(filepath.Join(v.root, "pkg/n.fk"), []byte(body), 0o644))
+	hits, _ := v.t.grep(context.Background(), v.root, v.root, "Zebra")
+	require.Len(t, hits, 1)
+	assert.Equal(t, 402, hits[0].Line)
 }

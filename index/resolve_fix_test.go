@@ -118,6 +118,26 @@ func TestResolveInheritedMemberFallsBackToName(t *testing.T) {
 	assert.Empty(t, r.TargetID, "an unknown owner is external, not a name guess")
 }
 
+// A self.m() call that fell back to an ambiguous name, before the owner's base
+// defined m, is re-resolved exactly once a later incremental run adds Base.m.
+func TestResolveInheritedMemberAddedLaterRepairsAmbiguity(t *testing.T) {
+	e := newEnv(t)
+	e.write(t, "o1.go", "func Save\n")
+	e.write(t, "o2.go", "func Save\n")
+	base := e.write(t, "base.go", "class Base\n")
+	child := e.write(t, "child.go", "class Child : base.Base\nfunc Run -> child.Child.Save\n")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	require.Equal(t, parser.ResolutionAmbiguous, e.symbols(t, child)["Run"].Relations[0].Resolution)
+
+	e.write(t, "base.go", "class Base\nmethod Base.Save\n")
+	_, err = e.run(t, nil)
+	require.NoError(t, err)
+	rel := e.symbols(t, child)["Run"].Relations[0]
+	assert.Equal(t, parser.ResolutionExact, rel.Resolution)
+	assert.Equal(t, e.symbols(t, base)["Save"].ID, rel.TargetID)
+}
+
 func TestFilesRunAfterFailedRunWidens(t *testing.T) {
 	e := newEnv(t)
 	f1 := e.write(t, "f1.go", funcs(40, "A"))

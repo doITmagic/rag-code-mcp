@@ -799,11 +799,15 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 			}
 		}
 		// a relation resolved by name, or not at all, or by a qualified suffix
-		// one of the added symbols also has
+		// one of the added symbols also has; an ambiguous one only with an
+		// owner (self.m()), which may now find m on the owner's base
 		guessed := func(h parser.Symbol) bool {
 			return slices.ContainsFunc(h.Relations, func(rel parser.Relation) bool {
-				if !names[rel.TargetName] || rel.Resolution == parser.ResolutionAmbiguous {
+				if !names[rel.TargetName] {
 					return false
+				}
+				if rel.Resolution == parser.ResolutionAmbiguous {
+					return strings.Contains(parser.Normalize(rel.TargetQualifiedName), ".")
 				}
 				if rel.Resolution != parser.ResolutionExact {
 					return true

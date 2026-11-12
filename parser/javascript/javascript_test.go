@@ -358,7 +358,8 @@ func TestUnbalanced(t *testing.T) {
 	assert.Len(t, analyze(t, "strs.js", strs), 1)
 	deep := strings.Repeat("export function f"+strings.Repeat("(", 2000)+"\n", 50)
 	assert.True(t, unbalanced([]byte(deep)))
-	assert.Empty(t, analyze(t, "deep.js", deep))
+	_, err := analyzer{}.Analyze(parser.File{Path: "/ws/deep.js", Root: "/ws", Source: []byte(deep)})
+	assert.ErrorContains(t, err, "unclosed brackets", "a refused file is a failed file, not an empty one")
 }
 
 func TestOutsideRoot(t *testing.T) {

@@ -232,8 +232,8 @@ func TestVerifyRobustness(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("hang")
 			}
-			if err != nil && strings.Contains(err.Error(), "parse stopped") {
-				err = nil // the parse timeout on a slow run is an honest failure, not a hang
+			if err != nil && (strings.Contains(err.Error(), "parse stopped") || strings.Contains(err.Error(), "brackets")) {
+				err = nil // a timeout on a slow run or refused garbage is an honest failure, not a hang
 			}
 			assert.NoError(t, err)
 			t.Logf("%s: %d symbols", name, n)

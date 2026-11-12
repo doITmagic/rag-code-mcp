@@ -188,6 +188,10 @@ func TestVerifyRobust(t *testing.T) {
 		for _, p := range []string{"/ws/x.gd", "/ws/x.tscn", "x.gd"} {
 			start := time.Now()
 			syms, err := analyzer{}.Analyze(parser.File{Path: p, Root: "/ws", Source: []byte(src), Language: "gdscript"})
+			if name == "deep" && p != "/ws/x.tscn" { // nested past the limit: refused
+				assert.ErrorContains(t, err, "brackets nested", name+" "+p)
+				continue
+			}
 			assert.NoError(t, err, name+" "+p)
 			assert.Less(t, time.Since(start), 5*time.Second, name+" "+p)
 			for _, s := range syms {
@@ -306,6 +310,11 @@ func TestVerifyLarge(t *testing.T) {
 	for name, src := range map[string]string{"big": b.String(), "nested": nested + "pass\n", "junk": strings.Repeat("\xff\x00[(\"\n", 1000)} {
 		t.Run(name, func(t *testing.T) {
 			start := time.Now()
+			if name == "junk" { // 2000 brackets left open: refused, not parsed for seconds
+				_, err := analyzer{}.Analyze(parser.File{Path: "/ws/big.gd", Root: "/ws", Source: []byte(src), Language: "gdscript"})
+				assert.ErrorContains(t, err, "brackets")
+				return
+			}
 			syms := analyze(t, "/ws/big.gd", "/ws", src)
 			assert.Less(t, time.Since(start), 5*time.Second, name)
 			if name == "big" {

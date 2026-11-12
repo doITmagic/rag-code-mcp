@@ -249,9 +249,9 @@ Every analyzer passes its output through `Finalize(f, syms)`, which:
 
 | Function | Purpose |
 |----------|---------|
-| `ParseTree(grammar, src)` | Parses with a named grammar (`go`, `python`, `php`, `javascript`, `typescript`, `tsx`, `gdscript`, `html`, ...). Returns the tree and the `*gotreesitter.Language` needed for `Node.Type`. A parse stopped by the 3 s timeout or the memory budget is an error (`parse stopped: timeout`), so the file counts as failed instead of being indexed without symbols. |
+| `ParseTree(grammar, src)` | Parses with a named grammar (`go`, `python`, `php`, `javascript`, `typescript`, `tsx`, `gdscript`, `html`, ...). Returns the tree and the `*gotreesitter.Language` needed for `Node.Type`. A parse stopped by the 3 s timeout or the memory budget is an error (`parse stopped: timeout`), so the file counts as failed instead of being indexed without symbols; so is a file whose brackets nest more than 1000 deep (`not parsed: brackets nested N deep`), which is not parsed at all: error recovery on such a cascade takes hundreds of MB. |
 | `Walk(n, fn)` | Depth-first visit of named nodes; returning `false` skips the children. |
-| `NamedChildren(n)` | Named children in order. Use it instead of `NamedChildCount`/`NamedChild` loops, which are quadratic in gotreesitter. |
+| `NamedChildren(n)` | Named children in order. For a root whose only child is an `ERROR` node (error recovery wrapped a whole broken file), the children of that node, so the declarations parsed before the broken part are still read. Use it instead of `NamedChildCount`/`NamedChild` loops, which are quadratic in gotreesitter. |
 | `Field`, `Text`, `Lines` | Child by field name, source text of a node, 1-based start/end lines. |
 | `ReleaseParsers()` | Drops the pooled parsers and arenas to hand memory back after a full index run. |
 

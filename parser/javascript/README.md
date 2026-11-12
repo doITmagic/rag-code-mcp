@@ -308,7 +308,8 @@ literal's values are not walked, its methods own their calls.
   a config or re-exporting module outside the workspace root (through `..` or
   a symlink): its import stays `<module>.<name>`.
 - The bracket guard does not skip regex literals, so a `(` inside one counts
-  as open.
+  as open. A script it rejects (more than 256 brackets left open) is an
+  error, so the file counts as failed; it is not indexed as an empty file.
 - Vue blocks are found by plain string scanning (`<script`, `</script`,
   `<template`, last `</template>`).
 - Only top-level statements produce symbols; functions declared inside other

@@ -326,7 +326,11 @@ func TestProbeBigAndDeep(t *testing.T) {
 			done := make(chan int)
 			go func() {
 				syms, err := Analyzer{}.Analyze(parser.File{Path: "/x/p.go", Root: "/x", Source: []byte(src), Language: "go"})
-				assert.NoError(t, err)
+				if name == "deep" { // nested past the limit: refused, not parsed with hundreds of MB
+					assert.ErrorContains(t, err, "brackets nested")
+				} else {
+					assert.NoError(t, err)
+				}
 				done <- len(syms)
 			}()
 			select {

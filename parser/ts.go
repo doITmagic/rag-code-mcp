@@ -17,6 +17,29 @@ import (
 // indexer's binary check could otherwise run for minutes.
 const parseTimeoutMicros = 3 * 1000 * 1000
 
+// maxNesting is how deep the brackets of a file may nest. Error recovery on
+// a cascade of unclosed ones, and the parse of 5000 closed ones, takes
+// hundreds of MB (570 MB for a 12 KB file) and returns a tree without the
+// file's declarations. Real code stays far below even with the brackets
+// inside strings counted: the deepest of 33,000 files of real projects is 100.
+const maxNesting = 1000
+
+// nesting is the deepest count of (, [ and { open at once while reading src,
+// strings and comments included.
+func nesting(src []byte) int {
+	depth, deepest := 0, 0
+	for _, c := range src {
+		switch c {
+		case '(', '[', '{':
+			depth++
+			deepest = max(deepest, depth)
+		case ')', ']', '}':
+			depth = max(depth-1, 0)
+		}
+	}
+	return deepest
+}
+
 var (
 	poolMu sync.Mutex
 	pools  = map[string]*gotreesitter.ParserPool{}
@@ -53,6 +76,9 @@ func ParseTree(grammar string, src []byte) (*gotreesitter.Tree, *gotreesitter.La
 	p, lang, err := pool(grammar)
 	if err != nil {
 		return nil, nil, err
+	}
+	if n := nesting(src); n > maxNesting {
+		return nil, nil, fmt.Errorf("parser: %s: not parsed: brackets nested %d deep (limit %d)", grammar, n, maxNesting)
 	}
 	t, err := p.Parse(src)
 	if err != nil {
@@ -93,6 +119,11 @@ func NamedChildren(n *gotreesitter.Node) []*gotreesitter.Node {
 		if ch.IsNamed() {
 			out = append(out, ch)
 		}
+	}
+	// Error recovery may wrap a whole broken file in one ERROR node: the
+	// declarations it completed are inside, read as if they were top-level.
+	if len(out) == 1 && out[0].IsError() && n.Parent() == nil {
+		return NamedChildren(out[0])
 	}
 	return out
 }

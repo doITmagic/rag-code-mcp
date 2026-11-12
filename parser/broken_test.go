@@ -1,0 +1,45 @@
+package parser_test
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/doITmagic/rag-code-mcp/v2/parser"
+	_ "github.com/doITmagic/rag-code-mcp/v2/parser/gdscript"
+	_ "github.com/doITmagic/rag-code-mcp/v2/parser/golang"
+	_ "github.com/doITmagic/rag-code-mcp/v2/parser/javascript"
+	_ "github.com/doITmagic/rag-code-mcp/v2/parser/php"
+	_ "github.com/doITmagic/rag-code-mcp/v2/parser/python"
+)
+
+// A line of unclosed brackets makes error recovery wrap the whole file in
+// one ERROR node: the declaration before it must still be a symbol (it used
+// to be a file without symbols and without an error). Past the limit the
+// file is refused with an error instead of costing hundreds of MB.
+func TestBrokenFileKeepsDeclarationsOrFails(t *testing.T) {
+	cases := map[string]string{
+		"a.go":  "package a\n\nfunc first() {}\n\nvar x = f%s\n",
+		"a.php": "<?php\nfunction first() {}\n$x = g%s;\n",
+		"a.py":  "def first():\n    pass\n\n\nx = f%s\n",
+		"a.js":  "function first(){}\nconst x = f%s\n",
+		"a.gd":  "func first():\n\tpass\n\nvar x = f%s\n",
+	}
+	for name, tpl := range cases {
+		for _, br := range []string{"(", "[", "{"} {
+			src := strings.Replace(tpl, "%s", strings.Repeat(br, 200), 1)
+			syms, err := parser.Analyze(parser.File{Path: "/ws/" + name, Root: "/ws", Source: []byte(src)})
+			found := false
+			for _, s := range syms {
+				found = found || s.Name == "first"
+			}
+			if err != nil || !found {
+				t.Errorf("%s with 200 unclosed %s: symbol first lost (%d symbols, err %v)", name, br, len(syms), err)
+			}
+			src = strings.Replace(tpl, "%s", strings.Repeat(br, 5000), 1)
+			_, err = parser.Analyze(parser.File{Path: "/ws/" + name, Root: "/ws", Source: []byte(src)})
+			if err == nil || !strings.Contains(err.Error(), "brackets") {
+				t.Errorf("%s with 5000 unclosed %s: want a brackets error, got %v", name, br, err)
+			}
+		}
+	}
+}

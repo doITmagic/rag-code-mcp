@@ -234,6 +234,9 @@ func TestProbeRobustness(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("hang > 5s")
 			}
+			if err != nil && strings.Contains(err.Error(), "brackets") {
+				err = nil // refused garbage is an honest failure
+			}
 			require.NoError(t, err)
 			for _, s := range syms {
 				assert.NotEmpty(t, s.QualifiedName)

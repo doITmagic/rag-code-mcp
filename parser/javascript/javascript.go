@@ -6,6 +6,7 @@ package javascript
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -171,11 +172,12 @@ func analyzeScript(grammar string, src []byte, wsRoot, module, dir, component st
 }
 
 // scanScript parses one script and runs pass 1: imports, top-level names and
-// export lists, so calls resolve forward references. The tree is nil for a
-// script the bracket guard rejects; the caller releases it.
+// export lists, so calls resolve forward references. The caller releases
+// the tree.
 func scanScript(grammar string, src []byte, wsRoot, module, dir, component string) (*fileCtx, *gotreesitter.Tree, error) {
 	if unbalanced(src) {
-		return nil, nil, nil
+		// an error, so the file counts as failed instead of indexed as empty
+		return nil, nil, fmt.Errorf("parser: %s: not parsed: more than %d unclosed brackets", grammar, maxUnclosed)
 	}
 	tree, lang, err := parser.ParseTree(grammar, src)
 	if err != nil {

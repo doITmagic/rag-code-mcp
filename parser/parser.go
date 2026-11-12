@@ -188,6 +188,7 @@ func SymbolID(filePath, qualifiedName string, startLine int) string {
 // analyzer calls it on its output so the contract holds for all languages.
 func Finalize(f File, syms []Symbol) []Symbol {
 	seen := make(map[string]bool, len(syms))
+	next := map[string]int{} // first id -> the next #n to try
 	for i := range syms {
 		s := &syms[i]
 		if s.FilePath == "" {
@@ -208,8 +209,11 @@ func Finalize(f File, syms []Symbol) []Symbol {
 		s.ID = SymbolID(s.FilePath, s.QualifiedName, s.StartLine)
 		// Same name on the same line (minified code, CR-only line endings):
 		// the n-th one hashes "name#n", so no symbol overwrites another.
-		for n := 2; seen[s.ID]; n++ {
+		// next remembers where the last search for this name and line stopped:
+		// starting at 2 each time is quadratic (minutes for 20,000 on a line).
+		for base, n := s.ID, max(next[s.ID], 2); seen[s.ID]; n++ {
 			s.ID = SymbolID(s.FilePath, s.QualifiedName+"#"+strconv.Itoa(n), s.StartLine)
+			next[base] = n + 1
 		}
 		seen[s.ID] = true
 	}

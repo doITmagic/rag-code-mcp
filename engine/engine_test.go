@@ -944,3 +944,40 @@ func TestMaxFilesRefusedWithoutRetry(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, hits)
 }
+
+// The model check is repeated when state.json changes: another server with
+// another embedding model may have rebuilt the shared index.
+func TestSearchAfterAnotherServerChangedModel(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.AutoIndex = false
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a.go"), "func A\n")
+	st := store.NewMemory()
+	a := &embed.Fake{Name: "model-a"}
+	b := &embed.Fake{Name: "model-b"}
+	e := New(cfg, st, a, nil)
+	defer e.Close()
+	w, err := e.Workspace(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := index.Options{Root: root, Collection: w.Collection, Store: st, Embedder: a}
+	if _, err := index.Run(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Search(context.Background(), "A", store.Filter{}, 10); err != nil {
+		t.Fatal(err)
+	}
+	// Another server changes the shared collection to another model of the same dimension.
+	o.Embedder = b
+	if _, err := index.Run(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	if index.StateModel(root) != "model-b" {
+		t.Fatal("setup: model-b was not recorded")
+	}
+	hits, err := w.Search(context.Background(), "A", store.Filter{}, 10)
+	if !errors.Is(err, ErrNotIndexed) {
+		t.Fatalf("search accepted incompatible model-b index: hits=%d err=%v; want ErrNotIndexed", len(hits), err)
+	}
+}

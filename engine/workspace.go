@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
@@ -37,7 +39,7 @@ type Workspace struct {
 	noEvents  string      // why the watcher of this root sees no edits (noNotify); "" when it does
 	watchErr  string      // the watcher start error last warned; "" once a watcher runs
 
-	modelOK atomic.Bool   // the index was made with the embedder's model (fixed for the process)
+	modelAt atomic.Int64  // state.json mtime at which its model was the embedder's; another server may re-index with another model
 	reopens atomic.Uint64 // store.SQLite.Reopens last seen; a change queues a resync
 }
 
@@ -106,12 +108,16 @@ func (w *Workspace) IndexFiles(changed, deleted []string) {
 
 // Search embeds query once and returns the nearest symbols.
 func (w *Workspace) Search(ctx context.Context, query string, f store.Filter, limit int) ([]store.Hit, error) {
-	if !w.modelOK.Load() {
+	stateAt := int64(0)
+	if fi, err := os.Stat(filepath.Join(index.Dir(w.Root), "state.json")); err == nil {
+		stateAt = fi.ModTime().UnixNano()
+	}
+	if w.modelAt.Load() != stateAt {
 		// Vectors of another model, even of the same size, are not comparable;
 		// index.Run re-embeds everything on the next run.
 		switch m := index.StateModel(w.Root); m {
 		case w.e.embed.Model():
-			w.modelOK.Store(true)
+			w.modelAt.Store(stateAt)
 		case "":
 		default:
 			if w.e.cfg.AutoIndex {

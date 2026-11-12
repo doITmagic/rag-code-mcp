@@ -390,8 +390,9 @@ Before embedding, `Search` compares the model recorded in the root's
 `state.json` (`index.StateModel`) with the embedder's: an index made with
 another model, even of the same vector size, returns `ErrNotIndexed` (and
 queues a run with `auto_index`), so `rag_search` falls back to name matching
-instead of ranking incomparable vectors. A match is remembered for the
-process. `Scroll` needs no vector and is not affected.
+instead of ranking incomparable vectors. A match is remembered until
+`state.json` changes (another server, started with another model, may have
+rebuilt the index). `Scroll` needs no vector and is not affected.
 
 `Ready` checks, in order, that the embedder answers (`Dimension`), that the
 store answers and that the collection exists; when not, the text says what

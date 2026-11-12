@@ -643,7 +643,22 @@ func (e *Engine) runJobs(w *Workspace) {
 				wt.Stop()
 			}
 			return
-		case errors.Is(err, index.ErrTooManyFiles), errors.Is(err, index.ErrNewerFormat):
+		case errors.Is(err, index.ErrNewerFormat):
+			// Only a restart helps. The watcher stops for good: its watch.lock
+			// goes to a server of the newer version, which can index the edits.
+			e.log.Warn("engine: index run refused, not retrying; this server no longer watches the root", "root", w.Root, "err", err)
+			wt := w.watch
+			w.watch, w.newer, w.running = nil, true, false
+			if w.takeover != nil {
+				w.takeover.Stop()
+				w.takeover = nil
+			}
+			e.mu.Unlock()
+			if wt != nil {
+				wt.Stop() // not forget(): dirs belongs to the watch loop; its events now find no watcher
+			}
+			return
+		case errors.Is(err, index.ErrTooManyFiles):
 			// Only a config change helps: no retry. rag_index_workspace scans again.
 			e.log.Warn("engine: index run refused, not retrying", "root", w.Root, "err", err)
 		case err != nil && e.ctx.Err() == nil:

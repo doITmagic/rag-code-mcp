@@ -74,6 +74,7 @@ graph TD
 | File | Covers |
 |------|--------|
 | `engine_test.go` | Root validation, auto-index on first contact, request coalescing, `ErrHeadChanged` re-queue, retry of failed runs, a failed recreate that resumes without dropping again, no watcher without `auto_index`, recreate, embedding model change, concurrent root registration from several engines, a search refused on an index of another model with the same vector size, a lock held by another engine, `Resume`, no goroutines left after `Close`, `WriteIDERules` (tracked files, symlinks, symlinked parent directories, continuing after a refused file), backoff, a run waiting for the slot counts as queued, the end of a run logged with its counts and duration, another process's run shown as running and a dead run's phase shown as `interrupted` (`TestStatusOfAnotherProcessRun`), the first retry after another process's lock within seconds (`TestLockedRetrySoon`), parents of home and broad system directories refused as roots (`TestValidateRootRefusesBroadDirs`), the watcher's full run logged once while queued, a request queued while the runner exits is still picked up, a run failing because the root was deleted is not retried and the root is caught up when it is back, a query after the store reopened a replaced collection file queues an incremental run (`TestQueryAfterReopenQueuesResync`), a root over `max_files` refused once, without a retry (`TestMaxFilesRefusedWithoutRetry`). `TestMain` points `RAGCODE_HOME` at a temp dir. |
+| `newer_format_test.go` | A leader that meets an index of a newer Format leaves `index_status.json` as it is and gives up `watch.lock`; the follower of the newer version then indexes the next edit. |
 | `watch_test.go` | The watcher end to end, a `.gitignore` edit queues a full run, a directory that becomes a linked worktree after it was watched is dropped with a full run (`TestWatcherLinkedWorktreeAdded`), a `.git` created after start queues a full run and is watched with its refs (`TestWatcherGitInitAfterStart`), a ref moved through its `.lock` file queues one full run (`TestWatcherRefUpdateQueuesOneFullRun`), RagCode's own home inside a root neither watched nor accepted as a root (`TestWatcherIgnoresOwnHome`), root removed, root that comes back, unreadable subdirectory, watcher restart retried, `Close` beginning during `Resume`'s watcher setup (no catch-up, no warning), only one of two servers on a root watches and indexes a save (`TestWatcherOneLeaderPerRoot`), the follower takes over with a catch-up run when the leader exits (`TestWatcherFollowerTakesOver`), `Resume` in a follower queues no catch-up (`TestResumeFollowerSkipsCatchUp`). |
 | `nonotify_linux_test.go` | A root on 9p is named by `noNotify`, warned once per process and reported in `Status.Unwatched`; other file systems are not. Build: Linux. |
 | `watch_linux_test.go` | All roots share one inotify instance (nested roots both see an event, `Close` releases it); a watcher that cannot start is retried; an event overflow re-walks the tree so new directories are watched again. |
@@ -283,7 +284,11 @@ process's lock nor an embedder or store outage drops its files.
 - **Newer index**: a run that ends with `index.ErrNewerFormat` (a server left
   running after an update, on an index the new version already rebuilt) is
   handled the same way, and every automatic request is dropped: this process
-  writes nothing to that index until it is restarted.
+  writes nothing to that index until it is restarted, not even
+  `index_status.json` (`index.Run` returns before its first status write).
+  Its watcher is stopped for good and `watch.lock` released (`Workspace.newer`),
+  so a server of the newer version, until then a follower, takes the watcher
+  over at its next poll and indexes the edits.
 - **The root is gone**: when the root is no longer a directory after a failed
   run (deleted while the server runs), nothing is retried. One warning
   ("workspace root is gone, not retrying") is logged, the watcher is stopped

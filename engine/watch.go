@@ -74,6 +74,12 @@ var takeoverPoll = 5 * time.Second
 // is not queued by every server. On ErrLocked the workspace is a follower: it
 // answers queries from the shared index and polls the lock to take over.
 func (e *Engine) startWatcher(w *Workspace) (leader bool, err error) {
+	e.mu.Lock()
+	newer := w.newer
+	e.mu.Unlock()
+	if newer {
+		return false, nil // watch.lock is left to a server that can write this index
+	}
 	dir := index.Dir(w.Root)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return false, err
@@ -121,7 +127,7 @@ func (e *Engine) startWatcher(w *Workspace) (leader bool, err error) {
 func (e *Engine) follow(w *Workspace) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.closed || w.watch != nil || w.takeover != nil {
+	if e.closed || w.newer || w.watch != nil || w.takeover != nil {
 		return
 	}
 	w.takeover = time.AfterFunc(takeoverPoll, func() {

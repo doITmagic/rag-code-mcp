@@ -36,6 +36,7 @@ type Workspace struct {
 	watch     *watcher
 	takeover  *time.Timer // a follower's poll of watch.lock; nil when leading or not watching
 	gone      bool        // the root was removed or renamed; the next Workspace call re-watches it
+	newer     bool        // the index belongs to a newer RagCode (index.ErrNewerFormat): never watched again by this process
 	noEvents  string      // why the watcher of this root sees no edits (noNotify); "" when it does
 	watchErr  string      // the watcher start error last warned; "" once a watcher runs
 

@@ -147,17 +147,18 @@ func Run(ctx context.Context, o Options) (Status, error) {
 		}
 	}()
 
-	var head string
-	r.status.Branch, head = gitHead(ctx, root)
-	r.writeStatus()
-
 	r.state, err = LoadState(root)
 	if err != nil {
 		o.Log.Warn("index: state.json unreadable, starting fresh", "root", root, "err", err)
 	}
 	if r.state.Format > Format {
-		return r.finish(ctx, fmt.Errorf("%w (index format %d, this server writes %d): restart this server to run the installed version", ErrNewerFormat, r.state.Format, Format))
+		// Checked before the first status write: the status file belongs to the newer server too.
+		return r.fail(fmt.Errorf("%w (index format %d, this server writes %d): restart this server to run the installed version", ErrNewerFormat, r.state.Format, Format))
 	}
+	var head string
+	r.status.Branch, head = gitHead(ctx, root)
+	r.writeStatus()
+
 	// Probed before the state or collection change: a model the embedder
 	// cannot serve (a typo, not pulled) must not drop the index of the old one.
 	dim, err := o.Embedder.Dimension(ctx)

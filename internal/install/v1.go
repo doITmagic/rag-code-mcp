@@ -36,25 +36,7 @@ func removeV1(ctx context.Context, home string, out io.Writer) {
 	step(out, "Removing RagCode v1 (its indexes are not compatible with v2; projects are indexed again)")
 	_ = exec.CommandContext(ctx, "docker", "rm", "-f", "ragcode-qdrant", "ragcode-ollama").Run()
 
-	cfg := filepath.Join(home, ".config")
-	if runtime.GOOS == "darwin" {
-		cfg = filepath.Join(home, "Library", "Application Support")
-	}
-	mcp, servers := []string{"mcpServers"}, []string{"servers"}
-	for _, t := range []idepaths.Target{
-		{Path: filepath.Join(home, ".codeium", "windsurf", "mcp_config.json"), Keys: mcp},
-		{Path: filepath.Join(home, ".cursor", "mcp.config.json"), Keys: mcp},
-		{Path: filepath.Join(home, ".gemini", "antigravity", "mcp_config.json"), Keys: mcp},
-		{Path: filepath.Join(home, ".aitk", "mcp.json"), Keys: servers},
-		{Path: filepath.Join(home, ".config", "mcp-servers.json"), Keys: mcp},
-		{Path: filepath.Join(cfg, "Claude", "mcp-servers.json"), Keys: mcp},
-		{Path: filepath.Join(cfg, "Code", "User", "mcp.json"), Keys: servers},
-		{Path: filepath.Join(cfg, "Code", "User", "globalStorage", "mcp-servers.json"), Keys: servers},
-	} {
-		if err := t.Remove(); err != nil {
-			warn(out, err.Error())
-		}
-	}
+	removeV1IDE(home, v1ConfigDir(runtime.GOOS, home), out)
 
 	// A v1 server left running would serve from deleted files without Qdrant.
 	v1Bin := filepath.Join(installDir, "bin", "rag-code-mcp")
@@ -105,6 +87,37 @@ func removeV1(ctx context.Context, home string, out io.Writer) {
 		removeRootOwned(ctx, share, "qdrant", out)
 	}
 	ok(out, "RagCode v1 removed")
+}
+
+// v1ConfigDir is where v1 wrote the Claude Desktop and VS Code configs.
+func v1ConfigDir(goos, home string) string {
+	switch {
+	case goos == "darwin":
+		return filepath.Join(home, "Library", "Application Support")
+	case goos == "windows" && os.Getenv("APPDATA") != "":
+		return os.Getenv("APPDATA")
+	}
+	return filepath.Join(home, ".config")
+}
+
+// removeV1IDE removes the ragcode entry from every IDE file v1 wrote; cfg is
+// v1ConfigDir.
+func removeV1IDE(home, cfg string, out io.Writer) {
+	mcp, servers := []string{"mcpServers"}, []string{"servers"}
+	for _, t := range []idepaths.Target{
+		{Path: filepath.Join(home, ".codeium", "windsurf", "mcp_config.json"), Keys: mcp},
+		{Path: filepath.Join(home, ".cursor", "mcp.config.json"), Keys: mcp},
+		{Path: filepath.Join(home, ".gemini", "antigravity", "mcp_config.json"), Keys: mcp},
+		{Path: filepath.Join(home, ".aitk", "mcp.json"), Keys: servers},
+		{Path: filepath.Join(home, ".config", "mcp-servers.json"), Keys: mcp},
+		{Path: filepath.Join(cfg, "Claude", "mcp-servers.json"), Keys: mcp},
+		{Path: filepath.Join(cfg, "Code", "User", "mcp.json"), Keys: servers},
+		{Path: filepath.Join(cfg, "Code", "User", "globalStorage", "mcp-servers.json"), Keys: servers},
+	} {
+		if err := t.Remove(); err != nil {
+			warn(out, err.Error())
+		}
+	}
 }
 
 // within reports whether p is dir or inside it, through symlinks, a relative

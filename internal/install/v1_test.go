@@ -3,6 +3,7 @@ package install
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -183,4 +184,31 @@ func TestInstallIntoV1DirViaSymlinkOrRelativePathKeepsItself(t *testing.T) {
 		assert.FileExists(t, filepath.Join(v1Dir, "bin", "rag-code-mcp"))
 		assert.FileExists(t, filepath.Join(v1Dir, "config.yaml"))
 	})
+}
+
+// On Windows v1 wrote the Claude Desktop and VS Code configs under %APPDATA%,
+// not ~/.config: their ragcode entries are removed there, other servers kept.
+func TestRemoveV1IDEWindowsAppData(t *testing.T) {
+	home, appData := t.TempDir(), t.TempDir()
+	t.Setenv("APPDATA", appData)
+	files := map[string]string{
+		filepath.Join(appData, "Claude", "mcp-servers.json"):                        "mcpServers",
+		filepath.Join(appData, "Code", "User", "mcp.json"):                          "servers",
+		filepath.Join(appData, "Code", "User", "globalStorage", "mcp-servers.json"): "servers",
+	}
+	for p, key := range files {
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte(`{"`+key+`":{"ragcode":{"command":"rag-code-mcp.exe"},"other":{"command":"gh"}}}`), 0o644))
+	}
+
+	cfg := v1ConfigDir("windows", home)
+	assert.Equal(t, appData, cfg)
+	removeV1IDE(home, cfg, io.Discard)
+
+	for p := range files {
+		data, err := os.ReadFile(p)
+		require.NoError(t, err)
+		assert.NotContains(t, string(data), "ragcode", p)
+		assert.Contains(t, string(data), `"other"`, p)
+	}
 }

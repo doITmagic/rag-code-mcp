@@ -45,14 +45,14 @@ graph LR
 | File | Contents |
 |:---|:---|
 | `install.go` | `Options`, `Run`, and the helpers `copyFile`, `runContainer`, `waitHTTP`, `pullModel`, `addPath` and the coloured `step`/`ok`/`warn` printers. |
-| `v1.go` | `removeV1`: deletes a RagCode v1 install (`~/.local/share/ragcode`), its IDE entries, PATH line, containers and Qdrant data. |
+| `v1.go` | `removeV1` (with `removeV1IDE`, `v1ConfigDir`): deletes a RagCode v1 install (`~/.local/share/ragcode`), its IDE entries, PATH line, containers and Qdrant data. |
 
 Tests:
 
 | File | Covers |
 |:---|:---|
 | `install_test.go` | Full run with a fake `docker` (GPU start fails, CPU retry) and an `httptest` Ollama: binary mode `0755`, config written, exact Docker commands, model pulled with progress, PATH line once, Cursor entry and summary snippet; a second run with `-ollama skip` keeps the config and does no Docker or model work; `-ollama local` and `-models-dir`; errors (bad `-ollama`, binary missing, user answers no); `pullModel` errors and the 412 "Ollama too old" message; a failed container still pulls from an Ollama already on the port; the Ollama image is pulled before the container starts and a failed pull keeps the local image (`TestOllamaImagePulledFirst`); no Qdrant is started. |
-| `v1_test.go` | A v1 install is removed (install dir, `~/.local/share/qdrant` when it holds only ragcode collections, PATH line, the `ragcode` entry in `~/.cursor/mcp.config.json`, Docker `rm -f`); answering no to "Replace?", a failed copy or an invalid config leaves v1 untouched; a collection RagCode did not create, or an unreadable collections directory, is kept; a running v1 server is stopped; `RAGCODE_HOME` reaching the v1 directory through a symlink or a relative path keeps the new install (`TestInstallIntoV1DirViaSymlinkOrRelativePathKeepsItself`). |
+| `v1_test.go` | A v1 install is removed (install dir, `~/.local/share/qdrant` when it holds only ragcode collections, PATH line, the `ragcode` entry in `~/.cursor/mcp.config.json`, Docker `rm -f`); answering no to "Replace?", a failed copy or an invalid config leaves v1 untouched; a collection RagCode did not create, or an unreadable collections directory, is kept; a running v1 server is stopped; `RAGCODE_HOME` reaching the v1 directory through a symlink or a relative path keeps the new install (`TestInstallIntoV1DirViaSymlinkOrRelativePathKeepsItself`); on Windows the v1 entries under `%APPDATA%` (Claude Desktop, VS Code) are removed (`TestRemoveV1IDEWindowsAppData`, runs on every OS). |
 | `zz_verify_test.go` | Verification tests: `-ollama local` without Docker still waits and pulls; a cancelled context does not hang `Run`; `waitHTTP` on an unreachable URL returns an error; a reinstall replaces the binary, leaves no temp file and writes `.zshrc` when `SHELL` is zsh. |
 
 ## Key types and functions
@@ -171,7 +171,9 @@ inside it, `removeV1`:
    `~/.cursor/mcp.config.json`, `~/.gemini/antigravity/mcp_config.json`,
    `~/.aitk/mcp.json`, `~/.config/mcp-servers.json`,
    `<cfg>/Claude/mcp-servers.json`, `<cfg>/Code/User/mcp.json`,
-   `<cfg>/Code/User/globalStorage/mcp-servers.json`);
+   `<cfg>/Code/User/globalStorage/mcp-servers.json`, where `<cfg>` is
+   `~/.config` on Linux, `~/Library/Application Support` on macOS and
+   `%APPDATA%` on Windows, as v1 wrote them);
 3. stops a running v1 server (`StopProcess` on its binary) and deletes
    `~/.local/share/ragcode`;
 4. removes the line `export PATH="<home>/.local/share/ragcode/bin:$PATH"`

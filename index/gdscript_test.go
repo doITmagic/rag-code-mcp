@@ -95,3 +95,28 @@ func TestResolveGDScriptSceneScript(t *testing.T) {
 	}
 	assert.Equal(t, []string{e.symbols(t, plain)["plain"].ID}, got)
 }
+
+// A script added in a later incremental run re-resolves the unchanged files
+// that name it by path, an extends "res://..." and a scene node's attached
+// script, as a full run would: they name its module, not its class.
+func TestResolveGDScriptPathReferrersOfAddedScript(t *testing.T) {
+	e := newEnv(t)
+	hero := e.write(t, "hero.gd", "extends \"res://actors/player.gd\"\nfunc act():\n\tpass\n")
+	scene := e.write(t, "level.tscn", "[gd_scene load_steps=2 format=3]\n[ext_resource type=\"Script\" path=\"res://actors/player.gd\" id=\"1\"]\n[node name=\"Root\" type=\"Node\"]\nscript = ExtResource(\"1\")\n")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+
+	player := e.write(t, "actors/player.gd", "class_name Player\nextends Node\n")
+	_, err = e.run(t, nil)
+	require.NoError(t, err)
+	id := e.symbols(t, player)["Player"].ID
+	require.NotEmpty(t, id)
+
+	rels := e.symbols(t, hero)["hero"].Relations
+	require.Len(t, rels, 1)
+	assert.Equal(t, parser.ResolutionExact, rels[0].Resolution)
+	assert.Equal(t, id, rels[0].TargetID, "extends")
+	rels = e.symbols(t, scene)["Root"].Relations
+	require.Len(t, rels, 1)
+	assert.Equal(t, id, rels[0].TargetID, "scene script")
+}

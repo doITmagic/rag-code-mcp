@@ -790,13 +790,23 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 			break
 		}
 		qns, names := make([]string, len(syms)), map[string]bool{}
-		var nameList []string
+		var nameList, mods []string
 		for i, s := range syms {
 			qns[i] = s.QualifiedName
 			if !names[s.Name] {
 				names[s.Name] = true
 				nameList = append(nameList, s.Name)
 			}
+			if s.Kind == parser.KindClass && s.Owner == "" && s.Module != "" && !slices.Contains(mods, s.Module) {
+				mods = append(mods, s.Module)
+			}
+		}
+		// extends "res://x.gd" (GDScript) and a scene node's attached script
+		// name a whole module: resolve takes its one top-level class
+		script := func(h parser.Symbol) bool {
+			return slices.ContainsFunc(h.Relations, func(rel parser.Relation) bool {
+				return slices.Contains(mods, rel.TargetQualifiedName) && (rel.Kind == parser.RelExtends || rel.Kind == parser.RelUsesType && h.Language == "gdscript")
+			})
 		}
 		// a relation resolved by name, or not at all, or by a qualified suffix
 		// one of the added symbols also has; an ambiguous one only with an
@@ -819,6 +829,7 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 			})
 		}
 		ok = query(qns, func(v []string) store.Filter { return store.Filter{TargetQualifiedNames: v} }, add(all)) &&
+			query(mods, func(v []string) store.Filter { return store.Filter{TargetQualifiedNames: v} }, add(script)) &&
 			query(nameList, func(v []string) store.Filter { return store.Filter{TargetNames: v, Language: lang} }, add(guessed))
 	}
 	sort.Strings(out)

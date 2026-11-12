@@ -82,7 +82,7 @@ graph LR
 | `twins_test.go` | Twins in one file resolve to the widest (then first) by qualified name and by name, in a full run and from the store; a qualified name in two files stays ambiguous; a wider twin added later re-resolves the unchanged caller in a files run; `..delta` resolves by name (unique, then ambiguous), never exact. |
 | `resolve_files_test.go` | A files run sees the stored candidates too: a target ambiguous in a full run stays ambiguous by exact and suffix match; removing one of two candidates (file deleted, symbol edited away, or one of two same-named methods of one file) makes the unchanged caller unique. |
 | `resolve_fix_test.go` | Name and qualified resolution stay within one language (html may cross), targets defined later, inherited-member fallback, an ambiguous `self.m()` made exact by a base method added in a later run, a files run after a failed run widens to a full walk, symlinked `.ragcode` directories and device files are refused, an exact suffix match (Python) turned ambiguous by a new symbol with that suffix, a PHP suffix match only `unique`, a Python suffix never cut inside a package (`json.dumps` vs `src.flask.json.dumps`). |
-| `gdscript_test.go` | `extends "res://x.gd"` resolves to the script's class, named by `class_name` or after the file, in full and files runs; `super.run()` in a `class_name` hierarchy (`BaseTrigger.run`, defined in the base's base `Cutscene`) resolves exactly through the bases, and by name when the owner is only in the store; a scene node's attached script resolves to the script's class. |
+| `gdscript_test.go` | `extends "res://x.gd"` resolves to the script's class, named by `class_name` or after the file, in full and files runs; `super.run()` in a `class_name` hierarchy (`BaseTrigger.run`, defined in the base's base `Cutscene`) resolves exactly through the bases, and by name when the owner is only in the store; a scene node's attached script resolves to the script's class; a script added in a later incremental run re-resolves the unchanged `extends` and scene files that name it by path. |
 | `prefix_test.go` | `Run` adds the model's document prefix before embedding. |
 | `lock_unix_test.go` | A second run on a locked root gets `ErrLocked`. Build tag `unix`. |
 | `lock_test.go` | Two holders of `index.lock` exclude each other, on every platform. |
@@ -355,7 +355,11 @@ re-parsed and re-resolved in the same run:
    relation was resolved by name or not at all, or by a qualified suffix that
    a new symbol also has (`pkg.Svc` with a new `lib.pkg.Svc`: no longer unique),
    or is ambiguous with an owner (`self.Save()` that fell back to two unrelated
-   `Save`: a new `Base.Save` on the owner's base makes it exact).
+   `Save`: a new `Base.Save` on the owner's base makes it exact). For a new
+   top-level class, also query points whose `extends` (or GDScript
+   `uses_type`) `TargetQualifiedName` is its module: `extends
+   "res://x/y.gd"` and a scene node's attached script name the script, and
+   resolve takes its one top-level class.
 5. Read the names of the vanished IDs; for a vanished candidate that is not
    still in its own file under the same qualified name (it only moved), query
    for points with that `TargetName` and language whose relation is

@@ -82,7 +82,7 @@ func scene(f parser.File) []parser.Symbol {
 			sym.Metadata["instance"] = inst
 		}
 		if p := extPath(s.script); p != "" {
-			m := resModule(p, mod)
+			m := resModule(p, mod, project(f))
 			scriptMod[path] = m
 			sym.Relations = []parser.Relation{{Kind: parser.RelUsesType, TargetName: stem(p), TargetQualifiedName: m, Line: s.scriptLine}}
 		}

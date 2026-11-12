@@ -38,7 +38,13 @@ script and the scene next to it share a module:
 | a file outside the root, or no root | `res://<stem>` |
 
 Paths found in the source (`extends "res://base/enemy.gd"`,
-`ext_resource path=...`) are mapped the same way. A relative path such as
+`ext_resource path=...`) are mapped the same way. Godot counts `res://` from
+the folder of `project.godot`: when the nearest one above the file is in a
+subfolder of the root (`/ws/game/project.godot`), a `res://main.gd` written
+in that project names the module `res://game/main`, so two projects in one
+workspace do not share names. A `project.godot` added or removed later
+changes the targets only of files parsed after it (a full re-index brings the
+rest). A relative path such as
 `"enemy.gd"` or `"../base.gd"` is taken from the referring file's directory
 and cleaned. Other schemes (`uid://`) cannot be mapped and give an empty
 target.
@@ -209,7 +215,7 @@ For `/ws/levels/main.tscn`: `res://levels/main.Main` (uses_type ->
 
 | File | Covers |
 |------|--------|
-| `gdscript_test.go` | Script symbols (kinds, owners, lines, signatures, docs, metadata), call relations including signals and connections, `extends` with `res://`, relative and `uid://` paths, Godot 3 keywords, module names, a scene with instances, scripts and connections, the node and content caps, garbage scenes, malformed scripts, registration, concurrency, `super` calls, calls in property `set` / `get` bodies. |
+| `gdscript_test.go` | Script symbols (kinds, owners, lines, signatures, docs, metadata), call relations including signals and connections, `extends` with `res://`, relative and `uid://` paths, Godot 3 keywords, module names, a scene with instances, scripts and connections, the node and content caps, garbage scenes, malformed scripts, registration, concurrency, `super` calls, calls in property `set` / `get` bodies. A project in a subfolder of the workspace: `res://` paths of scripts and scenes name the modules under that folder. |
 | `zz_verify_test.go` | Verification tests: scripts, scenes, robustness, Godot 4 syntax, CRLF and upper-case scene files, large inputs, and two further rounds of script, scene and big-file probes. |
 
 ## Testing

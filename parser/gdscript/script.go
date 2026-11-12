@@ -13,6 +13,7 @@ type scriptCtx struct {
 	src    []byte
 	lang   *gotreesitter.Language
 	module string
+	proj   string // see project
 }
 
 // scope is the class whose body is being collected: the script itself
@@ -31,7 +32,7 @@ func script(f parser.File) ([]parser.Symbol, error) {
 		return nil, err
 	}
 	defer tree.Release()
-	c := &scriptCtx{src: f.Source, lang: lang, module: module(f)}
+	c := &scriptCtx{src: f.Source, lang: lang, module: module(f), proj: project(f)}
 	root := tree.RootNode()
 
 	// Header pass: class_name and extends may come in either order.
@@ -259,7 +260,7 @@ func (c *scriptCtx) extendsRel(e *gotreesitter.Node) parser.Relation {
 	line, _ := parser.Lines(e)
 	if s := c.child(e, "string"); s != nil {
 		p := strings.Trim(c.text(s), `"'`)
-		return parser.Relation{Kind: parser.RelExtends, TargetName: stem(p), TargetQualifiedName: resModule(p, c.module), Line: line}
+		return parser.Relation{Kind: parser.RelExtends, TargetName: stem(p), TargetQualifiedName: resModule(p, c.module, c.proj), Line: line}
 	}
 	return parser.Relation{Kind: parser.RelExtends, TargetName: c.text(e.NamedChild(0)), Line: line}
 }

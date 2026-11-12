@@ -2,6 +2,8 @@ package gdscript
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -383,4 +385,27 @@ func TestPropertyAccessorCalls(t *testing.T) {
 	src := "class_name Pickup\nvar item_type: int:\n\tset(value):\n\t\titem_type = value\n\t\tInventory.get_item_icon(item_type)\n\t\thelp()\n\tget:\n\t\treturn calc()\nfunc help():\n\tpass\n"
 	m := byQN(analyze(t, "/ws/pickup.gd", "/ws", src))
 	assert.Equal(t, map[string]string{"get_item_icon": "", "help": "res://pickup.Pickup.help", "calc": ""}, targets(m["res://pickup.Pickup.item_type"], parser.RelCall))
+}
+
+// A Godot project in a subfolder of the workspace (ws/game/project.godot):
+// res:// paths count from that folder, so they name the modules under it.
+func TestResPathInProjectSubfolder(t *testing.T) {
+	ws := t.TempDir()
+	game := filepath.Join(ws, "game")
+	require.NoError(t, os.MkdirAll(filepath.Join(game, "mobs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(game, "project.godot"), nil, 0o644))
+
+	m := byQN(analyze(t, filepath.Join(game, "mobs", "slime.gd"), ws, "extends \"res://base/enemy.gd\"\n"))
+	assert.Equal(t, "res://game/base/enemy", m["res://game/mobs/slime.slime"].Relations[0].TargetQualifiedName)
+	rel := byQN(analyze(t, filepath.Join(game, "mobs", "slime.gd"), ws, "extends \"enemy.gd\"\n"))
+	assert.Equal(t, "res://game/mobs/enemy", rel["res://game/mobs/slime.slime"].Relations[0].TargetQualifiedName)
+
+	scn := "[gd_scene format=3]\n[ext_resource type=\"Script\" path=\"res://main.gd\" id=\"1\"]\n[node name=\"Main\" type=\"Node\"]\nscript = ExtResource(\"1\")\n[connection signal=\"hit\" from=\".\" to=\".\" method=\"on_hit\"]\n"
+	s := byQN(analyze(t, filepath.Join(game, "main.tscn"), ws, scn))["res://game/main.Main"]
+	assert.Equal(t, "res://game/main", targets(s, parser.RelUsesType)["main"])
+	assert.Equal(t, "res://game/main.on_hit", targets(s, parser.RelCall)["on_hit"])
+
+	// No project.godot above the file inside the root: res:// counts from the root.
+	top := byQN(analyze(t, filepath.Join(ws, "other", "a.gd"), ws, "extends \"res://base/enemy.gd\"\n"))
+	assert.Equal(t, "res://base/enemy", top["res://other/a.a"].Relations[0].TargetQualifiedName)
 }

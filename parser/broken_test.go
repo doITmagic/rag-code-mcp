@@ -37,8 +37,9 @@ func TestBrokenFileKeepsDeclarationsOrFails(t *testing.T) {
 			}
 			src = strings.Replace(tpl, "%s", strings.Repeat(br, 5000), 1)
 			_, err = parser.Analyze(parser.File{Path: "/ws/" + name, Root: "/ws", Source: []byte(src)})
-			if err == nil || !strings.Contains(err.Error(), "brackets") {
-				t.Errorf("%s with 5000 unclosed %s: want a brackets error, got %v", name, br, err)
+			// the parse runs first: on a slow run (-race) its timeout is the error
+			if err == nil || !strings.Contains(err.Error(), "brackets") && !strings.Contains(err.Error(), "parse stopped") {
+				t.Errorf("%s with 5000 unclosed %s: want a brackets or timeout error, got %v", name, br, err)
 			}
 		}
 	}

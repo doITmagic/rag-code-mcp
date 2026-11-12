@@ -325,6 +325,10 @@ literal's values are not walked, its methods own their calls.
   error, so the file counts as failed; it is not indexed as an empty file.
 - Vue blocks are found by plain string scanning (`<script`, `</script`,
   `<template`, last `</template>`).
+- The `javascript` grammar's parse time grows with the square of the number
+  of top-level statements (1.7 s for 20,000, measured): a `.js` file with some
+  30,000 or more of them hits the 3 s parse timeout and counts as failed.
+  `typescript`, `tsx` and the other languages parse 40,000 in 0.3 s.
 - Only top-level statements produce symbols; functions declared inside other
   functions do not, except the wrappers of a classic browser script. Two
   wrappers of one file declaring the same name give one qualified name

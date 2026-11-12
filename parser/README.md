@@ -280,7 +280,7 @@ error recovery can be quadratic on garbage input.
 | `normalize_test.go` | `TestNormalizeMethodExpression`: `Normalize` on Go method expressions and PHP separators; `TestNormalizeKeepsRoutePath`: a route path stays one segment in `Normalize` and `MatchQualified`, relative paths do not. |
 | `nesting_test.go` | The nesting guard leaves `html` alone: a page with 1001 `(` in a script string still parses. |
 | `literal_brackets_test.go` | A valid Go, JavaScript, PHP, Python, HTML, JSON or Markdown file with 1001 `[` in a string, comment or text keeps its symbols. |
-| `finalize_collision_test.go` | 20,000 symbols of one name on one line get their IDs within 5 s, through `Finalize` and through the JavaScript analyzer. |
+| `finalize_collision_test.go` | 20,000 symbols of one name on one line get their IDs within 5 s. |
 | `ts.go` | Pooled tree-sitter parsers with a parse timeout, `ParseTree`, `Walk`, `NamedChildren`, `Field`, `Text`, `Lines`, `ReleaseParsers`. |
 
 The test files here are `normalize_test.go`, `nesting_test.go`, `literal_brackets_test.go`, `finalize_test.go`,

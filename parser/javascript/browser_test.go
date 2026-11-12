@@ -117,6 +117,8 @@ export function exported() {}
 function own() {}
 window.own = own;
 window.direct = function () {};
+function renamed() {}
+window.other = renamed; // the global is other: onclick="renamed()" reaches nothing
 `
 	global := map[string]bool{}
 	for _, s := range append(analyze(t, "js/page.js", classic), analyze(t, "js/mod.js", module)...) {
@@ -125,7 +127,7 @@ window.direct = function () {};
 	assert.Equal(t, map[string]bool{
 		"js/page.top": true, "js/page.expr": true, "js/page.Widget": false, "js/page.Widget.open": false,
 		"js/page.local": false, "js/page.shared": true, "js/page.assigned": true,
-		"js/mod.exported": false, "js/mod.own": true, "js/mod.direct": true,
+		"js/mod.exported": false, "js/mod.own": true, "js/mod.direct": true, "js/mod.renamed": false,
 	}, global)
 }
 

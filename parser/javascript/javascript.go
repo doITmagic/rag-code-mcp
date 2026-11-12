@@ -734,7 +734,6 @@ func (c *fileCtx) scanExportsAssign(n *gotreesitter.Node) {
 		if right != nil && right.Type(c.lang) == "identifier" {
 			c.winAlias[windowProp(left)] = parser.Text(right, c.src)
 			c.exported[parser.Text(right, c.src)] = true
-			c.windowed[parser.Text(right, c.src)] = true
 		} else if right != nil && isFunc(right.Type(c.lang)) && c.defs[windowProp(left)] == "" {
 			c.defs[windowProp(left)] = parser.KindFunction
 		}

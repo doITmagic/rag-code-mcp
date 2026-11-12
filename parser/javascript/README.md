@@ -207,7 +207,9 @@ specifier is the module as written (`react.useState`).
   too), has `Metadata{"global": "true"}`; the index binds `onclick="f()"`
   only to those. Wrapper locals, methods and module functions do not, nor a
   function `f` the file reassigns with `window.f = g` (so `onclick="f()"`
-  links to nothing rather than to the replaced `f`).
+  links to nothing rather than to the replaced `f`), nor a module function
+  `g` exposed under another name (`window.f = g`: the global is `f`, and no
+  symbol has that name, so `onclick="f()"` links to nothing).
 - **Signature** is the declaration up to the body, whitespace collapsed;
   without a body, its first line.
 - **Doc** is the JSDoc block or the run of line comments directly above.

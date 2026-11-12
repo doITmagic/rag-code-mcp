@@ -16,6 +16,7 @@ type framework struct {
 	module  string         // import path without a /vN suffix
 	methods map[string]int // registration method -> index of its path argument
 	group   string         // method returning a sub-router prefixed by its path argument
+	last    bool           // the handler is the last argument (after middleware), not the one after the path
 }
 
 var frameworks = []framework{
@@ -23,11 +24,15 @@ var frameworks = []framework{
 		"GET": 0, "POST": 0, "PUT": 0, "DELETE": 0, "PATCH": 0, "OPTIONS": 0, "HEAD": 0, "CONNECT": 0, "TRACE": 0,
 		"Any": 0, "Match": 1, "Add": 1, "Static": 0, "File": 0,
 	}},
+	{name: "gin", module: "github.com/gin-gonic/gin", group: "Group", last: true, methods: map[string]int{
+		"GET": 0, "POST": 0, "PUT": 0, "DELETE": 0, "PATCH": 0, "OPTIONS": 0, "HEAD": 0,
+		"Any": 0, "Match": 1, "Handle": 1, "Static": 0, "StaticFile": 0, "StaticFS": 0,
+	}},
 }
 
 // noHandler are registration methods whose argument after the path is not a
 // handler (a directory or file name).
-var noHandler = map[string]bool{"Static": true, "File": true}
+var noHandler = map[string]bool{"Static": true, "File": true, "StaticFile": true, "StaticFS": true}
 
 // addFramework records the router an import path belongs to.
 func (fc *file) addFramework(path string) {
@@ -137,6 +142,9 @@ func (fc *file) route(call, fn *gotreesitter.Node, args []*gotreesitter.Node, gr
 			}
 			if handler = args[idx+1]; strings.HasSuffix(handler.Type(fc.lang), "string_literal") {
 				continue // Header().Add("k", "v")
+			}
+			if fw.last {
+				handler = args[len(args)-1]
 			}
 		}
 		name := fc.prefix(parser.Field(fn, fc.lang, "operand"), groups) + path

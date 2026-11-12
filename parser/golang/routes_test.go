@@ -137,3 +137,44 @@ func TestX(e *echo.Echo) { e.GET("/t", h) }
 `
 	assert.Empty(t, routeList(t, "web/x_test.go", test))
 }
+
+func TestGinRoutes(t *testing.T) {
+	src := `package api
+
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"github.com/acme/app/handlers"
+)
+
+func ping(c *gin.Context) {}
+
+func auth() gin.HandlerFunc { return nil }
+
+func Setup() *gin.Engine {
+	r := gin.Default()
+	r.GET("/ping", ping)
+	v1 := r.Group("/v1", auth())
+	{
+		v1.POST("/login", auth(), handlers.Login)
+		admin := v1.Group("/admin")
+		admin.Handle(http.MethodPut, "/users/:id", ping)
+		admin.Any("/any", func(c *gin.Context) {})
+	}
+	r.Static("/assets", "./assets")
+	r.StaticFile("/favicon.ico", "./f.ico")
+	c := &gin.Context{}
+	c.Header("X-Key", "v")
+	return r
+}
+`
+	assert.Equal(t, []string{
+		"gin GET api.Setup./ping -> api.ping",
+		"gin POST api.Setup./v1/login -> github.com/acme/app/handlers.Login",
+		"gin Handle api.Setup./v1/admin/users/:id -> api.ping",
+		"gin Any api.Setup./v1/admin/any ->",
+		"gin Static api.Setup./assets ->",
+		"gin StaticFile api.Setup./favicon.ico ->",
+	}, routeList(t, "api/r.go", src))
+}

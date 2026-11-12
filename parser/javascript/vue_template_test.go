@@ -129,3 +129,24 @@ function fmt() {}
 	}
 	assert.Equal(t, []string{"ask", "$t", "fmt"}, got)
 }
+
+// <widgets.Button /> of `import * as widgets` is a component usage whatever
+// the namespace's case; a lowercase dotted tag of no import, or one inside an
+// HTML comment, is not.
+func TestVueTemplateNamespaceComponent(t *testing.T) {
+	syms := analyze(t, "Page.vue", `<template><widgets.Button /><other.Thing /><!-- <widgets.Card /> --></template>
+<script setup>
+import * as widgets from './widgets';
+</script>
+`)
+	tpl := find(t, syms, "Page.Page")
+	var used []string
+	for _, r := range tpl.Relations {
+		if r.Kind == parser.RelUsesType {
+			used = append(used, r.TargetQualifiedName)
+		}
+	}
+	if len(used) != 1 || used[0] != "widgets.Button" {
+		t.Fatalf("component usages = %q; want only widgets.Button", used)
+	}
+}

@@ -425,8 +425,9 @@ func vueBlocks(src []byte) []vueBlock {
 }
 
 var (
-	// reVueTag is a component tag: PascalCase (`<StatusCard`, `<ns.Comp`) or kebab-case with a dash (`<status-card`).
-	reVueTag = regexp.MustCompile(`<([A-Z][\w]*(?:\.[A-Z]\w*)?|[a-z][a-z0-9]*(?:-[a-z0-9]+)+)[\s/>]`)
+	// reVueTag is a component tag: PascalCase (`<StatusCard`, `<Ns.Comp`), kebab-case with a dash (`<status-card`)
+	// or dotted with a lowercase first part (`<widgets.Button`, kept only when that part is imported).
+	reVueTag = regexp.MustCompile(`<([A-Z][\w]*(?:\.[A-Z]\w*)?|[a-z_$][\w$]*\.[\w$]+|[a-z][a-z0-9]*(?:-[a-z0-9]+)+)[\s/>]`)
 	// reVueExpr is a template expression: an event, bound or directive attribute value, or a {{ mustache }}.
 	reVueExpr = regexp.MustCompile(`\s(@[\w.:-]+|v-on:[\w.:-]+|:[\w.:-]+|v-bind:[\w.:-]+|v-(?:if|else-if|show|for|html|text))\s*=\s*"([^"]*)"|\{\{((?s:.*?))\}\}`)
 	reVueCall = regexp.MustCompile(`(?:^|[^\w$.])([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*\(`)
@@ -476,8 +477,11 @@ func templateRels(src []byte, b vueBlock, c *fileCtx, syms []parser.Symbol, comp
 	var rels []parser.Relation
 	for _, m := range reVueTag.FindAllSubmatchIndex(text, -1) {
 		name := string(text[m[2]:m[3]])
-		if !strings.Contains(name, ".") {
+		ns, _, dotted := strings.Cut(name, ".")
+		if !dotted {
 			name = pascal(name)
+		} else if (ns[0] < 'A' || ns[0] > 'Z') && (c == nil || c.imports[ns] == "") {
+			continue // <obj.prop> of no import: not a component
 		}
 		qn := ""
 		if c != nil {

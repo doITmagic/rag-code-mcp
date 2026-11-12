@@ -21,9 +21,31 @@ var bladeComment = regexp.MustCompile(`(?s)\{\{--.*?--\}\}`)
 // <x-dir.name>; group 1 is the name.
 var bladeTag = regexp.MustCompile(`<x-([\w.-]+)(?:[\s/>]|$)`)
 
+// bladeLivewire matches a Livewire component tag <livewire:name> or
+// <livewire:dir.name>; group 1 is the name.
+var bladeLivewire = regexp.MustCompile(`<livewire:([\w.-]+)(?:[\s/>]|$)`)
+
+// livewireClass is the class Livewire 3 maps a component name to:
+// "forum.post-list" is App\Livewire\Forum\PostList.
+func livewireClass(name string) string {
+	segs := strings.Split(name, ".")
+	for i, seg := range segs {
+		var b strings.Builder
+		for _, w := range strings.Split(seg, "-") {
+			if w != "" {
+				b.WriteString(strings.ToUpper(w[:1]) + w[1:])
+			}
+		}
+		segs[i] = b.String()
+	}
+	return `App\Livewire\` + strings.Join(segs, `\`)
+}
+
 // blade scans a .blade.php view line by line: one template symbol for the
 // file, one per @section/@component/@livewire, and an imports relation per
-// @extends/@include/@includeIf/@each/@component and <x-name> tag. Module is
+// @extends/@include/@includeIf/@each/@component and <x-name> tag; a
+// @livewire('x') or <livewire:x> imports the view livewire.x and uses the
+// class App\Livewire\X. Module is
 // the view's dotted directory below the nearest "views" folder, so
 // "layouts.app" resolves exactly.
 func blade(f parser.File) []parser.Symbol {
@@ -49,6 +71,15 @@ func blade(f parser.File) []parser.Symbol {
 			Kind: parser.RelImports, TargetName: view, TargetQualifiedName: view, Line: ln,
 		})
 	}
+	// A Livewire component is its view livewire.<name> and, by Livewire 3's
+	// convention, the class App\Livewire\<Name>.
+	livewire := func(name string, ln int) {
+		imports("livewire."+name, ln)
+		class := livewireClass(name)
+		syms[0].Relations = append(syms[0].Relations, parser.Relation{
+			Kind: parser.RelUsesType, TargetName: class[strings.LastIndex(class, `\`)+1:], TargetQualifiedName: class, Line: ln,
+		})
+	}
 	var open []int // indexes of the block symbols waiting for their closing directive, innermost last
 	for i, line := range scan {
 		ln := i + 1
@@ -65,6 +96,9 @@ func blade(f parser.File) []parser.Symbol {
 				if m[1] == "component" {
 					imports(m[2], ln)
 				}
+				if m[1] == "livewire" {
+					livewire(m[2], ln)
+				}
 				syms = append(syms, parser.Symbol{
 					Name: m[2], Kind: parser.KindTemplate, Module: syms[0].Module, Owner: stem,
 					Signature: strings.TrimSpace(m[0]), Content: lines[i], StartLine: ln, EndLine: ln, Exported: true,
@@ -79,6 +113,9 @@ func blade(f parser.File) []parser.Symbol {
 					open = open[:k]
 				}
 			}
+		}
+		for _, m := range bladeLivewire.FindAllStringSubmatch(line, -1) {
+			livewire(m[1], ln)
 		}
 		for _, m := range bladeTag.FindAllStringSubmatch(line, -1) {
 			if m[1] != "slot" && m[1] != "dynamic-component" {

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	_ "github.com/doITmagic/rag-code-mcp/v2/parser/php"
@@ -190,5 +191,32 @@ class Checkout {
 		require.Len(t, out.Files[0].Usages, 1, q)
 		assert.Equal(t, "App.Checkout.run", out.Files[0].Usages[0].Caller, q)
 		assert.False(t, out.Files[0].Usages[0].ByName, q)
+	}
+}
+
+// A Livewire component tag or directive in a view is a usage of the
+// component's class and of its view.
+func TestUsagesOfLivewireComponent(t *testing.T) {
+	v := newEnv(t, false, nil)
+	v.addFiles(t, map[string]string{
+		"app/Livewire/Likes.php":                   "<?php\n\nnamespace App\\Livewire;\n\nfinal class Likes extends Component\n{\n    public function mount(): void {}\n}\n",
+		"app/Livewire/Forum/PostList.php":          "<?php\n\nnamespace App\\Livewire\\Forum;\n\nfinal class PostList extends Component {}\n",
+		"app/Models/Counter.php":                   "<?php\n\nnamespace App\\Models;\n\nclass Counter {}\n",
+		"resources/views/other.blade.php":          "<livewire:counter />\n",
+		"resources/views/livewire/likes.blade.php": "<div>likes</div>\n",
+		"resources/views/page.blade.php":           "<div>\n    <livewire:likes :subject=\"$a\" />\n    @livewire('likes', ['subject' => $a])\n    <livewire:forum.post-list />\n</div>\n",
+	})
+	// a class of the tag's name in another namespace is not the component
+	r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": `App\Models\Counter`})
+	assert.Contains(t, r.Message, "0 usages", r.Message)
+	for symbol, lines := range map[string]int{`App\Livewire\Likes`: 2, "livewire.likes": 2, `App\Livewire\Forum\PostList`: 1} {
+		var out struct {
+			Files []FileUsages `json:"files"`
+		}
+		r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": symbol})
+		require.Equal(t, "ok", r.Status, symbol+": "+r.Message)
+		data(t, r, &out)
+		require.Len(t, out.Files, 1, symbol+": "+r.Message)
+		assert.Contains(t, r.Message, strconv.Itoa(lines)+" usages", symbol)
 	}
 }

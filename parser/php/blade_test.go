@@ -55,6 +55,8 @@ func TestBlade(t *testing.T) {
 		{Kind: parser.RelImports, TargetName: "partials.nav", TargetQualifiedName: "partials.nav", Line: 7},
 		{Kind: parser.RelImports, TargetName: "partials.flash", TargetQualifiedName: "partials.flash", Line: 8},
 		{Kind: parser.RelImports, TargetName: "users.row", TargetQualifiedName: "users.row", Line: 9},
+		{Kind: parser.RelImports, TargetName: "livewire.counter", TargetQualifiedName: "livewire.counter", Line: 10},
+		{Kind: parser.RelUsesType, TargetName: "Counter", TargetQualifiedName: `App\Livewire\Counter`, Line: 10},
 		{Kind: parser.RelImports, TargetName: "alert", TargetQualifiedName: "alert", Line: 13},
 	}, file.Relations)
 

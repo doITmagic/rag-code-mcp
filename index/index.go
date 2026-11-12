@@ -887,6 +887,24 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 			query(mods, func(v []string) store.Filter { return store.Filter{TargetQualifiedNames: v} }, add(script)) &&
 			query(nameList, func(v []string) store.Filter { return store.Filter{TargetNames: v} }, add(guessed))
 	}
+	// An html inline handler (onclick="f()") links only to a browser global:
+	// a kept JavaScript function that became one, or stopped being one,
+	// changes the handlers that name it.
+	global := map[string]parser.Symbol{} // kept id -> the function now
+	for _, p := range files {
+		for _, s := range p.syms {
+			if s.Language == "javascript" && s.Kind == parser.KindFunction && slices.Contains(r.state.Files[p.path].IDs, s.ID) {
+				global[s.ID] = s
+			}
+		}
+	}
+	var flipped []string
+	ok = ok && query(slices.Collect(maps.Keys(global)), func(v []string) store.Filter { return store.Filter{IDs: v} }, func(h store.Hit) {
+		if s := global[h.Symbol.ID]; h.Symbol.Metadata["global"] != s.Metadata["global"] && !slices.Contains(flipped, s.Name) {
+			flipped = append(flipped, s.Name)
+		}
+	})
+	ok = ok && query(flipped, func(v []string) store.Filter { return store.Filter{TargetNames: v} }, add(func(h parser.Symbol) bool { return h.Language == "html" }))
 	// X.m() on an owner X resolves through X: by name when X exists without
 	// m, through X's bases when it inherits m. A class the run adds, removes
 	// or gives other bases changes that for callers that name it as owner.

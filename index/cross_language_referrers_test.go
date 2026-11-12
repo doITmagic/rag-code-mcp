@@ -54,8 +54,8 @@ func TestFilesRunCrossLanguageCallerAfterDefinitionRemoved(t *testing.T) {
 	for p, c := range crossFiles {
 		e.write(t, p, c)
 	}
-	e.write(t, "src/util.js", "func f")
-	b := e.write(t, "lib/util.js", "func f")
+	e.write(t, "src/util.js", "func f as global")
+	b := e.write(t, "lib/util.js", "func f as global")
 	_, err := e.run(t, nil)
 	require.NoError(t, err)
 	require.Equal(t, parser.ResolutionAmbiguous, e.symbols(t, e.root+"/page.fkh")["page"].Relations[0].Resolution, "precondition")
@@ -65,7 +65,7 @@ func TestFilesRunCrossLanguageCallerAfterDefinitionRemoved(t *testing.T) {
 	_, err = e.run(t, func(o *Options) { o.Files = []string{}; o.Deleted = []string{b} })
 	require.NoError(t, err)
 
-	files := map[string]string{"src/util.js": "func f"}
+	files := map[string]string{"src/util.js": "func f as global"}
 	for p, c := range crossFiles {
 		files[p] = c
 	}
@@ -88,16 +88,16 @@ func TestFilesRunCrossLanguageCallerAfterDefinitionAdded(t *testing.T) {
 	for p, c := range crossFiles {
 		e.write(t, p, c)
 	}
-	e.write(t, "src/util.js", "func f")
+	e.write(t, "src/util.js", "func f as global")
 	_, err := e.run(t, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, e.symbols(t, e.root+"/page.fkh")["page"].Relations[0].TargetID, "precondition")
 
-	b := e.write(t, "lib/util.js", "func f")
+	b := e.write(t, "lib/util.js", "func f as global")
 	_, err = e.run(t, func(o *Options) { o.Files = []string{b} })
 	require.NoError(t, err)
 
-	files := map[string]string{"src/util.js": "func f", "lib/util.js": "func f"}
+	files := map[string]string{"src/util.js": "func f as global", "lib/util.js": "func f as global"}
 	for p, c := range crossFiles {
 		files[p] = c
 	}
@@ -109,4 +109,24 @@ func TestFilesRunCrossLanguageCallerAfterDefinitionAdded(t *testing.T) {
 	assert.Equal(t, wantPage.Resolution, page.Resolution, "html caller")
 	assert.Equal(t, wantDoc.TargetID, doc.TargetID, "docs caller")
 	assert.Equal(t, wantDoc.Resolution, doc.Resolution, "docs caller")
+}
+
+// A files run over a JavaScript file whose f became a browser global (or
+// stopped being one) must link (or unlink) the html caller, as a full run does.
+func TestFilesRunCrossLanguageCallerAfterGlobalChanged(t *testing.T) {
+	fakeCrossLanguage(t)
+	e := newEnv(t)
+	e.write(t, "page.fkh", crossFiles["page.fkh"])
+	a := e.write(t, "src/util.js", "func f")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	require.Empty(t, e.symbols(t, e.root+"/page.fkh")["page"].Relations[0].TargetID, "precondition")
+
+	for _, src := range []string{"func f as global", "func f"} {
+		e.write(t, "src/util.js", src)
+		_, err = e.run(t, func(o *Options) { o.Files = []string{a} })
+		require.NoError(t, err)
+		page := e.symbols(t, e.root+"/page.fkh")["page"].Relations[0]
+		assert.Equal(t, src != "func f", page.TargetID != "", src)
+	}
 }

@@ -20,30 +20,34 @@ type framework struct {
 	last    bool            // the handler is the last argument (after middleware), not the one after the path
 	inline  map[string]bool // methods returning a router with the receiver's prefix (chi With, Group)
 	pattern bool            // the path may be a Go 1.22 pattern: "GET /items/{id}", "host.com/x"
+	types   map[string]bool // router types: a parameter, var or field of one is a router
+	ctors   map[string]bool // package functions returning a router
 }
 
 var frameworks = []framework{
 	{name: "echo", module: "github.com/labstack/echo", group: "Group", methods: map[string]int{
 		"GET": 0, "POST": 0, "PUT": 0, "DELETE": 0, "PATCH": 0, "OPTIONS": 0, "HEAD": 0, "CONNECT": 0, "TRACE": 0,
 		"Any": 0, "Match": 1, "Add": 1, "Static": 0, "File": 0,
-	}},
+	}, types: map[string]bool{"Echo": true, "Group": true}, ctors: map[string]bool{"New": true}},
 	{name: "gin", module: "github.com/gin-gonic/gin", group: "Group", last: true, methods: map[string]int{
 		"GET": 0, "POST": 0, "PUT": 0, "DELETE": 0, "PATCH": 0, "OPTIONS": 0, "HEAD": 0,
 		"Any": 0, "Match": 1, "Handle": 1, "Static": 0, "StaticFile": 0, "StaticFS": 0,
-	}},
+	}, types: map[string]bool{"Engine": true, "RouterGroup": true, "IRouter": true, "IRoutes": true}, ctors: map[string]bool{"New": true, "Default": true}},
 	{name: "chi", module: "github.com/go-chi/chi", group: "Route", inline: map[string]bool{"With": true, "Group": true}, methods: map[string]int{
 		"Get": 0, "Post": 0, "Put": 0, "Delete": 0, "Patch": 0, "Options": 0, "Head": 0, "Connect": 0, "Trace": 0,
 		"Handle": 0, "HandleFunc": 0, "Method": 1, "MethodFunc": 1, "Mount": 0,
-	}},
-	{name: "net/http", module: "net/http", pattern: true, methods: map[string]int{"Handle": 0, "HandleFunc": 0}},
+	}, types: map[string]bool{"Router": true, "Mux": true}, ctors: map[string]bool{"NewRouter": true, "NewMux": true}},
+	{name: "net/http", module: "net/http", pattern: true, methods: map[string]int{"Handle": 0, "HandleFunc": 0},
+		types: map[string]bool{"ServeMux": true}, ctors: map[string]bool{"NewServeMux": true}},
 }
 
 // noHandler are registration methods whose argument after the path is not a
 // handler (a directory or file name).
 var noHandler = map[string]bool{"Static": true, "File": true, "StaticFile": true, "StaticFS": true}
 
-// addFramework records the router an import path belongs to.
-func (fc *file) addFramework(path string) {
+// addFramework records the router an import path belongs to and returns it,
+// nil for any other path.
+func (fc *file) addFramework(path string) *framework {
 	if i := strings.LastIndexByte(path, '/'); i > 0 && len(path) > i+2 && path[i+1] == 'v' && strings.Trim(path[i+2:], "0123456789") == "" {
 		path = path[:i]
 	}
@@ -52,10 +56,38 @@ func (fc *file) addFramework(path string) {
 		case frameworks[i].module != path:
 		case frameworks[i].pattern: // net/http last: a chi or gin Handle in a file importing both is theirs
 			fc.routers = append(fc.routers, &frameworks[i])
+			return &frameworks[i]
 		default:
 			fc.routers = append([]*framework{&frameworks[i]}, fc.routers...)
+			return &frameworks[i]
 		}
 	}
+	return nil
+}
+
+// routerType is true for a type naming a router type of an imported
+// framework: *echo.Group, chi.Router.
+func (fc *file) routerType(t *gotreesitter.Node) bool {
+	t = fc.bare(t)
+	if t == nil || t.Type(fc.lang) != "qualified_type" {
+		return false
+	}
+	fw := fc.fwPkgs[fc.text(parser.Field(t, fc.lang, "package"))]
+	return fw != nil && fw.types[fc.text(parser.Field(t, fc.lang, "name"))]
+}
+
+// newRouter is true for a call of a framework's router constructor:
+// echo.New(), chi.NewRouter(), http.NewServeMux().
+func (fc *file) newRouter(e *gotreesitter.Node) bool {
+	if e.Type(fc.lang) != "call_expression" {
+		return false
+	}
+	fn := parser.Field(e, fc.lang, "function")
+	if fn.Type(fc.lang) != "selector_expression" {
+		return false
+	}
+	fw := fc.fwPkgs[fc.text(parser.Field(fn, fc.lang, "operand"))]
+	return fw != nil && fw.ctors[fc.text(parser.Field(fn, fc.lang, "field"))]
 }
 
 // routes returns one route symbol per registration call in the function and
@@ -89,9 +121,10 @@ func (fc *file) declRoutes(decl *gotreesitter.Node, sym *parser.Symbol, params m
 	groups := map[string]string{}
 	i := 0
 	for _, pd := range parser.NamedChildren(parser.Field(decl, fc.lang, "parameters")) {
+		typed := fc.routerType(parser.Field(pd, fc.lang, "type"))
 		for _, name := range fc.names(pd) {
-			if p, ok := params[i]; ok {
-				groups[name] = p
+			if typed {
+				groups[name] = params[i] // "" when no call in the file shows its prefix
 			}
 			i++
 		}
@@ -120,7 +153,7 @@ func (fc *file) declRoutes(decl *gotreesitter.Node, sym *parser.Symbol, params m
 				r := parser.NamedChildren(parser.Field(c, fc.lang, "right"))
 				p, ok := "", false
 				if len(l) == 1 && len(r) == 1 {
-					p, ok = fc.groupPrefix(r[0], groups)
+					p, ok = fc.router(r[0], groups)
 				}
 				for _, v := range l {
 					switch name := fc.text(v); {
@@ -187,8 +220,8 @@ func (fc *file) scope(call, fn *gotreesitter.Node, args []*gotreesitter.Node, gr
 		if fw.inline == nil || param == "" {
 			continue
 		}
-		if fw.inline[method] {
-			return parser.Field(lit, fc.lang, "body"), param, fc.prefix(parser.Field(fn, fc.lang, "operand"), groups), true
+		if p, ok := fc.router(parser.Field(fn, fc.lang, "operand"), groups); ok && fw.inline[method] {
+			return parser.Field(lit, fc.lang, "body"), param, p, true
 		}
 		if p, ok := fc.groupPrefix(call, groups); ok {
 			return parser.Field(lit, fc.lang, "body"), param, p, true
@@ -197,10 +230,14 @@ func (fc *file) scope(call, fn *gotreesitter.Node, args []*gotreesitter.Node, gr
 	return nil, "", "", false
 }
 
-// route builds the symbol of "recv.Method(path, handler, ...)" when Method
-// is a registration method of a router the file imports and path is a
-// string literal that looks like one.
+// route builds the symbol of "recv.Method(path, handler, ...)" when recv is
+// a router the file shows, Method is a registration method of a router the
+// file imports and path is a string literal that looks like one.
 func (fc *file) route(call, fn *gotreesitter.Node, args []*gotreesitter.Node, groups map[string]string, sym *parser.Symbol) (parser.Symbol, bool) {
+	prefix, ok := fc.router(parser.Field(fn, fc.lang, "operand"), groups)
+	if !ok { // c.File(path) on an echo.Context, cache.Get(key, v)
+		return parser.Symbol{}, false
+	}
 	method := fc.text(parser.Field(fn, fc.lang, "field"))
 	for _, fw := range fc.routers {
 		idx, ok := fw.methods[method]
@@ -227,7 +264,7 @@ func (fc *file) route(call, fn *gotreesitter.Node, args []*gotreesitter.Node, gr
 				handler = args[len(args)-1]
 			}
 		}
-		name := fc.prefix(parser.Field(fn, fc.lang, "operand"), groups) + path
+		name := prefix + path
 		if name == "" {
 			name = "/"
 		}
@@ -264,7 +301,7 @@ func (fc *file) handlerRelation(h *gotreesitter.Node, rels []parser.Relation) (p
 	return parser.Relation{}, false
 }
 
-// groupPrefix returns the full prefix of "recv.Group(path, ...)".
+// groupPrefix returns the full prefix of "recv.Group(path, ...)" on a router.
 func (fc *file) groupPrefix(e *gotreesitter.Node, groups map[string]string) (string, bool) {
 	if e.Type(fc.lang) != "call_expression" {
 		return "", false
@@ -283,29 +320,58 @@ func (fc *file) groupPrefix(e *gotreesitter.Node, groups map[string]string) (str
 			continue
 		}
 		if path, ok := fc.pathLiteral(args[0], false); ok {
-			return fc.prefix(parser.Field(fn, fc.lang, "operand"), groups) + path, true
+			if p, ok := fc.router(parser.Field(fn, fc.lang, "operand"), groups); ok {
+				return p + path, true
+			}
 		}
 	}
 	return "", false
 }
 
-// prefix is the path prefix of a router expression: a tracked group
-// variable, an inline Group(...) call, "" for anything else (the root, or a
-// router whose prefix this file does not show).
-func (fc *file) prefix(recv *gotreesitter.Node, groups map[string]string) string {
-	if p, ok := fc.groupPrefix(recv, groups); ok {
-		return p
+// router returns the path prefix of a router expression and whether the
+// file shows it is a router of an imported framework: a tracked group or
+// router variable, a Group(...) or With(...) call on one, a constructor call,
+// a top-level var or a struct field of a router type, the net/http package.
+// The prefix is "" for the root or a router whose prefix the file does not
+// show (a parameter, a field set elsewhere).
+// shortcut: a local that is no router shadows a top-level router var or the
+// http import of its name only in the tracked groups, not in that fallback.
+func (fc *file) router(e *gotreesitter.Node, groups map[string]string) (string, bool) {
+	if p, ok := fc.groupPrefix(e, groups); ok {
+		return p, true
 	}
-	if recv.Type(fc.lang) == "call_expression" { // r.With(mw).Get(...)
-		if fn := parser.Field(recv, fc.lang, "function"); fn.Type(fc.lang) == "selector_expression" {
+	switch e.Type(fc.lang) {
+	case "call_expression": // r.With(mw).Get(...)
+		if fc.newRouter(e) {
+			return "", true
+		}
+		if fn := parser.Field(e, fc.lang, "function"); fn.Type(fc.lang) == "selector_expression" {
 			for _, fw := range fc.routers {
 				if fw.inline[fc.text(parser.Field(fn, fc.lang, "field"))] {
-					return fc.prefix(parser.Field(fn, fc.lang, "operand"), groups)
+					return fc.router(parser.Field(fn, fc.lang, "operand"), groups)
 				}
 			}
 		}
+	case "selector_expression":
+		if p, ok := groups[fc.text(e)]; ok {
+			return p, true
+		}
+		return "", fc.routerFields[fc.text(parser.Field(e, fc.lang, "field"))]
+	case "identifier":
+		name := fc.text(e)
+		if p, ok := groups[name]; ok {
+			return p, true
+		}
+		fw := fc.fwPkgs[name]
+		return "", fc.routerVars[name] || fw != nil && fw.pattern // http.HandleFunc
 	}
-	return groups[fc.text(recv)]
+	return "", false
+}
+
+// prefix is the path prefix of a router expression, "" for anything else.
+func (fc *file) prefix(recv *gotreesitter.Node, groups map[string]string) string {
+	p, _ := fc.router(recv, groups)
+	return p
 }
 
 // pathLiteral unquotes a string literal that is "" or starts with "/"; a

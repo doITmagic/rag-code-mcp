@@ -292,3 +292,60 @@ func Load(r *gin.Engine) {
 		"gin GET Load./api/users -> list",
 	}, routeList(t, "r.go", src))
 }
+
+// echo.Context.File serves a file inside a handler: the receiver is no
+// router, so no route.
+func TestEchoContextFileIsNoRoute(t *testing.T) {
+	src := `package web
+
+import "github.com/labstack/echo/v4"
+
+func index(c echo.Context) error {
+	return c.File("/var/www/index.html")
+}
+`
+	assert.Empty(t, routeList(t, "r.go", src))
+}
+
+// A chi file: a cache Get with a key starting with "/" is no route, the
+// receiver is no router the file shows.
+func TestChiCacheGetIsNoRoute(t *testing.T) {
+	src := `package web
+
+import "github.com/go-chi/chi/v5"
+
+var r = chi.NewRouter()
+
+func load(cache *Cache, out *Doc) {
+	cache.Get("/docs/1", out)
+}
+`
+	assert.Empty(t, routeList(t, "r.go", src))
+}
+
+// The receivers a route may have besides a local: a top-level var set from
+// a constructor and a struct field of a router type. A parameter of another
+// type is no router, even one with a registration method's name.
+func TestRouteReceiverEvidence(t *testing.T) {
+	src := `package web
+
+import "github.com/labstack/echo/v4"
+
+var e = echo.New()
+
+type server struct{ r *echo.Echo }
+
+func h(c echo.Context) error { return nil }
+
+func init() { e.GET("/top", h) }
+
+func (s *server) load(store *Store) {
+	s.r.POST("/field", h)
+	store.GET("/key", h)
+}
+`
+	assert.Equal(t, []string{
+		"echo GET web.init./top -> web.h",
+		"echo POST web.load./field -> web.h",
+	}, routeList(t, "web/r.go", src))
+}

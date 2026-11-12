@@ -50,6 +50,11 @@ type file struct {
 	tparams map[string]bool   // type parameters of the declaration being walked
 	test    bool              // a _test.go file: nothing in it is package API
 	routers []*framework      // HTTP routers this file imports
+
+	fwPkgs map[string]*framework // local import name -> the router of that import
+	// top-level vars and struct field names of a router type or set from a
+	// router constructor: the receivers a route may have besides locals.
+	routerVars, routerFields map[string]bool
 }
 
 // Analyze parses one Go file. Malformed input yields whatever declarations
@@ -69,6 +74,7 @@ func (Analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 		values:  map[string]bool{},
 		fields:  map[string]bool{},
 		test:    strings.HasSuffix(f.Path, "_test.go"),
+		fwPkgs:  map[string]*framework{}, routerVars: map[string]bool{}, routerFields: map[string]bool{},
 	}
 	root := tree.RootNode()
 	// Pass 1: import table, locally declared type names, and the names a
@@ -98,16 +104,21 @@ func (Analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 			}
 			parser.Walk(n, func(c *gotreesitter.Node) bool {
 				if c.Type(lang) == "field_declaration" {
+					router := fc.routerType(parser.Field(c, lang, "type"))
 					for _, name := range fc.names(c) {
 						fc.fields[name] = true
+						fc.routerFields[name] = fc.routerFields[name] || router
 					}
 				}
 				return true
 			})
 		case "var_declaration", "const_declaration":
 			for _, spec := range fc.specs(n, "var_spec", "const_spec") {
+				v := parser.NamedChildren(parser.Field(spec, lang, "value"))
+				router := fc.routerType(parser.Field(spec, lang, "type")) || len(v) == 1 && fc.newRouter(v[0])
 				for _, name := range fc.names(spec) {
 					fc.values[name] = true
+					fc.routerVars[name] = fc.routerVars[name] || router
 				}
 			}
 		case "method_declaration":
@@ -157,7 +168,7 @@ func (fc *file) addImport(spec *gotreesitter.Node) {
 	if path == "" {
 		return
 	}
-	fc.addFramework(path)
+	fw := fc.addFramework(path)
 	name := assumedName(path)
 	if n := parser.Field(spec, fc.lang, "name"); n != nil {
 		switch n.Type(fc.lang) {
@@ -167,6 +178,9 @@ func (fc *file) addImport(spec *gotreesitter.Node) {
 		name = fc.text(n)
 	}
 	fc.imports[name] = path
+	if fw != nil {
+		fc.fwPkgs[name] = fw
+	}
 }
 
 // assumedName is goimports' guess of a package's name from its import path:

@@ -162,10 +162,19 @@ func (fc *file) declRoutes(decl *gotreesitter.Node, sym *parser.Symbol, params m
 					}
 				}
 				return false
-			case "short_var_declaration", "assignment_statement":
-				short := c.Type(fc.lang) == "short_var_declaration"
+			case "short_var_declaration", "assignment_statement", "var_spec":
+				short := c.Type(fc.lang) != "assignment_statement"
 				l := parser.NamedChildren(parser.Field(c, fc.lang, "left"))
 				r := parser.NamedChildren(parser.Field(c, fc.lang, "right"))
+				if c.Type(fc.lang) == "var_spec" { // var g = e.Group("/x") declares like g := e.Group("/x")
+					l = nil
+					for i := 0; i < c.ChildCount(); i++ {
+						if c.FieldNameForChild(i, fc.lang) == "name" {
+							l = append(l, c.Child(i))
+						}
+					}
+					r = parser.NamedChildren(parser.Field(c, fc.lang, "value"))
+				}
 				p, ok := "", false
 				if len(l) == 1 && len(r) == 1 {
 					p, ok = fc.router(r[0], groups)

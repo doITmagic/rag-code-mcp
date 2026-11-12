@@ -420,3 +420,41 @@ func Register(mux *http.ServeMux) { mux.HandleFunc(%q, handler) }
 		})
 	}
 }
+
+func TestRouterHeldInVarDeclaration(t *testing.T) {
+	src := `package rv
+import (
+	"net/http"
+	"github.com/labstack/echo/v4"
+)
+func hello(c echo.Context) error { return nil }
+func serve(http.ResponseWriter, *http.Request) {}
+func EchoVar() {
+	var e = echo.New()
+	e.GET("/var", hello)
+	var g = e.Group("/g2")
+	g.GET("/items", hello)
+	var (
+		h = e.Group("/g3")
+	)
+	h.GET("/items", hello)
+	var t *echo.Group = e.Group("/g4")
+	t.GET("/items", hello)
+	var mux = http.NewServeMux()
+	mux.HandleFunc("/mux-var", serve)
+	{
+		var g = 1 // shadows the group inside the block only
+		_ = g
+	}
+	g.GET("/after", hello)
+}
+`
+	assert.Equal(t, []string{
+		"echo GET rv.EchoVar./var -> rv.hello",
+		"echo GET rv.EchoVar./g2/items -> rv.hello",
+		"echo GET rv.EchoVar./g3/items -> rv.hello",
+		"echo GET rv.EchoVar./g4/items -> rv.hello",
+		"net/http HandleFunc rv.EchoVar./mux-var -> rv.serve",
+		"echo GET rv.EchoVar./g2/after -> rv.hello",
+	}, routeList(t, "rv/rv.go", src))
+}

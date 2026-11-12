@@ -61,7 +61,9 @@ type Entry struct {
 // nameless symbol; points carry the owner of every relation target
 // (rel_target_owner), which the stale-referrer lookup filters on.
 // Go route registrations (Echo, Gin, Chi, net/http) are route symbols with a
-// handler relation.
+// handler relation; functions inside the IIFE or ready callback of a
+// classic browser script and window.f globals are symbols; inline html
+// handlers and Vue template tags, handlers and expressions are usages.
 const Format = 15
 
 // State is the per-root snapshot stored at Dir(root)/state.json. Only

@@ -55,6 +55,7 @@ describe('x', () => {
 		t.Errorf("unexpected symbol %s", s.QualifiedName)
 	}
 }
+
 // `window.toggleFilters = function () {}` defines a global function.
 func TestWindowAssignedFunction(t *testing.T) {
 	src := `document.addEventListener('DOMContentLoaded', function () {

@@ -218,7 +218,10 @@ declaration that is also the default export targets it; a JS re-exported
 namespace import no longer fails its importers. Version 15: symbols with
 one qualified name on one line of a file get distinct IDs; points carry
 `rel_target_owner`; Go route registrations (Echo, Gin, Chi, net/http) are
-`route` symbols with a relation to their handler.
+`route` symbols with a relation to their handler; functions inside the IIFE
+or ready callback of a classic browser script and `window.f` globals are
+symbols; inline html handlers and Vue template tags, handlers and expressions
+are usages.
 
 ---
 

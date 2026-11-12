@@ -1362,3 +1362,52 @@ func TestReferrerTurnedSymlinkIsPurged(t *testing.T) {
 		}
 	}
 }
+
+// A referrer whose directory became a symlink is not read: Walk would not enter it.
+func TestReferrerBehindSymlinkedDirIsPurged(t *testing.T) {
+	t.Setenv("RAGCODE_HOME", t.TempDir())
+	e := newEnv(t)
+	target := e.write(t, "target.go", "func Target\n")
+	caller := e.write(t, "sub/caller.go", "func Caller -> target.Target\n")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, e.symbols(t, caller)["Caller"].Relations[0].TargetID)
+
+	private := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(private, "caller.go"), []byte("func PrivateToken_SECRET123\n"), 0o600))
+	require.NoError(t, os.RemoveAll(filepath.Join(e.root, "sub")))
+	require.NoError(t, os.Symlink(private, filepath.Join(e.root, "sub")))
+	e.write(t, "target.go", "\nfunc Target\n")
+	_, err = e.run(t, func(o *Options) { o.Files = []string{target} })
+	require.NoError(t, err)
+	hits, err := e.store.Scroll(context.Background(), "c", store.Filter{Name: "PrivateToken_SECRET123"}, 10)
+	require.NoError(t, err)
+	if len(hits) != 0 {
+		t.Fatalf("private content outside workspace was indexed through symlinked referrer parent: %q", hits[0].Symbol.Content)
+	}
+}
+
+// A file replaced by a symlink between the scan and the parse is not followed.
+func TestParseDoesNotFollowFileReplacedBySymlink(t *testing.T) {
+	t.Setenv("RAGCODE_HOME", t.TempDir())
+	e := newEnv(t)
+	path := e.write(t, "public.md", "Public documentation\n")
+	private := filepath.Join(t.TempDir(), ".env")
+	require.NoError(t, os.WriteFile(private, []byte("API_KEY=SECRET456\n"), 0o600))
+	swapped := false
+	_, err := e.run(t, func(o *Options) {
+		o.Progress = func(s Status) {
+			if s.Phase == "parsing" && !swapped {
+				swapped = true
+				require.NoError(t, os.Remove(path))
+				require.NoError(t, os.Symlink(private, path))
+			}
+		}
+	})
+	require.NoError(t, err)
+	for _, s := range e.symbols(t, path) {
+		if strings.Contains(s.Content, "SECRET456") {
+			t.Fatalf("parse followed replacement symlink and indexed private .env content: %q", s.Content)
+		}
+	}
+}

@@ -510,8 +510,17 @@ func skipExplicit(root string, ex, known map[string]bool, f string, info fs.File
 	if err != nil || strings.HasPrefix(rel, "..") || LinkedWorktreeOf(root, f, known) != "" || InOwnHome(f, OwnHome()) {
 		return true
 	}
+	at := root
 	for _, d := range strings.Split(filepath.Dir(rel), string(filepath.Separator)) {
-		if d != "." && (strings.HasPrefix(d, ".") || ex[d]) {
+		if d == "." {
+			continue
+		}
+		if strings.HasPrefix(d, ".") || ex[d] {
+			return true
+		}
+		// Walk never enters a symlinked directory: it may lead out of the root.
+		at = filepath.Join(at, d)
+		if fi, err := os.Lstat(at); err != nil || !fi.IsDir() {
 			return true
 		}
 	}
@@ -591,7 +600,12 @@ func parseOne(root, path string, budget *semaphore.Weighted) (p parsed) {
 	}()
 	// Stat before reading: a write between the two leaves a newer mtime on
 	// disk than in the state, so the next run picks the file up again.
-	if p.info, p.err = os.Stat(path); p.err != nil {
+	// Lstat: a file replaced by a symlink since the scan is not followed.
+	if p.info, p.err = os.Lstat(path); p.err != nil {
+		return p
+	}
+	if !p.info.Mode().IsRegular() {
+		p.err = fmt.Errorf("%s is no longer a regular file", path)
 		return p
 	}
 	if p.info.Size() > maxFileSize {

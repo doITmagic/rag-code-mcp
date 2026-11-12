@@ -120,6 +120,9 @@ func appendPointer(real, path, header string) error {
 	}
 	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("%s is a symlink, not appending to it", path)
+	} else if err == nil && !info.Mode().IsRegular() {
+		// A FIFO would block the read below forever.
+		return fmt.Errorf("%s is not a regular file, not appending to it", path)
 	}
 	if tracked(path) {
 		return nil

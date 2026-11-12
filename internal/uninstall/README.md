@@ -47,6 +47,7 @@ Tests:
 | File | Covers |
 |:---|:---|
 | `uninstall_test.go` | Full run with a fake `docker`: workspace `.ragcode` and `~/.ragcode` removed, other workspace files kept, the pointer line stripped from `CLAUDE.md` and `.cursor/rules/ragcode.mdc` deleted, only the installer's PATH pair removed from `.bashrc`, other Cursor servers kept, exact Docker commands; the prompt for each workspace's `.ragcode`; every file `WriteIDERules` touched gets the pointer stripped; the index under `RAGCODE_HOME/index` goes with the home and no Qdrant is called. |
+| `fifo_test.go` | Build tag `unix`. A FIFO at `AGENTS.md` in a known root is skipped instead of blocking `Run`; `CLAUDE.md` still loses its pointer. |
 | `stop_unix_test.go` | Build tag `!windows`. `StopProcess` stops the server binary but not processes that only mention its path (a shell, `tail -f`, a launcher wrapper). |
 | `zz_verify_test.go` | Verification tests: garbage `roots.json` and a cancelled context neither panic nor hang, and the home is still removed; closed stdin when an answer is needed fails `Run`; a `RAGCODE_HOME` override is removed and its PATH line stripped while `~/.ragcode` stays; `RAGCODE_HOME` set to the user home or one of its parents is never deleted. |
 
@@ -111,7 +112,8 @@ warning and no per-workspace folder is removed. For each root:
   instruction files and `.cursor/rules/ragcode.mdc`), lines equal to
   `engine.IDEPointer` are removed. `ragcode.mdc` is deleted when only its
   front matter (`---\nalwaysApply: true\n---\n`) is left. Symlinks are never
-  followed, like the writer.
+  followed, like the writer, and a path that is not a regular file (a FIFO
+  would block the read forever) is skipped.
 - **`<root>/.ragcode`** (with `RAGCODE.md`) is deleted. Without `Yes` the user
   is asked `Remove <dir>? [y/N]`; anything but `y`/`yes` keeps it.
 

@@ -78,6 +78,7 @@ graph TD
 | `watch_test.go` | The watcher end to end, a `.gitignore` edit queues a full run, a directory that becomes a linked worktree after it was watched is dropped with a full run (`TestWatcherLinkedWorktreeAdded`), a `.git` created after start queues a full run and is watched with its refs (`TestWatcherGitInitAfterStart`), a ref moved through its `.lock` file queues one full run (`TestWatcherRefUpdateQueuesOneFullRun`), RagCode's own home inside a root neither watched nor accepted as a root (`TestWatcherIgnoresOwnHome`), root removed, root that comes back, unreadable subdirectory, watcher restart retried, `Close` beginning during `Resume`'s watcher setup (no catch-up, no warning), only one of two servers on a root watches and indexes a save (`TestWatcherOneLeaderPerRoot`), the follower takes over with a catch-up run when the leader exits (`TestWatcherFollowerTakesOver`), `Resume` in a follower queues no catch-up (`TestResumeFollowerSkipsCatchUp`). |
 | `nonotify_linux_test.go` | A root on 9p is named by `noNotify`, warned once per process and reported in `Status.Unwatched`; other file systems are not. Build: Linux. |
 | `watch_linux_test.go` | All roots share one inotify instance (nested roots both see an event, `Close` releases it); a watcher that cannot start is retried; an event overflow re-walks the tree so new directories are watched again. |
+| `iderules_fifo_test.go` | Build tag `unix`. A FIFO at `CLAUDE.md` is refused by `WriteIDERules` instead of blocking it, and `AGENTS.md` still gets the pointer. |
 | `prefix_test.go` | `Search` adds the model's query prefix. |
 | `roots_bom_test.go` | A `roots.json` with a UTF-8 BOM is read and kept; an invalid one is moved to `roots.json.bad` before the new list is written. |
 | `unsure_root_test.go` | A subdirectory of a repository, a directory holding several projects and a subdirectory of a known root are refused with candidates; a confirmed or known root is not asked again. |
@@ -434,7 +435,8 @@ counts as tracked.
 
 A cloned repository controls these paths, so no write follows a symlink: a
 target directory that resolves outside the real root is refused, and a
-pointer file that is a symlink is refused. A refused file is reported in the
+pointer file that is a symlink is refused. A pointer file that is not a
+regular file (a FIFO would block the read forever) is refused too. A refused file is reported in the
 joined error but does not stop the others. `PointerFiles(root)` lists every
 path that may hold the pointer, for the uninstaller.
 

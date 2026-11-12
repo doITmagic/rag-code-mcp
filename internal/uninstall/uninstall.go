@@ -185,8 +185,8 @@ func removePointer(root, path string) error {
 	if err != nil || derr != nil || dir != real && !strings.HasPrefix(dir, real+string(filepath.Separator)) {
 		return nil
 	}
-	if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeSymlink != 0 {
-		return nil
+	if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() {
+		return nil // a symlink, or a FIFO that would block the read forever
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

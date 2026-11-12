@@ -3,6 +3,8 @@ package php
 import (
 	"testing"
 
+	"github.com/doITmagic/rag-code-mcp/v2/parser"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -213,4 +215,22 @@ function outer(Mailer $service) {
 		"call f":           "App.Mailer.f",
 		"uses_type Mailer": "App.Mailer",
 	}, targets(syms["function App.outer"]))
+}
+
+// A class string is read with PHP's escapes: 'App\\User' names App\User.
+func TestEscapedClassStrings(t *testing.T) {
+	syms := analyze(t, "/root/app.php", `<?php
+namespace App;
+use Illuminate\Support\Facades\Route;
+class User extends \Illuminate\Database\Eloquent\Model {}
+class Post extends \Illuminate\Database\Eloquent\Model {
+    public function author() { return $this->belongsTo('App\\User'); }
+    public function editor() { return $this->belongsTo("App\\Editor"); }
+}
+class Controller { public function show() {} }
+Route::get('/user', 'App\\Controller@show');
+`)
+	assert.Equal(t, "App.User", parser.Normalize(targets(syms["method App.Post.author"])["uses_type User"]))
+	assert.Equal(t, "App.Editor", parser.Normalize(targets(syms["method App.Post.editor"])["uses_type Editor"]))
+	assert.Equal(t, "App.Controller.show", parser.Normalize(targets(syms["route App./user"])["call show"]))
 }

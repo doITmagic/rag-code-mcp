@@ -812,12 +812,20 @@ func (c *collector) args(n *gotreesitter.Node) []*gotreesitter.Node {
 	return out
 }
 
+// singleQuoted decodes the only two escapes a single-quoted PHP string has.
+var singleQuoted = strings.NewReplacer(`\\`, `\`, `\'`, `'`)
+
 // literal returns a plain string literal (no concatenation or
-// interpolation) without quotes, "" for anything else.
+// interpolation) without quotes and with \\ decoded ('App\\User' is
+// App\User), "" for anything else.
+// shortcut: in double quotes only \\ is decoded, enough for class names; a full decoder if other escapes matter.
 func (c *collector) literal(v *gotreesitter.Node) string {
 	s := c.text(v)
 	if t := c.typ(v); len(s) < 2 || t != "string" && (t != "encapsed_string" || strings.ContainsRune(s, '$')) {
 		return ""
 	}
-	return s[1 : len(s)-1]
+	if s[0] == '\'' {
+		return singleQuoted.Replace(s[1 : len(s)-1])
+	}
+	return strings.ReplaceAll(s[1:len(s)-1], `\\`, `\`)
 }

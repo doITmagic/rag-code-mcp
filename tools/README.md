@@ -64,7 +64,7 @@ Tests:
 | [`roots_test.go`](roots_test.go) | an empty `workspace_root` from a client without the `roots` capability is answered at once, `roots/list` is not sent; a client root `file://<host>/path` is refused outside Windows (naming the URI), `file://localhost/` is local. |
 | [`tools_test.go`](tools_test.go) | an MCP client and server over in-memory transports with a real engine on `store.NewMemory()`, `embed.Fake` and a fake `.fk` analyzer. Missing and bad roots, the root taken from client roots, every tool, the not-indexed and during-recreate fallbacks, dependency down, tool schemas, helpers, fallback skip rules, edits and deletes keeping results right, no Qdrant left in `rag_server_info`, same-name variants, lookup by declared name with `file_path` as a hard filter, `by_name` usages and hierarchy nodes, the live state of a root being indexed in `rag_server_info`, the last run's error kept after a restart, a deleted root reported as `missing`, overloads and get/set pairs resolved as one symbol, twins as one hierarchy node (both directions, every depth), one export (and count) and one search hit, `ambiguous_by_name` not counting calls that name another symbol's qualified name, the module spelling of a barrel file in `rag_list_package_exports`, an equal qualified name winning over suffix matches, a code symbol winning over a doc chunk of the same name, the no-exact-match message of an identifier query (and its not-indexed-yet variant during a run), the message of a filtered search with no hit, a qualified call bound by name only marked `by_name`, short directory names and file paths in `rag_list_package_exports` with one module per file (`.fkm` analyzer), the export-less file message, an unreadable directory reported as such, an excluded directory and file reported as not indexed, the zero-usage note not claiming imports, an unused object constant naming its called members, the text search beside the index (whole word, hidden directories skipped, none when the index knows the name, the 20-line cut), `indexing` (not `ok`, not the fallback) while a run goes over an existing index, `kinds` validation and the no-such-kinds message, `limit` respected exactly with `truncated` in usages and the hierarchy, a binary file with an unknown extension not dumped, also for a line range |
 | [`zz_verify_test.go`](zz_verify_test.go) | verification tests: short package names past the scroll cap, call-hierarchy cycles and the node cap, cancelled contexts, stalled `rag_server_info` endpoints, read-file edge cases (degenerate files, symlink out of the root, ranges, minified files, long lines, secrets), the 200-file fallback cap, multi-byte usage line cut, compact/full output and path boost, the 24 h update cache, a second index call while running, huge limits, `total_lines` and negative line numbers, the breadth-first node cap, a line range of a file over 8 MiB, exports of a workspace directory and `res://` paths, a Godot scene node not making its class ambiguous, the note on zero usages of a constant |
-| [`usages_test.go`](usages_test.go) | `rag_find_usages` `limit` counts live callers: deleted caller files do not shrink the answer below `limit` nor clear `truncated` |
+| [`usages_test.go`](usages_test.go) | `rag_find_usages` `limit` counts live callers: deleted caller files do not shrink the answer below `limit` nor clear `truncated`; usages, incoming hierarchy nodes and `ambiguous_by_name` stay in the symbol's language, while an `html` caller (`.fkh` analyzer) is still a usage |
 | [`readfile_test.go`](readfile_test.go) | a line range of a binary file over 8 MiB returns no lines (the first 8 KiB are checked although the file is streamed) |
 | [`source_files_test.go`](source_files_test.go) | the not-indexed fallback and the text search skip a non-hidden `RAGCODE_HOME` inside the root, and find nothing under a `path_prefix` in an excluded, hidden or linked-worktree directory |
 | [`ollama_password_test.go`](ollama_password_test.go) | the password of an `ollama_base_url` with basic auth is not in `rag_server_info` (`ollama.url`, `ollama.error`) nor in the `dependency_down` message |
@@ -331,7 +331,10 @@ over those that only end with it (`components.zzalert` against
 with `data.candidates` (`id, qualified_name, kind, file_path, start_line`).
 
 The references are the symbols with a relation whose resolved `target_id` is
-the symbol's id or whose `target_qualified_name` is its qualified name. The
+the symbol's id or whose `target_qualified_name` is its qualified name. A
+relation naming the qualified name counts only from the symbol's own language,
+or from `html` and `docs` files, as the index resolves: a Python `utils.parse`
+and a JavaScript `utils.parse` do not share callers. The
 source line of each reference is read from disk and cut at 200 bytes.
 
 Output `data`: `{symbol, files: [{file_path, usages: [{caller, kind, line,
@@ -356,7 +359,7 @@ call in `rag_call_hierarchy`. When the constant is an
 object whose members are symbols (`export const api = { list: ... }`) and
 something calls them through an exact link (not by name only), the note names the called members instead (at most
 10), so the object is not taken for dead code (`usedMembers`).
-`ambiguous_by_name` counts relations that name the symbol but were left
+`ambiguous_by_name` counts relations of the symbol's language that name the symbol but were left
 unresolved because several symbols share the name, and that cannot be
 attributed elsewhere: they name no qualified name, or one no indexed symbol
 has; the message mentions them. Calls naming the symbol's own qualified name

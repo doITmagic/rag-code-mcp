@@ -341,10 +341,17 @@ func referrers(ctx context.Context, w *engine.Workspace, sym *parser.Symbol, lim
 		if err != nil {
 			return nil, false, err
 		}
-		hits := append(byID, byQN...)
-		alive := live(w, hits)
+		full, rows := len(byID) == n || len(byQN) == n, len(byID)+len(byQN)
+		// A qualified name shared with another language's symbol is not this
+		// one's: as the index resolves, code never calls across languages
+		// (docs and html link into code on purpose).
+		byQN = slices.DeleteFunc(byQN, func(h store.Hit) bool {
+			l := h.Symbol.Language
+			return l != sym.Language && l != "docs" && l != "html"
+		})
+		alive := live(w, append(byID, byQN...))
 		// rows past a full scroll were not seen: dropped ones leave room for them
-		unseen := (len(byID) == n || len(byQN) == n) && len(alive) < len(hits)
+		unseen := full && len(alive) < rows
 		if unseen && n < store.MaxScroll {
 			continue
 		}
@@ -362,8 +369,9 @@ func referrers(ctx context.Context, w *engine.Workspace, sym *parser.Symbol, lim
 	}
 }
 
-// ambiguousByName counts the relations that name the symbol but were left
-// unresolved because several symbols share the name; 0 on a store error.
+// ambiguousByName counts the relations of the symbol's language that name it
+// but were left unresolved because several symbols share the name; 0 on a
+// store error.
 // Those naming its qualified name (its twins too) are already listed as
 // usages; those naming another indexed symbol's qualified name are that
 // symbol's.
@@ -375,6 +383,9 @@ func ambiguousByName(ctx context.Context, w *engine.Workspace, sym *parser.Symbo
 	known := map[string]bool{} // qualified name -> some indexed symbol has it
 	n := 0
 	for _, h := range hits {
+		if h.Symbol.Language != sym.Language { // the index looks a name up in its own language only
+			continue
+		}
 		for _, r := range h.Symbol.Relations {
 			qn := r.TargetQualifiedName
 			if r.TargetName != sym.Name || r.Resolution != parser.ResolutionAmbiguous || qn == sym.QualifiedName {

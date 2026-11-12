@@ -8,9 +8,82 @@ import (
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/v2/internal/config"
+	"github.com/doITmagic/rag-code-mcp/v2/parser"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// htmlAnalyzer parses .fkh files like fakeAnalyzer, as language "html", whose
+// relations the index lets point into code of any language.
+type htmlAnalyzer struct{ fakeAnalyzer }
+
+func (htmlAnalyzer) Language() string     { return "html" }
+func (htmlAnalyzer) Extensions() []string { return []string{".fkh"} }
+func (h htmlAnalyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
+	syms, err := h.fakeAnalyzer.Analyze(f)
+	for i := range syms {
+		syms[i].Language = "html"
+	}
+	return syms, err
+}
+
+func init() { parser.Register(htmlAnalyzer{}) }
+
+// A symbol's usages and callers come from its own language: a call in another
+// language naming the same qualified name (resolved by the index to that
+// language's symbol) is neither a usage nor an incoming node, and an ambiguous
+// call by name in another language is not in ambiguous_by_name. A page
+// (html) calling it is still a usage: html and docs link into code on purpose.
+func TestUsagesStayInTheirLanguage(t *testing.T) {
+	v := newEnv(t, false, nil)
+	for rel, content := range map[string]string{
+		"pkg/target.fk":  "func Parse\n",
+		"pkg/target.fk2": "func Parse\n",
+		"app/caller.fk2": "func RunOtherLang\n  call m/pkg.Parse\n",
+		"app/page.fkh":   "func Page\n  call m/pkg.Parse\n",
+		"pkg/s.fk":       "func Save\n",
+		"pkg/s1.fk2":     "func Save\n",
+		"other/s2.fk2":   "func Save\n",
+		"app/ambig.fk2":  "func AmbOtherLang\n  call Save\n",
+	} {
+		p := filepath.Join(v.root, rel)
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte(content), 0o644))
+	}
+	w, err := v.e.Workspace(v.root)
+	require.NoError(t, err)
+	w.Index(false)
+	require.Eventually(t, func() bool {
+		s := w.Status()
+		return s.Phase == "done" && !s.Running && !s.Queued
+	}, 10*time.Second, 20*time.Millisecond)
+
+	r, res := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "Parse", "file_path": "pkg/target.fk"})
+	require.False(t, res.IsError, r.Message)
+	var u struct {
+		Files []FileUsages `json:"files"`
+		Total int          `json:"total"`
+	}
+	data(t, r, &u)
+	require.Equal(t, 1, u.Total, "only the html page, not the fake2 caller")
+	assert.Equal(t, "m/app.Page", u.Files[0].Usages[0].Caller)
+
+	rh, res := v.call(t, "rag_call_hierarchy", map[string]any{"workspace_root": v.root, "symbol": "Parse", "file_path": "pkg/target.fk", "direction": "incoming"})
+	require.False(t, res.IsError, rh.Message)
+	var h struct{ Incoming *Node }
+	data(t, rh, &h)
+	require.NotNil(t, h.Incoming)
+	require.Len(t, h.Incoming.Children, 1)
+	assert.Equal(t, "m/app.Page", h.Incoming.Children[0].QualifiedName)
+
+	ra, res := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "Save", "file_path": "pkg/s.fk"})
+	require.False(t, res.IsError, ra.Message)
+	var a struct {
+		Ambiguous int `json:"ambiguous_by_name"`
+	}
+	data(t, ra, &a)
+	assert.Zero(t, a.Ambiguous, "a fake2 call by name is ambiguous among fake2 symbols only")
+}
 
 func setupTruncatedUsagesEnv(t *testing.T) *env {
 	t.Helper()

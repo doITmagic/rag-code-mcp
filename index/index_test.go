@@ -72,6 +72,9 @@ func (a lineAnalyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 			if n, ok := strings.CutSuffix(s.Name, " as default"); ok { // a JS default export
 				s.Name, s.QualifiedName = n, module+".default"
 			}
+			if n, ok := strings.CutSuffix(s.Name, " as global"); ok { // a JS browser global
+				s.Name, s.Metadata = n, map[string]string{"global": "true"}
+			}
 			if target != "" {
 				rel := parser.Relation{Kind: parser.RelCall, Line: i + 1}
 				if strings.Contains(target, ".") {

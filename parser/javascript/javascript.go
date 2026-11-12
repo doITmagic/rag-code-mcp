@@ -52,13 +52,14 @@ type fileCtx struct {
 	picked    map[string]bool        // default or named imports of a workspace module: their members are followed
 	esm       bool                   // the script imports, requires or exports something
 	classic   bool                   // a browser script (no esm): its wrappers' declarations count as top-level ones
+	windowed  map[string]bool        // names assigned to window.x (window.x = f | function () {})
 }
 
 func newCtx(src []byte, lang *gotreesitter.Language, wsRoot, module, dir, component string) *fileCtx {
 	return &fileCtx{src: src, lang: lang, module: module, dir: dir, root: wsRoot, component: component,
 		imports: map[string]string{}, defs: map[string]parser.Kind{}, exported: map[string]bool{},
 		exportAs: map[string]string{}, reexp: map[string]string{}, bare: map[string]bool{},
-		props: map[string]string{}, picked: map[string]bool{}}
+		props: map[string]string{}, picked: map[string]bool{}, windowed: map[string]bool{}}
 }
 
 func (analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
@@ -258,7 +259,11 @@ func (c *fileCtx) emit(tree *gotreesitter.Tree) ([]parser.Symbol, []parser.Relat
 	var syms []parser.Symbol
 	var rels []parser.Relation
 	for _, nc := range parser.NamedChildren(root) {
+		from := len(syms)
 		c.topLevel(nc, &syms)
+		for i := from; i < len(syms); i++ {
+			c.markGlobal(&syms[i], c.classic)
+		}
 		c.wrapped(nc, 0, func(st *gotreesitter.Node) {
 			var in []parser.Symbol
 			c.topLevel(st, &in)
@@ -266,6 +271,7 @@ func (c *fileCtx) emit(tree *gotreesitter.Tree) ([]parser.Symbol, []parser.Relat
 				// Locals of a wrapper (`var form = ...`, a test's `const wrapper = mount()`) are no
 				// symbols; shortcut: a name of one or two letters there is minified code, not indexed.
 				if s.Kind != parser.KindVariable && s.Kind != parser.KindConstant && len(s.Name) > 2 {
+					c.markGlobal(&s, false)
 					syms = append(syms, s)
 				}
 			}
@@ -283,6 +289,18 @@ func (c *fileCtx) emit(tree *gotreesitter.Tree) ([]parser.Symbol, []parser.Relat
 		}
 	}
 	return syms, rels
+}
+
+// markGlobal flags a function an inline html handler (onclick="f()") can
+// reach: a top-level one of a classic script (top), or one assigned to
+// window.f. Methods, module functions and wrapper locals are out of reach.
+func (c *fileCtx) markGlobal(s *parser.Symbol, top bool) {
+	if s.Owner == "" && s.Kind == parser.KindFunction && (top || c.windowed[s.Name]) {
+		if s.Metadata == nil {
+			s.Metadata = map[string]string{}
+		}
+		s.Metadata["global"] = "true"
+	}
 }
 
 // maxUnclosed is the most brackets a file may leave open before it is
@@ -703,8 +721,10 @@ func (c *fileCtx) scanExportsAssign(n *gotreesitter.Node) {
 		}
 	case windowProp(left) != "": // a browser global: window.f = f | function () {}
 		c.exported[windowProp(left)] = true
+		c.windowed[windowProp(left)] = true
 		if right != nil && right.Type(c.lang) == "identifier" {
 			c.exported[parser.Text(right, c.src)] = true
+			c.windowed[parser.Text(right, c.src)] = true
 		} else if right != nil && isFunc(right.Type(c.lang)) && c.defs[windowProp(left)] == "" {
 			c.defs[windowProp(left)] = parser.KindFunction
 		}

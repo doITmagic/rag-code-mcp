@@ -97,3 +97,34 @@ suite('s', function () { function suiteHelper() {} });
 	}
 	find(t, syms, "src/sum.test.realGlobal")
 }
+
+// Only what an inline html handler can reach is flagged global: a top-level
+// function of a classic script or a window.f global, not a wrapper local, a
+// method, nor a function of an ES module.
+func TestBrowserGlobalsFlagged(t *testing.T) {
+	classic := `function top() {}
+var expr = function () {};
+class Widget { open() {} }
+(function () {
+  function local() {}
+  function shared() {}
+  window.shared = shared;
+  window.assigned = function () {};
+})();
+`
+	module := `import { x } from './x';
+export function exported() {}
+function own() {}
+window.own = own;
+window.direct = function () {};
+`
+	global := map[string]bool{}
+	for _, s := range append(analyze(t, "js/page.js", classic), analyze(t, "js/mod.js", module)...) {
+		global[s.QualifiedName] = s.Metadata["global"] == "true"
+	}
+	assert.Equal(t, map[string]bool{
+		"js/page.top": true, "js/page.expr": true, "js/page.Widget": false, "js/page.Widget.open": false,
+		"js/page.local": false, "js/page.shared": true, "js/page.assigned": true,
+		"js/mod.exported": false, "js/mod.own": true, "js/mod.direct": true,
+	}, global)
+}

@@ -78,7 +78,7 @@ graph LR
 | `js_object_members_test.go` | With the real JavaScript analyzer: `Obj.f()` through a default or named import of an object literal with a shorthand or `key: ident` member (`export default { getToken }`, `export const api = { read }`) resolves exactly to the function the member names. |
 | `budget_test.go` | The parse byte budget is respected, and batches still resolve forward references. |
 | `go_value_use_test.go` | With the real Go analyzer, two files of one package: a method passed as `s.firmaJSON` (on a local `s := &server{}` and on the receiver) and a function passed as `handler` link exactly to their declarations in the other file, in a full run and from the store; a field read (also one named like a method of another type), a constant, a variable and `http.MethodGet` in the same positions leave no relation at all. |
-| `resolve_test.go` | A non-fresh run resolves more than 500 targets through the store; an html call to `window.f` resolves by name to the JavaScript function `f` (never a variable, a Go symbol, nor from a JS caller), in a full run and from the store; a JS `import { n }` of a default-exported declaration resolves by module and name, in a full run and from the store. |
+| `resolve_test.go` | A non-fresh run resolves more than 500 targets through the store; an html call to `window.f` resolves by name to the JavaScript global function `f` (never a variable, a method or module function of that name, a Go symbol, nor from a JS caller), in a full run and from the store; a JS `import { n }` of a default-exported declaration resolves by module and name, in a full run and from the store. |
 | `owners_test.go` | Files runs that must match a full run: both twins shifted by one line keep the caller on the first twin; with the real Python analyzer, `Repo.save()` loses its by-name link when class `Repo` is deleted and gains it when `Repo` is added, and `Child.save()` follows `Child` to its new base. |
 | `cross_language_referrers_test.go` | Files runs that must match a full run for `html` and `docs` callers of JavaScript symbols (line analyzers for `.js`, `.fkh`, `.fkd`): removing one of two definitions of `f` turns `onclick`-style `window.f` and `util.f` callers from ambiguous to the remaining one; adding a second definition makes them ambiguous. |
 | `twins_test.go` | Twins in one file resolve to the widest (then first) by qualified name and by name, in a full run and from the store; a qualified name in two files stays ambiguous; a wider twin added later re-resolves the unchanged caller in a files run; `..delta` resolves by name (unique, then ambiguous), never exact. |
@@ -221,8 +221,9 @@ one qualified name on one line of a file get distinct IDs; points carry
 `rel_target_owner`; Go route registrations (Echo, Gin, Chi, net/http) are
 `route` symbols with a relation to their handler; functions inside the IIFE
 or ready callback of a classic browser script and `window.f` globals are
-symbols; inline html handlers and Vue template tags, handlers and expressions
-are usages; Laravel routes carry group prefixes and link to their handler,
+symbols, the browser globals flagged `global` in their metadata; inline html
+handlers (reaching only those globals) and Vue template tags, handlers and
+expressions are usages; Laravel routes carry group prefixes and link to their handler,
 `view()` links to the Blade template, `X::class`, property types, relation
 model strings and `$listen` are class usages, a call on a typed parameter or
 property targets its class; a broken file keeps the declarations parsed
@@ -437,9 +438,12 @@ each relation:
   top-level symbol named `n`: a declaration both named and default-exported
   is qualified `m.default`, while `import { n }` names `m.n`. An `html`
   call to `window.f` (an inline `onclick="f()"` handler, see
-  [web](../parser/web/README.md)) takes the JavaScript function or method
-  named `f`, by name (`ResolutionUnique`; ambiguous when several files
-  define it).
+  [web](../parser/web/README.md)) takes the JavaScript browser global named
+  `f` (metadata `global`: a top-level function of a classic script or a
+  `window.f` global, never a method nor a function of an ES module), by name
+  (`ResolutionUnique`; ambiguous when several files define it). When the run
+  itself holds two or more other callables named `f`, the store is not asked,
+  so a global only in the store is missed.
 - A `TargetQualifiedName` that normalizes to a bare name (`..delta`) has no
   qualifier: without an exact match it skips the suffix lookup and is matched
   by name (`ResolutionUnique` or ambiguous), so a name-only guess is never

@@ -69,12 +69,14 @@ func TestResolveByModuleAndName(t *testing.T) {
 }
 
 // onclick="toggle()" in a page names the browser global window.toggle: the
-// JavaScript function of that name, by name, from html only.
+// JavaScript global function of that name, by name, from html only; a
+// method or a module function of that name is out of its reach.
 func TestResolveHTMLHandlerToJavaScriptGlobal(t *testing.T) {
 	parser.Register(lineAnalyzer{"javascript", ".js"})
 	parser.Register(lineAnalyzer{"html", ".fkh"})
 	e := newEnv(t)
-	js := e.write(t, "filter.js", "func toggle\nvar shown")
+	js := e.write(t, "filter.js", "func toggle as global\nvar shown")
+	e.write(t, "mod.js", "func toggle\nmethod Cart.toggle")
 	e.write(t, "t.go", "func toggle")
 	h := e.write(t, "page.fkh", "func page -> window.toggle\nfunc other -> window.shown")
 	a := e.write(t, "a.js", "func F -> window.toggle")

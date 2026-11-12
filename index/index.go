@@ -905,7 +905,7 @@ func names(files []parsed) []parsed {
 	for i := range files {
 		for j, s := range files[i].syms {
 			n := parser.Symbol{ID: s.ID, QualifiedName: s.QualifiedName, Name: s.Name, Language: s.Language, Kind: s.Kind, Module: s.Module, Owner: s.Owner,
-				FilePath: s.FilePath, StartLine: s.StartLine, EndLine: s.EndLine}
+				FilePath: s.FilePath, StartLine: s.StartLine, EndLine: s.EndLine, Metadata: s.Metadata}
 			if s.Kind == parser.KindClass || s.Kind == parser.KindInterface {
 				for _, r := range s.Relations {
 					if (r.TargetQualifiedName != "" || r.TargetName != "") && (r.Kind == parser.RelExtends || r.Kind == parser.RelImplements || r.Kind == parser.RelUsesType) {
@@ -929,6 +929,7 @@ type nameIndex struct {
 	lang      map[string]string      // symbol id -> language
 	kind      map[string]parser.Kind // symbol id -> kind, for fit
 	place     map[string]place       // symbol id -> where it is, for twins
+	global    map[string]bool        // symbol id -> a browser global an inline html handler reaches (metadata global)
 	bases     map[string][]string    // class id -> what it extends, implements or uses (traits): qualified name, else bare name
 	changed   map[string]bool        // files of the run: their stored points are stale
 }
@@ -946,7 +947,7 @@ func placeOf(s parser.Symbol) place {
 
 func newNameIndex(files []parsed) nameIndex {
 	idx := nameIndex{byQN: map[string][]string{}, bySuffix: map[string][]string{}, byName: map[[2]string][]string{}, byModule: map[string][]string{},
-		byModName: map[[2]string][]string{}, lang: map[string]string{}, kind: map[string]parser.Kind{}, place: map[string]place{}, bases: map[string][]string{}, changed: make(map[string]bool, len(files))}
+		byModName: map[[2]string][]string{}, lang: map[string]string{}, kind: map[string]parser.Kind{}, place: map[string]place{}, global: map[string]bool{}, bases: map[string][]string{}, changed: make(map[string]bool, len(files))}
 	for i := range files {
 		idx.changed[files[i].path] = true
 		for _, s := range files[i].syms {
@@ -954,6 +955,7 @@ func newNameIndex(files []parsed) nameIndex {
 			idx.lang[s.ID] = s.Language
 			idx.kind[s.ID] = s.Kind
 			idx.place[s.ID] = placeOf(s)
+			idx.global[s.ID] = s.Metadata["global"] == "true"
 			if s.Kind == parser.KindClass || s.Kind == parser.KindInterface {
 				for _, r := range s.Relations {
 					// Go promotes only an embedded type's methods (extends), not a named field's.
@@ -1012,6 +1014,7 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 				langOf[h.Symbol.ID] = h.Symbol.Language
 				kindOf[h.Symbol.ID] = h.Symbol.Kind
 				idx.place[h.Symbol.ID] = placeOf(h.Symbol)
+				idx.global[h.Symbol.ID] = h.Symbol.Metadata["global"] == "true"
 			}
 		}
 		cache[key] = ids
@@ -1200,9 +1203,11 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 						}
 					}
 					// An html inline handler (onclick="f()") calls the browser
-					// global window.f: a JavaScript function of that name.
+					// global window.f: a JavaScript function of that name that
+					// is a global (top level of a classic script, or window.f),
+					// never a method nor a function of an ES module.
 					if name, ok := strings.CutPrefix(tqn, "window."); len(ids) == 0 && ok && lang == "html" {
-						ids, nameOnly, resolution = named("javascript", name), true, parser.ResolutionUnique
+						ids, nameOnly, resolution = slices.DeleteFunc(slices.Clone(named("javascript", name)), func(id string) bool { return !idx.global[id] }), true, parser.ResolutionUnique
 					}
 					// Otherwise fall back to the name. An unknown owner is
 					// external (vendor, stdlib).

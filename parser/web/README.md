@@ -103,7 +103,7 @@ Relations on the document: imports `../../assets/css/shop.css` ->
 | `<script src="...">` | `imports` | document | Module of the referenced file |
 | `<link rel="stylesheet" href="...">` | `imports` | document | Same |
 | `{{template "x" ...}}` | `call` | innermost enclosing `define`/`block`, else the document | `<module>.x` when `x` is defined or blocked in the same file, else `""` |
-| `f(...)` in an `on*="..."` / `on*='...'` attribute (`onclick="resolveError({{.ID}})"`), not `ns.f()` nor keywords | `call` | the symbol with the narrowest line span around the attribute (an element with an id, a `define`, else the document) | `window.f`: the index resolves it by name to a JavaScript function `f` |
+| `f(...)` in an `on*="..."` / `on*='...'` attribute (`onclick="resolveError({{.ID}})"`), not `ns.f()` nor keywords | `call` | the symbol with the narrowest line span around the attribute (an element with an id, a `define`, else the document) | `window.f`: the index resolves it by name to a JavaScript browser global `f` (a top-level function of a classic script or a `window.f` global, not a method nor an ES module function) |
 
 References are resolved relative to the file's directory, ignoring `?query`
 and `#fragment`. Absolute paths (`/x`), URLs (anything with `:`) and paths

@@ -206,7 +206,7 @@ func TestController(t *testing.T) {
 		"call helper":        ns + ".UserController.helper",
 		"call other":         ns + ".UserController.other",
 		"call show":          "",
-		"call input":         "",
+		"call input":         `Illuminate\Http.Request.input`, // $request declared Req
 		"call format_name":   `App\Helpers.format_name`,
 		"call strlen":        "", // global fallback: name lookup
 		"call save":          "",

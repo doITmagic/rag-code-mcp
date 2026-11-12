@@ -4,6 +4,7 @@
 package php
 
 import (
+	"maps"
 	"strings"
 
 	"github.com/doITmagic/rag-code-mcp/v2/parser"
@@ -45,6 +46,7 @@ type collector struct {
 	funcs   map[string]string // alias -> fully qualified function name
 	syms    []parser.Symbol
 	calls   []rawCall
+	vars    map[string]string // receiver -> declared class FQN in the body being walked: "$p", "$this->x"
 }
 
 // rawCall is one function or static call seen anywhere in the file, kept for
@@ -351,9 +353,83 @@ func (c *collector) function(n *gotreesitter.Node) {
 		return
 	}
 	s := c.symbol(n, name, parser.KindFunction, "", true)
+	c.vars = c.paramTypes(n, "")
 	c.walkBody(c.field(n, "body"), &s, "")
+	c.vars = nil
 	c.signatureTypes(n, &s)
 	c.syms = append(c.syms, s)
+}
+
+// declType is the class FQN of a type declaration naming one class
+// (?C included), "" for a scalar, union or missing type and for parent.
+func (c *collector) declType(t *gotreesitter.Node, owner string) string {
+	if c.typ(t) == "optional_type" {
+		t = t.NamedChild(0)
+	}
+	if c.typ(t) != "named_type" || t.NamedChildCount() != 1 {
+		return ""
+	}
+	ch := t.NamedChild(0)
+	if k := c.typ(ch); k != "name" && k != "qualified_name" {
+		return ""
+	}
+	return c.resolve(c.text(ch), c.classes, owner)
+}
+
+// paramTypes maps each parameter of fn declared with one class to it
+// ("$request" -> Illuminate\Http\Request).
+// shortcut: a parameter reassigned in the body keeps its declared class; flow analysis if that misleads.
+func (c *collector) paramTypes(fn *gotreesitter.Node, owner string) map[string]string {
+	out := map[string]string{}
+	for _, p := range parser.NamedChildren(c.field(fn, "parameters")) {
+		if t := c.declType(c.field(p, "type"), owner); t != "" {
+			out[c.text(c.field(p, "name"))] = t
+		}
+	}
+	return out
+}
+
+// propTypes maps "$this->x" to the class of property x when declared: a
+// typed property, a constructor-promoted parameter, or a property the
+// constructor assigns from a typed parameter ($this->repo = $users).
+func (c *collector) propTypes(body *gotreesitter.Node, owner string) map[string]string {
+	out := map[string]string{}
+	for _, ch := range parser.NamedChildren(body) {
+		switch ch.Type(c.lang) {
+		case "property_declaration":
+			if t := c.declType(c.field(ch, "type"), owner); t != "" {
+				for _, el := range parser.NamedChildren(ch) {
+					if el.Type(c.lang) == "property_element" {
+						out["$this->"+strings.TrimPrefix(c.text(c.field(el, "name")), "$")] = t
+					}
+				}
+			}
+		case "method_declaration":
+			if !strings.EqualFold(c.text(c.field(ch, "name")), "__construct") {
+				continue
+			}
+			params := c.paramTypes(ch, owner)
+			for _, p := range parser.NamedChildren(c.field(ch, "parameters")) {
+				pn := c.text(c.field(p, "name"))
+				if p.Type(c.lang) == "property_promotion_parameter" && params[pn] != "" {
+					out["$this->"+strings.TrimPrefix(pn, "$")] = params[pn]
+				}
+			}
+			parser.Walk(c.field(ch, "body"), func(a *gotreesitter.Node) bool {
+				if a.Type(c.lang) != "assignment_expression" {
+					return true
+				}
+				l, r := c.field(a, "left"), c.field(a, "right")
+				if c.typ(l) == "member_access_expression" && c.text(c.field(l, "object")) == "$this" && params[c.text(r)] != "" {
+					if k := "$this->" + c.text(c.field(l, "name")); out[k] == "" {
+						out[k] = params[c.text(r)]
+					}
+				}
+				return false
+			})
+		}
+	}
+	return out
 }
 
 // signatureTypes adds a uses_type relation per class named in the parameter
@@ -431,6 +507,7 @@ func (c *collector) classLike(n *gotreesitter.Node) {
 		}
 	}
 	c.syms = append(c.syms, s)
+	props := c.propTypes(body, name)
 	for _, nc := range parser.NamedChildren(body) {
 		switch ch := nc; ch.Type(c.lang) {
 		case "const_declaration":
@@ -438,7 +515,7 @@ func (c *collector) classLike(n *gotreesitter.Node) {
 		case "property_declaration":
 			c.properties(ch, name)
 		case "method_declaration":
-			c.method(ch, name)
+			c.method(ch, name, props)
 		case "enum_case":
 			if cn := c.text(c.field(ch, "name")); cn != "" {
 				c.syms = append(c.syms, c.symbol(ch, cn, parser.KindConstant, name, true))
@@ -517,13 +594,16 @@ func (c *collector) classString(n *gotreesitter.Node, lit string, s *parser.Symb
 		TargetQualifiedName: qualified(fqn), Line: line})
 }
 
-func (c *collector) method(n *gotreesitter.Node, owner string) {
+func (c *collector) method(n *gotreesitter.Node, owner string, props map[string]string) {
 	name := c.text(c.field(n, "name"))
 	if name == "" {
 		return
 	}
 	s := c.symbol(n, name, parser.KindMethod, owner, c.visible(n))
+	c.vars = c.paramTypes(n, owner)
+	maps.Copy(c.vars, props)
 	c.walkBody(c.field(n, "body"), &s, owner)
+	c.vars = nil
 	c.signatureTypes(n, &s)
 	c.syms = append(c.syms, s)
 	params := c.field(n, "parameters")
@@ -588,8 +668,10 @@ func (c *collector) call(n *gotreesitter.Node, sym *parser.Symbol, owner string)
 			return
 		}
 		name, at = c.text(fn), fn
-		if c.text(c.field(n, "object")) == "$this" && owner != "" {
+		if obj := c.text(c.field(n, "object")); obj == "$this" && owner != "" {
 			target = parser.Qualify(c.ns, owner, name)
+		} else if fqn := c.vars[obj]; fqn != "" { // a declared class: typed parameter or property
+			target = qualified(fqn) + "." + name
 		}
 		if name == "group" {
 			c.fluentGroup(n)

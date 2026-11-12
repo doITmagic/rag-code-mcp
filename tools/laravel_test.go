@@ -49,7 +49,7 @@ Route::group(['prefix' => 'admin', 'namespace' => 'Backend'], function () {
 func TestUsagesOfLaravelModelAndListener(t *testing.T) {
 	v := newEnv(t, false, nil)
 	v.addFiles(t, map[string]string{
-		"app/Lawyer.php": "<?php\nnamespace App;\nclass Lawyer {}\n",
+		"app/Lawyer.php":                      "<?php\nnamespace App;\nclass Lawyer {}\n",
 		"app/Listeners/SendEmailListener.php": "<?php\nnamespace App\\Listeners;\nclass SendEmailListener {}\n",
 		"app/Mandate.php": `<?php
 namespace App;
@@ -70,6 +70,32 @@ class EventServiceProvider {
 	files = usagesOf(t, v, `App\Listeners\SendEmailListener`)
 	require.Len(t, files, 1)
 	assert.Equal(t, `App\Providers.EventServiceProvider.listen`, files[0].Usages[0].Caller)
+}
+
+// Two services define send; the controller calls it on a property the
+// constructor assigns from a typed parameter, so the usage is exact and
+// belongs to that service only.
+func TestUsagesThroughTypedPhpProperty(t *testing.T) {
+	v := newEnv(t, false, nil)
+	v.addFiles(t, map[string]string{
+		"app/Services/Mailer.php": "<?php\nnamespace App\\Services;\nclass Mailer { public function send() {} }\n",
+		"app/Services/Sms.php":    "<?php\nnamespace App\\Services;\nclass Sms { public function send() {} }\n",
+		"app/Http/Controllers/UserController.php": `<?php
+namespace App\Http\Controllers;
+use App\Services\Mailer;
+class UserController {
+    private $mailer;
+    public function __construct(Mailer $mailer) { $this->mailer = $mailer; }
+    public function store() { $this->mailer->send(); }
+}
+`,
+	})
+	files := usagesOf(t, v, `App\Services\Mailer::send`)
+	require.Len(t, files, 1)
+	require.Len(t, files[0].Usages, 1)
+	assert.Equal(t, `App\Http\Controllers.UserController.store`, files[0].Usages[0].Caller)
+	assert.False(t, files[0].Usages[0].ByName)
+	assert.Empty(t, usagesOf(t, v, `App\Services\Sms::send`))
 }
 
 // The controller method returning view('users.show') is a usage of the

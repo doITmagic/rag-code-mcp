@@ -144,7 +144,8 @@ Relations: `UserController` extends `Controller` ->
 | Strings naming classes in a `$listen` property (`'App\Events\E' => ['App\Listeners\L']`, Laravel's event map) | `uses_type` | Same; only strings with a `\`. |
 | `Foo::bar()`, `self::bar()`, `static::bar()` | `call` | `<class FQN>.bar`; `parent::bar()` has an empty target. |
 | `$this->m()` / `$this?->m()` | `call` | `<namespace>.<Owner>.m`; when the class does not define `m`, the indexer looks in the classes and traits it declares (`extends`, `implements`, `use`), one level. |
-| `$obj->m()` | `call` | `""` (receiver type unknown) |
+| `$p->m()`, `$this->x->m()`, `$this->x?->m()` where `$p` is a parameter declared with one class (`Request $p`, `?Mailer $p`) or `x` a property declared with one class, a constructor-promoted parameter, or a property the constructor assigns from such a parameter (`$this->repo = $repo`) | `call` | `<class FQN>.m`; a class outside the workspace (`Illuminate\Http\Request`) leaves the call unresolved instead of matching a workspace method by name. |
+| `$obj->m()` on anything else | `call` | `""` (receiver type unknown) |
 | `fn()` | `call` | Through the function table. Inside a namespace, an unqualified function that is not imported gets an empty target: PHP falls back to the global function at runtime, so the namespace would only be a guess and the indexer resolves it by name instead. |
 | `view('users.show', ...)`, `View::make('users.show')` | `imports` (besides the `call`) | The view name as written, which is the qualified name of `resources/views/users/show.blade.php`; a dynamic name or a package view (`mail::message`) gives none. |
 
@@ -224,7 +225,11 @@ A view outside any `views` folder has module `""`.
   routes inside it their controller.
 - A static call to a member a class inherits from outside the workspace
   (`Authority::all()` on an Eloquent model) is not a usage of the class.
-- Receiver types are not inferred, so `$obj->method()` stays unresolved.
+- Receiver types come only from declarations (typed parameters and
+  properties, see Relations): `$x = new Foo(); $x->m()`, a local
+  assigned from a call, an untyped or union-typed parameter or property,
+  and a parameter reassigned in the body (it keeps its declared class) are
+  not followed.
 - A named function, class, interface, trait or enum declared inside a
   function or method body is not emitted as a symbol.
 - Route and hook symbols inside a method take the method's name as owner,
@@ -261,7 +266,7 @@ A view outside any `views` folder has module `""`.
 |------|--------|
 | `php_test.go` | Registration of both extensions; a controller fixture with group/function/const `use`, attributes, traits, enums, promoted properties, closures, anonymous classes, routes and hooks (kinds, owners, lines, docs, signatures, metadata, relation targets); `define()` inside a namespace is global; hook and route names only from a plain string literal in the name position; a plugin with braced namespaces and parse-error recovery; malformed input; global-namespace function calls; concurrency; parameter and return type uses; a class named with a reserved word (`class Object extends Base`) keeping its name and base (`TestReservedClassName`); the line of a `->` chain call split over lines (`TestChainedCallLine`). |
 | `blade_test.go` | A Blade view with sections, components and includes; a view outside a `views` folder; the file symbol's end line with a trailing newline; a `@component` nested in a `@section`. |
-| `laravel_test.go` | Laravel route groups (array and fluent, nested, namespace) and handler relations (`C@m`, `uses`, `[C::class, m]`, invokable, resource, `Route::view`); `view()` / `View::make()` importing the template, not for a dynamic or package view name; `X::class`, property types, Eloquent relation strings and the `$listen` map as `uses_type` (`TestLaravelClassReferences`). |
+| `laravel_test.go` | Laravel route groups (array and fluent, nested, namespace) and handler relations (`C@m`, `uses`, `[C::class, m]`, invokable, resource, `Route::view`); `view()` / `View::make()` importing the template, not for a dynamic or package view name; `X::class`, property types, Eloquent relation strings and the `$listen` map as `uses_type` (`TestLaravelClassReferences`); calls on typed parameters, typed, promoted and constructor-assigned properties (`TestTypedReceivers`). |
 | `zz_verify_test.go` | Verification tests: name resolution, global-namespace WordPress code, robustness, a routes file, multiple namespaces in one file, Blade layouts, no shared state between calls. |
 
 ## Testing

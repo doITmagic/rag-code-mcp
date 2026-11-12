@@ -119,6 +119,60 @@ func TestLaravelClassReferences(t *testing.T) {
 	}, targets(syms["variable App.EventServiceProvider.listen"]))
 }
 
+const typedReceiverSrc = `<?php
+namespace App\Http\Controllers;
+
+use App\Services\Mailer;
+use App\Repositories\UserRepository;
+use Illuminate\Http\Request;
+
+class UserController extends Controller
+{
+    private ?Mailer $mailer;
+    protected $untyped;
+    private $repo;
+    private $cache;
+
+    public function __construct(private \App\Services\Billing $billing, UserRepository $users, $cache)
+    {
+        $this->repo = $users;
+        $this->cache = $cache;
+    }
+
+    public function store(Request $request, int $id, self $other)
+    {
+        $this->mailer->send($request->input('x'));
+        $this->billing?->charge();
+        $this->repo->save();
+        $this->untyped->run();
+        $this->cache->get();
+        $other->helper();
+        $id->nope();
+    }
+}
+
+function free(Mailer $m) { $m->queue(); }
+`
+
+// A call on a typed property, a promoted or assigned constructor parameter
+// or a typed parameter takes the declared class as its target.
+func TestTypedReceivers(t *testing.T) {
+	syms := analyze(t, "/root/app/Http/Controllers/UserController.php", typedReceiverSrc)
+	got := targets(syms[`method App\Http\Controllers.UserController.store`])
+	assert.Equal(t, map[string]string{
+		"call send":         `App\Services.Mailer.send`,
+		"call input":        `Illuminate\Http.Request.input`,
+		"call charge":       `App\Services.Billing.charge`,
+		"call save":         `App\Repositories.UserRepository.save`,
+		"call run":          "",
+		"call get":          "",
+		"call helper":       `App\Http\Controllers.UserController.helper`,
+		"call nope":         "",
+		"uses_type Request": `Illuminate\Http.Request`,
+	}, got)
+	assert.Equal(t, `App\Services.Mailer.queue`, targets(syms[`function App\Http\Controllers.free`])["call queue"])
+}
+
 // view('x.y') and View::make('x.y') name the template a controller renders.
 func TestLaravelViewCallImportsTemplate(t *testing.T) {
 	syms := analyze(t, "/root/app/Http/Controllers/UserController.php", laravelViewSrc)

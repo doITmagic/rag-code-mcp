@@ -174,9 +174,13 @@ type Relation struct {
 
 Analyzers resolve `TargetQualifiedName` only from evidence in the file (its
 imports, its own declarations, `self`/`this`). They never guess the type of a
-variable; an unknown receiver leaves the field empty. The one exception is
+variable; an unknown receiver leaves the field empty. One exception is
 the Go value use below: a local declared with a single type (`s *T`,
-`var s T`, `s := &T{...}`) gives `s.m` the target `T.m`.
+`var s T`, `s := &T{...}`) gives `s.m` the target `T.m`. PHP reads declared
+types the same way: a parameter typed with one class (`Request $r`) and a
+property typed with one class, promoted from or assigned from such a
+constructor parameter (`$this->repo = $repo`), give `$r->m()` and
+`$this->repo->m()` the target `<class>.m`.
 
 `Value` marks a `RelCall` that is only a candidate: the Go analyzer cannot
 tell a function or method named as a value (`mux.HandleFunc(p, s.handler)`)

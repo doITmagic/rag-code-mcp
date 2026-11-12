@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/doITmagic/rag-code-mcp/v2/parser"
+	_ "github.com/doITmagic/rag-code-mcp/v2/parser/php"
 	_ "github.com/doITmagic/rag-code-mcp/v2/parser/web"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -118,4 +119,56 @@ func TestResolveHTMLHandlerIgnoresModuleNamedWindow(t *testing.T) {
 	require.Len(t, rels, 1)
 	assert.Equal(t, e.symbols(t, js)["toggle"].ID, rels[0].TargetID)
 	assert.Equal(t, parser.ResolutionUnique, rels[0].Resolution)
+}
+
+var realPHP = parser.ForLanguage("php")
+
+// A PHP property and a method of one name are not twins: the call
+// $cart->items() binds to the method, never to the wider property.
+func TestResolvePHPCallPrefersMethodOverProperty(t *testing.T) {
+	parser.Register(realPHP)
+	t.Cleanup(func() { parser.Register(lineAnalyzer{lang: "php", ext: ".php"}) })
+
+	e := newEnv(t)
+	cart := e.write(t, "Cart.php", `<?php
+namespace App;
+
+class Cart {
+    private array $items = [
+        'sku_a',
+        'sku_b',
+        'sku_c',
+    ];
+
+    public function items(): array { return $this->items; }
+}
+`)
+	caller := e.write(t, "Checkout.php", `<?php
+namespace App;
+
+class Checkout {
+    public function run(Cart $cart): array {
+        return $cart->items();
+    }
+}
+`)
+
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+
+	var methodID string
+	for _, s := range e.all(t, cart) {
+		if s.Name == "items" && s.Kind == parser.KindMethod {
+			methodID = s.ID
+		}
+	}
+	require.NotEmpty(t, methodID)
+
+	var callTargetID string
+	for _, r := range e.symbols(t, caller)["run"].Relations {
+		if r.Kind == parser.RelCall && r.TargetName == "items" {
+			callTargetID = r.TargetID
+		}
+	}
+	assert.Equal(t, methodID, callTargetID)
 }

@@ -481,7 +481,9 @@ each relation:
   declarations, Python redefinitions), are one candidate in every lookup: the
   widest line span, then the lowest start line. The pick depends on that file
   only, so a full and a files run agree. The same qualified name in two files
-  (Go build-tagged variants) stays ambiguous.
+  (Go build-tagged variants) stays ambiguous. A function or method and a
+  symbol of another kind of one name (a PHP property `$items` and its method
+  `items()`) are not twins.
 - With only a `TargetName`: matched by `(language, name)`.
 - Code never resolves into another language, by name or qualified name; only
   relations from `docs` and `html` (links, scripts, `onclick` handlers) cross
@@ -489,7 +491,8 @@ each relation:
 - Only `imports` relations may target a template, scene node, doc chunk,
   route or hook; a `call` matched by name alone binds only to something
   callable, never a variable or constant (an exact match may: a variable can
-  hold a function). So a Godot scene node sharing its class's qualified name
+  hold a function, unless a function or method is among the candidates, so
+  `$cart->items()` takes the method `items`, not the property `$items`). So a Godot scene node sharing its class's qualified name
   does not make an `extends` ambiguous, and `->default(0)` does not bind to a
   Blade view named `default`.
 - One ID sets `TargetID`; several set `ResolutionAmbiguous`.

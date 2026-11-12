@@ -153,3 +153,42 @@ class RouteServiceProvider {
 	assert.Equal(t, `App\Providers.map./about`, found.Results[0].QualifiedName)
 	assert.Equal(t, "exact", found.Results[0].Match)
 }
+
+// A property and a method of one name are two symbols: the call
+// $cart->items() is the method's usage, and the name picks the method.
+func TestUsagesOfPhpMethodNamedLikeProperty(t *testing.T) {
+	v := newEnv(t, false, nil)
+	v.addFiles(t, map[string]string{
+		"app/Cart.php": `<?php
+namespace App;
+class Cart {
+    private array $items = [
+        'sku_a',
+        'sku_b',
+    ];
+    public function items(): array { return $this->items; }
+}
+`,
+		"app/Checkout.php": `<?php
+namespace App;
+class Checkout {
+    public function run(Cart $cart): array { return $cart->items(); }
+}
+`,
+	})
+	for _, q := range []string{`App\Cart::items`, "items"} {
+		var out struct {
+			Symbol Candidate    `json:"symbol"`
+			Files  []FileUsages `json:"files"`
+		}
+		r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": q})
+		require.Equal(t, "ok", r.Status, r.Message)
+		data(t, r, &out)
+		assert.Equal(t, "method", out.Symbol.Kind, q)
+		assert.Equal(t, 8, out.Symbol.StartLine, q)
+		require.Len(t, out.Files, 1, q)
+		require.Len(t, out.Files[0].Usages, 1, q)
+		assert.Equal(t, "App.Checkout.run", out.Files[0].Usages[0].Caller, q)
+		assert.False(t, out.Files[0].Usages[0].ByName, q)
+	}
+}

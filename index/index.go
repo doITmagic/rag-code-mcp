@@ -983,14 +983,17 @@ type nameIndex struct {
 }
 
 // place groups twins: symbols sharing file and qualified name (overloads,
-// getter/setter pairs, merged declarations) are one target.
+// getter/setter pairs, merged declarations) are one target. A function or
+// method and another kind of one name (a PHP property and its accessor
+// method) are not twins.
 type place struct {
 	file, qn   string
+	fn         bool
 	start, end int
 }
 
 func placeOf(s parser.Symbol) place {
-	return place{s.FilePath, parser.Normalize(s.QualifiedName), s.StartLine, s.EndLine}
+	return place{s.FilePath, parser.Normalize(s.QualifiedName), s.Kind == parser.KindFunction || s.Kind == parser.KindMethod, s.StartLine, s.EndLine}
 }
 
 func newNameIndex(files []parsed) nameIndex {
@@ -1082,11 +1085,11 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 	// collapse keeps one id per twin group: the widest, then the first. A
 	// group lies in one file, so a full and a files run pick the same one.
 	collapse := func(ids []string) []string {
-		best := map[[2]string]string{}
+		best := map[place]string{}
 		out := ids[:0:0]
 		for _, id := range ids {
 			p := idx.place[id]
-			k := [2]string{p.file, p.qn}
+			k := place{file: p.file, qn: p.qn, fn: p.fn}
 			b, ok := best[k]
 			if !ok {
 				out = append(out, id)
@@ -1097,7 +1100,7 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 		}
 		for i, id := range out {
 			p := idx.place[id]
-			out[i] = best[[2]string{p.file, p.qn}]
+			out[i] = best[place{file: p.file, qn: p.qn, fn: p.fn}]
 		}
 		return out
 	}
@@ -1168,12 +1171,14 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 	}
 	// fit drops the candidates a relation cannot point at: only imports reach
 	// templates, scene nodes, doc chunks, routes and hooks, and a call matched
-	// by name alone binds only to something callable (an exact match may
-	// name a variable holding a function).
+	// by name alone, or with a function or method among its candidates (a
+	// PHP property and method of one name), binds only to something callable
+	// (an exact match alone may name a variable holding a function).
 	fit := func(rk parser.RelationKind, nameOnly bool, ids []string) []string {
 		if rk == parser.RelImports {
 			return ids
 		}
+		nameOnly = nameOnly || rk == parser.RelCall && slices.ContainsFunc(ids, func(id string) bool { return idx.place[id].fn })
 		out := ids[:0:0]
 		for _, id := range ids {
 			switch kindOf[id] {

@@ -104,6 +104,15 @@ func resolveSymbol(ctx context.Context, w *engine.Workspace, query, filePath str
 		}
 	}
 	hits = mergeTwins(hits, func(h *store.Hit) *parser.Symbol { return &h.Symbol })
+	if len(hits) > 1 { // a property and a method of one name: the method, reads of a property are not tracked
+		fn := map[twinKey]bool{}
+		for _, h := range hits {
+			if k := twinOf(&h.Symbol); k.fn {
+				fn[twinKey{k.qn, k.file, false}] = true
+			}
+		}
+		hits = slices.DeleteFunc(hits, func(h store.Hit) bool { return fn[twinOf(&h.Symbol)] })
+	}
 	if len(hits) > 1 { // the one whose qualified name is the query beats those that only end with it
 		q := parser.Normalize(query)
 		var equal []store.Hit
@@ -136,14 +145,19 @@ func resolveSymbol(ctx context.Context, w *engine.Workspace, query, filePath str
 
 // twinKey groups twins: overload signatures, a get/set pair or a merged
 // declaration share a qualified name and a file. Doc chunks (two sections
-// with one heading) and routes (GET and DELETE of one path) are never twins.
-type twinKey struct{ qn, file string }
+// with one heading) and routes (GET and DELETE of one path) are never twins,
+// nor a function or method and another kind of one name (a PHP property and
+// its accessor method), as the index resolves.
+type twinKey struct {
+	qn, file string
+	fn       bool
+}
 
 func twinOf(s *parser.Symbol) twinKey {
 	if s.Kind == parser.KindChunk || s.Kind == parser.KindRoute {
-		return twinKey{s.ID, ""}
+		return twinKey{qn: s.ID}
 	}
-	return twinKey{s.QualifiedName, s.FilePath}
+	return twinKey{s.QualifiedName, s.FilePath, s.Kind == parser.KindFunction || s.Kind == parser.KindMethod}
 }
 
 // mergeTwins keeps one item per twin group, in first-seen order: the widest
@@ -595,7 +609,9 @@ func (wk *walker) next(ctx context.Context, sym parser.Symbol, incoming bool) ([
 			hits, err := wk.w.Scroll(ctx, f, n)
 			if t := hits; err == nil && r.TargetID != "" && len(t) == 1 && t[0].Symbol.Kind != parser.KindChunk && t[0].Symbol.QualifiedName != "" {
 				// The target's twins (a getter and its setter) carry calls of their own.
+				k := twinOf(&t[0].Symbol)
 				hits, err = wk.w.Scroll(ctx, store.Filter{QualifiedName: t[0].Symbol.QualifiedName, FilePath: t[0].Symbol.FilePath}, candidateLimit)
+				hits = slices.DeleteFunc(hits, func(h store.Hit) bool { return twinOf(&h.Symbol) != k })
 			}
 			if err != nil {
 				wk.err = err

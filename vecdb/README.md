@@ -168,6 +168,14 @@ formula defines it. Results are ordered by score descending, then id.
 
 The package documentation puts this in the tens of milliseconds up to about
 100,000 points of 768 dimensions; `BenchmarkSearch15k` measures 15,000.
+Measured on real indexes (2026-11-12, file already in the OS cache): 29 ms for
+14,609 points (176 MB file) on Linux; 520 ms for 20,702 points (256 MB file) on
+Windows 11 with NTFS and Defender, where the first search after a boot reads
+the file from disk and took 20 s. Every search reads the whole `points` table
+through SQLite's default 2 MB page cache. `PRAGMA mmap_size` brought the
+Windows search to about 150 ms in the same measurement; it is not set, because
+an I/O error or a truncated file under a memory map ends the process instead
+of returning an error.
 
 ### Size and dimension checks
 

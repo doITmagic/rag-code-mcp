@@ -312,7 +312,7 @@ func TestSelfParserFile(t *testing.T) {
 	assert.True(t, found, "SymbolID must call sha256.Sum256: %+v", id.Relations)
 
 	fin := syms[mod+".Finalize"]
-	assert.Contains(t, fin.Relations, rel(parser.RelCall, "SymbolID", mod+".SymbolID", fin.EndLine-3))
+	assert.Contains(t, fin.Relations, rel(parser.RelCall, "SymbolID", mod+".SymbolID", fin.EndLine-9))
 	assert.Equal(t, parser.KindInterface, syms[mod+".Analyzer"].Kind)
 	assert.Equal(t, "Language,Extensions,Analyze", syms[mod+".Analyzer"].Metadata["methods"])
 	assert.Equal(t, parser.KindConstant, syms[mod+".KindFunction"].Kind)

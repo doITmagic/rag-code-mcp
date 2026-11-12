@@ -162,6 +162,7 @@ func SymbolID(filePath, qualifiedName string, startLine int) string {
 // Finalize fills ID and QualifiedName (when empty) and clamps lines. Every
 // analyzer calls it on its output so the contract holds for all languages.
 func Finalize(f File, syms []Symbol) []Symbol {
+	seen := make(map[string]bool, len(syms))
 	for i := range syms {
 		s := &syms[i]
 		if s.FilePath == "" {
@@ -180,6 +181,12 @@ func Finalize(f File, syms []Symbol) []Symbol {
 			s.EndLine = s.StartLine
 		}
 		s.ID = SymbolID(s.FilePath, s.QualifiedName, s.StartLine)
+		// Same name on the same line (minified code, CR-only line endings):
+		// the n-th one hashes "name#n", so no symbol overwrites another.
+		for n := 2; seen[s.ID]; n++ {
+			s.ID = SymbolID(s.FilePath, s.QualifiedName+"#"+strconv.Itoa(n), s.StartLine)
+		}
+		seen[s.ID] = true
 	}
 	return syms
 }

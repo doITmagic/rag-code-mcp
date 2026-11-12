@@ -56,7 +56,10 @@ type Entry struct {
 // 14: a go.mod module line with a tab or a trailing comment gives the module
 // path; a JS named import of a declaration that is also the default export
 // targets it; a JS re-exported namespace import no longer fails its importers.
-const Format = 14
+// 15: symbols with one qualified name on one line of a file get distinct IDs
+// (one used to overwrite the other); a malformed Python assignment gives no
+// nameless symbol.
+const Format = 15
 
 // State is the per-root snapshot stored at Dir(root)/state.json. Only
 // the run goroutine touches it; nothing here locks.

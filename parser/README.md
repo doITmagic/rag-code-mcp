@@ -231,7 +231,10 @@ string, or the query is a suffix of the name on a segment boundary:
 `SymbolID(filePath, qualifiedName, startLine)` is the first 16 bytes of a
 SHA-256 over the slash-normalized path, the qualified name and the start line,
 hex encoded (32 characters). Two symbols with the same qualified name in the
-same file (overloads, redefinitions) stay distinct through the line.
+same file (overloads, redefinitions) stay distinct through the line. When they also
+share the line (minified code, CR-only line endings, a PHP property and method
+of one name), `Finalize` hashes the n-th one as `name#n` (n from 2, in the
+order the analyzer emits them).
 
 ### Finalize
 
@@ -240,7 +243,7 @@ Every analyzer passes its output through `Finalize(f, syms)`, which:
 1. sets `FilePath` and `Language` from the `File` when empty;
 2. sets `QualifiedName = Qualify(Module, Owner, Name)` when empty;
 3. clamps `StartLine` to at least 1 and `EndLine` to at least `StartLine`;
-4. computes `ID`.
+4. computes `ID`, distinct for every symbol of the file.
 
 ## Tree-sitter helpers (`ts.go`)
 

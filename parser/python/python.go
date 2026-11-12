@@ -311,6 +311,9 @@ func (c *fileCtx) assignment(n *gotreesitter.Node) []parser.Symbol {
 	sig, _, _ := strings.Cut(parser.Text(n, c.src), "=")
 	var out []parser.Symbol
 	for _, name := range names {
+		if name == "" { // error recovery gives a zero-width identifier
+			continue
+		}
 		kind := parser.KindVariable
 		if isConstName(name) {
 			kind = parser.KindConstant

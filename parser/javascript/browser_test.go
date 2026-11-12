@@ -120,14 +120,15 @@ window.direct = function () {};
 function renamed() {}
 window.other = renamed; // the global is other, a symbol calling renamed: onclick="renamed()" reaches nothing
 `
+	sfc := "<template><button @click=\"press()\">b</button></template>\n<script setup>\nfunction press() { return 1; }\n</script>\n"
 	global := map[string]bool{}
-	for _, s := range append(analyze(t, "js/page.js", classic), analyze(t, "js/mod.js", module)...) {
+	for _, s := range append(append(analyze(t, "js/page.js", classic), analyze(t, "js/mod.js", module)...), analyze(t, "js/Btn.vue", sfc)...) {
 		global[s.QualifiedName] = s.Metadata["global"] == "true"
 	}
 	assert.Equal(t, map[string]bool{
 		"js/page.top": true, "js/page.expr": true, "js/page.Widget": false, "js/page.Widget.open": false,
 		"js/page.local": false, "js/page.shared": true, "js/page.assigned": true,
-		"js/mod.exported": false, "js/mod.own": true, "js/mod.direct": true, "js/mod.renamed": false, "js/mod.other": true,
+		"js/Btn.Btn": false, "js/Btn.default": false, "js/Btn.press": false, "js/mod.exported": false, "js/mod.own": true, "js/mod.direct": true, "js/mod.renamed": false, "js/mod.other": true,
 	}, global)
 }
 

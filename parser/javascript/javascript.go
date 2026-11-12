@@ -87,7 +87,7 @@ func (analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 			}
 			// Leading newlines keep tree-sitter rows equal to .vue file rows.
 			src := append(bytes.Repeat([]byte{'\n'}, bytes.Count(f.Source[:b.start], []byte{'\n'})), f.Source[b.start:b.end]...)
-			c, tree, err := scanScript(b.grammar, src, f.Root, module, dir, component)
+			c, tree, err := scanScript(b.grammar, src, f.Root, module, dir, component, true)
 			if err != nil {
 				return nil, err
 			}
@@ -172,7 +172,7 @@ func appendDefault(syms []parser.Symbol, d parser.Symbol) []parser.Symbol {
 // top-level expression statements (watch(...), defineProps<T>()), which no
 // symbol owns.
 func analyzeScript(grammar string, src []byte, wsRoot, module, dir, component string) ([]parser.Symbol, []parser.Relation, error) {
-	c, tree, err := scanScript(grammar, src, wsRoot, module, dir, component)
+	c, tree, err := scanScript(grammar, src, wsRoot, module, dir, component, false)
 	if err != nil || tree == nil {
 		return nil, nil, err
 	}
@@ -211,7 +211,7 @@ func (c *fileCtx) hidden(n *gotreesitter.Node, inErr bool) bool {
 // scanScript parses one script and runs pass 1: imports, top-level names and
 // export lists, so calls resolve forward references. The caller releases
 // the tree.
-func scanScript(grammar string, src []byte, wsRoot, module, dir, component string) (*fileCtx, *gotreesitter.Tree, error) {
+func scanScript(grammar string, src []byte, wsRoot, module, dir, component string, sfc bool) (*fileCtx, *gotreesitter.Tree, error) {
 	tree, lang, err := parser.ParseTree(grammar, src)
 	if err != nil {
 		return nil, nil, err
@@ -227,7 +227,8 @@ func scanScript(grammar string, src []byte, wsRoot, module, dir, component strin
 	for _, nc := range parser.NamedChildren(tree.RootNode()) {
 		c.scan(nc)
 	}
-	if c.classic = !c.esm; c.classic {
+	// a .vue script block (sfc) is a module even without imports: nothing in it is a browser global
+	if c.classic = !c.esm && !sfc; c.classic {
 		for _, nc := range parser.NamedChildren(tree.RootNode()) {
 			c.wrapped(nc, 0, c.scan)
 		}

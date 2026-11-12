@@ -216,7 +216,8 @@ specifier is the module as written (`react.useState`).
 - **Global**: a function an inline html handler can reach, a top-level
   function of a classic browser script or a `window.f` global (in a module
   too), has `Metadata{"global": "true"}`; the index binds `onclick="f()"`
-  only to those. Wrapper locals, methods and module functions do not, nor a
+  only to those. Wrapper locals, methods, module functions and the functions
+  of a `.vue` script block (a module even without imports) do not, nor a
   function `f` the file reassigns with `window.f = g` (so `onclick="f()"`
   links to nothing rather than to the replaced `f`), nor a module function
   `g` exposed under another name (`window.f = g`: the global is `f`, a
@@ -328,8 +329,8 @@ literal's values are not walked, its methods own their calls.
   on one has `""`, or the target of a script name it shadows), single-quoted
   attribute values are skipped, and a component tag resolves to the
   `<script setup>` `default` symbol of its file, not to its `template` symbol:
-  `rag_find_usages` of the component's name finds the `template` symbol, so
-  its usages are found under `<dir>/X.default`. A `.vue` file without a
+  `rag_find_usages` of the component's name answers for that `default` symbol
+  (`rag_call_hierarchy` for the `template` symbol). A `.vue` file without a
   script has no `default` symbol, so a tag of it links to nothing.
 - Nuxt auto-imports (no import statement) resolve by name only.
 - tsconfig `paths` targets are relative to the `baseUrl` of the config that

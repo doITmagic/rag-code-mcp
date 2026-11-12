@@ -128,3 +128,20 @@ window.direct = function () {};
 		"js/mod.exported": false, "js/mod.own": true, "js/mod.direct": true,
 	}, global)
 }
+
+// window.exposed = implementation: window.exposed() calls implementation, and
+// the declared exposed is no longer what onclick="exposed()" reaches.
+func TestBrowserWindowAliasTargetsAssignedFunction(t *testing.T) {
+	syms := analyze(t, "browser.js", `function implementation() {}
+function exposed() {}
+window.exposed = implementation;
+function caller() { window.exposed(); }
+`)
+	caller := find(t, syms, "browser.caller")
+	r := rel(t, caller, parser.RelCall, "exposed")
+	if r.TargetQualifiedName != "browser.implementation" {
+		t.Fatalf("window.exposed() target = %q; want browser.implementation (the assigned function)", r.TargetQualifiedName)
+	}
+	assert.Empty(t, find(t, syms, "browser.exposed").Metadata["global"], "window.exposed is implementation now")
+	assert.Equal(t, "true", find(t, syms, "browser.implementation").Metadata["global"])
+}

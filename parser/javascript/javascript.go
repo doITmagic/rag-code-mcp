@@ -53,13 +53,14 @@ type fileCtx struct {
 	esm       bool                   // the script imports, requires or exports something
 	classic   bool                   // a browser script (no esm): its wrappers' declarations count as top-level ones
 	windowed  map[string]bool        // names assigned to window.x (window.x = f | function () {})
+	winAlias  map[string]string      // window.x = y: x -> y, the last assignment of the file winning
 }
 
 func newCtx(src []byte, lang *gotreesitter.Language, wsRoot, module, dir, component string) *fileCtx {
 	return &fileCtx{src: src, lang: lang, module: module, dir: dir, root: wsRoot, component: component,
 		imports: map[string]string{}, defs: map[string]parser.Kind{}, exported: map[string]bool{},
 		exportAs: map[string]string{}, reexp: map[string]string{}, bare: map[string]bool{},
-		props: map[string]string{}, picked: map[string]bool{}, windowed: map[string]bool{}}
+		props: map[string]string{}, picked: map[string]bool{}, windowed: map[string]bool{}, winAlias: map[string]string{}}
 }
 
 func (analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
@@ -295,6 +296,9 @@ func (c *fileCtx) emit(tree *gotreesitter.Tree) ([]parser.Symbol, []parser.Relat
 // reach: a top-level one of a classic script (top), or one assigned to
 // window.f. Methods, module functions and wrapper locals are out of reach.
 func (c *fileCtx) markGlobal(s *parser.Symbol, top bool) {
+	if a := c.winAlias[s.Name]; a != "" && a != s.Name {
+		return // window.f = g: onclick="f()" no longer reaches this f
+	}
 	if s.Owner == "" && s.Kind == parser.KindFunction && (top || c.windowed[s.Name]) {
 		if s.Metadata == nil {
 			s.Metadata = map[string]string{}
@@ -722,7 +726,9 @@ func (c *fileCtx) scanExportsAssign(n *gotreesitter.Node) {
 	case windowProp(left) != "": // a browser global: window.f = f | function () {}
 		c.exported[windowProp(left)] = true
 		c.windowed[windowProp(left)] = true
+		c.winAlias[windowProp(left)] = ""
 		if right != nil && right.Type(c.lang) == "identifier" {
+			c.winAlias[windowProp(left)] = parser.Text(right, c.src)
 			c.exported[parser.Text(right, c.src)] = true
 			c.windowed[parser.Text(right, c.src)] = true
 		} else if right != nil && isFunc(right.Type(c.lang)) && c.defs[windowProp(left)] == "" {
@@ -1308,6 +1314,9 @@ func (c *fileCtx) resolveMember(obj *gotreesitter.Node, name, owner string) stri
 		return parser.Qualify(c.module, c.qual(owner), name)
 	case "identifier", "member_expression":
 		if parser.Text(obj, c.src) == "window" && c.imports["window"] == "" && c.defs["window"] == "" {
+			if a := c.winAlias[name]; a != "" {
+				name = a // window.f = g: window.f() calls g
+			}
 			return c.resolveDotted(name) // window.f() of a global this file declares
 		}
 		return c.resolveDotted(parser.Text(obj, c.src) + "." + name)

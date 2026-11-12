@@ -131,7 +131,11 @@ type tsconfig struct {
 // "paths" (or its directory), not an inherited baseUrl; package "extends"
 // (e.g. "@tsconfig/node20") are not followed. Upgrade if a repo needs either.
 func readPaths(root, cfg string, depth int) []pathAlias {
-	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(cfg)))
+	p := filepath.Join(root, filepath.FromSlash(cfg))
+	if info, err := os.Stat(p); err != nil || !info.Mode().IsRegular() || info.Size() > 4<<20 { // a FIFO would block the read
+		return nil
+	}
+	raw, err := os.ReadFile(p)
 	if err != nil || depth > 4 {
 		return nil
 	}

@@ -120,7 +120,11 @@ func readBarrel(root, m, p, ext string) *barrel {
 		c.scan(nc)
 	}
 	for name := range c.defs {
-		b.own[c.qual(name)] = true
+		q := c.qual(name)
+		b.own[q] = true
+		if q != name { // `export class X {}; export default X`: a named import of X is the default's declaration
+			b.named[name] = m + "." + q
+		}
 	}
 	b.own["default"] = c.anonDef || c.defs[c.def] != ""
 	for name, t := range c.reexp {

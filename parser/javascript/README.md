@@ -128,6 +128,7 @@ to the module that declares the name (`barrel.go`). With
 | In the target module | Name | Followed to |
 |----------------------|------|-------------|
 | A declaration of the name (`export const own`, `export default ...` for `default`) | `own` | the target module itself |
+| The own name of a declaration that is also the default export (`export class X {}; export default X`) | `X` | `m.default`, the identity the declaration is indexed under |
 | `export { a as b } from './x'`, `export { default as P } from './p'` | `b`, `P` | `x.a`, `p.default`, followed further |
 | `export { Hono as HonoBase }` | `HonoBase` | `<module>.Hono` |
 | `export { x }`, `export { x as y }`, `export default x` of an imported `x` | `x`, `y`, `default` | the import target of `x`, followed further |
@@ -305,6 +306,7 @@ literal's values are not walked, its methods own their calls.
 |------|--------|
 | `javascript_test.go` | ESM and CommonJS imports and exports, classes and methods, TypeScript (interfaces, types, enums, abstract classes), TSX, Vue options API, Vue `<script setup lang="ts">`, malformed and unbalanced input, files outside the root, concurrency, registration, default exports and directory (`index`) imports, root-absolute imports, TypeScript type uses, methods of an object literal bound to a const, aliased imports (tsconfig paths, Nuxt conventions), calls in top-level initializers and `export default defineX(...)`, export of object-literal methods, `const C = defineComponent(...)`, barrel re-exports (`export *`, `export { a as b } from`, local alias exports, cycles, cache invalidation, package specifiers never read from disk nor named like a root file of that name, `.`/`..` specifiers), top-level calls of `<script setup>` attributed to `default`, `await f<T>()` calls, top-level variable type annotations, `<script>` and `<script setup>` sharing names, the line of a chained call split over lines, top-level destructuring calls of `<script setup>`, members of an exported object literal followed as re-exports (shorthand, `key: ident`, methods of an inline `export default {...}`, a const both named and default-exported). |
 | `zz_verify_test.go` | Verification tests: JSX and import forms, TS enums and generics, `defineComponent` and CRLF files, robustness, nested CommonJS, component objects in plain JS, template-first `<script setup>`, statelessness, private TS members and syntax-error recovery, two script blocks, deep nesting, concurrent analysis. |
+| `fifo_unix_test.go` | A `tsconfig.json` that is a FIFO is not read (Linux only). |
 
 ## Testing
 

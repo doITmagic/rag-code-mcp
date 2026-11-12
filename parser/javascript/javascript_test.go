@@ -1,6 +1,7 @@
 package javascript
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,7 +12,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/doITmagic/rag-code-mcp/v2/embed"
+	"github.com/doITmagic/rag-code-mcp/v2/index"
 	"github.com/doITmagic/rag-code-mcp/v2/parser"
+	"github.com/doITmagic/rag-code-mcp/v2/store"
 )
 
 const root = "/ws"
@@ -916,4 +920,42 @@ func TestObjectMemberNamedAndDefault(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "src/api.read", rel(t, find(t, syms, "src/use.a"), parser.RelCall, "read").TargetQualifiedName)
 	assert.Equal(t, "src/api.read", rel(t, find(t, syms, "src/use.b"), parser.RelCall, "read").TargetQualifiedName)
+}
+
+// `export class X {}; export default X`: a call through a named import of X
+// links to the method declared under the default identity.
+func TestNamedImportOfDefaultExportedClass(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("RAGCODE_HOME", filepath.Join(root, ".ragcode-home"))
+	src := []byte("export class Client { static save() {} }\nexport default Client;\n")
+	if err := os.WriteFile(filepath.Join(root, "api.js"), src, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "caller.js"), []byte("import { Client } from './api';\nexport function run() { Client.save(); }\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	st := store.NewMemory()
+	if _, err := index.Run(ctx, index.Options{Root: root, Collection: "repro", Store: st, Embedder: &embed.Fake{}}); err != nil {
+		t.Fatal(err)
+	}
+	targets, err := st.Scroll(ctx, "repro", store.Filter{FilePath: filepath.Join(root, "api.js"), Name: "save"}, 10)
+	if err != nil || len(targets) != 1 {
+		t.Fatalf("target lookup: %d symbols, error %v", len(targets), err)
+	}
+	callers, err := st.Scroll(ctx, "repro", store.Filter{FilePath: filepath.Join(root, "caller.js"), Name: "run"}, 10)
+	if err != nil || len(callers) != 1 {
+		t.Fatalf("caller lookup: %d symbols, error %v", len(callers), err)
+	}
+	for _, s := range callers {
+		for _, r := range s.Symbol.Relations {
+			if r.TargetName == "save" {
+				if r.TargetID != targets[0].Symbol.ID {
+					t.Fatalf("named-import method target = %q, linked=%t; declaration is indexed as %q", r.TargetQualifiedName, r.TargetID != "", targets[0].Symbol.QualifiedName)
+				}
+				return
+			}
+		}
+	}
+	t.Fatal("missing save call relation")
 }

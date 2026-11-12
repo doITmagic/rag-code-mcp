@@ -395,7 +395,21 @@ var (
 	reVueExpr = regexp.MustCompile(`\s(@[\w.:-]+|v-on:[\w.:-]+|:[\w.:-]+|v-bind:[\w.:-]+|v-(?:if|else-if|show|for|html|text))\s*=\s*"([^"]*)"|\{\{((?s:.*?))\}\}`)
 	reVueCall = regexp.MustCompile(`(?:^|[^\w$.])([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*\(`)
 	reVueName = regexp.MustCompile(`^\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*$`)
+	// reHTMLComment is an HTML comment of the template: commented-out markup is not used.
+	reHTMLComment = regexp.MustCompile(`(?s)<!--.*?-->`)
 )
+
+// blank replaces every match of re in b with spaces, keeping newlines so line numbers stay.
+func blank(re *regexp.Regexp, b []byte) []byte {
+	return re.ReplaceAllFunc(b, func(m []byte) []byte {
+		return bytes.Map(func(r rune) rune {
+			if r == '\n' {
+				return r
+			}
+			return ' '
+		}, m)
+	})
+}
 
 // templateRels lists what a Vue <template> uses: component tags (uses_type)
 // and the calls in its expressions, a bare event handler name (`@click="go"`)
@@ -403,7 +417,7 @@ var (
 // without one) or to an options-API method of the component.
 // shortcut: regex over the template text, like the block scanner; v-for and slot locals are not tracked.
 func templateRels(src []byte, b vueBlock, c *fileCtx, syms []parser.Symbol, component string) []parser.Relation {
-	text := src[b.start:b.end]
+	text := blank(reHTMLComment, src[b.start:b.end])
 	base := bytes.Count(src[:b.start], []byte{'\n'}) + 1
 	lineAt := func(off int) int { return base + bytes.Count(text[:off], []byte{'\n'}) }
 	resolve := func(dotted string) string {

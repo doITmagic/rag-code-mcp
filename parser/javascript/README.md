@@ -297,7 +297,8 @@ literal's values are not walked, its methods own their calls.
   read it). Editing the object does not re-parse its importers, the same
   staleness as for barrels.
 - Vue `<template>` expressions are found with regular expressions over the
-  template text, not parsed: `v-for` and slot locals are not known (a call
+  template text (its `<!-- -->` comments blanked first, so commented-out
+  markup is no usage), not parsed: `v-for` and slot locals are not known (a call
   on one has `""`, or the target of a script name it shadows), single-quoted
   attribute values are skipped, and a component tag resolves to the
   `<script setup>` `default` symbol of its file, not to its `template` symbol.
@@ -334,7 +335,7 @@ literal's values are not walked, its methods own their calls.
 | File | Covers |
 |------|--------|
 | `javascript_test.go` | ESM and CommonJS imports and exports, classes and methods, TypeScript (interfaces, types, enums, abstract classes), TSX, Vue options API, Vue `<script setup lang="ts">`, malformed and unbalanced input, files outside the root, concurrency, registration, default exports and directory (`index`) imports, root-absolute imports, TypeScript type uses, methods of an object literal bound to a const, aliased imports (tsconfig paths, Nuxt conventions), calls in top-level initializers and `export default defineX(...)`, export of object-literal methods, `const C = defineComponent(...)`, barrel re-exports (`export *`, `export { a as b } from`, local alias exports, cycles, cache invalidation, package specifiers never read from disk nor named like a root file of that name, `.`/`..` specifiers), top-level calls of `<script setup>` attributed to `default`, `await f<T>()` calls, top-level variable type annotations, `<script>` and `<script setup>` sharing names, the line of a chained call split over lines, top-level destructuring calls of `<script setup>`, members of an exported object literal followed as re-exports (shorthand, `key: ident`, methods of an inline `export default {...}`, a const both named and default-exported). |
-| `vue_template_test.go` | Vue `<template>` usages: imported PascalCase and kebab-case components, calls in `@`/`:`/`v-if` attributes and mustaches, bare handler names resolved to `<script setup>` functions or options-API methods, `v-model` and plain tags not counted. |
+| `vue_template_test.go` | Vue `<template>` usages: imported PascalCase and kebab-case components, calls in `@`/`:`/`v-if` attributes and mustaches, bare handler names resolved to `<script setup>` functions or options-API methods, `v-model` and plain tags not counted, nothing inside an HTML comment counted. |
 | `browser_test.go` | Classic browser scripts: functions inside an IIFE, `!function(){}()`, ready and `DOMContentLoaded` callbacks (nested) are symbols with resolved local calls; a module's `describe()` callback is not descended; `window.f = function` and `window.f = f` define an exported global, `window.f()` resolves to it. |
 | `zz_verify_test.go` | Verification tests: JSX and import forms, TS enums and generics, `defineComponent` and CRLF files, robustness, nested CommonJS, component objects in plain JS, template-first `<script setup>`, statelessness, private TS members and syntax-error recovery, two script blocks, deep nesting, concurrent analysis. |
 | `root_test.go` | A re-exporting module reached through `..` or a symlinked directory outside the root, and a tsconfig `extends` through such a symlink, are not read; a symlink inside the root and a parent-directory `extends` still inside it keep working. |

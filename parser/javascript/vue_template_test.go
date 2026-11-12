@@ -60,3 +60,27 @@ export default { methods: { go() {}, stop() {} } }
 	assert.Equal(t, "src/todo-item.TodoItem.go", rel(t, tpl, parser.RelCall, "go").TargetQualifiedName)
 	assert.Equal(t, "src/todo-item.TodoItem.stop", rel(t, tpl, parser.RelCall, "stop").TargetQualifiedName)
 }
+
+// A component or call inside an HTML comment of the template is not used.
+func TestVueTemplateCommentNoUsage(t *testing.T) {
+	src := `<template>
+  <div>
+    <!-- <LegacyCard :item="pick(x)" /> -->
+    <span>{{ fmt(x) }}</span>
+  </div>
+</template>
+
+<script setup>
+import LegacyCard from './LegacyCard.vue'
+function pick(v) { return v }
+function fmt(v) { return v }
+</script>
+`
+	syms := analyze(t, "src/comp/Box.vue", src)
+	tpl := find(t, syms, "src/comp/Box.Box")
+	for _, r := range tpl.Relations {
+		assert.NotEqual(t, "LegacyCard", r.TargetName, "commented-out tag")
+		assert.NotEqual(t, "pick", r.TargetName, "commented-out binding")
+	}
+	assert.Equal(t, 4, rel(t, tpl, parser.RelCall, "fmt").Line, "lines kept after the comment")
+}

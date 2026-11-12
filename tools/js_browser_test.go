@@ -46,6 +46,33 @@ func TestUsagesOfBrowserGlobals(t *testing.T) {
 	assert.Equal(t, 2, out.Total, r.Message)
 }
 
+// window.resolveError = handleResolve: onclick="resolveError(1)" reaches
+// the global resolveError, which calls handleResolve.
+func TestInlineHandlerReachesWindowAliasTarget(t *testing.T) {
+	v := newEnv(t, false, nil)
+	v.addFiles(t, map[string]string{
+		"public/errors.js": `function handleResolve(id) {
+  return id;
+}
+window.resolveError = handleResolve;
+`,
+		"templates/page.html": `<div id="list">
+  <button onclick="resolveError(1)">Resolve</button>
+</div>
+`,
+	})
+	for name, file := range map[string]string{"resolveError": filepath.Join("templates", "page.html"), "handleResolve": filepath.Join("public", "errors.js")} {
+		var out struct {
+			Files []FileUsages `json:"files"`
+		}
+		r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": name})
+		require.Equal(t, "ok", r.Status, r.Message)
+		data(t, r, &out)
+		require.Len(t, out.Files, 1, name+": "+r.Message)
+		assert.Equal(t, filepath.Join(v.root, file), out.Files[0].FilePath, name)
+	}
+}
+
 // A Jest test file relying on the global describe/test (no imports): the
 // helper inside the suite is no indexed symbol.
 func TestJestGlobalSuiteHelperNoSymbol(t *testing.T) {

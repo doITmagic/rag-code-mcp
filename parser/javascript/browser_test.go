@@ -118,7 +118,7 @@ function own() {}
 window.own = own;
 window.direct = function () {};
 function renamed() {}
-window.other = renamed; // the global is other: onclick="renamed()" reaches nothing
+window.other = renamed; // the global is other, a symbol calling renamed: onclick="renamed()" reaches nothing
 `
 	global := map[string]bool{}
 	for _, s := range append(analyze(t, "js/page.js", classic), analyze(t, "js/mod.js", module)...) {
@@ -127,7 +127,7 @@ window.other = renamed; // the global is other: onclick="renamed()" reaches noth
 	assert.Equal(t, map[string]bool{
 		"js/page.top": true, "js/page.expr": true, "js/page.Widget": false, "js/page.Widget.open": false,
 		"js/page.local": false, "js/page.shared": true, "js/page.assigned": true,
-		"js/mod.exported": false, "js/mod.own": true, "js/mod.direct": true, "js/mod.renamed": false,
+		"js/mod.exported": false, "js/mod.own": true, "js/mod.direct": true, "js/mod.renamed": false, "js/mod.other": true,
 	}, global)
 }
 
@@ -146,4 +146,20 @@ function caller() { window.exposed(); }
 	}
 	assert.Empty(t, find(t, syms, "browser.exposed").Metadata["global"], "window.exposed is implementation now")
 	assert.Equal(t, "true", find(t, syms, "browser.implementation").Metadata["global"])
+}
+
+// window.resolveError = handleResolve with no declared resolveError: the
+// global is a symbol of its own that calls handleResolve.
+func TestBrowserWindowAliasIsGlobalSymbol(t *testing.T) {
+	syms := analyze(t, "public/errors.js", `function handleResolve(id) {
+  return id;
+}
+window.resolveError = handleResolve;
+`)
+	g := find(t, syms, "public/errors.resolveError")
+	assert.Equal(t, parser.KindFunction, g.Kind)
+	assert.True(t, g.Exported)
+	assert.Equal(t, "true", g.Metadata["global"])
+	assert.Equal(t, 4, g.StartLine)
+	assert.Equal(t, "public/errors.handleResolve", rel(t, g, parser.RelCall, "handleResolve").TargetQualifiedName)
 }

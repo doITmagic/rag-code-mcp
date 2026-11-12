@@ -186,6 +186,7 @@ specifier is the module as written (`react.useState`).
 | `let v` / `var v` | `variable` | |
 | `exports.x = function () {}` / `module.exports.x = ...` | `function` or `variable` | |
 | `window.x = function () {}` / `window.x = value` (a browser global, also inside a wrapper of a classic script, where only functions count) | `function` or `variable`, exported | |
+| `window.x = g` of a function `g` the file declares, with no declared `x` (the file's last assignment to `window.x`) | `function` `x`, exported, `global`, spanning the assignment, with one `call` relation to `g` | |
 | `class A`, `abstract class A` | `class` | |
 | Class methods, abstract method signatures, class fields holding a function | `method` | class name |
 | TS `enum E` | `class` | |
@@ -218,8 +219,9 @@ specifier is the module as written (`react.useState`).
   only to those. Wrapper locals, methods and module functions do not, nor a
   function `f` the file reassigns with `window.f = g` (so `onclick="f()"`
   links to nothing rather than to the replaced `f`), nor a module function
-  `g` exposed under another name (`window.f = g`: the global is `f`, and no
-  symbol has that name, so `onclick="f()"` links to nothing).
+  `g` exposed under another name (`window.f = g`: the global is `f`, a
+  symbol of its own that calls `g`, so `onclick="f()"` reaches `g` through
+  it; `onclick="g()"` links to nothing).
 - **Signature** is the declaration up to the body, whitespace collapsed;
   without a body, its first line.
 - **Doc** is the JSDoc block or the run of line comments directly above.
@@ -336,6 +338,9 @@ literal's values are not walked, its methods own their calls.
   as open. A script it rejects (syntax errors and more than 256 brackets left
   open) is an error, so the file counts as failed; it is not indexed as an
   empty file. A barrel it rejects exports nothing to its importers.
+- `window.f = g` in a file that also declares a function `f` makes no global
+  symbol `f` (it would share the declared `f`'s qualified name), so
+  `onclick="f()"` links to nothing there.
 - A broken script that keeps some symbols is indexed with them: a class that
   error recovery shredded is lost without an error when another declaration
   of the file survived (`class A { b() { if (x { } }` followed by a complete
@@ -369,7 +374,7 @@ literal's values are not walked, its methods own their calls.
 |------|--------|
 | `javascript_test.go` | ESM and CommonJS imports and exports, classes and methods, TypeScript (interfaces, types, enums, abstract classes), TSX, Vue options API, Vue `<script setup lang="ts">`, malformed and unbalanced input, files outside the root, concurrency, registration, default exports and directory (`index`) imports, root-absolute imports, TypeScript type uses, methods of an object literal bound to a const, aliased imports (tsconfig paths, Nuxt conventions), calls in top-level initializers and `export default defineX(...)`, export of object-literal methods, `const C = defineComponent(...)`, barrel re-exports (`export *`, `export { a as b } from`, local alias exports, cycles, cache invalidation, package specifiers never read from disk nor named like a root file of that name, `.`/`..` specifiers), top-level calls of `<script setup>` attributed to `default`, `await f<T>()` calls, top-level variable type annotations, `<script>` and `<script setup>` sharing names, the line of a chained call split over lines, top-level destructuring calls of `<script setup>`, members of an exported object literal followed as re-exports (shorthand, `key: ident`, methods of an inline `export default {...}`, a const both named and default-exported). |
 | `vue_template_test.go` | Vue `<template>` usages: imported PascalCase and kebab-case components, a dotted tag of an imported lowercase namespace (none without the import), calls in `@`/`:`/`v-if` attributes and mustaches, bare handler names resolved to `<script setup>` functions or options-API methods, `v-model` and plain tags not counted, nothing inside an HTML comment counted, a call in a multi-line attribute on its own line, words inside string literals not counted. |
-| `browser_test.go` | Classic browser scripts: functions inside an IIFE, `!function(){}()`, ready and `DOMContentLoaded` callbacks (nested) are symbols with resolved local calls; a module's `describe()` callback is not descended, nor the suite and hook callbacks of a test file without imports; `window.f = function` and `window.f = f` define an exported global, `window.f()` resolves to it, and to `g` after `window.f = g` (the replaced `f` then not `global`); only top-level functions of a classic script and `window.f` globals are flagged `global`. |
+| `browser_test.go` | Classic browser scripts: functions inside an IIFE, `!function(){}()`, ready and `DOMContentLoaded` callbacks (nested) are symbols with resolved local calls; a module's `describe()` callback is not descended, nor the suite and hook callbacks of a test file without imports; `window.f = function` and `window.f = f` define an exported global, `window.f = g` a global `f` calling `g`, `window.f()` resolves to it, and to `g` after `window.f = g` (the replaced `f` then not `global`); only top-level functions of a classic script and `window.f` globals are flagged `global`. |
 | `zz_verify_test.go` | Verification tests: JSX and import forms, TS enums and generics, `defineComponent` and CRLF files, robustness, nested CommonJS, component objects in plain JS, template-first `<script setup>`, statelessness, private TS members and syntax-error recovery, two script blocks, deep nesting, concurrent analysis. |
 | `root_test.go` | A re-exporting module reached through `..` or a symlinked directory outside the root, and a tsconfig `extends` through such a symlink, are not read; a symlink inside the root and a parent-directory `extends` still inside it keep working. |
 | `fifo_unix_test.go` | A `tsconfig.json` that is a FIFO is not read (Linux only). |

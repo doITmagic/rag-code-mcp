@@ -1091,6 +1091,15 @@ func (c *fileCtx) exportsAssign(n, decl *gotreesitter.Node, out *[]parser.Symbol
 	}
 	name, v := left[strings.LastIndex(left, ".")+1:], parser.Field(n, c.lang, "right")
 	if v != nil && v.Type(c.lang) == "identifier" && c.defs[parser.Text(v, c.src)] != "" {
+		// window.x = y of a function y and no declared x: the global x is a
+		// symbol of its own calling y, so onclick="x()" reaches y through it.
+		if y := parser.Text(v, c.src); windowProp(left) != "" && name != y && c.winAlias[name] == y && c.defs[name] == "" && c.defs[y] == parser.KindFunction {
+			s := c.symbol(v, decl, "", name, parser.KindFunction, true)
+			line, _ := parser.Lines(v)
+			s.Relations = []parser.Relation{{Kind: parser.RelCall, TargetName: y, TargetQualifiedName: c.resolveDotted(y), Line: line}}
+			s.Metadata = map[string]string{"global": "true"}
+			*out = append(*out, s)
+		}
 		return // re-export of a declared name: scanExportsAssign already flagged it
 	}
 	kind := parser.KindVariable

@@ -5,7 +5,6 @@ package golang
 
 import (
 	"bufio"
-	"bytes"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -711,9 +710,9 @@ func readModuleLine(path string) string {
 	defer fh.Close()
 	sc := bufio.NewScanner(fh)
 	for sc.Scan() {
-		line := bytes.TrimSpace(sc.Bytes())
-		if rest, ok := bytes.CutPrefix(line, []byte("module ")); ok {
-			m := strings.TrimSpace(string(rest))
+		// "module" then the path, split by any blank; a comment may follow.
+		if f := strings.Fields(sc.Text()); len(f) >= 2 && f[0] == "module" {
+			m := f[1]
 			if u, err := strconv.Unquote(m); err == nil {
 				m = u
 			}

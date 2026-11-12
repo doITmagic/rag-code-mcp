@@ -684,3 +684,28 @@ func local(v any, ch chan func()) {
 	assert.Equal(t, []parser.Relation{val("handler", "api.handler", 32)}, values("api.pick"), "return value")
 	assert.Empty(t, values("api.local"), "a type switch or select local is no package function")
 }
+
+// go.mod may separate "module" and the path with a tab and end the line with a comment.
+func TestModuleDirectiveWithTabOrComment(t *testing.T) {
+	for name, directive := range map[string]string{
+		"inline_comment": "module example.com/repro // module comment\n",
+		"tab_separator":  "module\texample.com/repro\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(directive), 0600); err != nil {
+				t.Fatal(err)
+			}
+			syms, err := (Analyzer{}).Analyze(parser.File{Path: filepath.Join(root, "main.go"), Root: root, Source: []byte("package repro\nfunc F() {}\n")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(syms) != 1 {
+				t.Fatalf("got %d symbols; want one function", len(syms))
+			}
+			if got := syms[0].QualifiedName; got != "example.com/repro.F" {
+				t.Fatalf("qualified name = %q; want %q", got, "example.com/repro.F")
+			}
+		})
+	}
+}

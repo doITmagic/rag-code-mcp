@@ -141,6 +141,8 @@ func Less(a, b string) bool {
 			return x[i] < y[i]
 		}
 	}
+	a, _, _ = strings.Cut(a, "+") // build metadata may hold a hyphen
+	b, _, _ = strings.Cut(b, "+")
 	return strings.Contains(a, "-") && !strings.Contains(b, "-") // shortcut: two pre-releases of one version compare equal; order them if testers run several
 }
 

@@ -208,3 +208,17 @@ func TestReplaced(t *testing.T) {
 	Remember(filepath.Join(dir, "missing"))
 	assert.False(t, Replaced())
 }
+
+// A hyphen in build metadata does not make a stable version a pre-release.
+func TestBuildMetadataHyphenIsNotPrerelease(t *testing.T) {
+	skipWindows(t)
+	source, target := t.TempDir(), installed(t)
+	makeRelease(t, source, "v2.0.0")
+	v, err := Install(context.Background(), source, target, "v2.0.0+build-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != "" {
+		t.Fatalf("installed %s over an equal stable version: build metadata was treated as a prerelease", v)
+	}
+}

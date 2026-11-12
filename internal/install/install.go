@@ -122,10 +122,15 @@ func Run(ctx context.Context, o Options) error {
 		}
 		mount := "ragcode-ollama:/root/.ollama"
 		if o.ModelsDir != "" {
-			if err := os.MkdirAll(o.ModelsDir, 0o755); err != nil {
+			// docker -v reads a bare relative name as a named volume, not the host dir.
+			dir, err := filepath.Abs(o.ModelsDir)
+			if err == nil {
+				err = os.MkdirAll(dir, 0o755)
+			}
+			if err != nil {
 				return fmt.Errorf("install: models dir: %w", err)
 			}
-			mount = o.ModelsDir + ":/root/.ollama"
+			mount = dir + ":/root/.ollama"
 		}
 		args := []string{"-p", "127.0.0.1:11434:11434", "-v", mount}
 		var err error

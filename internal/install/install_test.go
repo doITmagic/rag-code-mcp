@@ -137,6 +137,36 @@ func TestRunLocalOllamaAndModelsDir(t *testing.T) {
 	assert.Len(t, *pulled, 1)
 }
 
+// A relative -models-dir is mounted as the host directory it creates, made
+// absolute, not passed to docker -v where a bare name means a named volume.
+func TestRunRelativeModelsDirMountsHostDir(t *testing.T) {
+	_, dockerLog, _ := env(t)
+
+	work := t.TempDir()
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(work))
+	t.Cleanup(func() { _ = os.Chdir(wd) })
+
+	var out bytes.Buffer
+	opts := Options{
+		Ollama:    "docker",
+		ModelsDir: "ollama-models",
+		SkipIDE:   true,
+		Yes:       true,
+		Out:       &out,
+		srcDir:    src(t),
+	}
+	require.NoError(t, Run(context.Background(), opts), out.String())
+
+	hostDir := filepath.Join(work, "ollama-models")
+	require.DirExists(t, hostDir)
+
+	rawLog, err := os.ReadFile(dockerLog)
+	require.NoError(t, err)
+	assert.Contains(t, string(rawLog), "-v "+hostDir+":/root/.ollama")
+}
+
 func TestRunErrors(t *testing.T) {
 	env(t)
 	good := src(t)

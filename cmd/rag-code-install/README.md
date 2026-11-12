@@ -40,7 +40,7 @@ There are no tests in this package; the behaviour is tested in
 | `-ollama` | `docker` | How to get Ollama: `docker` runs a `ragcode-ollama` container, `local` uses the one already running, `skip` does nothing (no wait, no model pull). Any other value is an error. |
 | `-gpu` | `true` | Start the container with `--gpus all` first; on failure retry on CPU. Use `-gpu=false` to go straight to CPU. |
 | `-y` | `false` | Answer yes to every prompt. For install: replace an existing binary without asking. For uninstall: remove every `<workspace>/.ragcode` without asking. |
-| `-models-dir` | empty | Host directory mounted as the Ollama model store (`/root/.ollama`) instead of the `ragcode-ollama` Docker volume. Created if missing. |
+| `-models-dir` | empty | Host directory mounted as the Ollama model store (`/root/.ollama`) instead of the `ragcode-ollama` Docker volume. Created if missing; a relative path is taken from the current directory. |
 | `-skip-ide` | `false` | Do not write IDE MCP configs. |
 | `-uninstall` | `false` | Remove RagCode instead of installing it. |
 | `-docker` | `false` | With `-uninstall`: also remove the `ragcode-ollama` container and volume (and a leftover v1 `ragcode-qdrant`). |

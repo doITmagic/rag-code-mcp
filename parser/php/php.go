@@ -33,6 +33,11 @@ func (analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 	c.resetImports()
 	c.walkTop(tree.RootNode())
 	c.syms = append(c.syms, frameworkSymbols(c.calls)...)
+	if len(c.syms) == 0 {
+		if err := parser.Swallowed("php", tree.RootNode(), lang, "class", "function", "interface", "trait"); err != nil {
+			return nil, err
+		}
+	}
 	return parser.Finalize(f, c.syms), nil
 }
 

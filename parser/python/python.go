@@ -50,6 +50,11 @@ func (analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 	c.scan(root)
 	var syms []parser.Symbol
 	c.collect(root, "", true, &syms)
+	if len(syms) == 0 {
+		if err := parser.Swallowed("python", root, lang, "class", "def"); err != nil {
+			return nil, err
+		}
+	}
 	return parser.Finalize(f, syms), nil
 }
 

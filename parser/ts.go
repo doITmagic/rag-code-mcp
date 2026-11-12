@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/odvcencio/gotreesitter"
@@ -110,6 +111,28 @@ func ParseTree(grammar string, src []byte) (*gotreesitter.Tree, *gotreesitter.La
 		}
 	}
 	return t, lang, nil
+}
+
+// Swallowed returns an error when error recovery hid a declaration: one of
+// the keyword tokens (class, def, function, func) lies inside an ERROR node.
+// An analyzer that found no symbol calls it, so a file whose break shredded
+// its class counts as failed instead of being indexed as empty.
+func Swallowed(grammar string, root *gotreesitter.Node, lang *gotreesitter.Language, keywords ...string) error {
+	var hidden func(n *gotreesitter.Node, inErr bool) bool
+	hidden = func(n *gotreesitter.Node, inErr bool) bool {
+		if !inErr && !n.HasError() {
+			return false
+		}
+		if inErr && slices.Contains(keywords, n.Type(lang)) {
+			return true
+		}
+		inErr = inErr || n.IsError()
+		return slices.ContainsFunc(n.Children(), func(ch *gotreesitter.Node) bool { return hidden(ch, inErr) })
+	}
+	if hidden(root, false) {
+		return fmt.Errorf("parser: %s: not parsed: syntax errors left no declaration", grammar)
+	}
+	return nil
 }
 
 // Walk visits every named node depth-first. Return false from fn to skip the

@@ -50,8 +50,11 @@ func TestBrokenFileKeepsDeclarationsOrFails(t *testing.T) {
 // file without symbols and without an error.
 func TestBrokenClassMethodIsNoSilentEmptyFile(t *testing.T) {
 	cases := map[string]string{
-		"svc.ts": "export class Svc {\n  first(): number { return 1; }\n  broken() { const x = f" + strings.Repeat("(", 200) + "\n}\n",
-		"svc.js": "class Svc {\n  first() { return 1; }\n  broken() { const x = f" + strings.Repeat("(", 200) + "\n}\n",
+		"svc.ts":  "export class Svc {\n  first(): number { return 1; }\n  broken() { const x = f" + strings.Repeat("(", 200) + "\n}\n",
+		"svc.py":  "class Svc:\n    def first(self):\n        return 1\n\n    def broken(self):\n        x = f" + strings.Repeat("(", 200) + "\n",
+		"svc.php": "<?php\nclass Svc {\n  function first() { return 1; }\n  function broken() { $x = f" + strings.Repeat("(", 200) + ";\n}\n",
+		"svc.gd":  "class_name Svc\n\nfunc first():\n\treturn 1\n\nfunc broken():\n\tvar x = f" + strings.Repeat("(", 200) + "\n",
+		"svc.js":  "class Svc {\n  first() { return 1; }\n  broken() { const x = f" + strings.Repeat("(", 200) + "\n}\n",
 	}
 	for name, src := range cases {
 		syms, err := parser.Analyze(parser.File{Path: "/ws/" + name, Root: "/ws", Source: []byte(src)})

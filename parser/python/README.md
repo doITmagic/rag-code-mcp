@@ -163,6 +163,11 @@ same timestamp tick is seen.
 
 ## Known limitations visible in the code
 
+- A file with syntax errors that yields no symbol while a `class` or function
+  keyword sits inside the broken part (a class whose method has unclosed
+  brackets) is an error (`syntax errors left no declaration`): a failed file,
+  not an empty one. When some symbols survive they are kept, without an
+  error, and the ones after the break may be missing.
 - A class defined inside a function is not a symbol, so its `extends` is not
   recorded.
 - Return-type and variable annotations (`-> NullSession`) and classes used as
@@ -203,7 +208,7 @@ same timestamp tick is seen.
 | File | Covers |
 |------|--------|
 | `python_test.go` | Symbols (kinds, owners, signatures, docstrings, decorators, overloads), call targets for every import form, base classes, module names, relative imports from `__init__.py`, malformed input, registration, concurrency, package re-exports (also under a `src/` root, from `tests/` outside it, and with the cache; a symlinked directory out of the root not followed, one inside it followed), function-local imports and class-body calls, imports under `if TYPE_CHECKING:` and try/except, calls in module-level assignments, the line of a chained call split over lines. |
-| `broken_class_test.go` | A class cut off mid-edit: none of its methods comes out as a module-level function. |
+| `broken_class_test.go` | A class cut off mid-edit: none of its methods comes out as a module-level function, and the file is an error when no symbol is left. |
 | `zz_verify_test.go` | Verification tests: a fresh fixture exercising every import form, symbols, `from` not importing the module itself, `.pyi` files and the root module, robustness. |
 
 ## Testing

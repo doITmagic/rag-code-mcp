@@ -318,7 +318,10 @@ func TestMalformed(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			syms, err := parser.Analyze(parser.File{Path: "/root/x.php", Source: []byte(tt.src)})
-			assert.NoError(t, err)
+			if err != nil { // a class or function lost in the errors: a failed file, not an empty one
+				assert.ErrorContains(t, err, "syntax errors left no declaration")
+				assert.Contains(t, []string{"unterminated class", "garbage"}, tt.name)
+			}
 			for _, s := range syms {
 				assert.NotEmpty(t, s.Name)
 			}

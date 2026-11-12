@@ -218,6 +218,11 @@ A view outside any `views` folder has module `""`.
 
 ## Known limitations visible in the code
 
+- A file with syntax errors that yields no symbol while a `class` or function
+  keyword sits inside the broken part (a class whose method has unclosed
+  brackets) is an error (`syntax errors left no declaration`): a failed file,
+  not an empty one. When some symbols survive they are kept, without an
+  error, and the ones after the break may be missing.
 - `X::class` and class-name strings in file-level code (`config/app.php`
   provider lists, a `database/` seeder array outside a method) are not
   usages, because a relation needs an owning symbol (see below). A class

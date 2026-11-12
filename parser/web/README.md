@@ -6,7 +6,8 @@ The `web` package indexes HTML pages and Go `html/template` / `text/template`
 files. It produces a document symbol per file, a symbol per element that has
 an `id` or is a sectional tag (`header`, `nav`, `main`, ...), a symbol per Go
 template `{{define}}` / `{{block}}`, and relations for linked scripts and
-stylesheets and for `{{template "x"}}` calls.
+stylesheets, for `{{template "x"}}` calls and for the functions inline event
+handlers call (`onclick="save()"`).
 
 HTML is parsed with the tree-sitter `html` grammar; Go template actions are
 found with a regular expression over the raw source. Every symbol has kind
@@ -102,6 +103,7 @@ Relations on the document: imports `../../assets/css/shop.css` ->
 | `<script src="...">` | `imports` | document | Module of the referenced file |
 | `<link rel="stylesheet" href="...">` | `imports` | document | Same |
 | `{{template "x" ...}}` | `call` | innermost enclosing `define`/`block`, else the document | `<module>.x` when `x` is defined or blocked in the same file, else `""` |
+| `f(...)` in an `on*="..."` / `on*='...'` attribute (`onclick="resolveError({{.ID}})"`), not `ns.f()` nor keywords | `call` | the symbol with the narrowest line span around the attribute (an element with an id, a `define`, else the document) | `window.f`: the index resolves it by name to a JavaScript function `f` |
 
 References are resolved relative to the file's directory, ignoring `?query`
 and `#fragment`. Absolute paths (`/x`), URLs (anything with `:`) and paths
@@ -115,6 +117,10 @@ that leave the workspace root give an empty target.
 - Hugo `{{ partial "x.html" }}` is not tracked; only `{{ template }}` is.
 - Inline `<script>` blocks are not parsed: their functions are not symbols and
   their calls are not usages.
+- Inline handlers are found with a regular expression over the raw source,
+  inside or outside markup; only plain calls (`f()`) count, not `ns.f()`,
+  `App.open()` or a function referenced without a call. The line is the
+  attribute's first line.
 - `{{template}}` calls to templates defined in other files are unresolved at
   parse time (the target name is still recorded).
 - Go template actions are matched by regex on the whole file, also outside
@@ -128,13 +134,14 @@ that leave the workspace root give an empty target.
 | File | Contents |
 |------|----------|
 | `web.go` | Package doc, limits (2000 symbols per file, 400 content lines), registration, shared helpers: module and reference resolution (`moduleName`, `refModule`), comment trimming, line capping, a byte-offset-to-line index. |
-| `html.go` | The HTML analyzer: document and part symbols, element walk with sectional ownership, start-tag attribute parsing, script/stylesheet imports, and the Go template action scanner (`goTemplates`). |
+| `html.go` | The HTML analyzer: document and part symbols, element walk with sectional ownership, start-tag attribute parsing, script/stylesheet imports, the Go template action scanner (`goTemplates`) and the inline event handler scanner (`handlers`). |
 
 ### Tests
 
 | File | Covers |
 |------|--------|
 | `web_test.go` | An HTML page (title, imports, ids, sectional ownership, comments as doc), a Go template file (`define`, `block`, nested `range`, calls), splitting of long documents, module names and reference resolution, malformed input, the symbol cap, registration (and no analyzer for stylesheets), concurrency, a void element (`<input>`) spanning its own tag only. |
+| `handlers_test.go` | Inline event handlers: calls in `onclick`/`ONCLICK`/`onchange` with double or single quotes and Go template actions inside become `window.f` calls on the narrowest symbol; members, keywords and `data-onclick` are not. |
 | `zz_verify_test.go` | Verification tests: a fresh HTML + Go template fixture (ownership, imports, defined and missing templates, `<style>` not indexed), and malformed or binary input that must neither panic nor hang. |
 
 ## Testing

@@ -59,7 +59,45 @@ func (htmlAnalyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 	}
 	c.walk(root, "")
 	c.goTemplates()
+	c.handlers()
 	return parser.Finalize(f, c.syms), nil
+}
+
+// reHandler matches an inline event handler attribute (onclick="..."),
+// reCall a plain call in its code: not a member (`.f(`), not a keyword.
+var (
+	reHandler  = regexp.MustCompile(`(?i)\son[a-z]+\s*=\s*(?:"([^"]*)"|'([^']*)')`)
+	reCall     = regexp.MustCompile(`(?:^|[^\w$.])([A-Za-z_$][\w$]*)\s*\(`)
+	reGoAction = regexp.MustCompile(`\{\{.*?\}\}`)
+	keywords   = map[string]bool{"if": true, "for": true, "while": true, "switch": true, "return": true, "function": true,
+		"typeof": true, "new": true, "catch": true, "void": true, "delete": true, "await": true, "in": true, "of": true}
+)
+
+// handlers adds a call to window.f for each f() in an inline event handler,
+// on the narrowest symbol spanning its line: the code runs in the page's
+// global scope, where the index finds the script function f by name.
+// shortcut: scanned with a regex over the raw source, like the Go template
+// actions; `ns.f()` and handlers in inline scripts are not tracked.
+func (c *htmlCtx) handlers() {
+	for _, m := range reHandler.FindAllSubmatchIndex(c.f.Source, -1) {
+		from, to := m[2], m[3]
+		if from < 0 {
+			from, to = m[4], m[5]
+		}
+		code := reGoAction.ReplaceAllLiteral(c.f.Source[from:to], []byte("0")) // resolveError({{.ID}})
+		line := c.lines.lineOf(from)
+		var owner *parser.Symbol
+		for i := range c.syms {
+			if s := &c.syms[i]; s.StartLine <= line && line <= s.EndLine && (owner == nil || s.EndLine-s.StartLine < owner.EndLine-owner.StartLine) {
+				owner = s
+			}
+		}
+		for _, cm := range reCall.FindAllSubmatch(code, -1) {
+			if name := string(cm[1]); !keywords[name] {
+				owner.Relations = append(owner.Relations, parser.Relation{Kind: parser.RelCall, TargetName: name, TargetQualifiedName: "window." + name, Line: line})
+			}
+		}
+	}
 }
 
 // walk emits one symbol per element with an id or a sectional tag and

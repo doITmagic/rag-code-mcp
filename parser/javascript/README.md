@@ -171,6 +171,7 @@ specifier is the module as written (`react.useState`).
 | `const K = 1` | `constant` | |
 | `let v` / `var v` | `variable` | |
 | `exports.x = function () {}` / `module.exports.x = ...` | `function` or `variable` | |
+| `window.x = function () {}` / `window.x = value` (a browser global, also inside a wrapper of a classic script, where only functions count) | `function` or `variable`, exported | |
 | `class A`, `abstract class A` | `class` | |
 | Class methods, abstract method signatures, class fields holding a function | `method` | class name |
 | TS `enum E` | `class` | |
@@ -191,7 +192,8 @@ specifier is the module as written (`react.useState`).
   `todo-item.vue` -> `TodoItem`. It is the owner of options-API methods and
   the name of the `<template>` symbol.
 - **Exported** is true for `export` declarations and for names listed in
-  `export { }`, `module.exports = ...` or `exports.x = name`. Class methods
+  `export { }`, `module.exports = ...`, `exports.x = name` or
+  `window.x = name` (a browser global). Class methods
   are exported when the class is, unless they are `#private` or have the
   `private` modifier. Methods of a top-level object literal or of
   `const C = defineComponent({...})` are exported when that variable is;
@@ -238,6 +240,7 @@ call `fetch` -> `src/services/api.default.fetch`.
 | `f()`, `await f<T>()` | `call` | Through the import table or a top-level name in the file; `""` otherwise. |
 | `ns.g()`, `a.b.c()` | `call` | First segment through imports; for a local name only when it is a class or enum (a variable's type is never guessed). `Obj.k()` of a default or named import whose module defines `Obj` as an object literal with `{ k }` or `{ k: f }` targets the declaration of `f`, not `<module>.default.k`. |
 | `this.m()` in a class or component | `call` | `<module>.<Owner>.m` |
+| `window.f()` | `call` | As `f()`: `<module>.f` when this file declares `f` (also through `window.f = function`), else `""` (the index binds it by name). |
 | `new Foo()` | `uses_type` | Same resolution as a name. |
 | `<Comp />`, `<ns.Comp>` in JSX | `uses_type` | Only for capitalized or dotted tag names. |
 | TypeScript type in a parameter or return annotation, a top-level `const` / `let` / `var` annotation (`const c: Foo[] = ...`), a generic argument (`useState<Plant[]>`), the body of an `interface` or a `type` alias | `uses_type` | Only types an import or this file defines; type parameters and globals are dropped. |
@@ -325,7 +328,7 @@ literal's values are not walked, its methods own their calls.
 | File | Covers |
 |------|--------|
 | `javascript_test.go` | ESM and CommonJS imports and exports, classes and methods, TypeScript (interfaces, types, enums, abstract classes), TSX, Vue options API, Vue `<script setup lang="ts">`, malformed and unbalanced input, files outside the root, concurrency, registration, default exports and directory (`index`) imports, root-absolute imports, TypeScript type uses, methods of an object literal bound to a const, aliased imports (tsconfig paths, Nuxt conventions), calls in top-level initializers and `export default defineX(...)`, export of object-literal methods, `const C = defineComponent(...)`, barrel re-exports (`export *`, `export { a as b } from`, local alias exports, cycles, cache invalidation, package specifiers never read from disk nor named like a root file of that name, `.`/`..` specifiers), top-level calls of `<script setup>` attributed to `default`, `await f<T>()` calls, top-level variable type annotations, `<script>` and `<script setup>` sharing names, the line of a chained call split over lines, top-level destructuring calls of `<script setup>`, members of an exported object literal followed as re-exports (shorthand, `key: ident`, methods of an inline `export default {...}`, a const both named and default-exported). |
-| `browser_test.go` | Classic browser scripts: functions inside an IIFE, `!function(){}()`, ready and `DOMContentLoaded` callbacks (nested) are symbols with resolved local calls; a module's `describe()` callback is not descended. |
+| `browser_test.go` | Classic browser scripts: functions inside an IIFE, `!function(){}()`, ready and `DOMContentLoaded` callbacks (nested) are symbols with resolved local calls; a module's `describe()` callback is not descended; `window.f = function` and `window.f = f` define an exported global, `window.f()` resolves to it. |
 | `zz_verify_test.go` | Verification tests: JSX and import forms, TS enums and generics, `defineComponent` and CRLF files, robustness, nested CommonJS, component objects in plain JS, template-first `<script setup>`, statelessness, private TS members and syntax-error recovery, two script blocks, deep nesting, concurrent analysis. |
 | `root_test.go` | A re-exporting module reached through `..` or a symlinked directory outside the root, and a tsconfig `extends` through such a symlink, are not read; a symlink inside the root and a parent-directory `extends` still inside it keep working. |
 | `fifo_unix_test.go` | A `tsconfig.json` that is a FIFO is not read (Linux only). |

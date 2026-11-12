@@ -592,7 +592,22 @@ func (c *fileCtx) scanExportsAssign(n *gotreesitter.Node) {
 		if right != nil && right.Type(c.lang) == "identifier" {
 			c.exported[parser.Text(right, c.src)] = true
 		}
+	case windowProp(left) != "": // a browser global: window.f = f | function () {}
+		c.exported[windowProp(left)] = true
+		if right != nil && right.Type(c.lang) == "identifier" {
+			c.exported[parser.Text(right, c.src)] = true
+		} else if right != nil && isFunc(right.Type(c.lang)) && c.defs[windowProp(left)] == "" {
+			c.defs[windowProp(left)] = parser.KindFunction
+		}
 	}
+}
+
+// windowProp is x for "window.x", else "".
+func windowProp(left string) string {
+	if p, ok := strings.CutPrefix(left, "window."); ok && p != "" && !strings.ContainsAny(p, ".[") {
+		return p
+	}
+	return ""
 }
 
 // resolveSpec maps an import specifier to a module: relative paths are joined
@@ -897,7 +912,7 @@ func (c *fileCtx) exportsAssign(n, decl *gotreesitter.Node, out *[]parser.Symbol
 		return
 	}
 	left := parser.Text(parser.Field(n, c.lang, "left"), c.src)
-	if !strings.HasPrefix(left, "exports.") && !strings.HasPrefix(left, "module.exports.") {
+	if !strings.HasPrefix(left, "exports.") && !strings.HasPrefix(left, "module.exports.") && windowProp(left) == "" {
 		return
 	}
 	name, v := left[strings.LastIndex(left, ".")+1:], parser.Field(n, c.lang, "right")
@@ -1163,6 +1178,9 @@ func (c *fileCtx) resolveMember(obj *gotreesitter.Node, name, owner string) stri
 		}
 		return parser.Qualify(c.module, c.qual(owner), name)
 	case "identifier", "member_expression":
+		if parser.Text(obj, c.src) == "window" && c.imports["window"] == "" && c.defs["window"] == "" {
+			return c.resolveDotted(name) // window.f() of a global this file declares
+		}
 		return c.resolveDotted(parser.Text(obj, c.src) + "." + name)
 	}
 	return ""

@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Kind is the symbol kind. Analyzers must use one of these constants.
@@ -292,6 +293,13 @@ func RelModule(root, p string) (string, bool) {
 	}
 	return strings.TrimSuffix(filepath.ToSlash(rel), filepath.Ext(rel)), true
 }
+
+// Racy reports whether a file whose modification time is mtime, read at
+// readAt, may have changed since without its mtime changing: mtime is not
+// older than readAt by more than the coarsest common timestamp tick (FAT32
+// keeps 2 s, ecryptfs whole seconds for set times). What is cached by mtime
+// (and size) from such a read is checked again by content, or not cached.
+func Racy(mtime, readAt time.Time) bool { return !mtime.Before(readAt.Add(-2 * time.Second)) }
 
 // InRoot reports whether p is a regular file whose real path (every symlink
 // resolved) lies inside root, resolved too. An analyzer calls it before

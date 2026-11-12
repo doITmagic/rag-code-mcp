@@ -15,7 +15,8 @@ owns lives under `~/.ragcode/index/<collection>/`.
 ## Objectives
 
 - **Incremental runs**: only files whose mtime or size changed since the last
-  run are parsed and embedded again.
+  run (or, for a file indexed within 2 s of its mtime, whose bytes changed)
+  are parsed and embedded again.
 - **Correct relations**: a caller keeps pointing at the right callee even when
   only the callee's file changed, moved or disappeared.
 - **Bounded memory**: parsing is capped by source bytes in flight, and the
@@ -76,6 +77,7 @@ graph LR
 |------|--------|
 | `index_test.go` | The main suite, with a line-based fake analyzer and a hook embedder: full, incremental, delete, recreate, model and `Format` change, embed failure, parse failures and panics, cancel, `ErrHeadChanged`, relation resolution, `Skip`, `Walk`, `.gitignore`, linked worktrees, symlinks in `Files`, byte-budgeted upsert batches, empty collection with stale state, a crash between a recreate's state save and its drop, moved targets, vanished referrers, a file that changed between the two passes, deleted paths counted only when they were indexed, relation target kinds (`TestResolutionTargetKinds`) and inherited members through the owner's bases (`TestResolutionThroughBases`), in full and files runs, Go bases limited to embeddings (`TestResolutionThroughBasesGoEmbeddingOnly`), a run cancelled before it changed anything keeping the previous `done` status (`TestRunCancelledKeepsDoneStatus`), and a run with nothing to do keeping the last run's counters on disk (`TestRunWithoutChangesKeepsLastCounters`), and a model the embedder cannot serve leaving the old index and state untouched (`TestRunModelChangeUnavailableKeepsIndex`), the WARN for an unreadable directory (`TestWalkWarnsUnreadableDir`), RagCode's own home pruned (`TestWalkSkipsOwnHome`), a failed run that changed nothing keeping the last real counters under its error (`TestRunFailedUnchangedKeepsCounters`), a files run skipping a file inside a linked worktree (`TestRunFilesSkipsLinkedWorktree`), a run with nothing to do recording the current branch (`TestRunWithoutChangesRecordsBranch`), a run with nothing to do after one stopped by `ErrHeadChanged` keeping that run's counters (`TestRunAfterHeadChangedKeepsCounters`), and a file deleted between the scan and the parse purged, not counted as failed (`TestRunFileVanishedDuringRun`), and a full walk over `MaxFiles` refused before parsing, leaving no empty collection and keeping an existing index (`TestRunMaxFiles`). Its `TestMain` points `RAGCODE_HOME` at a temp dir. |
 | `js_object_members_test.go` | With the real JavaScript analyzer: `Obj.f()` through a default or named import of an object literal with a shorthand or `key: ident` member (`export default { getToken }`, `export const api = { read }`) resolves exactly to the function the member names. |
+| `racy_test.go` | Racy clean: a file indexed within 2 s of its mtime and replaced by other bytes of the same size under the same mtime is re-indexed, in full and files runs; one whose bytes turned binary leaves the index; an old-mtime file replaced the same way is not opened and not seen (as in git); a racy file left untouched is read again until its mtime is past the window, then its hash is dropped and saved and it is no longer opened; a `state.json` without hashes loads and runs unchanged. `clock` is fixed by the tests. |
 | `budget_test.go` | The parse byte budget is respected, and batches still resolve forward references. |
 | `go_value_use_test.go` | With the real Go analyzer, two files of one package: a method passed as `s.firmaJSON` (on a local `s := &server{}` and on the receiver) and a function passed as `handler` link exactly to their declarations in the other file, in a full run and from the store; a field read (also one named like a method of another type), a constant, a variable and `http.MethodGet` in the same positions leave no relation at all. |
 | `resolve_test.go` | A non-fresh run resolves more than 500 targets through the store; an html call to `window.f` resolves by name to the JavaScript global function `f` (never a variable, a method or module function of that name, a Go symbol, nor from a JS caller), in a full run and from the store; a JS `import { n }` of a default-exported declaration resolves by module and name, in a full run and from the store. |
@@ -166,6 +168,7 @@ type Entry struct {
     ModTime int64    `json:"mtime"` // unix nanoseconds
     Size    int64    `json:"size"`
     IDs     []string `json:"ids,omitempty"`
+    Hash    string   `json:"hash,omitempty"` // hex SHA-256 of the bytes indexed, only while the mtime is racy
 }
 
 type State struct {
@@ -323,7 +326,22 @@ index nothing ever completes. A fresh run also skips every store lookup.
   seen is gone, even one the state never recorded, because an interrupted run
   may have left its points.
 - A file is **changed** when it is not in the state or its mtime (ns) or size
-  differs.
+  differs. Contents are not compared, with one exception, the "racy clean"
+  rule git uses for its index: a file whose mtime was not at least 2 seconds
+  older than the moment it was read for indexing (`parser.Racy`; 2 s covers
+  FAT32's tick, ecryptfs keeps whole seconds of a set mtime) is recorded with
+  `Hash`, the SHA-256 of the bytes indexed. Its stat could stay the same
+  under different bytes: a same-size write in the same timestamp tick, or a
+  tool that sets mtimes (`tar -x`, `cp -p`, `rsync -a`). A scan reads such a
+  file and compares the hash: different is changed, the same is unchanged,
+  and once the mtime is more than 2 s older than that read the hash is
+  dropped and saved, so the file is not read again on later runs. The walk
+  does not take a file with a hash as known text either, so its binary check
+  opens it. Entries without a hash (every file indexed well after its last
+  write, and every `state.json` written before hashes existed) are never
+  opened. A same-stat replacement of a file whose mtime is old (`tar -x` of
+  other content over an old file, same size, same mtime) is not seen, as in
+  git; an edit through an editor always gives a new mtime.
 
 Gone files are purged with `DeleteByFile` and removed from the state; their
 symbol IDs are remembered for `staleReferrers`.
@@ -556,7 +574,7 @@ Files must have an analyzer (`parser.ForFile`) and pass `Skip`:
 | `lockfile` | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `composer.lock`, `go.sum`, `cargo.lock`, `poetry.lock`. |
 | `secret` | `Secret(path)`: `.env`, `.env.*`, `id_rsa*`, `.npmrc`, `.pypirc`, `.netrc`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, and `credentials`/`secrets` with no extension or a data extension (`.json`, `.yaml`, `.yml`, `.toml`, `.ini`, `.xml`, `.properties`, `.conf`, `.cfg`, `.txt`). `credentials.go` is code and is kept. A secret inside an ordinarily named file is not caught. |
 | `no analyzer` | No registered parser for the extension. |
-| `binary` | A NUL byte in the first 8 KiB. `Walk` checks it last, after the `.gitignore` filter, so a file git ignores is listed but never opened (on Windows every open costs an antivirus scan, about 10 ms for a file not opened since boot). A run's full walk (`walk`) does not open either a file the state has with the same size and modification time: it was text when it was indexed, so a catch-up with nothing changed opens no file. |
+| `binary` | A NUL byte in the first 8 KiB. `Walk` checks it last, after the `.gitignore` filter, so a file git ignores is listed but never opened (on Windows every open costs an antivirus scan, about 10 ms for a file not opened since boot). A run's full walk (`walk`) does not open either a file the state has with the same size and modification time and no `Hash`: it was text when it was indexed, so a catch-up with nothing changed opens no file. |
 
 ### .gitignore handling
 

@@ -6,6 +6,8 @@ package index
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -52,6 +54,9 @@ const (
 	maxLookups   = 500 // store lookups per run while finding stale referrers
 	lookupBatch  = 500 // values per lookup: ids, qualified names or names
 )
+
+// clock is time.Now; tests fix it.
+var clock = time.Now
 
 // Options configures one run.
 type Options struct {
@@ -101,6 +106,7 @@ type parsed struct {
 	info fs.FileInfo
 	syms []parser.Symbol
 	err  error
+	hash string // of the bytes parsed, only when info's mtime was racy at the read
 }
 
 type run struct {
@@ -454,7 +460,8 @@ func (r *run) scan(ctx context.Context) (changed, gone []string, err error) {
 	if r.Files == nil {
 		unchanged := func(f string, info fs.FileInfo) bool {
 			e, ok := r.state.Files[f]
-			return ok && e.ModTime == info.ModTime().UnixNano() && e.Size == info.Size()
+			// A racy entry (with a hash) may hold other bytes: the binary check opens it.
+			return ok && e.ModTime == info.ModTime().UnixNano() && e.Size == info.Size() && e.Hash == ""
 		}
 		if files, err = walk(r.root, r.Exclude, unchanged); err != nil {
 			return nil, nil, err
@@ -488,8 +495,21 @@ func (r *run) scan(ctx context.Context) (changed, gone []string, err error) {
 			continue
 		}
 		seen[f] = true
-		if e, ok := r.state.Files[f]; !ok || e.ModTime != info.ModTime().UnixNano() || e.Size != info.Size() {
+		e, ok := r.state.Files[f]
+		switch {
+		case !ok || e.ModTime != info.ModTime().UnixNano() || e.Size != info.Size():
 			changed = append(changed, f)
+		case e.Hash != "" && info.Mode().IsRegular():
+			// Indexed within the racy window of its mtime: the same stat may
+			// hide other bytes, compare them. Once the mtime is safely old, a
+			// later write must change it, so the hash goes.
+			at := clock()
+			if src, err := os.ReadFile(f); err != nil || contentHash(src) != e.Hash {
+				changed = append(changed, f)
+			} else if !parser.Racy(info.ModTime(), at) {
+				e.Hash = ""
+				r.state.Files[f] = e
+			}
 		}
 	}
 	for _, f := range r.Deleted {
@@ -623,10 +643,14 @@ func parseOne(root, path string, budget *semaphore.Weighted) (p parsed) {
 	if p.info.Size() > maxFileSize {
 		return p // grew past the cap since the walk: indexed as empty
 	}
+	at := clock()
 	src, err := os.ReadFile(path)
 	if err != nil {
 		p.err = err
 		return p
+	}
+	if parser.Racy(p.info.ModTime(), at) {
+		p.hash = contentHash(src)
 	}
 	// Never blocks for good: every holder releases after one file.
 	w := min(max(int64(len(src)), 1), parseBudget)
@@ -1318,7 +1342,7 @@ func (r *run) embedUpsert(ctx context.Context, files []parsed) error {
 
 // record marks a file as fully indexed in the state.
 func (r *run) record(p parsed) {
-	e := Entry{ModTime: p.info.ModTime().UnixNano(), Size: p.info.Size(), IDs: symIDs(p)}
+	e := Entry{ModTime: p.info.ModTime().UnixNano(), Size: p.info.Size(), IDs: symIDs(p), Hash: p.hash}
 	if first, ok := r.named[p.path]; ok && !slices.Equal(first, e.IDs) {
 		// The file changed after the name pass (a checkout in progress):
 		// callers resolved in this run may hold its first ids, never stored.
@@ -1328,6 +1352,11 @@ func (r *run) record(p parsed) {
 	}
 	r.state.Files[p.path] = e
 	r.status.Done++
+}
+
+func contentHash(src []byte) string {
+	h := sha256.Sum256(src)
+	return hex.EncodeToString(h[:])
 }
 
 func symIDs(p parsed) []string {

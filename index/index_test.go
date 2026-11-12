@@ -1495,10 +1495,14 @@ func TestNewerFormatIsNotReindexed(t *testing.T) {
 // modification time: on Windows every first open is an antivirus scan, and a
 // catch-up with nothing changed opened all 2340 files of a root (20 s).
 // Proven by a file whose bytes became binary under an unchanged stat: it
-// stays; with a new modification time it is read and dropped.
+// stays; with a new modification time it is read and dropped. The mtime is
+// an hour old: one within two seconds of the run (writeTick's) is racy, and a
+// racy file is opened to compare its bytes (racy_test.go).
 func TestWalkDoesNotOpenUnchangedFiles(t *testing.T) {
 	e := newEnv(t)
 	p := e.write(t, "a.go", "func A")
+	old := time.Now().Truncate(time.Second).Add(-time.Hour)
+	require.NoError(t, os.Chtimes(p, old, old))
 	_, err := e.run(t, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, e.all(t, p))

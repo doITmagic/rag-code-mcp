@@ -276,7 +276,7 @@ error recovery can be quadratic on garbage input.
 
 | File | Contents |
 |------|----------|
-| `parser.go` | `Kind`, `RelationKind`, resolution constants, `Symbol`, `Relation`, `File`, `Analyzer`; `Qualify`, `Normalize` (also turns a Go method expression `(*T).M` into `T.M`), `MatchQualified`, `SymbolID`, `Finalize`; the registry (`Register`, `ForFile`, `ForLanguage`, `Languages`, `Analyze`); `RelModule`; `InRoot`, the check every analyzer makes before reading a project file other than the one it parses (regular file, real path inside the root). |
+| `parser.go` | `Kind`, `RelationKind`, resolution constants, `Symbol`, `Relation`, `File`, `Analyzer`; `Qualify`, `Normalize` (also turns a Go method expression `(*T).M` into `T.M`), `MatchQualified`, `SymbolID`, `Finalize`; the registry (`Register`, `ForFile`, `ForLanguage`, `Languages`, `Analyze`); `RelModule`; `InRoot`, the check every analyzer makes before reading a project file other than the one it parses (regular file, real path inside the root); `Racy`, whether a file's mtime was within 2 s of its read, so that what is cached by mtime (and size) from it must not be trusted (the `index` state, the Go `go.mod`, Python `__init__.py` and JavaScript re-export caches). |
 | `normalize_test.go` | `TestNormalizeMethodExpression`: `Normalize` on Go method expressions and PHP separators; `TestNormalizeKeepsRoutePath`: a route path stays one segment in `Normalize` and `MatchQualified`, relative paths do not. |
 | `nesting_test.go` | The nesting guard leaves `html` alone: a page with 1001 `(` in a script string still parses. |
 | `ts.go` | Pooled tree-sitter parsers with a parse timeout, `ParseTree`, `Walk`, `NamedChildren`, `Field`, `Text`, `Lines`, `ReleaseParsers`. |

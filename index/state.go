@@ -11,11 +11,16 @@ import (
 )
 
 // Entry is what the index knows about one file: the mtime and size it was
-// indexed at and the IDs of the symbols it produced.
+// indexed at, the IDs of the symbols it produced and, while its mtime is
+// racy, the hash of the bytes indexed.
 type Entry struct {
 	ModTime int64    `json:"mtime"` // unix nanoseconds
 	Size    int64    `json:"size"`
 	IDs     []string `json:"ids,omitempty"`
+	// Hash is the hex SHA-256 of the bytes indexed, kept only while ModTime
+	// is within racyWindow of a read: a same-size rewrite in the same mtime
+	// tick (coarse timestamps, tar -x, cp -p) would otherwise go unseen.
+	Hash string `json:"hash,omitempty"`
 }
 
 // Format is the version of what parsers and the indexer store. Bump it when a

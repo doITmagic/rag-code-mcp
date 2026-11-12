@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/v2/internal/config"
 	"github.com/doITmagic/rag-code-mcp/v2/parser"
+	"github.com/doITmagic/rag-code-mcp/v2/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -139,4 +141,49 @@ func TestFindUsagesLimitCountsLiveFiles(t *testing.T) {
 	data(t, r2, &second)
 	assert.Equal(t, 2, second.Total, "3 live callers exist so limit=2 must return 2")
 	assert.True(t, second.Truncated, "3 live callers exist with limit=2 so truncated must be true")
+}
+
+// truncated and the advice to raise limit are true: callers in another
+// language naming the same qualified name do not fill the scroll and mark one
+// real usage truncated, and when callers in deleted files fill the store's
+// scroll, raising limit would show nothing more, so the message says to grep.
+func TestFindUsagesTruncatedOnlyWhenMoreExist(t *testing.T) {
+	t.Run("other language callers", func(t *testing.T) {
+		v := newEnv(t, false, func(c *config.Config) { c.AutoIndex = false })
+		var other strings.Builder
+		other.WriteString("package m/other\n")
+		for i := range store.MaxScroll {
+			fmt.Fprintf(&other, "func Foreign%d\n  call m/shared.Target\n", i)
+		}
+		v.addFiles(t, map[string]string{
+			"shared/live.fk":  "package m/shared\nfunc Target\nfunc RealCaller\n  call m/shared.Target\n",
+			"other/noise.fk2": other.String(),
+		})
+		r, res := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "m/shared.Target"})
+		require.False(t, res.IsError, r.Message)
+		var out struct {
+			Total     int  `json:"total"`
+			Truncated bool `json:"truncated"`
+		}
+		data(t, r, &out)
+		assert.Equal(t, 1, out.Total, r.Message)
+		assert.False(t, out.Truncated, r.Message)
+	})
+
+	t.Run("deleted callers fill the scroll", func(t *testing.T) {
+		v := newEnv(t, false, func(c *config.Config) { c.AutoIndex = false })
+		var gone strings.Builder
+		for i := range store.MaxScroll + 5 {
+			fmt.Fprintf(&gone, "func Gone%d\n  call m/live.Target\n", i)
+		}
+		v.addFiles(t, map[string]string{
+			"live/t.fk":    "func Target\nfunc AliveCaller\n  call m/live.Target\n",
+			"gone/dead.fk": gone.String(),
+		})
+		require.NoError(t, os.Remove(filepath.Join(v.root, "gone", "dead.fk")))
+		r, res := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "m/live.Target"})
+		require.False(t, res.IsError, r.Message)
+		assert.NotContains(t, r.Message, "raise limit")
+		assert.Contains(t, r.Message, "grep the name for the rest")
+	})
 }

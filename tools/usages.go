@@ -282,10 +282,12 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 	data := map[string]any{"symbol": toCandidate(*sym), "files": files, "total": total, "ambiguous_by_name": ambiguous, "by_name": guessed, "truncated": cut}
 	msg := fmt.Sprintf("%d usages in %d files", total, len(files))
 	switch {
-	case cut && in.Limit < store.MaxScroll-1:
+	case cut && len(callers) == in.Limit && in.Limit < store.MaxScroll-1:
 		msg += fmt.Sprintf("; only the first %d referencing symbols: raise limit for the rest", in.Limit)
-	case cut:
+	case cut && len(callers) == store.MaxScroll-1:
 		msg += fmt.Sprintf("; only the first %d referencing symbols, the most one answer holds: grep the name for the rest", len(callers))
+	case cut: // fewer than limit: rows of files deleted from disk filled the store's scroll
+		msg += fmt.Sprintf("; the store scroll (%d rows) filled up with callers in files deleted from disk, more may follow: grep the name for the rest", store.MaxScroll)
 	}
 	if guessed > 0 {
 		msg += fmt.Sprintf("; %d matched by name only (no import, qualified name or known type links them; it may be another symbol of that name), marked by_name", guessed)
@@ -344,19 +346,20 @@ func referrers(ctx context.Context, w *engine.Workspace, sym *parser.Symbol, lim
 		if err != nil {
 			return nil, false, err
 		}
-		byQN, err := w.Scroll(ctx, store.Filter{TargetQualifiedNames: []string{sym.QualifiedName}}, n)
-		if err != nil {
-			return nil, false, err
-		}
-		full, rows := len(byID) == n || len(byQN) == n, len(byID)+len(byQN)
+		full, rows := len(byID) == n, len(byID)
 		// A qualified name shared with another language's symbol is not this
 		// one's: as the index resolves, code never calls across languages
-		// (docs and html link into code on purpose).
-		byQN = slices.DeleteFunc(byQN, func(h store.Hit) bool {
-			l := h.Symbol.Language
-			return l != sym.Language && l != "docs" && l != "html"
-		})
-		alive := live(w, append(byID, byQN...))
+		// (docs and html link into code on purpose). Each language is its own
+		// scroll, so another language's rows never fill the cap.
+		for _, l := range slices.Compact([]string{sym.Language, "docs", "html"}) {
+			hs, err := w.Scroll(ctx, store.Filter{Language: l, TargetQualifiedNames: []string{sym.QualifiedName}}, n)
+			if err != nil {
+				return nil, false, err
+			}
+			full, rows = full || len(hs) == n, rows+len(hs)
+			byID = append(byID, hs...)
+		}
+		alive := live(w, byID)
 		// rows past a full scroll were not seen: dropped ones leave room for them
 		unseen := full && len(alive) < rows
 		if unseen && n < store.MaxScroll {

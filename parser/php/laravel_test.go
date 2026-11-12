@@ -234,3 +234,17 @@ Route::get('/user', 'App\\Controller@show');
 	assert.Equal(t, "App.Editor", parser.Normalize(targets(syms["method App.Post.editor"])["uses_type Editor"]))
 	assert.Equal(t, "App.Controller.show", parser.Normalize(targets(syms["route App./user"])["call show"]))
 }
+
+func TestDoubleQuotedListenMap(t *testing.T) {
+	syms := analyze(t, "/root/app/EventServiceProvider.php", `<?php
+namespace App;
+class EventServiceProvider {
+    protected $listen = [
+        "App\\Events\\OrderShipped" => ["App\\Listeners\\SendShipmentNotification"],
+    ];
+}
+`)
+	got := targets(syms["variable App.EventServiceProvider.listen"])
+	assert.Equal(t, "App.Events.OrderShipped", parser.Normalize(got["uses_type OrderShipped"]))
+	assert.Equal(t, "App.Listeners.SendShipmentNotification", parser.Normalize(got["uses_type SendShipmentNotification"]))
+}

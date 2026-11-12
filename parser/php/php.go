@@ -591,7 +591,7 @@ func (c *collector) properties(n *gotreesitter.Node, owner string) {
 			switch v.Type(c.lang) {
 			case "class_constant_access_expression":
 				c.classRef(v, &s, owner)
-			case "string":
+			case "string", "encapsed_string":
 				// Laravel's event map names its classes as strings:
 				// $listen = ['App\Events\E' => ['App\Listeners\L']].
 				if lit := c.literal(v); name == "listen" && strings.Contains(lit, `\`) && className(lit) {

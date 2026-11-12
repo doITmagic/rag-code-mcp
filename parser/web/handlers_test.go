@@ -32,3 +32,21 @@ func TestInlineHandlerCalls(t *testing.T) {
 		{"f", "window.f", 7},
 	}, rels(syms["t/page.page"], parser.RelCall))
 }
+
+// Words inside a string of an inline handler are no calls.
+func TestInlineHandlerStringNoCall(t *testing.T) {
+	src := `<html><body>
+<div id="bar">
+  <button onclick="return confirm('Delete the item(s)?') && drop(` + "`a ${b}(c)`" + `)">D</button>
+  <button onclick='alert("Save (now)"); keep()'>K</button>
+</div>
+</body></html>
+`
+	syms := byQN(analyze(t, "/ws/t/page.html", src))
+	assert.Equal(t, []rel{
+		{"confirm", "window.confirm", 3},
+		{"drop", "window.drop", 3},
+		{"alert", "window.alert", 4},
+		{"keep", "window.keep", 4},
+	}, rels(syms["t/page.bar"], parser.RelCall))
+}

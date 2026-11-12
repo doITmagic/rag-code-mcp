@@ -397,17 +397,21 @@ var (
 	reVueName = regexp.MustCompile(`^\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*$`)
 	// reHTMLComment is an HTML comment of the template: commented-out markup is not used.
 	reHTMLComment = regexp.MustCompile(`(?s)<!--.*?-->`)
+	// reString is a string literal of a template expression: the words in it are no calls.
+	reString = regexp.MustCompile(`'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|` + "`(?:[^`\\\\]|\\\\.)*`")
 )
 
-// blank replaces every match of re in b with spaces, keeping newlines so line numbers stay.
+// blank replaces every byte of each match of re in b with a space, keeping
+// newlines, so offsets and line numbers stay.
 func blank(re *regexp.Regexp, b []byte) []byte {
 	return re.ReplaceAllFunc(b, func(m []byte) []byte {
-		return bytes.Map(func(r rune) rune {
-			if r == '\n' {
-				return r
+		out := bytes.Repeat([]byte{' '}, len(m))
+		for i, c := range m {
+			if c == '\n' {
+				out[i] = c
 			}
-			return ' '
-		}, m)
+		}
+		return out
 	})
 }
 
@@ -450,7 +454,7 @@ func templateRels(src []byte, b vueBlock, c *fileCtx, syms []parser.Symbol, comp
 		if from < 0 {
 			from, to = m[6], m[7]
 		}
-		expr := text[from:to]
+		expr := blank(reString, text[from:to])
 		var called [][]int // offsets of each called name in expr
 		event := m[2] >= 0 && (text[m[2]] == '@' || bytes.HasPrefix(text[m[2]:m[3]], []byte("v-on:")))
 		if n := reVueName.FindSubmatchIndex(expr); event && n != nil {

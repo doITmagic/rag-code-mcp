@@ -69,6 +69,8 @@ var (
 	reHandler  = regexp.MustCompile(`(?i)\son[a-z]+\s*=\s*(?:"([^"]*)"|'([^']*)')`)
 	reCall     = regexp.MustCompile(`(?:^|[^\w$.])([A-Za-z_$][\w$]*)\s*\(`)
 	reGoAction = regexp.MustCompile(`\{\{.*?\}\}`)
+	// reString is a JavaScript string literal: the words in it are no calls.
+	reString = regexp.MustCompile(`'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|` + "`(?:[^`\\\\]|\\\\.)*`")
 	keywords   = map[string]bool{"if": true, "for": true, "while": true, "switch": true, "return": true, "function": true,
 		"typeof": true, "new": true, "catch": true, "void": true, "delete": true, "await": true, "in": true, "of": true}
 )
@@ -85,6 +87,7 @@ func (c *htmlCtx) handlers() {
 			from, to = m[4], m[5]
 		}
 		code := reGoAction.ReplaceAllLiteral(c.f.Source[from:to], []byte("0")) // resolveError({{.ID}})
+		code = reString.ReplaceAllLiteral(code, []byte(`""`))
 		line := c.lines.lineOf(from)
 		var owner *parser.Symbol
 		for i := range c.syms {

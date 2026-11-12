@@ -119,7 +119,9 @@ that leave the workspace root give an empty target.
   their calls are not usages.
 - Inline handlers are found with a regular expression over the raw source,
   inside or outside markup; only plain calls (`f()`) count, not `ns.f()`,
-  `App.open()` or a function referenced without a call. The line is the
+  `App.open()`, a function referenced without a call, or words inside a
+  string literal (`confirm('Delete the item(s)?')`); the `${...}` of a
+  template literal is skipped with its string. The line is the
   attribute's first line.
 - `{{template}}` calls to templates defined in other files are unresolved at
   parse time (the target name is still recorded).
@@ -141,7 +143,7 @@ that leave the workspace root give an empty target.
 | File | Covers |
 |------|--------|
 | `web_test.go` | An HTML page (title, imports, ids, sectional ownership, comments as doc), a Go template file (`define`, `block`, nested `range`, calls), splitting of long documents, module names and reference resolution, malformed input, the symbol cap, registration (and no analyzer for stylesheets), concurrency, a void element (`<input>`) spanning its own tag only. |
-| `handlers_test.go` | Inline event handlers: calls in `onclick`/`ONCLICK`/`onchange` with double or single quotes and Go template actions inside become `window.f` calls on the narrowest symbol; members, keywords and `data-onclick` are not. |
+| `handlers_test.go` | Inline event handlers: calls in `onclick`/`ONCLICK`/`onchange` with double or single quotes and Go template actions inside become `window.f` calls on the narrowest symbol; members, keywords, words inside string literals and `data-onclick` are not. |
 | `zz_verify_test.go` | Verification tests: a fresh HTML + Go template fixture (ownership, imports, defined and missing templates, `<style>` not indexed), and malformed or binary input that must neither panic nor hang. |
 
 ## Testing

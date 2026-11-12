@@ -107,3 +107,25 @@ function stop() {}
 	assert.Equal(t, 4, rel(t, tpl, parser.RelCall, "save").Line)
 	assert.Equal(t, 7, rel(t, tpl, parser.RelCall, "stop").Line, "a bare handler name on its own line")
 }
+
+// Words inside a string literal of a template expression are no calls.
+func TestVueTemplateStringNoCall(t *testing.T) {
+	src := `<template>
+  <button @click="ask('Delete the item(s)?')" :title="` + "`x ${y}(z)`" + `">{{ $t('Save (now)') }}{{ fmt("a (b)") }}</button>
+</template>
+
+<script setup>
+function ask() {}
+function fmt() {}
+</script>
+`
+	syms := analyze(t, "src/comp/Box.vue", src)
+	tpl := find(t, syms, "src/comp/Box.Box")
+	var got []string
+	for _, r := range tpl.Relations {
+		if r.Kind == parser.RelCall {
+			got = append(got, r.TargetName)
+		}
+	}
+	assert.Equal(t, []string{"ask", "$t", "fmt"}, got)
+}

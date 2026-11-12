@@ -599,8 +599,9 @@ func (c *fileCtx) canonical(qn string, depth int) string {
 // reexports is the import table of the workspace package pkg's __init__.py,
 // nil when there is none. The package is looked up under the workspace root,
 // then under each directory down to this file's (src/ layouts, monorepo
-// subprojects). Only a regular file within the index size cap is read, so
-// a symlink to a device is treated as absent. The lookup is cached per
+// subprojects). Only a regular file within the index size cap whose real
+// path is inside the root is read, so a symlink to a device or out of the
+// workspace is treated as absent. The lookup is cached per
 // analyzed file, the parsed table process-wide (initTable).
 func (c *fileCtx) reexports(pkg string) map[string]string {
 	if m, ok := c.reexp[pkg]; ok {
@@ -618,7 +619,7 @@ func (c *fileCtx) reexports(pkg string) map[string]string {
 	for _, d := range dirs {
 		path := filepath.Join(d, filepath.Join(strings.Split(pkg, ".")...), "__init__.py")
 		info, err := os.Lstat(path)
-		if err != nil || !info.Mode().IsRegular() || info.Size() > 4<<20 {
+		if err != nil || !info.Mode().IsRegular() || info.Size() > 4<<20 || !parser.InRoot(c.root, path) { // a symlinked directory may lead out of the root
 			continue
 		}
 		m = initTable(c.root, path, info)

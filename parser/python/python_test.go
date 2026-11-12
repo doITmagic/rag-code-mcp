@@ -347,6 +347,36 @@ def v():
 	assert.Equal(t, map[string]string{"find": "src.mypkg.user.User.find", "x": "mypkg.dev.x"}, targets(byQN(syms)["src.mypkg.api.v"], parser.RelCall))
 }
 
+// An __init__.py reached through a symlinked directory that leads out of the
+// workspace root is treated as absent, so no name written there reaches the
+// index; a symlinked directory pointing inside the root is still followed.
+func TestPackageReexportSymlinkedDirOutsideRoot(t *testing.T) {
+	base := t.TempDir()
+	root, outside := filepath.Join(base, "ws"), filepath.Join(base, "outside")
+	require.NoError(t, os.MkdirAll(filepath.Join(outside, "pkg"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "real", "pkg"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "pkg", "__init__.py"), []byte("from .private_vault import hidden_key as User\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "real", "pkg", "__init__.py"), []byte("from .user import User\n"), 0o644))
+	for link, target := range map[string]string{"out": outside, "inner": filepath.Join(root, "real")} {
+		if err := os.Symlink(target, filepath.Join(root, link)); err != nil {
+			t.Skipf("symlink not available: %v", err)
+		}
+	}
+	syms := analyze(t, filepath.Join(root, "views.py"), root, `
+from out.pkg import User as A
+from inner.pkg import User as B
+
+def v():
+    A.find()
+    B.find()
+`)
+	calls := map[string]bool{}
+	for _, r := range byQN(syms)["views.v"].Relations {
+		calls[r.TargetQualifiedName] = true
+	}
+	assert.Equal(t, map[string]bool{"out.pkg.User.find": true, "inner.pkg.user.User.find": true}, calls)
+}
+
 // A caller outside src/ (tests/, examples/) still finds a src/ layout
 // package's __init__.py re-exports, as flask's tests do with `import flask`.
 func TestPackageReexportSrcLayoutFromTests(t *testing.T) {

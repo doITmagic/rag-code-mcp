@@ -67,6 +67,11 @@ graph TD
    because only the parse tells an apostrophe in JSX text (`<p>Don't</p>`)
    from a string start; a file that parses clean is never refused. Deep
    nesting that closes (300 nested arrays) is valid and parsed.
+   A script whose parse has syntax errors and that yields no symbol although
+   error recovery swallowed a declaration (a `class` or `function` keyword,
+   or a declaration node, inside an `ERROR` node) is an error too, so the
+   file counts as failed instead of being indexed as empty: a class whose
+   second method has unclosed brackets, a `.js` file with Flow annotations.
 2. **Pass 1** records the import table, top-level declared names and what
    they are, `export { ... }` lists and re-exports (`export ... from`), the
    default export's local name, and CommonJS `module.exports` / `exports.x`
@@ -331,6 +336,10 @@ literal's values are not walked, its methods own their calls.
   as open. A script it rejects (syntax errors and more than 256 brackets left
   open) is an error, so the file counts as failed; it is not indexed as an
   empty file. A barrel it rejects exports nothing to its importers.
+- A broken script that keeps some symbols is indexed with them: a class that
+  error recovery shredded is lost without an error when another declaration
+  of the file survived (`class A { b() { if (x { } }` followed by a complete
+  `function z() {}` gives only `z`).
 - Vue blocks are found by plain string scanning (`<script`, `</script`,
   `<template`, last `</template>`).
 - The `javascript` grammar's parse time grows with the square of the number

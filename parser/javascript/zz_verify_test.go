@@ -234,7 +234,7 @@ func TestProbeRobustness(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("hang > 5s")
 			}
-			if err != nil && (strings.Contains(err.Error(), "brackets") || strings.Contains(err.Error(), "parse stopped")) {
+			if err != nil && (strings.Contains(err.Error(), "not parsed") || strings.Contains(err.Error(), "parse stopped")) {
 				err = nil // refused or timed-out garbage is an honest failure
 			}
 			require.NoError(t, err)

@@ -114,6 +114,9 @@ func (analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 		var setup *parser.Symbol // the component: top-level statements of <script setup>
 		for _, sc := range scripts {
 			out, rels := sc.c.emit(sc.tree)
+			if len(out) == 0 && sc.c.hidden(sc.tree.RootNode(), false) {
+				return nil, fmt.Errorf("parser: %s: not parsed: syntax errors left no declaration", sc.b.grammar)
+			}
 			syms = append(syms, out...)
 			if sc.b.setup && len(rels) > 0 {
 				start, end := lineSpan(f.Source, sc.b.start, sc.b.end)
@@ -170,7 +173,34 @@ func analyzeScript(grammar string, src []byte, wsRoot, module, dir, component st
 	}
 	defer tree.Release()
 	syms, rels := c.emit(tree)
+	if len(syms) == 0 && c.hidden(tree.RootNode(), false) {
+		return nil, nil, fmt.Errorf("parser: %s: not parsed: syntax errors left no declaration", grammar)
+	}
 	return syms, rels, nil
+}
+
+// hidden reports whether error recovery swallowed a declaration: a class or
+// function keyword, or a declaration node, inside an ERROR node. A broken file
+// that keeps no symbol but had one is an error, so it counts as failed instead
+// of being indexed as empty (a class whose second method is broken).
+func (c *fileCtx) hidden(n *gotreesitter.Node, inErr bool) bool {
+	if !inErr && !n.HasError() {
+		return false
+	}
+	switch n.Type(c.lang) {
+	case "class", "function", "function_declaration", "generator_function_declaration",
+		"class_declaration", "abstract_class_declaration", "method_definition":
+		if inErr {
+			return true
+		}
+	}
+	inErr = inErr || n.IsError()
+	for _, ch := range n.Children() {
+		if c.hidden(ch, inErr) {
+			return true
+		}
+	}
+	return false
 }
 
 // scanScript parses one script and runs pass 1: imports, top-level names and

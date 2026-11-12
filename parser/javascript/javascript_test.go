@@ -992,3 +992,16 @@ func TestReexportedNamespaceImportDoesNotPanic(t *testing.T) {
 	}
 	require.Contains(t, targets, "util.g")
 }
+
+func TestBrokenScriptWithoutSymbolsIsAnError(t *testing.T) {
+	// Flow annotations shred the class and the function: an error, not an empty file.
+	flow := "// @flow\nclass A {\n  m(a: number): string { return ''; }\n}\nfunction f(x: number): void {}\n"
+	_, err := analyzer{}.Analyze(parser.File{Path: "/ws/flow.js", Root: "/ws", Source: []byte(flow)})
+	assert.ErrorContains(t, err, "left no declaration")
+	_, err = analyzer{}.Analyze(parser.File{Path: "/ws/Flow.vue", Root: "/ws", Source: []byte("<script>\n" + flow + "</script>\n")})
+	assert.ErrorContains(t, err, "left no declaration")
+	// A broken file without any declaration stays an empty file.
+	syms, err := analyzer{}.Analyze(parser.File{Path: "/ws/junk.js", Root: "/ws", Source: []byte("}}}} ((( import from")})
+	require.NoError(t, err)
+	assert.Empty(t, syms)
+}

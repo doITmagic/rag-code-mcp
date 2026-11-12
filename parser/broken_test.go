@@ -44,3 +44,19 @@ func TestBrokenFileKeepsDeclarationsOrFails(t *testing.T) {
 		}
 	}
 }
+
+// Unclosed brackets in the second method of a class shred the class: error
+// recovery leaves no declaration node, so the file is an error instead of a
+// file without symbols and without an error.
+func TestBrokenClassMethodIsNoSilentEmptyFile(t *testing.T) {
+	cases := map[string]string{
+		"svc.ts": "export class Svc {\n  first(): number { return 1; }\n  broken() { const x = f" + strings.Repeat("(", 200) + "\n}\n",
+		"svc.js": "class Svc {\n  first() { return 1; }\n  broken() { const x = f" + strings.Repeat("(", 200) + "\n}\n",
+	}
+	for name, src := range cases {
+		syms, err := parser.Analyze(parser.File{Path: "/ws/" + name, Root: "/ws", Source: []byte(src)})
+		if err == nil && len(syms) == 0 {
+			t.Errorf("%s: no symbols and no error", name)
+		}
+	}
+}

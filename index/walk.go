@@ -97,8 +97,10 @@ func walk(root string, exclude []string, known func(path string, info fs.FileInf
 // GitIgnored returns the files among files that git ignores, by every
 // .gitignore and the user's excludes; tracked files are never ignored. A
 // directory with its own .git is a separate repository and follows its own
-// rules, not its parent's (e.g. a legacy app kept as a nested repo that
-// its parent ignores). Files outside any git work tree are never ignored.
+// rules, not its parent's, unless the repository around it ignores that
+// directory (a legacy app kept as a nested repo under an ignored folder):
+// then every file in it is ignored. Files outside any git work tree are
+// never ignored.
 func GitIgnored(root string, files []string) map[string]bool {
 	repoOf := map[string]string{}
 	var repo func(dir string) string
@@ -122,8 +124,32 @@ func GitIgnored(root string, files []string) map[string]bool {
 		r := repo(filepath.Dir(f))
 		groups[r] = append(groups[r], f)
 	}
+	// dropped: the nested repository r lies in a directory an enclosing one ignores.
+	drop := map[string]bool{}
+	var dropped func(r string) bool
+	dropped = func(r string) bool {
+		if r == root {
+			return false
+		}
+		d, ok := drop[r]
+		if !ok {
+			parent := repo(filepath.Dir(r))
+			d = dropped(parent) || exec.Command("git", "-C", parent, "check-ignore", "-q", r).Run() == nil
+			drop[r] = d
+		}
+		return d
+	}
 	var ign map[string]bool
 	for r, fs := range groups {
+		if dropped(r) {
+			if ign == nil {
+				ign = map[string]bool{}
+			}
+			for _, f := range fs {
+				ign[f] = true
+			}
+			continue
+		}
 		var in bytes.Buffer
 		for _, f := range fs {
 			in.WriteString(f)

@@ -155,7 +155,7 @@ to `index_status.json`:
 | `Running(root)` | Whether a run holds the lock right now. |
 | `LockFile(path)` | Takes the same cross-process lock as `index.lock` on any path; returns `unlock`, or `ErrLocked` when held. |
 | `StateModel(root)` | The embedding model recorded in `state.json`, `""` when there is none. |
-| `GitIgnored(root, files)` | The subset of `files` git ignores (tracked files never are; a nested repository follows its own rules). |
+| `GitIgnored(root, files)` | The subset of `files` git ignores (tracked files never are; a nested repository follows its own rules, and is left out whole when the repository around it ignores its directory). |
 | `WriteAtomic(path, data)` | Temp file plus rename; also used by the engine for `roots.json` and `RAGCODE.md`. |
 | `ErrLocked` | Another run holds `index.lock`. |
 | `ErrHeadChanged` | Git HEAD moved during the run; the caller should queue a full run. |
@@ -599,7 +599,9 @@ After the walk, `GitIgnored` pipes the file list to
 `git -C <repo> check-ignore --stdin -z`, so every `.gitignore` and the user's
 excludes apply, and tracked files are
 never ignored. A directory with its own `.git` below the root is a separate
-repository and is checked against its own rules, not its parent's. Files
+repository and is checked against its own rules, not its parent's; when
+the repository around it ignores that directory (`/php-app/` in the parent's
+`.gitignore`, `php-app/legacy/.git`), every file in it is ignored. Files
 outside any git work tree (or with no `git` installed) are never ignored.
 Files runs apply the same check to the listed files.
 

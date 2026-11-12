@@ -241,6 +241,18 @@ func TestEmbedThreads(t *testing.T) {
 
 // Redacted hides the password of a user:password@ URL and leaves any other
 // value (a URL without one, a local path) as it is.
+// An invalid ollama_base_url with basic auth never shows its password in
+// the error, which reaches the log and the terminal.
+func TestValidateHidesURLPassword(t *testing.T) {
+	for _, raw := range []string{"ftp://u:secret@h:11434", "http://u:secret@h:11434/%zz", "http://u:secret@"} {
+		cfg := Default()
+		cfg.OllamaBaseURL = raw
+		err := cfg.Validate()
+		assert.ErrorContains(t, err, "ollama_base_url", raw)
+		assert.NotContains(t, err.Error(), "secret", raw)
+	}
+}
+
 func TestRedacted(t *testing.T) {
 	assert.Equal(t, "http://u:xxxxx@h:11434", Redacted("http://u:secret@h:11434"))
 	assert.Equal(t, "http://h:11434", Redacted("http://h:11434"))

@@ -159,8 +159,12 @@ func (c Config) Validate() error {
 
 func checkURL(field, raw string) error {
 	u, err := url.Parse(raw)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return fmt.Errorf("config: %s %q must be an http(s) URL", field, raw)
+	if err != nil {
+		// not shown: what does not parse cannot have its password hidden
+		return fmt.Errorf("config: %s must be an http(s) URL, it does not parse as a URL", field)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("config: %s %q must be an http(s) URL", field, Redacted(raw))
 	}
 	return nil
 }

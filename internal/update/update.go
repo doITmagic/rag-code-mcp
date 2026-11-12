@@ -210,7 +210,7 @@ func Install(ctx context.Context, source, target, current string) (string, error
 	if !Less(current, v) {
 		return "", nil // also refuses a downgrade
 	}
-	if err := replace(tmp.Name(), target); err != nil {
+	if err := Replace(tmp.Name(), target); err != nil {
 		return "", err
 	}
 	return v, nil
@@ -319,9 +319,9 @@ func extract(archive []byte, asset, bin string) ([]byte, error) {
 	return nil, fmt.Errorf("update: %s not found in %s", bin, asset)
 }
 
-// replace moves src over dst. Windows cannot overwrite a running binary but
+// Replace moves src over dst. Windows cannot overwrite a running binary but
 // can rename it, so the old one moves to dst.old first.
-func replace(src, dst string) error {
+func Replace(src, dst string) error {
 	if runtime.GOOS != "windows" {
 		return os.Rename(src, dst)
 	}

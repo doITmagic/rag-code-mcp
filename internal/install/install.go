@@ -23,6 +23,7 @@ import (
 	"github.com/doITmagic/rag-code-mcp/v2/internal/config"
 	"github.com/doITmagic/rag-code-mcp/v2/internal/idepaths"
 	"github.com/doITmagic/rag-code-mcp/v2/internal/uninstall"
+	"github.com/doITmagic/rag-code-mcp/v2/internal/update"
 )
 
 // Options controls Run.
@@ -217,7 +218,7 @@ func copyFile(src, dst string) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), dst)
+	return update.Replace(tmp.Name(), dst) // on Windows a binary a client still runs is moved aside first
 }
 
 // runContainer replaces any container with that name and starts a new one.

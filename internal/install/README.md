@@ -108,7 +108,9 @@ the user is asked `Replace it? [Y/n]` (empty answer means yes). Running
 servers of that binary are stopped first (`uninstall.StopProcess`). The copy
 goes to a temp file next to the destination, gets mode `0755` and is renamed
 over it, so a binary an IDE still runs is replaced instead of failing with
-"text file busy".
+"text file busy". On Windows, where a running
+binary cannot be overwritten but can be renamed, the old one is moved to
+`rag-code-mcp.exe.old` first (`update.Replace`).
 
 ### Config
 

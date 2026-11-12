@@ -451,7 +451,11 @@ func gitHead(ctx context.Context, root string) (branch, head string) {
 func (r *run) scan(ctx context.Context) (changed, gone []string, err error) {
 	var files []string
 	if r.Files == nil {
-		if files, err = Walk(r.root, r.Exclude); err != nil {
+		unchanged := func(f string, info fs.FileInfo) bool {
+			e, ok := r.state.Files[f]
+			return ok && e.ModTime == info.ModTime().UnixNano() && e.Size == info.Size()
+		}
+		if files, err = walk(r.root, r.Exclude, unchanged); err != nil {
 			return nil, nil, err
 		}
 		if r.MaxFiles > 0 && len(files) > r.MaxFiles {

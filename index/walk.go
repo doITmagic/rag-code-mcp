@@ -40,7 +40,15 @@ var lockfiles = map[string]bool{
 // directories, directories whose name is in exclude, linked git worktrees and
 // RagCode's own home (OwnHome) are pruned at any depth; files go through Skip.
 func Walk(root string, exclude []string) ([]string, error) {
+	return walk(root, exclude, nil)
+}
+
+// walk is Walk; a file known reports (the state has it with this size and
+// modification time) was text on the run that indexed it and is not opened
+// for the binary check again.
+func walk(root string, exclude []string, known func(path string, info fs.FileInfo) bool) ([]string, error) {
 	ex := set(exclude)
+	text := map[string]bool{}
 	home := OwnHome()
 	var out []string
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -70,6 +78,9 @@ func Walk(root string, exclude []string) ([]string, error) {
 		}
 		if Skip(path, info, nil) == "" { // regular files only: a fifo or device is never opened below
 			out = append(out, path)
+			if known != nil && known(path, info) {
+				text[path] = true
+			}
 		}
 		return nil
 	})
@@ -77,8 +88,9 @@ func Walk(root string, exclude []string) ([]string, error) {
 		out = slices.DeleteFunc(out, func(f string) bool { return ign[f] })
 	}
 	// The binary check opens the file, which on Windows costs an antivirus
-	// scan: only files git keeps are opened, never those of ignored directories.
-	out = slices.DeleteFunc(out, func(f string) bool { return bytes.IndexByte(readHead(f), 0) >= 0 })
+	// scan (about 10 ms a file not opened since boot): only files git keeps
+	// are opened, never those of ignored directories or those known as text.
+	out = slices.DeleteFunc(out, func(f string) bool { return !text[f] && bytes.IndexByte(readHead(f), 0) >= 0 })
 	return out, err
 }
 

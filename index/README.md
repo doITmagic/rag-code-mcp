@@ -510,7 +510,7 @@ Files must have an analyzer (`parser.ForFile`) and pass `Skip`:
 | `lockfile` | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `composer.lock`, `go.sum`, `cargo.lock`, `poetry.lock`. |
 | `secret` | `Secret(path)`: `.env`, `.env.*`, `id_rsa*`, `.npmrc`, `.pypirc`, `.netrc`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, and `credentials`/`secrets` with no extension or a data extension (`.json`, `.yaml`, `.yml`, `.toml`, `.ini`, `.xml`, `.properties`, `.conf`, `.cfg`, `.txt`). `credentials.go` is code and is kept. A secret inside an ordinarily named file is not caught. |
 | `no analyzer` | No registered parser for the extension. |
-| `binary` | A NUL byte in the first 8 KiB. `Walk` checks it last, after the `.gitignore` filter, so a file git ignores is listed but never opened (on Windows every open costs an antivirus scan). |
+| `binary` | A NUL byte in the first 8 KiB. `Walk` checks it last, after the `.gitignore` filter, so a file git ignores is listed but never opened (on Windows every open costs an antivirus scan, about 10 ms for a file not opened since boot). A run's full walk (`walk`) does not open either a file the state has with the same size and modification time: it was text when it was indexed, so a catch-up with nothing changed opens no file. |
 
 ### .gitignore handling
 

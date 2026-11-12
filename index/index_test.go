@@ -1479,3 +1479,30 @@ func TestNewerFormatIsNotReindexed(t *testing.T) {
 	assert.Equal(t, Format+1, st.Format)
 	assert.Len(t, e.symbols(t, f), 1, "the newer index keeps its points")
 }
+
+// A full walk does not open a file the state has with the same size and
+// modification time: on Windows every first open is an antivirus scan, and a
+// catch-up with nothing changed opened all 2340 files of a root (20 s).
+// Proven by a file whose bytes became binary under an unchanged stat: it
+// stays; with a new modification time it is read and dropped.
+func TestWalkDoesNotOpenUnchangedFiles(t *testing.T) {
+	e := newEnv(t)
+	p := e.write(t, "a.go", "func A")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, e.all(t, p))
+	info, err := os.Stat(p)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(p, []byte("fun\x00 A"), 0o644))
+	require.NoError(t, os.Chtimes(p, info.ModTime(), info.ModTime()))
+	s, err := e.run(t, nil)
+	require.NoError(t, err)
+	assert.Zero(t, s.Deleted)
+	assert.NotEmpty(t, e.all(t, p))
+
+	require.NoError(t, os.Chtimes(p, info.ModTime(), info.ModTime().Add(time.Minute)))
+	s, err = e.run(t, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, s.Deleted)
+	assert.Empty(t, e.all(t, p))
+}

@@ -79,7 +79,8 @@ func (t *tools) readFile(ctx context.Context, req *mcp.CallToolRequest, in ReadI
 	first, total := 1, 0
 	if big {
 		// Only the requested lines are kept: the file is streamed, not loaded.
-		lines, total, err = lineRange(path, start, end)
+		// src holds its first 8 KiB, for the binary check below.
+		src, lines, total, err = lineRange(path, start, end)
 		first = start
 	} else if src, err = os.ReadFile(path); err == nil && len(src) > 0 {
 		lines = strings.Split(strings.TrimSuffix(string(src), "\n"), "\n")
@@ -170,17 +171,19 @@ func numbered(lines []string, first, start, end int) string {
 	return b.String()
 }
 
-// lineRange streams path and returns its lines start..end (end clamped) and
-// its line count.
+// lineRange streams path and returns its first 8 KiB, its lines start..end
+// (end clamped) and its line count.
 // shortcut: one line is read whole before capLine cuts it; a multi-GB line
 // would be held in memory. Upgrade to a capped reader if that shows up.
-func lineRange(path string, start, end int) ([]string, int, error) {
+func lineRange(path string, start, end int) ([]byte, []string, int, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 	defer f.Close()
-	r := bufio.NewReader(f)
+	r := bufio.NewReaderSize(f, 8<<10)
+	head, _ := r.Peek(8 << 10) // a short file gives what it has; a read error shows below
+	head = bytes.Clone(head)
 	var got []string
 	n := 0
 	for {
@@ -192,10 +195,10 @@ func lineRange(path string, start, end int) ([]string, int, error) {
 			}
 		}
 		if err == io.EOF {
-			return got, n, nil
+			return head, got, n, nil
 		}
 		if err != nil {
-			return nil, 0, err
+			return nil, nil, 0, err
 		}
 	}
 }

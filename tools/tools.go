@@ -246,10 +246,25 @@ func insideRoot(root, p string) (string, error) {
 	if real, err := filepath.EvalSymlinks(p); err == nil {
 		p = real
 	}
-	if p != root && !strings.HasPrefix(p, root+string(filepath.Separator)) {
+	// Windows paths ignore case; EvalSymlinks fixes the case of an existing path only.
+	p, ok := within(root, p, runtime.GOOS == "windows")
+	if !ok {
 		return "", fmt.Errorf("%s is outside the workspace root %s", p, root)
 	}
 	return p, nil
+}
+
+// within reports whether p is root or under it, and returns p spelled with
+// root's own case; fold compares case-insensitively.
+func within(root, p string, fold bool) (string, bool) {
+	n := len(root)
+	if len(p) < n || (len(p) > n && p[n] != filepath.Separator) {
+		return p, false
+	}
+	if p[:n] != root && (!fold || !strings.EqualFold(p[:n], root)) {
+		return p, false
+	}
+	return root + p[n:], true
 }
 
 // live drops the hits whose file is gone from disk (deleted with the watcher

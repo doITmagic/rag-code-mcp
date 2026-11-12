@@ -249,7 +249,7 @@ Every analyzer passes its output through `Finalize(f, syms)`, which:
 
 | Function | Purpose |
 |----------|---------|
-| `ParseTree(grammar, src)` | Parses with a named grammar (`go`, `python`, `php`, `javascript`, `typescript`, `tsx`, `gdscript`, `html`, ...). Returns the tree and the `*gotreesitter.Language` needed for `Node.Type`. |
+| `ParseTree(grammar, src)` | Parses with a named grammar (`go`, `python`, `php`, `javascript`, `typescript`, `tsx`, `gdscript`, `html`, ...). Returns the tree and the `*gotreesitter.Language` needed for `Node.Type`. A parse stopped by the 3 s timeout or the memory budget is an error (`parse stopped: timeout`), so the file counts as failed instead of being indexed without symbols. |
 | `Walk(n, fn)` | Depth-first visit of named nodes; returning `false` skips the children. |
 | `NamedChildren(n)` | Named children in order. Use it instead of `NamedChildCount`/`NamedChild` loops, which are quadratic in gotreesitter. |
 | `Field`, `Text`, `Lines` | Child by field name, source text of a node, 1-based start/end lines. |

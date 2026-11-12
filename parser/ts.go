@@ -58,6 +58,11 @@ func ParseTree(grammar string, src []byte) (*gotreesitter.Tree, *gotreesitter.La
 	if err != nil {
 		return nil, nil, fmt.Errorf("parser: %s: %w", grammar, err)
 	}
+	// A parse cut short holds part of the file at best: an error, so the file
+	// counts as failed instead of being indexed as empty.
+	if r := t.ParseStopReason(); r == gotreesitter.ParseStopTimeout || r == gotreesitter.ParseStopMemoryBudget {
+		return nil, nil, fmt.Errorf("parser: %s: parse stopped: %s", grammar, r)
+	}
 	return t, lang, nil
 }
 

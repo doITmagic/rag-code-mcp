@@ -355,7 +355,7 @@ gone. Where locking is a no-op (no flock), every server leads, as before.
 | remove/rename of a file | queued as deleted |
 | create of a directory | watched with its subtree, and every file already in it is queued as changed (a directory moved in emits no events for its contents) |
 | create/write of a file | queued as changed |
-| event overflow | the tree is re-walked so directories created meanwhile are watched (a failure logs `engine: cannot re-watch after overflow`), then a full run ("event overflow") |
+| event overflow | the tree is re-walked so directories created meanwhile are watched (a failure logs `engine: cannot re-watch after overflow`), then a full run ("event overflow"). On Windows each watched directory has a 16 KiB event buffer (`watchBuffer`; fsnotify's default of 64 KiB held 605 MB for a root with 9,502 directories, most of them git-ignored, which are still watched), so a burst of a few hundred events in one directory overflows |
 | remove/rename of the root itself | watcher stops; `LastError` says so; the next `Workspace` call restarts it |
 
 **Debounce.** Changed and deleted files collect in two sets behind one timer

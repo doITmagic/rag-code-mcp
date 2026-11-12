@@ -20,6 +20,11 @@ import (
 // batch back; a file written without pause would otherwise block every edit.
 const maxDebounces = 10
 
+// watchBuffer is the event buffer of one watched directory on Windows (no
+// effect elsewhere). fsnotify's default of 64 KiB made a root with 9,502
+// directories hold 605 MB; an overflow of the smaller buffer queues a full run.
+const watchBuffer = 16 << 10
+
 // watcher turns fsnotify events of one root into IndexFiles batches. A change
 // to .git/HEAD, .git/refs or a .gitignore, an event overflow or a removed
 // directory queue a full run instead.
@@ -216,7 +221,7 @@ func (wt *watcher) addTree(dir string, collect bool) error {
 		case path != dir && (wt.skipDir(d.Name()) || index.IsLinkedWorktree(path) || index.InOwnHome(path, home)):
 			return fs.SkipDir
 		default:
-			if err := wt.fsw.Add(path); err != nil && (path == dir || errors.Is(err, fsnotify.ErrClosed)) {
+			if err := wt.fsw.AddWith(path, fsnotify.WithBufferSize(watchBuffer)); err != nil && (path == dir || errors.Is(err, fsnotify.ErrClosed)) {
 				return err
 			} else if err != nil {
 				if !os.IsNotExist(err) {

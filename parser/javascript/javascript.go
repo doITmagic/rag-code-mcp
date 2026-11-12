@@ -451,17 +451,17 @@ func templateRels(src []byte, b vueBlock, c *fileCtx, syms []parser.Symbol, comp
 			from, to = m[6], m[7]
 		}
 		expr := text[from:to]
-		var called [][]byte
+		var called [][]int // offsets of each called name in expr
 		event := m[2] >= 0 && (text[m[2]] == '@' || bytes.HasPrefix(text[m[2]:m[3]], []byte("v-on:")))
-		if n := reVueName.FindSubmatch(expr); event && n != nil {
-			called = append(called, n[1]) // @click="go": the handler itself
+		if n := reVueName.FindSubmatchIndex(expr); event && n != nil {
+			called = append(called, n[2:4]) // @click="go": the handler itself
 		}
-		for _, cm := range reVueCall.FindAllSubmatch(expr, -1) {
-			called = append(called, cm[1])
+		for _, cm := range reVueCall.FindAllSubmatchIndex(expr, -1) {
+			called = append(called, cm[2:4])
 		}
 		for _, d := range called {
-			dotted := string(d)
-			rels = append(rels, parser.Relation{Kind: parser.RelCall, TargetName: dotted[strings.LastIndex(dotted, ".")+1:], TargetQualifiedName: resolve(dotted), Line: lineAt(from)})
+			dotted := string(expr[d[0]:d[1]])
+			rels = append(rels, parser.Relation{Kind: parser.RelCall, TargetName: dotted[strings.LastIndex(dotted, ".")+1:], TargetQualifiedName: resolve(dotted), Line: lineAt(from + d[0])})
 		}
 	}
 	return rels

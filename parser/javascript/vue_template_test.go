@@ -84,3 +84,26 @@ function fmt(v) { return v }
 	}
 	assert.Equal(t, 4, rel(t, tpl, parser.RelCall, "fmt").Line, "lines kept after the comment")
 }
+
+// A call on a later line of a multi-line attribute value is on its own line.
+func TestVueTemplateMultilineCallLine(t *testing.T) {
+	src := `<template>
+  <button
+    @click="
+      save()
+    "
+    @keyup="
+      stop
+    ">x</button>
+</template>
+
+<script setup>
+function save() {}
+function stop() {}
+</script>
+`
+	syms := analyze(t, "src/comp/Box.vue", src)
+	tpl := find(t, syms, "src/comp/Box.Box")
+	assert.Equal(t, 4, rel(t, tpl, parser.RelCall, "save").Line)
+	assert.Equal(t, 7, rel(t, tpl, parser.RelCall, "stop").Line, "a bare handler name on its own line")
+}

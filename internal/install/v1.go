@@ -29,7 +29,7 @@ func removeV1(ctx context.Context, home string, out io.Writer) {
 	if _, err := os.Stat(installDir); err != nil {
 		return
 	}
-	if rel, err := filepath.Rel(installDir, config.HomeDir()); err == nil && !strings.HasPrefix(rel, "..") {
+	if within(installDir, config.HomeDir()) {
 		warn(out, "RAGCODE_HOME is inside the v1 directory "+installDir+": v1 is not removed")
 		return
 	}
@@ -105,6 +105,32 @@ func removeV1(ctx context.Context, home string, out io.Writer) {
 		removeRootOwned(ctx, share, "qdrant", out)
 	}
 	ok(out, "RagCode v1 removed")
+}
+
+// within reports whether p is dir or inside it, through symlinks, a relative
+// path or a case-insensitive file system; when either path cannot be
+// resolved it reports true, so the caller keeps what it would delete.
+func within(dir, p string) bool {
+	di, err := os.Stat(dir)
+	if err != nil {
+		return true
+	}
+	if p, err = filepath.Abs(p); err == nil {
+		p, err = filepath.EvalSymlinks(p)
+	}
+	if err != nil {
+		return true
+	}
+	for {
+		if fi, err := os.Stat(p); err == nil && os.SameFile(di, fi) {
+			return true
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return false
+		}
+		p = parent
+	}
 }
 
 // removeRootOwned deletes share/rel. The v1 Qdrant container wrote its data

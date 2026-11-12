@@ -52,7 +52,7 @@ Tests:
 | File | Covers |
 |:---|:---|
 | `install_test.go` | Full run with a fake `docker` (GPU start fails, CPU retry) and an `httptest` Ollama: binary mode `0755`, config written, exact Docker commands, model pulled with progress, PATH line once, Cursor entry and summary snippet; a second run with `-ollama skip` keeps the config and does no Docker or model work; `-ollama local` and `-models-dir`; errors (bad `-ollama`, binary missing, user answers no); `pullModel` errors and the 412 "Ollama too old" message; a failed container still pulls from an Ollama already on the port; the Ollama image is pulled before the container starts and a failed pull keeps the local image (`TestOllamaImagePulledFirst`); no Qdrant is started. |
-| `v1_test.go` | A v1 install is removed (install dir, `~/.local/share/qdrant` when it holds only ragcode collections, PATH line, the `ragcode` entry in `~/.cursor/mcp.config.json`, Docker `rm -f`); answering no to "Replace?", a failed copy or an invalid config leaves v1 untouched; a collection RagCode did not create, or an unreadable collections directory, is kept; a running v1 server is stopped. |
+| `v1_test.go` | A v1 install is removed (install dir, `~/.local/share/qdrant` when it holds only ragcode collections, PATH line, the `ragcode` entry in `~/.cursor/mcp.config.json`, Docker `rm -f`); answering no to "Replace?", a failed copy or an invalid config leaves v1 untouched; a collection RagCode did not create, or an unreadable collections directory, is kept; a running v1 server is stopped; `RAGCODE_HOME` reaching the v1 directory through a symlink or a relative path keeps the new install (`TestInstallIntoV1DirViaSymlinkOrRelativePathKeepsItself`). |
 | `zz_verify_test.go` | Verification tests: `-ollama local` without Docker still waits and pulls; a cancelled context does not hang `Run`; `waitHTTP` on an unreachable URL returns an error; a reinstall replaces the binary, leaves no temp file and writes `.zshrc` when `SHELL` is zsh. |
 
 ## Key types and functions
@@ -163,7 +163,8 @@ Prints the binary, config, Ollama URL and model, the index directory
 ## Removing RagCode v1 (`v1.go`)
 
 Most users upgrade from v1, whose indexes are not compatible with v2. When
-`~/.local/share/ragcode` exists, `removeV1`:
+`~/.local/share/ragcode` exists and `RAGCODE_HOME` is not that directory or
+inside it, `removeV1`:
 
 1. runs `docker rm -f ragcode-qdrant ragcode-ollama`;
 2. removes the `ragcode` entry from the IDE files v1 wrote (Windsurf,
@@ -183,6 +184,12 @@ Most users upgrade from v1, whose indexes are not compatible with v2. When
    `~/.local/share/qdrant` is then kept, with a warning. Qdrant wrote the data as root, so if a plain delete fails it runs
    `rm -rf` inside a throwaway `qdrant/qdrant:v1.19.1` container; if that fails
    too it prints a `sudo rm -rf` hint.
+
+`RAGCODE_HOME` is compared after resolving it to an absolute path without
+symlinks, and directories are matched by file identity (`os.SameFile`), so a
+symlink, a relative path or a different letter case on a case-insensitive
+disk still counts as inside. If either path cannot be resolved, v1 is kept
+with the warning `RAGCODE_HOME is inside the v1 directory ...`.
 
 Each failure is a warning; v1 removal never stops the install. It runs only
 after the v2 binary is copied and its config loads, so answering no to

@@ -142,3 +142,45 @@ func TestRunStopsV1Server(t *testing.T) {
 		t.Fatal("v1 server still running")
 	}
 }
+
+// RAGCODE_HOME reaching the v1 directory through a symlink or a relative path:
+// the v1 cleanup must still see it is the new install and not delete it.
+func TestInstallIntoV1DirViaSymlinkOrRelativePathKeepsItself(t *testing.T) {
+	t.Run("symlink_ragcode_home", func(t *testing.T) {
+		home, _, _ := env(t)
+		v1Dir := filepath.Join(home, ".local", "share", "ragcode")
+		require.NoError(t, os.MkdirAll(v1Dir, 0o755))
+
+		link := filepath.Join(home, ".ragcode-link")
+		require.NoError(t, os.Symlink(v1Dir, link))
+		t.Setenv("RAGCODE_HOME", link)
+
+		var out bytes.Buffer
+		opts := Options{Ollama: "skip", SkipIDE: true, Yes: true, Out: &out, srcDir: src(t)}
+		require.NoError(t, Run(context.Background(), opts), out.String())
+
+		assert.FileExists(t, filepath.Join(link, "bin", "rag-code-mcp"))
+		assert.FileExists(t, filepath.Join(link, "config.yaml"))
+	})
+
+	t.Run("relative_ragcode_home", func(t *testing.T) {
+		home, _, _ := env(t)
+		v1Dir := filepath.Join(home, ".local", "share", "ragcode")
+		require.NoError(t, os.MkdirAll(v1Dir, 0o755))
+
+		wd, err := os.Getwd()
+		require.NoError(t, err)
+		require.NoError(t, os.Chdir(home))
+		t.Cleanup(func() { _ = os.Chdir(wd) })
+
+		relHome := filepath.Join(".local", "share", "ragcode")
+		t.Setenv("RAGCODE_HOME", relHome)
+
+		var out bytes.Buffer
+		opts := Options{Ollama: "skip", SkipIDE: true, Yes: true, Out: &out, srcDir: src(t)}
+		require.NoError(t, Run(context.Background(), opts), out.String())
+
+		assert.FileExists(t, filepath.Join(v1Dir, "bin", "rag-code-mcp"))
+		assert.FileExists(t, filepath.Join(v1Dir, "config.yaml"))
+	})
+}

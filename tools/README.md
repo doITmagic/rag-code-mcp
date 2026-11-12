@@ -66,6 +66,7 @@ Tests:
 | [`zz_verify_test.go`](zz_verify_test.go) | verification tests: short package names past the scroll cap, call-hierarchy cycles and the node cap, cancelled contexts, stalled `rag_server_info` endpoints, read-file edge cases (degenerate files, symlink out of the root, ranges, minified files, long lines, secrets), the 200-file fallback cap, multi-byte usage line cut, compact/full output and path boost, the 24 h update cache, a second index call while running, huge limits, `total_lines` and negative line numbers, the breadth-first node cap, a line range of a file over 8 MiB, exports of a workspace directory and `res://` paths, a Godot scene node not making its class ambiguous, the note on zero usages of a constant |
 | [`usages_test.go`](usages_test.go) | `rag_find_usages` `limit` counts live callers: deleted caller files do not shrink the answer below `limit` nor clear `truncated` |
 | [`readfile_test.go`](readfile_test.go) | a line range of a binary file over 8 MiB returns no lines (the first 8 KiB are checked although the file is streamed) |
+| [`source_files_test.go`](source_files_test.go) | the not-indexed fallback and the text search skip a non-hidden `RAGCODE_HOME` inside the root, and find nothing under a `path_prefix` in an excluded, hidden or linked-worktree directory |
 | [`fifo_unix_test.go`](fifo_unix_test.go) | the not-indexed fallback keeps the index skip rules: no symlink out of the root, no fifo, no secret file (Unix only) |
 | [`index_unix_test.go`](index_unix_test.go) | (`//go:build unix`) a known root with no `ended_at` is `interrupted` only when nobody holds its lock |
 
@@ -141,8 +142,9 @@ lookup (`grep.go`, `startGrep`). It looks for the last segment of the name
 (`pkg.Foo` -> `Foo`) as a whole word, case-sensitive and without regard to diacritics on
 either side (`Salveaza` finds `Salvează` and the reverse; Latin letters only, `unaccent`),
 in the files an analyzer handles, by the
-index skip rules (`sourceFiles`, shared with the not-indexed fallback), under
-`path_prefix` when `rag_search` has one. It is bounded by work, not by a
+index skip rules (`sourceFiles`, shared with the not-indexed fallback: no hidden,
+excluded or linked-worktree directory, not RagCode's own home), under
+`path_prefix` when `rag_search` has one (nothing when that directory is itself one the index skips). It is bounded by work, not by a
 clock: 5000 files (counted after git dropped the ignored ones) or 20 lines,
 so a slow disk only takes longer; the request being cancelled ends it. Files
 are read in parallel (GOMAXPROCS at a time) and the lines are joined in file

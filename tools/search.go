@@ -219,8 +219,19 @@ func (t *tools) fallback(ctx context.Context, root string, in SearchInput, f sto
 
 // sourceFiles lists at most max files under start that an analyzer handles
 // (only those with one of exts, when given), by the index rules: no hidden or
-// excluded directory, no linked worktree, nothing Skip or git leaves out.
+// excluded directory, no linked worktree, not RagCode's own home, nothing Skip
+// or git leaves out. A start in or under such a directory lists nothing.
 func (t *tools) sourceFiles(ctx context.Context, root, start string, exts map[string]bool, max int) []string {
+	home := index.OwnHome()
+	pruned := func(dir string) bool {
+		name := filepath.Base(dir)
+		return strings.HasPrefix(name, ".") || slices.Contains(t.cfg.ExcludePatterns, name) || index.IsLinkedWorktree(dir) || index.InOwnHome(dir, home)
+	}
+	for dir := start; len(dir) > len(root); dir = filepath.Dir(dir) { // start and its parents below root
+		if pruned(dir) {
+			return nil
+		}
+	}
 	var files []string
 	kept := 0 // files[:kept] went through git already
 	gitFilter := func() {
@@ -242,7 +253,7 @@ func (t *tools) sourceFiles(ctx context.Context, root, start string, exts map[st
 			return nil // unreadable entry: skip it, keep walking (as index.Walk does)
 		}
 		if d.IsDir() {
-			if path != start && (strings.HasPrefix(d.Name(), ".") || slices.Contains(t.cfg.ExcludePatterns, d.Name()) || index.IsLinkedWorktree(path)) {
+			if path != start && pruned(path) {
 				return fs.SkipDir
 			}
 			return nil

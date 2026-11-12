@@ -68,6 +68,16 @@ graph TD
    assignments. Named and default imports are followed through the target
    module's re-exports ([Re-exports](#re-exports)).
 3. **Pass 2** emits the symbols of each top-level statement.
+   In a classic browser script (no `import`, `export`, `require()` or
+   CommonJS export at the top level), the statements inside the function a
+   top-level expression statement wraps count as top-level ones for passes 1
+   and 2: an IIFE (`(function () {...})()`, `!function ($) {...}(jQuery)`,
+   `(() => {...})()`) or a function argument (`$(function () {...})`,
+   `document.addEventListener('DOMContentLoaded', () => {...})`), and the
+   wrappers inside those, three levels deep. Only their functions, classes,
+   methods and types become symbols, never their `var` / `let` / `const`
+   values, nor a name of one or two letters (minified code). In a module the
+   wrappers are test suites and hooks, so they are not descended.
 4. **Vue files**: each `<script>` body is parsed separately with leading
    newlines added so line numbers match the `.vue` file; the outermost
    `<template>...</template>` becomes one `template` symbol. The blocks are
@@ -171,6 +181,7 @@ specifier is the module as written (`react.useState`).
 | `const model = { load() {...}, f: () => ... }` at top level, also with `let` / `var` (Alpine / Pinia store models): methods and function-valued pairs, exported only when the const is | `method` | the const name, e.g. `model` |
 | `const C = defineComponent({...})`: the same options as `export default` | `method` | the const name, e.g. `C` |
 | Vue `<template>` | `template` | |
+| In a classic browser script: `function f()`, `const f = () => {}`, classes and object methods declared directly inside an IIFE or a callback argument of a top-level call (see pass 2) | as at the top level, qualified `<module>.f` | |
 | Top-level expression statements of a Vue `<script setup>` (`watch(...)`, `defineProps<T>()`) and the initializers of its top-level destructuring declarations (`const { a } = useX()`): their calls and type uses | `function` named `default`, exported, spanning the `<script setup>` block; when the file already has a `default` symbol the relations are added to it | |
 
 - **Default export.** Importers see the default export only as `default`, so
@@ -260,10 +271,12 @@ literal's values are not walked, its methods own their calls.
   matches no symbol, and has no by-name fallback.
 - Top-level expression statements of a plain `.js`/`.ts` file (`describe()` /
   `it()` in tests, side-effect calls) belong to no symbol, so their calls are
-  not usages. A file whose code all sits in such statements (a jQuery
-  `(function ($) { ... })(jQuery)` IIFE, `$(document).ready(...)`) has no
-  symbol at all, so `rag_search` never returns it; read it with
-  `rag_read_file_context` or grep.
+  not usages. In a classic browser script the functions declared inside an
+  IIFE or ready callback are symbols, but the calls written directly in the
+  wrapper body (`initFlatpickr();` in a `DOMContentLoaded` handler) still
+  belong to no symbol. A module's wrappers are not descended, and a file
+  whose code is only such calls has no symbol, so `rag_search` never
+  returns it; read it with `rag_read_file_context` or grep.
 - Re-exports are read from the imported file when an importer is parsed:
   editing a barrel (`index.ts`) does not re-parse the files that import
   through it, so their targets stay stale until they change or are
@@ -291,7 +304,9 @@ literal's values are not walked, its methods own their calls.
 - Vue blocks are found by plain string scanning (`<script`, `</script`,
   `<template`, last `</template>`).
 - Only top-level statements produce symbols; functions declared inside other
-  functions do not.
+  functions do not, except the wrappers of a classic browser script. Two
+  wrappers of one file declaring the same name give one qualified name
+  (twins: the widest is the target).
 - No type inference for calls on variables or parameters. A parameter or
   `let`/`const`/`var` name shadows an import or top-level name for the whole
   function (one set per function, not scoped by declaration position), so
@@ -310,6 +325,7 @@ literal's values are not walked, its methods own their calls.
 | File | Covers |
 |------|--------|
 | `javascript_test.go` | ESM and CommonJS imports and exports, classes and methods, TypeScript (interfaces, types, enums, abstract classes), TSX, Vue options API, Vue `<script setup lang="ts">`, malformed and unbalanced input, files outside the root, concurrency, registration, default exports and directory (`index`) imports, root-absolute imports, TypeScript type uses, methods of an object literal bound to a const, aliased imports (tsconfig paths, Nuxt conventions), calls in top-level initializers and `export default defineX(...)`, export of object-literal methods, `const C = defineComponent(...)`, barrel re-exports (`export *`, `export { a as b } from`, local alias exports, cycles, cache invalidation, package specifiers never read from disk nor named like a root file of that name, `.`/`..` specifiers), top-level calls of `<script setup>` attributed to `default`, `await f<T>()` calls, top-level variable type annotations, `<script>` and `<script setup>` sharing names, the line of a chained call split over lines, top-level destructuring calls of `<script setup>`, members of an exported object literal followed as re-exports (shorthand, `key: ident`, methods of an inline `export default {...}`, a const both named and default-exported). |
+| `browser_test.go` | Classic browser scripts: functions inside an IIFE, `!function(){}()`, ready and `DOMContentLoaded` callbacks (nested) are symbols with resolved local calls; a module's `describe()` callback is not descended. |
 | `zz_verify_test.go` | Verification tests: JSX and import forms, TS enums and generics, `defineComponent` and CRLF files, robustness, nested CommonJS, component objects in plain JS, template-first `<script setup>`, statelessness, private TS members and syntax-error recovery, two script blocks, deep nesting, concurrent analysis. |
 | `root_test.go` | A re-exporting module reached through `..` or a symlinked directory outside the root, and a tsconfig `extends` through such a symlink, are not read; a symlink inside the root and a parent-directory `extends` still inside it keep working. |
 | `fifo_unix_test.go` | A `tsconfig.json` that is a FIFO is not read (Linux only). |

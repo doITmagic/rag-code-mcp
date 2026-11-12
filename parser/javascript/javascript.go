@@ -48,6 +48,8 @@ type fileCtx struct {
 	bare      map[string]bool        // export ... from 'pkg': package modules, not workspace files
 	props     map[string]string      // "obj.key" -> local name of a shorthand / key: ident member of a top-level object literal ("" for a method of an inline export default {...})
 	picked    map[string]bool        // default or named imports of a workspace module: their members are followed
+	esm       bool                   // the script imports, requires or exports something
+	classic   bool                   // a browser script (no esm): its wrappers' declarations count as top-level ones
 }
 
 func newCtx(src []byte, lang *gotreesitter.Language, wsRoot, module, dir, component string) *fileCtx {
@@ -173,7 +175,54 @@ func scanScript(grammar string, src []byte, wsRoot, module, dir, component strin
 	for _, nc := range parser.NamedChildren(tree.RootNode()) {
 		c.scan(nc)
 	}
+	if c.classic = !c.esm; c.classic {
+		for _, nc := range parser.NamedChildren(tree.RootNode()) {
+			c.wrapped(nc, 0, c.scan)
+		}
+	}
 	return c, tree, nil
+}
+
+// maxWrap is how deep wrappers nest (an IIFE holding a ready callback ...)
+// before their statements stop counting as top-level ones.
+const maxWrap = 3
+
+// wrapped calls fn on each statement of the function bodies a top-level
+// expression statement wraps, as classic browser scripts do: an IIFE
+// `(function () {...})()` / `!function () {...}()`, or a function argument
+// `$(function () {...})`, `addEventListener('DOMContentLoaded', () => {...})`,
+// and on the statements of wrappers inside those, up to maxWrap levels. A
+// module (imports, require, exports) is not descended: there wrappers are
+// test suites (`describe(() => {...})`) and hooks, whose locals are no API.
+func (c *fileCtx) wrapped(n *gotreesitter.Node, depth int, fn func(*gotreesitter.Node)) {
+	if !c.classic || depth >= maxWrap || n.Type(c.lang) != "expression_statement" || n.NamedChildCount() == 0 {
+		return
+	}
+	e := c.unwrap(n.NamedChild(0))
+	if e.Type(c.lang) != "call_expression" {
+		return
+	}
+	funcs := []*gotreesitter.Node{c.unwrap(parser.Field(e, c.lang, "function"))}
+	funcs = append(funcs, parser.NamedChildren(parser.Field(e, c.lang, "arguments"))...)
+	for _, f := range funcs {
+		if f == nil || !isFunc(f.Type(c.lang)) {
+			continue
+		}
+		if body := parser.Field(f, c.lang, "body"); body != nil && body.Type(c.lang) == "statement_block" {
+			for _, st := range parser.NamedChildren(body) {
+				fn(st)
+				c.wrapped(st, depth+1, fn)
+			}
+		}
+	}
+}
+
+// unwrap strips the parentheses and unary operators around an IIFE.
+func (c *fileCtx) unwrap(e *gotreesitter.Node) *gotreesitter.Node {
+	for e != nil && (e.Type(c.lang) == "parenthesized_expression" || e.Type(c.lang) == "unary_expression") && e.NamedChildCount() > 0 {
+		e = e.NamedChild(e.NamedChildCount() - 1)
+	}
+	return e
 }
 
 // emit runs pass 2 over a scanned script: its symbols and the relations of
@@ -184,6 +233,17 @@ func (c *fileCtx) emit(tree *gotreesitter.Tree) ([]parser.Symbol, []parser.Relat
 	var rels []parser.Relation
 	for _, nc := range parser.NamedChildren(root) {
 		c.topLevel(nc, &syms)
+		c.wrapped(nc, 0, func(st *gotreesitter.Node) {
+			var in []parser.Symbol
+			c.topLevel(st, &in)
+			for _, s := range in {
+				// Locals of a wrapper (`var form = ...`, a test's `const wrapper = mount()`) are no
+				// symbols; shortcut: a name of one or two letters there is minified code, not indexed.
+				if s.Kind != parser.KindVariable && s.Kind != parser.KindConstant && len(s.Name) > 2 {
+					syms = append(syms, s)
+				}
+			}
+		})
 		switch nc.Type(c.lang) {
 		case "expression_statement":
 			rels = append(rels, c.relsUnder(nc, c.locals(nc), "")...)
@@ -325,8 +385,10 @@ func lineSpan(src []byte, start, end int) (int, int) {
 func (c *fileCtx) scan(n *gotreesitter.Node) {
 	switch n.Type(c.lang) {
 	case "import_statement":
+		c.esm = true
 		c.addImport(n)
 	case "export_statement":
+		c.esm = true
 		if d := parser.Field(n, c.lang, "declaration"); d != nil {
 			if c.isDefault(n) { // export default function Button() {}
 				c.def = parser.Text(parser.Field(d, c.lang, "name"), c.src)
@@ -388,6 +450,7 @@ func (c *fileCtx) scan(n *gotreesitter.Node) {
 		for _, d := range parser.NamedChildren(n) {
 			name, value := parser.Field(d, c.lang, "name"), parser.Field(d, c.lang, "value")
 			if spec := c.requireSpec(value); spec != "" {
+				c.esm = true
 				c.addRequire(name, c.resolveSpec(spec))
 				continue
 			}
@@ -507,6 +570,9 @@ func (c *fileCtx) scanExportsAssign(n *gotreesitter.Node) {
 	}
 	left := parser.Text(parser.Field(n, c.lang, "left"), c.src)
 	right := parser.Field(n, c.lang, "right")
+	if left == "module.exports" || strings.HasPrefix(left, "exports.") || strings.HasPrefix(left, "module.exports.") {
+		c.esm = true
+	}
 	switch {
 	case left == "module.exports" && right != nil && right.Type(c.lang) == "identifier":
 		c.exported[parser.Text(right, c.src)] = true

@@ -498,7 +498,8 @@ func (c *collector) method(n *gotreesitter.Node, owner string) {
 func (c *collector) call(n *gotreesitter.Node, sym *parser.Symbol, owner string) {
 	kind, track := parser.RelCall, false // track: plain and static calls feed the framework pass
 	var recv, recvFQN, name, target string
-	at := n // the node whose line the relation takes
+	viewCall := false // view('x') or View::make('x')
+	at := n           // the node whose line the relation takes
 	switch n.Type(c.lang) {
 	case "function_call_expression":
 		track = true
@@ -508,6 +509,7 @@ func (c *collector) call(n *gotreesitter.Node, sym *parser.Symbol, owner string)
 		}
 		raw := c.text(fn)
 		name, target = short(raw), qualified(c.resolve(raw, c.funcs, owner))
+		viewCall = raw == "view" || raw == `\view`
 		if _, imported := c.funcs[raw]; c.ns != "" && !imported && !strings.ContainsRune(raw, '\\') {
 			// PHP falls back to the global function at runtime, so the
 			// namespace is only a guess: leave the target to a name lookup.
@@ -530,6 +532,7 @@ func (c *collector) call(n *gotreesitter.Node, sym *parser.Symbol, owner string)
 		if recvFQN != "" {
 			target = qualified(recvFQN) + "." + name
 		}
+		viewCall = name == "make" && (recv == "View" || recvFQN == `Illuminate\Support\Facades\View`)
 	case "member_call_expression", "nullsafe_member_call_expression":
 		fn := c.field(n, "name")
 		if c.typ(fn) != "name" {
@@ -560,6 +563,13 @@ func (c *collector) call(n *gotreesitter.Node, sym *parser.Symbol, owner string)
 		sym.Relations = append(sym.Relations, parser.Relation{
 			Kind: kind, TargetName: name, TargetQualifiedName: target, Line: line,
 		})
+		// view('users.show'): the Blade template's qualified name; a package
+		// view (mail::message) is not in the workspace.
+		if v := c.viewName(n, viewCall); v != "" {
+			sym.Relations = append(sym.Relations, parser.Relation{
+				Kind: parser.RelImports, TargetName: v, TargetQualifiedName: v, Line: line,
+			})
+		}
 	}
 	if track {
 		var ownerName string
@@ -580,6 +590,18 @@ func (c *collector) call(n *gotreesitter.Node, sym *parser.Symbol, owner string)
 		}
 		c.calls = append(c.calls, rc)
 	}
+}
+
+// viewName is the template a view call renders: its first argument when a
+// plain string not naming a package view.
+func (c *collector) viewName(n *gotreesitter.Node, viewCall bool) string {
+	if !viewCall {
+		return ""
+	}
+	if v := c.stringArg(n, 0); !strings.Contains(v, "::") {
+		return v
+	}
+	return ""
 }
 
 // define turns a top-level define('NAME', value) into a constant symbol.

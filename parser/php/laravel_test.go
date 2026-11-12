@@ -48,3 +48,40 @@ func TestLaravelRouteGroupsAndHandlers(t *testing.T) {
 	}
 	assert.Equal(t, "apiResource", syms["route api/photos"].Metadata["method"])
 }
+
+const laravelViewSrc = `<?php
+namespace App\Http\Controllers;
+
+use Illuminate\Support\Facades\View;
+
+class UserController extends Controller
+{
+    public function show($id)
+    {
+        if ($id) {
+            return view('users.show', ['id' => $id]);
+        }
+        return View::make('users.empty');
+    }
+
+    public function other($name)
+    {
+        return view($name) . view('mail::message');
+    }
+}
+`
+
+// view('x.y') and View::make('x.y') name the template a controller renders.
+func TestLaravelViewCallImportsTemplate(t *testing.T) {
+	syms := analyze(t, "/root/app/Http/Controllers/UserController.php", laravelViewSrc)
+	var imports []string
+	for _, r := range syms[`method App\Http\Controllers.UserController.show`].Relations {
+		if r.Kind == "imports" {
+			imports = append(imports, r.TargetQualifiedName)
+		}
+	}
+	assert.Equal(t, []string{"users.show", "users.empty"}, imports)
+	for _, r := range syms[`method App\Http\Controllers.UserController.other`].Relations {
+		assert.NotEqual(t, "imports", string(r.Kind), "a dynamic or namespaced view name is not a template of the workspace")
+	}
+}

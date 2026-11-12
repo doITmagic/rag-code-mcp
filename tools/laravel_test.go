@@ -43,3 +43,26 @@ Route::group(['prefix' => 'admin', 'namespace' => 'Backend'], function () {
 	assert.Equal(t, 3, files[0].Usages[0].Line)
 	assert.Empty(t, usagesOf(t, v, `App\Http\Controllers\Main\UsersController::index`))
 }
+
+// The controller method returning view('users.show') is a usage of the
+// template resources/views/users/show.blade.php.
+func TestUsagesOfBladeTemplateFromController(t *testing.T) {
+	v := newEnv(t, false, nil)
+	v.addFiles(t, map[string]string{
+		"resources/views/users/show.blade.php": "<h1>{{ $user->name }}</h1>\n",
+		"app/Http/Controllers/UserController.php": `<?php
+namespace App\Http\Controllers;
+class UserController {
+    public function show($id) {
+        return view('users.show', ['id' => $id]);
+    }
+}
+`,
+	})
+	files := usagesOf(t, v, "users.show")
+	require.Len(t, files, 1)
+	require.Len(t, files[0].Usages, 1)
+	assert.Equal(t, `App\Http\Controllers.UserController.show`, files[0].Usages[0].Caller)
+	assert.Equal(t, "imports", files[0].Usages[0].Kind)
+	assert.False(t, files[0].Usages[0].ByName)
+}

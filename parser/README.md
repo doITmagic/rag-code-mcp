@@ -170,7 +170,7 @@ type Relation struct {
 | `RelImplements` | `implements` | `implements` clauses (PHP, TS) |
 | `RelExtends` | `extends` | Base classes, Go embedded types and embedded interfaces |
 | `RelUsesType` | `uses_type` | `new X`, composite literals, PHP trait `use`, JSX components, scene scripts |
-| `RelImports` | `imports` | Blade `@extends`/`@include`, HTML script/stylesheet links, Markdown links |
+| `RelImports` | `imports` | Blade `@extends`/`@include`, PHP `view('x.y')` and Laravel route handlers naming a view, HTML script/stylesheet links, Markdown links |
 
 Analyzers resolve `TargetQualifiedName` only from evidence in the file (its
 imports, its own declarations, `self`/`this`). They never guess the type of a

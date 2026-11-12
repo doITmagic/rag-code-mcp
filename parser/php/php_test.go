@@ -196,22 +196,23 @@ func TestController(t *testing.T) {
 
 	show := syms["method "+ns+".UserController.show"]
 	assert.Equal(t, map[string]string{
-		"call find":        `App\Models.User.find`,
-		"uses_type Mailer": `App\Services.Mailer`,
-		"uses_type Req":    `Illuminate\Http.Request`,
-		"uses_type View":   `Illuminate\View.View`,
-		"uses_type Log":    `App\Services.Logger`,
-		"call validate":    ns + ".UserController.validate",
-		"call helper":      ns + ".UserController.helper",
-		"call other":       ns + ".UserController.other",
-		"call show":        "",
-		"call input":       "",
-		"call format_name": `App\Helpers.format_name`,
-		"call strlen":      "", // global fallback: name lookup
-		"call save":        "",
-		"call helper2":     "",
-		"call bar":         "",
-		"call view":        "",
+		"imports users.show": "users.show",
+		"call find":          `App\Models.User.find`,
+		"uses_type Mailer":   `App\Services.Mailer`,
+		"uses_type Req":      `Illuminate\Http.Request`,
+		"uses_type View":     `Illuminate\View.View`,
+		"uses_type Log":      `App\Services.Logger`,
+		"call validate":      ns + ".UserController.validate",
+		"call helper":        ns + ".UserController.helper",
+		"call other":         ns + ".UserController.other",
+		"call show":          "",
+		"call input":         "",
+		"call format_name":   `App\Helpers.format_name`,
+		"call strlen":        "", // global fallback: name lookup
+		"call save":          "",
+		"call helper2":       "",
+		"call bar":           "",
+		"call view":          "",
 	}, targets(show), "innerCall from the anonymous class must not leak into show")
 	for _, r := range show.Relations {
 		if r.TargetName == "find" {

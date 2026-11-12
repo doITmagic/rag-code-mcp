@@ -1171,21 +1171,29 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 	}
 	// fit drops the candidates a relation cannot point at: only imports reach
 	// templates, scene nodes, doc chunks, routes and hooks, and a call matched
-	// by name alone, or with a function or method among its candidates (a
-	// PHP property and method of one name), binds only to something callable
+	// by name alone, or naming a variable that has a function or method of
+	// its qualified name in its file (a PHP property and its method), binds
+	// only to something callable
 	// (an exact match alone may name a variable holding a function).
 	fit := func(rk parser.RelationKind, nameOnly bool, ids []string) []string {
 		if rk == parser.RelImports {
 			return ids
 		}
-		nameOnly = nameOnly || rk == parser.RelCall && slices.ContainsFunc(ids, func(id string) bool { return idx.place[id].fn })
+		// the property and method of one class share file and qualified name; a
+		// var holding a function in another file (a build-tagged variant) stays
+		callable := map[[2]string]bool{}
+		for _, id := range ids {
+			if p := idx.place[id]; p.fn {
+				callable[[2]string{p.file, p.qn}] = true
+			}
+		}
 		out := ids[:0:0]
 		for _, id := range ids {
 			switch kindOf[id] {
 			case parser.KindTemplate, parser.KindScene, parser.KindChunk, parser.KindRoute, parser.KindHook:
 				continue
 			case parser.KindVariable, parser.KindConstant:
-				if nameOnly && rk == parser.RelCall {
+				if p := idx.place[id]; rk == parser.RelCall && (nameOnly || callable[[2]string{p.file, p.qn}]) {
 					continue
 				}
 			}

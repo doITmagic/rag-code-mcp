@@ -97,3 +97,18 @@ func TestResolutionDegenerateQualifiedName(t *testing.T) {
 	assert.Equal(t, parser.ResolutionAmbiguous, rel.Resolution)
 	assert.Empty(t, rel.TargetID)
 }
+
+// A variable holding a function in one file and a function of that name in
+// another (Go build-tagged variants: var umask = syscall.Umask, func umask)
+// are both candidates of a qualified call: ambiguous, not the function alone.
+func TestResolutionVarAndFuncVariantsStayAmbiguous(t *testing.T) {
+	e := newEnv(t)
+	a := e.write(t, "a.go", "func Run -> um.umask\n")
+	e.write(t, "x/um.go", "var umask\n")
+	e.write(t, "y/um.go", "func umask\n")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	rel := e.symbols(t, a)["Run"].Relations[0]
+	assert.Equal(t, parser.ResolutionAmbiguous, rel.Resolution)
+	assert.Empty(t, rel.TargetID)
+}

@@ -483,7 +483,9 @@ each relation:
   only, so a full and a files run agree. The same qualified name in two files
   (Go build-tagged variants) stays ambiguous. A function or method and a
   symbol of another kind of one name (a PHP property `$items` and its method
-  `items()`) are not twins.
+  `items()`) are not twins: a call takes the method. A variable in another
+  file than the function of its name (`var umask = syscall.Umask` beside a
+  build-tagged `func umask`) stays a candidate, so that call is ambiguous.
 - With only a `TargetName`: matched by `(language, name)`.
 - Code never resolves into another language, by name or qualified name; only
   relations from `docs` and `html` (links, scripts, `onclick` handlers) cross

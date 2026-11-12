@@ -249,8 +249,11 @@ func (fc *file) route(call, fn *gotreesitter.Node, args []*gotreesitter.Node, gr
 			continue
 		}
 		verb := method
-		if v, rest, cut := strings.Cut(path, " "); cut && fw.pattern {
-			verb, path = v, strings.TrimLeft(rest, " ")
+		if fw.pattern {
+			var v string
+			if v, path = splitMethod(path); v != "" {
+				verb = v
+			}
 		}
 		var handler *gotreesitter.Node
 		if !noHandler[method] {
@@ -379,14 +382,23 @@ func (fc *file) pathLiteral(n *gotreesitter.Node, pattern bool) (string, bool) {
 		return "", false
 	}
 	p := s
-	if v, rest, cut := strings.Cut(s, " "); pattern && cut && v != "" && strings.ToUpper(v) == v {
-		p = strings.TrimLeft(rest, " ")
-	}
-	if host, _, ok := strings.Cut(p, "/"); pattern && ok && strings.Contains(host, ".") {
-		p = "/" // a host pattern: example.com/x
+	if pattern {
+		_, p = splitMethod(s)
+		if i := strings.IndexByte(p, '/'); i > 0 {
+			p = p[i:] // a host pattern: example.com/x, localhost/x
+		}
 	}
 	if s != "" && (p == "" || p[0] != '/') {
 		return "", false
 	}
 	return s, true
+}
+
+// splitMethod splits a net/http pattern as ServeMux does: the method is the
+// text before the first space or tab, case kept ("get" is a method of its own).
+func splitMethod(s string) (method, rest string) {
+	if i := strings.IndexAny(s, " \t"); i >= 0 {
+		return s[:i], strings.TrimLeft(s[i+1:], " \t")
+	}
+	return "", s
 }

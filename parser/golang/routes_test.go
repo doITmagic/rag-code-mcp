@@ -1,6 +1,8 @@
 package golang
 
 import (
+	"fmt"
+	"net/http"
 	"path/filepath"
 	"testing"
 
@@ -365,4 +367,23 @@ func Register(mux *http.ServeMux, a First, b Second) {
 		"net/http HandleFunc routes.Register./first -> routes.First.Handle",
 		"net/http HandleFunc routes.Register./second -> routes.Second.Handle",
 	}, routeList(t, "routes/routes.go", src))
+}
+
+func TestNetHTTPPatternsServeMuxAccepts(t *testing.T) {
+	for pattern, want := range map[string]string{
+		"localhost/status": "net/http HandleFunc routes.Register.localhost/status -> routes.handler",
+		"get /status":      "net/http get routes.Register./status -> routes.handler", // a method of its own, case kept
+		"GET\t/status":     "net/http GET routes.Register./status -> routes.handler",
+	} {
+		t.Run(pattern, func(t *testing.T) {
+			// Registration validates the pattern without opening any socket.
+			http.NewServeMux().HandleFunc(pattern, func(http.ResponseWriter, *http.Request) {})
+			src := fmt.Sprintf(`package routes
+import "net/http"
+func handler(http.ResponseWriter, *http.Request) {}
+func Register(mux *http.ServeMux) { mux.HandleFunc(%q, handler) }
+`, pattern)
+			assert.Equal(t, []string{want}, routeList(t, "routes/routes.go", src))
+		})
+	}
 }

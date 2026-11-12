@@ -981,3 +981,18 @@ func TestSearchAfterAnotherServerChangedModel(t *testing.T) {
 		t.Fatalf("search accepted incompatible model-b index: hits=%d err=%v; want ErrNotIndexed", len(hits), err)
 	}
 }
+
+// .ragcode as a symlink, even to the workspace itself, is not written through.
+func TestIDERulesRefuseSymlinkedDir(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, ".gitignore")
+	const original = "important-local-data/\n*.private\n"
+	require.NoError(t, os.WriteFile(path, []byte(original), 0o644))
+	require.NoError(t, os.Symlink(".", filepath.Join(root, ".ragcode")))
+	_ = WriteIDERules(root)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	if string(data) != original {
+		t.Fatalf("project .gitignore overwritten through .ragcode symlink: got %q, want %q", data, original)
+	}
+}

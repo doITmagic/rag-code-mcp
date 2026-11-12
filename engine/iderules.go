@@ -52,8 +52,10 @@ func WriteIDERules(root string) error {
 	dir := filepath.Join(root, ".ragcode")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		errs = append(errs, err)
-	} else if err := within(real, dir); err != nil {
-		errs = append(errs, err)
+	} else if info, err := os.Lstat(dir); err != nil || info.Mode()&os.ModeSymlink != 0 {
+		// Even a link that stays inside the workspace: to "." it would put the
+		// "*" below over the project's own .gitignore.
+		errs = append(errs, fmt.Errorf("%s is a symlink, not writing there", dir))
 	} else if err := index.WriteAtomic(filepath.Join(dir, "RAGCODE.md"), []byte(ideRules)); err != nil {
 		errs = append(errs, err)
 	} else if err := index.WriteAtomic(filepath.Join(dir, ".gitignore"), []byte("*\n")); err != nil {

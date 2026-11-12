@@ -201,6 +201,7 @@ keyed by root + path and invalidated by mtime and size.
 | File | Covers |
 |------|--------|
 | `python_test.go` | Symbols (kinds, owners, signatures, docstrings, decorators, overloads), call targets for every import form, base classes, module names, relative imports from `__init__.py`, malformed input, registration, concurrency, package re-exports (also under a `src/` root, from `tests/` outside it, and with the cache; a symlinked directory out of the root not followed, one inside it followed), function-local imports and class-body calls, imports under `if TYPE_CHECKING:` and try/except, calls in module-level assignments, the line of a chained call split over lines. |
+| `broken_class_test.go` | A class cut off mid-edit: none of its methods comes out as a module-level function. |
 | `zz_verify_test.go` | Verification tests: a fresh fixture exercising every import form, symbols, `from` not importing the module itself, `.pyi` files and the root module, robustness. |
 
 ## Testing

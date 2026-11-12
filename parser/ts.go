@@ -137,9 +137,19 @@ func NamedChildren(n *gotreesitter.Node) []*gotreesitter.Node {
 		}
 	}
 	// Error recovery may wrap a whole broken file in one ERROR node: the
-	// declarations it completed are inside, read as if they were top-level.
+	// declarations it completed are inside. Only those starting at column 0
+	// are surely top-level; an indented one may be a method of a class the
+	// error swallowed, which would come out with a wrong owner and kind.
+	// shortcut: a top-level declaration after another on the same line
+	// (minified code) is lost in such a file; fine while it is mid-edit.
 	if len(out) == 1 && out[0].IsError() && n.Parent() == nil {
-		return NamedChildren(out[0])
+		errNode := out[0]
+		out = out[:0]
+		for _, ch := range NamedChildren(errNode) {
+			if ch.StartPoint().Column == 0 && !ch.IsError() {
+				out = append(out, ch)
+			}
+		}
 	}
 	return out
 }

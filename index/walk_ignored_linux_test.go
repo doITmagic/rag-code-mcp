@@ -75,3 +75,13 @@ func TestWalkDoesNotOpenIgnoredFiles(t *testing.T) {
 	}
 	assert.Zero(t, opened, "Walk opened %d of the %d git-ignored files", opened, 2*perDir)
 }
+
+// A file whose name is not valid UTF-8 is skipped: the store would alter its path.
+func TestWalkSkipsNonUTF8Path(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "ok.go"), []byte("package a\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "bad\xff.go"), []byte("package a\n"), 0o644))
+	files, err := Walk(root, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{filepath.Join(root, "ok.go")}, files)
+}

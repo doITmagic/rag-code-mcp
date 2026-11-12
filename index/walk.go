@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/doITmagic/rag-code-mcp/v2/parser"
 )
@@ -196,6 +197,9 @@ func Skip(path string, info fs.FileInfo, head []byte) string {
 	}
 	if info.Size() > maxFileSize {
 		return "over 256 KiB"
+	}
+	if !utf8.ValidString(path) {
+		return "path is not valid UTF-8" // the store keeps paths as JSON text, which would alter it
 	}
 	base := strings.ToLower(filepath.Base(path))
 	switch {

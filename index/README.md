@@ -504,6 +504,7 @@ Files must have an analyzer (`parser.ForFile`) and pass `Skip`:
 |--------|------|
 | `not a regular file` | Symlinks, FIFOs, devices. FIFOs and devices are never opened. |
 | `over 256 KiB` | Bundles and generated code; also tree-sitter memory. |
+| `path is not valid UTF-8` | A name with bytes that are not UTF-8 (Unix allows them): the store keeps paths as JSON text and could not give the path back. |
 | `minified` | `*.min.js`, `*.min.css`, `*.map`. |
 | `lockfile` | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `composer.lock`, `go.sum`, `cargo.lock`, `poetry.lock`. |
 | `secret` | `Secret(path)`: `.env`, `.env.*`, `id_rsa*`, `.npmrc`, `.pypirc`, `.netrc`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, and `credentials`/`secrets` with no extension or a data extension (`.json`, `.yaml`, `.yml`, `.toml`, `.ini`, `.xml`, `.properties`, `.conf`, `.cfg`, `.txt`). `credentials.go` is code and is kept. A secret inside an ordinarily named file is not caught. |

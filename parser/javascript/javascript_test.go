@@ -1005,3 +1005,25 @@ func TestBrokenScriptWithoutSymbolsIsAnError(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, syms)
 }
+
+// A barrel with more export * lines than the old cap of 64 (umami's hooks
+// index has 125) resolves a name declared by its last source.
+func TestBarrelWithManyStarExports(t *testing.T) {
+	ws := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(ws, "src", "hooks"), 0o755))
+	var index strings.Builder
+	for i := 1; i <= 130; i++ {
+		fmt.Fprintf(&index, "export * from './use%03d'\n", i)
+		require.NoError(t, os.WriteFile(filepath.Join(ws, "src", "hooks", fmt.Sprintf("use%03d.ts", i)),
+			fmt.Appendf(nil, "export function use%03d() {}\n", i), 0o644))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(ws, "src", "hooks", "index.ts"), []byte(index.String()), 0o644))
+	src := "import { use001, use130 } from './hooks'\nexport function app() { use001(); use130() }\n"
+	syms, err := analyzer{}.Analyze(parser.File{Path: filepath.Join(ws, "src", "app.ts"), Root: ws, Source: []byte(src)})
+	require.NoError(t, err)
+	var got []string
+	for _, r := range find(t, syms, "src/app.app").Relations {
+		got = append(got, r.TargetQualifiedName)
+	}
+	assert.Equal(t, []string{"src/hooks/use001.use001", "src/hooks/use130.use130"}, got)
+}

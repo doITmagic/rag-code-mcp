@@ -38,10 +38,11 @@ func (c *fileCtx) follow(m, name string) string {
 }
 
 // declarer is the qualified name of name in the module that declares it, ""
-// when no chain from m reaches one. seen stops cycles and caps the work.
+// when no chain from m reaches one. seen stops cycles and caps the work at
+// 4096 modules: one real barrel (umami's hooks index) has 125 export * lines.
 func (c *fileCtx) declarer(m, name string, seen map[string]bool) string {
 	key := m + "\x00" + name
-	if seen[key] || len(seen) > 64 {
+	if seen[key] || len(seen) > 4096 {
 		return ""
 	}
 	seen[key] = true

@@ -120,3 +120,36 @@ class UserController {
 	assert.Equal(t, "imports", files[0].Usages[0].Kind)
 	assert.False(t, files[0].Usages[0].ByName)
 }
+
+// A Laravel route registered inside a method takes the method's name as
+// owner (App\Providers.map./): the method map is still the one symbol named
+// map, and the route stays findable by its path.
+func TestLaravelRoutePathIsNotANameSegment(t *testing.T) {
+	v := newEnv(t, false, nil)
+	v.addFiles(t, map[string]string{
+		"app/Providers/RouteServiceProvider.php": `<?php
+namespace App\Providers;
+class RouteServiceProvider {
+    public function boot() { $this->map(); }
+    public function map() {
+        Route::get('/', 'HomeController@index');
+        Route::get('/about', 'HomeController@about');
+    }
+}
+`,
+	})
+	files := usagesOf(t, v, "map")
+	require.Len(t, files, 1)
+	require.Len(t, files[0].Usages, 1)
+	assert.Equal(t, `App\Providers.RouteServiceProvider.boot`, files[0].Usages[0].Caller)
+
+	var found struct {
+		Results []SearchHit `json:"results"`
+	}
+	r, _ := v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "/about", "kinds": []string{"route"}})
+	require.Equal(t, "ok", r.Status, r.Message)
+	data(t, r, &found)
+	require.Len(t, found.Results, 1, r.Message)
+	assert.Equal(t, `App\Providers.map./about`, found.Results[0].QualifiedName)
+	assert.Equal(t, "exact", found.Results[0].Match)
+}

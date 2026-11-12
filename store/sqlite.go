@@ -190,6 +190,9 @@ func qnSuffixes(norm string) []string {
 		if i == 0 || norm[i-1] == '.' {
 			out = append(out, norm[i:])
 		}
+		if norm[i] == '/' {
+			break // a route path (parser.Normalize) is one segment
+		}
 	}
 	return out
 }

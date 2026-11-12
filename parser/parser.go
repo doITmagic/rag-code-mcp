@@ -124,7 +124,17 @@ func Qualify(module, owner, name string) string {
 
 // Normalize maps every language's separators to "." so that queries written
 // as App\Models\User::find, pkg/foo.Bar or Class.method compare equal.
+// A segment starting with "/" is a route path (pkg.Load./users, a query
+// /users): it is kept as written to the end, so "/" never normalizes to
+// nothing and /users never to another symbol's name users. After Normalize,
+// a "/" can only be the start of such a path.
 func Normalize(s string) string {
+	if i := routePath(s); i >= 0 {
+		if head := Normalize(s[:i]); head != "" {
+			return head + "." + s[i:]
+		}
+		return s[i:]
+	}
 	s = strings.ReplaceAll(s, "::", ".")
 	s = strings.ReplaceAll(s, "\\", ".")
 	s = strings.ReplaceAll(s, "/", ".")
@@ -134,6 +144,18 @@ func Normalize(s string) string {
 	}
 	s = strings.Trim(s, ".")
 	return s
+}
+
+// routePath is the index of the "/" starting a route path segment in s: at
+// the start or right after a "." that ends a segment ("./x" and "../x" are
+// relative paths, not routes), or -1.
+func routePath(s string) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == '/' && (i == 0 || i >= 2 && s[i-1] == '.' && s[i-2] != '.' && s[i-2] != '/') {
+			return i
+		}
+	}
+	return -1
 }
 
 // MatchQualified reports whether query names qualifiedName: equal after
@@ -148,7 +170,9 @@ func MatchQualified(qualifiedName, query string) bool {
 	if n == q {
 		return true
 	}
-	return strings.HasSuffix(n, "."+q)
+	// the cut must fall before a route path: /static/app.js does not end with the name js
+	cut := len(n) - len(q) - 1
+	return strings.HasSuffix(n, "."+q) && (strings.IndexByte(n, '/') < 0 || cut < strings.IndexByte(n, '/'))
 }
 
 // SymbolID is the stable identity of a symbol: hash of file, qualified name

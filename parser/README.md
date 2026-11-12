@@ -219,7 +219,14 @@ trims leading/trailing dots:
 ```go
 parser.Normalize(`App\Models\User::find`) // "App.Models.User.find"
 parser.Normalize("pkg/foo.Bar")           // "pkg.foo.Bar"
+parser.Normalize("pkg/app.Load./users")   // "pkg.app.Load./users"
 ```
+
+A segment that starts with `/` (at the start, or right after a `.` that ends
+a segment; `./x` and `../x` are relative paths) is a route path: it is kept as
+written to the end, so the route `/` of `func Load` (`pkg.Load./`) never
+normalizes to the function `pkg.Load`, nor `/users` to a name `users`. After
+`Normalize`, a `/` can only start such a path.
 
 `MatchQualified(qualifiedName, query)` is true when both normalize to the same
 string, or the query is a suffix of the name on a segment boundary:
@@ -229,6 +236,8 @@ string, or the query is a suffix of the name on a segment boundary:
 | `App\Models.User.find` | `User::find` | yes |
 | `App\Models.User.find` | `find` | yes |
 | `App\Models.User.find` | `ser.find` | no |
+| `pkg.Load./users` | `/users` | yes |
+| `pkg.Load./users` | `users` | no (the cut falls inside the route path) |
 
 ### Symbol IDs
 
@@ -268,7 +277,7 @@ error recovery can be quadratic on garbage input.
 | File | Contents |
 |------|----------|
 | `parser.go` | `Kind`, `RelationKind`, resolution constants, `Symbol`, `Relation`, `File`, `Analyzer`; `Qualify`, `Normalize` (also turns a Go method expression `(*T).M` into `T.M`), `MatchQualified`, `SymbolID`, `Finalize`; the registry (`Register`, `ForFile`, `ForLanguage`, `Languages`, `Analyze`); `RelModule`; `InRoot`, the check every analyzer makes before reading a project file other than the one it parses (regular file, real path inside the root). |
-| `normalize_test.go` | `TestNormalizeMethodExpression`: `Normalize` on Go method expressions and PHP separators. |
+| `normalize_test.go` | `TestNormalizeMethodExpression`: `Normalize` on Go method expressions and PHP separators; `TestNormalizeKeepsRoutePath`: a route path stays one segment in `Normalize` and `MatchQualified`, relative paths do not. |
 | `nesting_test.go` | The nesting guard leaves `html` alone: a page with 1001 `(` in a script string still parses. |
 | `ts.go` | Pooled tree-sitter parsers with a parse timeout, `ParseTree`, `Walk`, `NamedChildren`, `Field`, `Text`, `Lines`, `ReleaseParsers`. |
 

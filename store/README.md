@@ -59,7 +59,7 @@ Tests:
 |---|---|
 | [`store_test.go`](store_test.go) | `TestStoreContract` runs the same behaviour checks on `Memory` and `SQLite`; `qnSuffixes` and `dirParts` |
 | [`memory_test.go`](memory_test.go) | `Memory` filters, search order, collection lifecycle, delete by file, the `MaxScroll` cap and cancelled contexts |
-| [`zz_verify_test.go`](zz_verify_test.go) | verification tests that pin parity between both stores: `PathPrefix` as a directory (not a string prefix), empty `QualifiedSuffix`, delete of a missing collection, search limit edges, scroll paging past 256, awkward payload strings, large result pages, mixed-separator qualified names, an empty path never being a wildcard, overwrite and relative paths; plus `Memory` under a cancelled context and the race detector |
+| [`zz_verify_test.go`](zz_verify_test.go) | verification tests that pin parity between both stores: `PathPrefix` as a directory (not a string prefix), empty `QualifiedSuffix`, delete of a missing collection, search limit edges, scroll paging past 256, awkward payload strings, large result pages, mixed-separator qualified names and route paths, an empty path never being a wildcard, overwrite and relative paths; plus `Memory` under a cancelled context and the race detector |
 
 ## Key types and functions
 
@@ -180,6 +180,8 @@ keyword matches:
 
 - `qn_suffixes`: `parser.Normalize` turns `::`, `\`, `/` and `->` into `.`, then
   every suffix is listed, longest first. `a.b.c` gives `a.b.c`, `b.c`, `c`.
+  A route path (`pkg.Load./static/app.js`) is one segment: no suffix starts
+  inside it.
   A `QualifiedSuffix` filter normalizes its value the same way and matches one
   of these. A value that normalizes to `""` matches nothing, because
   `qn_suffixes` never holds `""`.

@@ -213,8 +213,8 @@ func TestVerifyLargeContentPages(t *testing.T) {
 // QualifiedSuffix parity: both stores must agree with parser.MatchQualified
 // on mixed-separator names and queries.
 func TestVerifyQualifiedSuffixParity(t *testing.T) {
-	names := []string{`App\Models\User::find`, "github.com/x/pkg.Bar", "a.b.c", "User.find", "find", "a..b", "x->y.z"}
-	queries := []string{"User.find", "find", "User::find", `Models\User::find`, "pkg.Bar", "Bar", "x/pkg.Bar", "c", "b.c", ".c", "b", "a..b", ".b", "y.z", "z", "::", "ser.find", "User", "Models"}
+	names := []string{`App\Models\User::find`, "github.com/x/pkg.Bar", "a.b.c", "User.find", "find", "a..b", "x->y.z", "x/pkg.Load./", "x/pkg.Load./users", "x/pkg.main./app.js"}
+	queries := []string{"User.find", "find", "User::find", `Models\User::find`, "pkg.Bar", "Bar", "x/pkg.Bar", "c", "b.c", ".c", "b", "a..b", ".b", "y.z", "z", "::", "ser.find", "User", "Models", "Load", "pkg.Load", "users", "/users", "Load./users", "js", "app.js", "/app.js"}
 	eachStore(t, func(t *testing.T, s Store) {
 		ctx := context.Background()
 		col := newCol(t, s, 1)

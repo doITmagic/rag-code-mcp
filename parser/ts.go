@@ -24,14 +24,14 @@ const parseTimeoutMicros = 3 * 1000 * 1000
 // budget stops keeps the tree built so far.
 const parseMemoryBudget = 128 << 20
 
-// maxNesting is how deep the brackets of a file may nest. Error recovery on
-// a cascade of unclosed ones, and the parse of 5000 closed ones, takes
-// hundreds of MB (570 MB for a 12 KB file) and returns a tree without the
-// file's declarations. Real code stays far below even with the brackets
-// inside strings counted: the deepest of 33,000 files of real projects is 100.
+// maxNesting is how deep the brackets of a file whose parse has errors may
+// nest. Error recovery on a cascade of unclosed ones returns a tree without
+// the file's declarations, so such a file is refused. Brackets inside strings
+// and comments count, which is why a file that parses clean is never refused:
+// the deepest of 33,000 files of real projects is 100.
 const maxNesting = 1000
 
-// nestingGuarded are the grammars the blow-up was measured on. Brackets mean
+// nestingGuarded are the grammars the empty tree was measured on. Brackets mean
 // nothing to the others (html), where a real 563 KB page nests 742 deep.
 var nestingGuarded = map[string]bool{
 	"go": true, "php": true, "python": true, "javascript": true,
@@ -92,9 +92,6 @@ func ParseTree(grammar string, src []byte) (*gotreesitter.Tree, *gotreesitter.La
 	if err != nil {
 		return nil, nil, err
 	}
-	if n := nesting(src); nestingGuarded[grammar] && n > maxNesting {
-		return nil, nil, fmt.Errorf("parser: %s: not parsed: brackets nested %d deep (limit %d)", grammar, n, maxNesting)
-	}
 	t, err := p.Parse(src)
 	if err != nil {
 		return nil, nil, fmt.Errorf("parser: %s: %w", grammar, err)
@@ -104,6 +101,13 @@ func ParseTree(grammar string, src []byte) (*gotreesitter.Tree, *gotreesitter.La
 	// indexed as empty.
 	if r := t.ParseStopReason(); r == gotreesitter.ParseStopTimeout {
 		return nil, nil, fmt.Errorf("parser: %s: parse stopped: %s", grammar, r)
+	}
+	// The parse comes first: parseMemoryBudget and the timeout bound it, and
+	// only it tells brackets in a string from a cascade of unclosed ones.
+	if nestingGuarded[grammar] && t.RootNode().HasError() {
+		if n := nesting(src); n > maxNesting {
+			return nil, nil, fmt.Errorf("parser: %s: not parsed: syntax errors and brackets nested %d deep (limit %d)", grammar, n, maxNesting)
+		}
 	}
 	return t, lang, nil
 }

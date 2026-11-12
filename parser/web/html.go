@@ -71,7 +71,7 @@ var (
 	reGoAction = regexp.MustCompile(`\{\{.*?\}\}`)
 	// reString is a JavaScript string literal: the words in it are no calls.
 	reString = regexp.MustCompile(`'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|` + "`(?:[^`\\\\]|\\\\.)*`")
-	keywords   = map[string]bool{"if": true, "for": true, "while": true, "switch": true, "return": true, "function": true,
+	keywords = map[string]bool{"if": true, "for": true, "while": true, "switch": true, "return": true, "function": true,
 		"typeof": true, "new": true, "catch": true, "void": true, "delete": true, "await": true, "in": true, "of": true}
 )
 

@@ -156,7 +156,8 @@ is known and the module is a regular `.ts .tsx .js .mjs .cjs .jsx` file under
 it within 4 MiB (the file itself not a symlink, and its real path inside the
 root: a `..` specifier or a symlinked directory leading out of the root makes
 it absent); its pass 1 is cached process-wide by root and path, checked
-against mtime and size, and does not itself follow imports. When nothing
+against mtime and size (not cached when read within 2 s of its mtime,
+`parser.Racy`), and does not itself follow imports. When nothing
 declares the name, the import stays `<module>.<name>`. A named re-export
 whose source cannot be read still maps to that source (`x.a`). A package specifier (`react`, `@scope/pkg`, or a path that resolved to
 nothing) is never read as a workspace file, as an import or as an

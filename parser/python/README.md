@@ -157,7 +157,9 @@ find a `src/` layout package (flask's `import flask`). Only regular files up to 
 root (reached through a symlinked directory), is treated as absent, so its
 re-exports are not followed. Re-exports are
 followed up to 8 levels deep. The parsed import table is cached process-wide,
-keyed by root + path and invalidated by mtime and size.
+keyed by root + path and invalidated by mtime and size; a file read within
+2 s of its mtime is not cached (`parser.Racy`), so a same-size rewrite in the
+same timestamp tick is seen.
 
 ## Known limitations visible in the code
 

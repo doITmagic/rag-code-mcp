@@ -215,7 +215,9 @@ evidence: a method named `GET` in a file that imports no router is no route.
   declaration (marked as a `shortcut:` in `locals`); a call on a shadowed
   receiver keeps an empty target.
 - The `go.mod` lookup is cached per root + directory and re-read when that
-  `go.mod` changes (mtime) or disappears; a `go.mod` created later in a
+  `go.mod` changes (mtime) or disappears; a `go.mod` read within 2 s of its
+  mtime is not cached (`parser.Racy`), so a rewrite in the same timestamp
+  tick is seen; a `go.mod` created later in a
   directory that had none needs a restart to show up. A `go.mod` symlinked
   out of the workspace root is ignored, so the module falls back to the
   directory path.

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/doITmagic/rag-code-mcp/v2/parser"
 	"github.com/stretchr/testify/assert"
@@ -92,4 +93,22 @@ func TestProjectFilesOutsideRootNotRead(t *testing.T) {
 		got := callTarget(t, ws, "packages/web/app.ts", "import { pub } from '@/real/auth';\n"+call, "packages/web/app.run")
 		assert.Equal(t, "real/auth.pub", got)
 	})
+}
+
+// A re-exporting module rewritten with the same size and mtime within two
+// seconds of its read (coarse timestamps, cp -p) is read again: a racy mtime
+// is not cached.
+func TestBarrelRacyRewriteSeen(t *testing.T) {
+	ws := t.TempDir()
+	barrel := filepath.Join(ws, "barrel.ts")
+	now := time.Now().Truncate(time.Second) // whole seconds: ecryptfs drops the rest of a Chtimes
+	write := func(src string) {
+		require.NoError(t, os.WriteFile(barrel, []byte(src), 0o644))
+		require.NoError(t, os.Chtimes(barrel, now, now))
+	}
+	call := "import { pub } from './barrel';\nexport function run() { pub(); }\n"
+	write("export { aaa as pub } from './impl';\n")
+	assert.Equal(t, "impl.aaa", callTarget(t, ws, "app.ts", call, "app.run"))
+	write("export { bbb as pub } from './impl';\n")
+	assert.Equal(t, "impl.bbb", callTarget(t, ws, "app.ts", call, "app.run"))
 }

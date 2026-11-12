@@ -255,6 +255,22 @@ func TestGoModRenameSeen(t *testing.T) {
 	assert.Contains(t, analyze(t, root, path, "package pkg\n\nfunc F() {}\n"), "new.example/app/pkg.F")
 }
 
+// A go.mod rewritten with the same mtime within two seconds of its read
+// (coarse timestamps, cp -p) is read again: a racy mtime is not cached.
+func TestGoModRacyRewriteSeen(t *testing.T) {
+	root := t.TempDir()
+	gomod := filepath.Join(root, "go.mod")
+	now := time.Now().Truncate(time.Second) // whole seconds: ecryptfs drops the rest of a Chtimes
+	require.NoError(t, os.WriteFile(gomod, []byte("module aaa.example/app\n"), 0o644))
+	require.NoError(t, os.Chtimes(gomod, now, now))
+	path := filepath.Join(root, "pkg", "f.go")
+	assert.Contains(t, analyze(t, root, path, "package pkg\n\nfunc F() {}\n"), "aaa.example/app/pkg.F")
+
+	require.NoError(t, os.WriteFile(gomod, []byte("module bbb.example/app\n"), 0o644))
+	require.NoError(t, os.Chtimes(gomod, now, now))
+	assert.Contains(t, analyze(t, root, path, "package pkg\n\nfunc F() {}\n"), "bbb.example/app/pkg.F")
+}
+
 func TestMalformed(t *testing.T) {
 	tests := []struct {
 		name string

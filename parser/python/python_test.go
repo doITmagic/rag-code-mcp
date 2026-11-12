@@ -398,15 +398,17 @@ def test_v():
 }
 
 // The parsed __init__.py table is shared process-wide by mtime+size: a
-// rewrite with the same size and mtime is served from the cache (no
-// re-parse), a size change is re-parsed.
+// rewrite with the same size and an old mtime is served from the cache (no
+// re-parse), a size change is re-parsed, and a file read within two seconds
+// of its mtime is never cached (parser.Racy): a same-size rewrite in the same
+// mtime tick is seen.
 func TestPackageReexportCached(t *testing.T) {
 	root := t.TempDir()
 	init := filepath.Join(root, "app", "__init__.py")
 	require.NoError(t, os.MkdirAll(filepath.Dir(init), 0o755))
 	require.NoError(t, os.WriteFile(init, []byte("from .user import User\n"), 0o644))
 	// Whole seconds: ecryptfs drops the sub-second part of a Chtimes, so restore a value it keeps.
-	mt := time.Now().Truncate(time.Second)
+	mt := time.Now().Truncate(time.Second).Add(-time.Hour)
 	require.NoError(t, os.Chtimes(init, mt, mt))
 	find := func() string {
 		syms := analyze(t, filepath.Join(root, "a.py"), root, "from app import User\n\ndef v():\n    User.find()\n")
@@ -418,6 +420,13 @@ func TestPackageReexportCached(t *testing.T) {
 	assert.Equal(t, "app.user.User.find", find(), "same mtime+size: cached table reused")
 	require.NoError(t, os.WriteFile(init, []byte("from .person import User\n"), 0o644))
 	assert.Equal(t, "app.person.User.find", find(), "size changed: re-parsed")
+
+	now := time.Now().Truncate(time.Second)
+	require.NoError(t, os.Chtimes(init, now, now))
+	assert.Equal(t, "app.person.User.find", find())
+	require.NoError(t, os.WriteFile(init, []byte("from .persan import User\n"), 0o644))
+	require.NoError(t, os.Chtimes(init, now, now))
+	assert.Equal(t, "app.persan.User.find", find(), "racy mtime: re-parsed although mtime+size match")
 }
 
 func TestLocalsShadowImports(t *testing.T) {

@@ -634,7 +634,8 @@ func (c *fileCtx) reexports(pkg string) map[string]string {
 
 // initCache maps root+path of a package __init__.py to its import table and
 // the mtime+size it was parsed from, so every importing file in a run shares
-// one parse instead of re-reading app/__init__.py per file.
+// one parse instead of re-reading app/__init__.py per file. A file read
+// within the racy window of its mtime is not cached (parser.Racy).
 var initCache sync.Map
 
 type initEntry struct {
@@ -652,6 +653,7 @@ func initTable(root, path string, info os.FileInfo) map[string]string {
 			return e.table
 		}
 	}
+	at := time.Now()
 	src, err := os.ReadFile(path)
 	if err != nil {
 		return nil
@@ -663,6 +665,8 @@ func initTable(root, path string, info os.FileInfo) map[string]string {
 	ic := newCtx(parser.File{Path: path, Root: root, Source: src}, lang)
 	ic.scan(tree.RootNode())
 	tree.Release()
-	initCache.Store(key, initEntry{info.ModTime(), info.Size(), ic.imports})
+	if !parser.Racy(info.ModTime(), at) {
+		initCache.Store(key, initEntry{info.ModTime(), info.Size(), ic.imports})
+	}
 	return ic.imports
 }

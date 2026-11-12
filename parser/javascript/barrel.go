@@ -71,7 +71,8 @@ func (c *fileCtx) declarer(m, name string, seen map[string]bool) string {
 }
 
 // barrelCache maps root+path of a module file to its barrel and the
-// mtime+size it was parsed from, shared by every importer in the process.
+// mtime+size it was parsed from, shared by every importer in the process. A
+// file read within the racy window of its mtime is not cached (parser.Racy).
 var barrelCache sync.Map
 
 type barrelEntry struct {
@@ -99,8 +100,11 @@ func (c *fileCtx) barrel(m string) *barrel {
 		if !parser.InRoot(c.root, p) { // `..` or a symlinked directory leading out of the workspace
 			continue
 		}
+		at := time.Now()
 		b := readBarrel(c.root, m, p, ext)
-		barrelCache.Store(key, barrelEntry{info.ModTime(), info.Size(), b})
+		if !parser.Racy(info.ModTime(), at) {
+			barrelCache.Store(key, barrelEntry{info.ModTime(), info.Size(), b})
+		}
 		return b
 	}
 	return nil

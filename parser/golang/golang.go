@@ -679,7 +679,8 @@ func firstLine(s string) string {
 // ---- module path ----
 
 // modCache maps root+dir to a modEntry, so go.mod is read once per directory
-// and only stat-ed afterwards. shortcut: a go.mod created later in a
+// and only stat-ed afterwards; a go.mod read within the racy window of its
+// mtime is not cached (parser.Racy). shortcut: a go.mod created later in a
 // directory that had none is not seen until a restart.
 var modCache sync.Map
 
@@ -704,7 +705,7 @@ func modulePath(root, dir string) string {
 			return e.mod
 		}
 	}
-	e := modEntry{}
+	e, at := modEntry{}, time.Now()
 	for d := dir; ; {
 		p := filepath.Join(d, "go.mod")
 		fi, err := os.Stat(p)
@@ -719,7 +720,9 @@ func modulePath(root, dir string) string {
 		}
 		d = parent
 	}
-	modCache.Store(key, e)
+	if e.gomod == "" || !parser.Racy(e.mtime, at) {
+		modCache.Store(key, e)
+	}
 	return e.mod
 }
 

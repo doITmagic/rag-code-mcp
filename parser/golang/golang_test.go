@@ -709,3 +709,35 @@ func TestModuleDirectiveWithTabOrComment(t *testing.T) {
 		})
 	}
 }
+
+// A go.mod that is a symlink to a file outside the workspace root is treated
+// as absent: its module line never reaches a symbol. A go.mod symlinked to a
+// file inside the root is still read.
+func TestGoModSymlinkOutsideRootIgnored(t *testing.T) {
+	for _, tc := range []struct {
+		name, target, want string
+	}{
+		{"outside", filepath.Join("..", "outside", "go.mod"), ""},
+		{"inside", filepath.Join("mods", "go.mod"), "example.com/inside"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := t.TempDir()
+			ws := filepath.Join(base, "ws")
+			require.NoError(t, os.MkdirAll(filepath.Join(ws, "mods"), 0o755))
+			require.NoError(t, os.MkdirAll(filepath.Join(base, "outside"), 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(base, "outside", "go.mod"), []byte("module secret.example/outside\n"), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(ws, "mods", "go.mod"), []byte("module example.com/inside\n"), 0o600))
+			if err := os.Symlink(filepath.Join(ws, tc.target), filepath.Join(ws, "go.mod")); err != nil {
+				t.Skipf("symlink not available: %v", err)
+			}
+			src := "package main\nfunc Run() {}\n"
+			goFile := filepath.Join(ws, "main.go")
+			require.NoError(t, os.WriteFile(goFile, []byte(src), 0o644))
+			syms, err := Analyzer{}.Analyze(parser.File{Path: goFile, Root: ws, Source: []byte(src), Language: "go"})
+			require.NoError(t, err)
+			require.Len(t, syms, 1)
+			assert.Equal(t, tc.want, syms[0].Module)
+			assert.Equal(t, parser.Qualify(tc.want, "", "Run"), syms[0].QualifiedName)
+		})
+	}
+}

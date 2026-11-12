@@ -53,8 +53,9 @@ graph TD
    `type_declaration`, `var_declaration` and `const_declaration`.
 3. **Module** is the Go import path: the `module` line of the nearest `go.mod`
    at or above the file's directory (never above the workspace root) plus the
-   relative directory. Without a `go.mod` it is the directory relative to the
-   root; a file directly in the root has module `""`. A `_test.go` file of an
+   relative directory. A `go.mod` that is not a regular file whose real path
+   (symlinks resolved) is inside the root counts as absent. Without a `go.mod`
+   it is the directory relative to the root; a file directly in the root has module `""`. A `_test.go` file of an
    external test package (`package flux_test`) gets that module plus `_test`,
    so its declarations never share qualified names with `package flux`.
 
@@ -154,7 +155,9 @@ Relations of a `var` or `const` spec are shared by every name in that spec.
   receiver keeps an empty target.
 - The `go.mod` lookup is cached per root + directory and re-read when that
   `go.mod` changes (mtime) or disappears; a `go.mod` created later in a
-  directory that had none needs a restart to show up.
+  directory that had none needs a restart to show up. A `go.mod` symlinked
+  out of the workspace root is ignored, so the module falls back to the
+  directory path.
 - Methods whose receiver type cannot be read produce no symbol.
 - Route registrations (Echo/Gin/Chi `r.GET("/path", h)`, `http.HandleFunc`)
   are not `route` symbols: `rag_search` with `kinds=route` finds no Go route.
@@ -177,7 +180,7 @@ Relations of a `var` or `const` spec are shared by every name in that spec.
 
 | File | Covers |
 |------|--------|
-| `golang_test.go` | A fixture with grouped declarations, generics, embedded types, aliased/dot/blank imports: symbol kinds, owners, lines, signatures, docs, IDs, metadata; every relation and its target; module path without `go.mod`, nested `go.mod` stopping at the root; malformed input; analyzing the real `parser.go` of this repo; registration; concurrency; generic calls; `Exported` for test files and unexported owners; calls through local function values; a parameter shadowing an import; a local shadowing the receiver; the line of a chained call split over lines; functions and methods named as values (arguments, assignments, literals, returns), with fields, vars, consts, type switch and select locals skipped; an external test package as its own module; a renamed module seen without a restart; same-package types declared in another file, type parameters (receiver ones too) and the receiver skipped; blank vars keeping their relations; goimports-style assumed import names. |
+| `golang_test.go` | A fixture with grouped declarations, generics, embedded types, aliased/dot/blank imports: symbol kinds, owners, lines, signatures, docs, IDs, metadata; every relation and its target; module path without `go.mod`, nested `go.mod` stopping at the root; malformed input; analyzing the real `parser.go` of this repo; registration; concurrency; generic calls; `Exported` for test files and unexported owners; calls through local function values; a parameter shadowing an import; a local shadowing the receiver; the line of a chained call split over lines; functions and methods named as values (arguments, assignments, literals, returns), with fields, vars, consts, type switch and select locals skipped; an external test package as its own module; a renamed module seen without a restart; same-package types declared in another file, type parameters (receiver ones too) and the receiver skipped; blank vars keeping their relations; goimports-style assumed import names; a `go.mod` symlinked out of the root ignored, one symlinked inside it read. |
 | `zz_verify_test.go` | Verification tests: resolution probes, an unclean (non-normalized) root path, robustness on garbage and edge input, a second round of edge cases, very large and deeply nested files. |
 
 ## Testing

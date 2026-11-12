@@ -684,7 +684,7 @@ func modulePath(root, dir string) string {
 	for d := dir; ; {
 		p := filepath.Join(d, "go.mod")
 		fi, err := os.Stat(p)
-		if m := readModuleLine(p); err == nil && m != "" {
+		if m := readModuleLine(root, p); err == nil && m != "" {
 			e = modEntry{mod: joinSlash(m, relSlash(d, dir)), gomod: p, mtime: fi.ModTime()}
 			break
 		}
@@ -699,8 +699,10 @@ func modulePath(root, dir string) string {
 	return e.mod
 }
 
-func readModuleLine(path string) string {
-	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() { // a FIFO would block the open
+// readModuleLine is the module path in the go.mod at path, "" when it has
+// none or is not a regular file inside root (a symlink out of the workspace).
+func readModuleLine(root, path string) string {
+	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() || !parser.InRoot(root, path) { // a FIFO would block the open
 		return ""
 	}
 	fh, err := os.Open(path)

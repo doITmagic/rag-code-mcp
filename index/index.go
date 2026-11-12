@@ -1193,6 +1193,11 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 							}
 						}
 					}
+					// An html inline handler (onclick="f()") calls the browser
+					// global window.f: a JavaScript function of that name.
+					if name, ok := strings.CutPrefix(tqn, "window."); len(ids) == 0 && ok && lang == "html" {
+						ids, nameOnly, resolution = named("javascript", name), true, parser.ResolutionUnique
+					}
 					// Otherwise fall back to the name. An unknown owner is
 					// external (vendor, stdlib).
 					if dot := strings.LastIndex(tqn, "."); len(ids) == 0 && dot > 0 && rel.TargetName != "" && !rel.Value && len(qualified(lang, tqn[:dot])) > 0 {

@@ -67,3 +67,29 @@ func TestResolveByModuleAndName(t *testing.T) {
 	assert.Equal(t, target, e.symbols(t, c)["G"].Relations[0].TargetID, "from the store")
 	assert.Empty(t, e.symbols(t, e.root+"/g.go")["H"].Relations[0].TargetID)
 }
+
+// onclick="toggle()" in a page names the browser global window.toggle: the
+// JavaScript function of that name, by name, from html only.
+func TestResolveHTMLHandlerToJavaScriptGlobal(t *testing.T) {
+	parser.Register(lineAnalyzer{"javascript", ".js"})
+	parser.Register(lineAnalyzer{"html", ".fkh"})
+	e := newEnv(t)
+	js := e.write(t, "filter.js", "func toggle\nvar shown")
+	e.write(t, "t.go", "func toggle")
+	h := e.write(t, "page.fkh", "func page -> window.toggle\nfunc other -> window.shown")
+	a := e.write(t, "a.js", "func F -> window.toggle")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	target := e.symbols(t, js)["toggle"].ID
+	require.NotEmpty(t, target)
+	r := e.symbols(t, h)["page"].Relations[0]
+	assert.Equal(t, target, r.TargetID, "full run")
+	assert.Equal(t, parser.ResolutionUnique, r.Resolution)
+	assert.Empty(t, e.symbols(t, h)["other"].Relations[0].TargetID, "a call by name never binds a variable")
+	assert.Empty(t, e.symbols(t, a)["F"].Relations[0].TargetID, "only html handlers")
+
+	h2 := e.write(t, "page2.fkh", "func page2 -> window.toggle")
+	_, err = e.run(t, nil)
+	require.NoError(t, err)
+	assert.Equal(t, target, e.symbols(t, h2)["page2"].Relations[0].TargetID, "from the store")
+}

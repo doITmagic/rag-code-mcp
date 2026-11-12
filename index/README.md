@@ -78,7 +78,7 @@ graph LR
 | `js_object_members_test.go` | With the real JavaScript analyzer: `Obj.f()` through a default or named import of an object literal with a shorthand or `key: ident` member (`export default { getToken }`, `export const api = { read }`) resolves exactly to the function the member names. |
 | `budget_test.go` | The parse byte budget is respected, and batches still resolve forward references. |
 | `go_value_use_test.go` | With the real Go analyzer, two files of one package: a method passed as `s.firmaJSON` (on a local `s := &server{}` and on the receiver) and a function passed as `handler` link exactly to their declarations in the other file, in a full run and from the store; a field read (also one named like a method of another type), a constant, a variable and `http.MethodGet` in the same positions leave no relation at all. |
-| `resolve_test.go` | A non-fresh run resolves more than 500 targets through the store; a JS `import { n }` of a default-exported declaration resolves by module and name, in a full run and from the store. |
+| `resolve_test.go` | A non-fresh run resolves more than 500 targets through the store; an html call to `window.f` resolves by name to the JavaScript function `f` (never a variable, a Go symbol, nor from a JS caller), in a full run and from the store; a JS `import { n }` of a default-exported declaration resolves by module and name, in a full run and from the store. |
 | `owners_test.go` | Files runs that must match a full run: both twins shifted by one line keep the caller on the first twin; with the real Python analyzer, `Repo.save()` loses its by-name link when class `Repo` is deleted and gains it when `Repo` is added, and `Child.save()` follows `Child` to its new base. |
 | `twins_test.go` | Twins in one file resolve to the widest (then first) by qualified name and by name, in a full run and from the store; a qualified name in two files stays ambiguous; a wider twin added later re-resolves the unchanged caller in a files run; `..delta` resolves by name (unique, then ambiguous), never exact. |
 | `resolve_files_test.go` | A files run sees the stored candidates too: a target ambiguous in a full run stays ambiguous by exact and suffix match; removing one of two candidates (file deleted, symbol edited away, or one of two same-named methods of one file) makes the unchanged caller unique. |
@@ -423,7 +423,11 @@ each relation:
   attached script), takes that module's one top-level class
   (`ResolutionUnique`). In JavaScript, `m.n` with no match takes module `m`'s
   top-level symbol named `n`: a declaration both named and default-exported
-  is qualified `m.default`, while `import { n }` names `m.n`.
+  is qualified `m.default`, while `import { n }` names `m.n`. An `html`
+  call to `window.f` (an inline `onclick="f()"` handler, see
+  [web](../parser/web/README.md)) takes the JavaScript function or method
+  named `f`, by name (`ResolutionUnique`; ambiguous when several files
+  define it).
 - A `TargetQualifiedName` that normalizes to a bare name (`..delta`) has no
   qualifier: without an exact match it skips the suffix lookup and is matched
   by name (`ResolutionUnique` or ambiguous), so a name-only guess is never

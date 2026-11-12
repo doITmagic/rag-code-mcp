@@ -175,5 +175,10 @@ func Redacted(raw string) string {
 	if u, err := url.Parse(raw); err == nil && u.User != nil {
 		return u.Redacted()
 	}
+	// A mistyped URL (http:user:pw@host) has no user part to parse: what
+	// stands before the last @ is hidden when it may hold user:password.
+	if i := strings.LastIndex(raw, "@"); i >= 0 && strings.Contains(raw[:i], ":") {
+		return "xxxxx@" + raw[i+1:]
+	}
 	return raw
 }

@@ -244,7 +244,7 @@ func TestEmbedThreads(t *testing.T) {
 // An invalid ollama_base_url with basic auth never shows its password in
 // the error, which reaches the log and the terminal.
 func TestValidateHidesURLPassword(t *testing.T) {
-	for _, raw := range []string{"ftp://u:secret@h:11434", "http://u:secret@h:11434/%zz", "http://u:secret@"} {
+	for _, raw := range []string{"ftp://u:secret@h:11434", "http://u:secret@h:11434/%zz", "http://u:secret@", "http:u:secret@h:11434", "u:secret@h:11434"} {
 		cfg := Default()
 		cfg.OllamaBaseURL = raw
 		err := cfg.Validate()
@@ -257,4 +257,6 @@ func TestRedacted(t *testing.T) {
 	assert.Equal(t, "http://u:xxxxx@h:11434", Redacted("http://u:secret@h:11434"))
 	assert.Equal(t, "http://h:11434", Redacted("http://h:11434"))
 	assert.Equal(t, `C:\rel\latest.json`, Redacted(`C:\rel\latest.json`))
+	assert.Equal(t, "xxxxx@h:11434", Redacted("http:u:secret@h:11434"))
+	assert.Equal(t, "/srv/@scope/latest.json", Redacted("/srv/@scope/latest.json"))
 }

@@ -79,3 +79,26 @@ func TestGrepIgnoresDiacritics(t *testing.T) {
 	hits, _ = v.t.grep(context.Background(), v.root, v.root, "tara")
 	assert.Len(t, hits, 1)
 }
+
+// A qualified name with a wrong owner ("Base.Data" when the method is
+// BackendController.Data) lists the symbols of that last name first, marked
+// "name", and says so, instead of only unrelated semantic neighbours.
+func TestSearchWrongOwnerListsSymbolsOfThatName(t *testing.T) {
+	v := newEnv(t, true, nil)
+	r, _ := v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "Wrong.Foo", "limit": 3})
+	require.Equal(t, "ok", r.Status)
+	assert.Contains(t, r.Message, `no symbol named "Wrong.Foo"; 1 symbols are named "Foo"`)
+	var out struct {
+		Results []SearchHit `json:"results"`
+	}
+	data(t, r, &out)
+	require.NotEmpty(t, out.Results)
+	assert.Equal(t, "Foo", out.Results[0].Name)
+	assert.Equal(t, "name", out.Results[0].Match)
+	// A right qualified name stays an exact match.
+	r, _ = v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "pkg.Foo", "limit": 3})
+	data(t, r, &out)
+	require.NotEmpty(t, out.Results)
+	assert.Equal(t, "exact", out.Results[0].Match)
+	assert.Empty(t, r.Message)
+}

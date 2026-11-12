@@ -57,7 +57,7 @@ Tests:
 
 | File | What it covers |
 |---|---|
-| [`grep_walk_test.go`](grep_walk_test.go) | the grep file cap counts only files git keeps; an unreadable directory does not end the walk; a word without diacritics finds the text written with them, and the reverse. |
+| [`grep_walk_test.go`](grep_walk_test.go) | the grep file cap counts only files git keeps; an unreadable directory does not end the walk; a word without diacritics finds the text written with them, and the reverse; a qualified name with a wrong owner lists the symbols of its last name (`match: "name"`). |
 | [`grep_marks_test.go`](grep_marks_test.go) | a symbol made only of combining marks finds no line. |
 | [`go_value_use_test.go`](go_value_use_test.go) | with the real Go analyzer, `rag_find_usages firmaJSON` counts `mux.HandleFunc(p, s.firmaJSON)` in `main.go` for a method declared in another file of the package. |
 | [`js_object_members_test.go`](js_object_members_test.go) | with the real JavaScript analyzer, `rag_find_usages getToken` counts `JwtService.getToken()` calls through `export default { getToken }` in each importer. |
@@ -251,6 +251,11 @@ How it works:
    `kinds` that finds nothing says the filters left nothing; with
    `language=go` and `kinds` holding `route` it adds that Go route
    registrations are not indexed.
+   A qualified query with no exact match is then looked up by its last
+   segment alone (`Base.Data` -> `Data`): the caller guessed the owner. The
+   symbols of that name come first with `match: "name"`, score 1, and the
+   message says `no symbol named "Base.Data"; 2 symbols are named "Data"
+   under another owner`; no text search is added then.
 2. **Semantic.** The query is embedded and the `2 × limit` nearest symbols
    are fetched; those scoring at least 0.55 and not already found are added
    with `match: "semantic"`.

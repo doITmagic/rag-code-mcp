@@ -53,7 +53,7 @@ type SearchHit struct {
 	EndLine       int     `json:"end_line"`
 	Signature     string  `json:"signature,omitempty"`
 	Score         float32 `json:"score"`
-	Match         string  `json:"match"` // exact|semantic|fallback
+	Match         string  `json:"match"` // exact|name|semantic|fallback
 	Content       string  `json:"content,omitempty"`
 }
 
@@ -108,13 +108,26 @@ func (t *tools) search(ctx context.Context, req *mcp.CallToolRequest, in SearchI
 				msg = fmt.Sprintf("no symbol named %q in the files indexed so far: it may be in a file not indexed yet (grep finds it now); the results are semantic neighbours only", in.Query)
 			}
 		}
+		match := "exact"
+		// A qualified name nothing has ("Base.Data" for BackendController.Data): the
+		// caller guessed the owner, so the symbols of that last name are the answer.
+		if q := parser.Normalize(in.Query); len(exact) == 0 && strings.Contains(q, ".") {
+			last := q[strings.LastIndex(q, ".")+1:]
+			if exact, err = byName(ctx, w, f, last, exactLimit); err != nil {
+				return t.searchErr(ctx, w, in, f, err)
+			}
+			if exact = merge(exact); len(exact) > 0 {
+				match = "name"
+				msg = fmt.Sprintf("no symbol named %q; %d symbols are named %q under another owner (listed first, match \"name\")", in.Query, len(exact), last)
+			}
+		}
 		if len(exact) > 0 { // the index knows the name: no text search needed
 			g.stop()
 			g = nil
 		}
 		for _, h := range exact {
 			seen[twinOf(&h.Symbol)] = true
-			hits = append(hits, toHit(h.Symbol, 1, "exact"))
+			hits = append(hits, toHit(h.Symbol, 1, match))
 		}
 	}
 	sem, err := w.Search(ctx, in.Query, f, in.Limit*2)

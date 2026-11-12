@@ -57,3 +57,25 @@ func TestGrepUnreadableDirStopsSearch(t *testing.T) {
 }
 
 // F6: with an index in place the text search still walks the whole tree and
+
+// A word typed without diacritics finds the text written with them, and the
+// other way round ("Salveaza" against 40 "Salvează" lines found nothing).
+// The line comes back as it is in the file; a longer word is not a match.
+func TestGrepIgnoresDiacritics(t *testing.T) {
+	v := newEnv(t, false, nil)
+	require.NoError(t, os.WriteFile(filepath.Join(v.root, "pkg/d.fk"),
+		[]byte("func D\n  label Salvează\n  label Salveaza\n  label Salveazăă\n  label Șterge țară\n"), 0o644))
+	for _, word := range []string{"Salveaza", "Salvează"} {
+		hits, cut := v.t.grep(context.Background(), v.root, v.root, word)
+		require.Len(t, hits, 2, word)
+		assert.Equal(t, "label Salvează", hits[0].Text, word)
+		assert.Equal(t, 2, hits[0].Line, word)
+		assert.Equal(t, 3, hits[1].Line, word)
+		assert.False(t, cut)
+	}
+	hits, _ := v.t.grep(context.Background(), v.root, v.root, "Sterge")
+	require.Len(t, hits, 1)
+	assert.Equal(t, "label Șterge țară", hits[0].Text)
+	hits, _ = v.t.grep(context.Background(), v.root, v.root, "tara")
+	assert.Len(t, hits, 1)
+}

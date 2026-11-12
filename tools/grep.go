@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -95,7 +97,9 @@ func (g *grepRun) add(msg string, data map[string]any) string {
 // grep returns at most grepHits lines of at most grepFiles source files that
 // hold word as a whole word; truncated says the search stopped early.
 func (t *tools) grep(ctx context.Context, root, start, word string) (hits []GrepHit, truncated bool) {
-	re := regexp.MustCompile(`(?:^|[^A-Za-z0-9_$])` + regexp.QuoteMeta(word) + `(?:$|[^A-Za-z0-9_])`)
+	// Compared without diacritics on both sides: "Salveaza" finds "Salvează".
+	plain := unaccent([]byte(word))
+	re := regexp.MustCompile(`(?:^|[^A-Za-z0-9_$])` + regexp.QuoteMeta(string(plain)) + `(?:$|[^A-Za-z0-9_])`)
 	files := t.sourceFiles(ctx, root, start, nil, grepFiles)
 	truncated = len(files) >= grepFiles || ctx.Err() != nil // a cancelled walk is not a complete one
 	// Files are read in parallel: on a slow file system (9p under WSL) the
@@ -113,13 +117,13 @@ func (t *tools) grep(ctx context.Context, root, start, word string) (hits []Grep
 		wg.Go(func() {
 			defer func() { <-sem }()
 			src, err := os.ReadFile(path)
-			if err != nil || bytes.IndexByte(src, 0) >= 0 || !bytes.Contains(src, []byte(word)) {
+			if err != nil || bytes.IndexByte(src, 0) >= 0 || !bytes.Contains(unaccent(src), plain) {
 				return
 			}
 			sc := bufio.NewScanner(bytes.NewReader(src))
 			sc.Buffer(nil, len(src)+1)
 			for n := 1; sc.Scan() && len(per[i]) <= grepHits; n++ {
-				if re.Match(sc.Bytes()) {
+				if re.Match(unaccent(sc.Bytes())) {
 					per[i] = append(per[i], GrepHit{FilePath: path, Line: n, Text: lineText([]string{sc.Text()}, 1), Match: "grep"})
 					found.Add(1)
 				}
@@ -134,4 +138,43 @@ func (t *tools) grep(ctx context.Context, root, start, word string) (hits []Grep
 		return hits[:grepHits], true
 	}
 	return hits, truncated || ctx.Err() != nil
+}
+
+// baseLetter maps a Latin letter with a diacritic to its plain letter.
+// shortcut: Latin-1 and Latin Extended-A plus the Romanian comma letters;
+// other scripts are compared as written, upgrade to x/text when one is needed.
+var baseLetter = func() map[rune]rune {
+	m := map[rune]rune{}
+	for _, g := range strings.Fields("aàáâãäåāăą cçćĉċč dďđ eèéêëēĕėęě gĝğġģ hĥħ iìíîïĩīĭįı jĵ kķ lĺļľŀł nñńņňŉ oòóôõöøōŏő rŕŗř sśŝşšș tţťŧț uùúûüũūŭůűų wŵ yýÿŷ zźżž " +
+		"AÀÁÂÃÄÅĀĂĄ CÇĆĈĊČ DĎĐ EÈÉÊËĒĔĖĘĚ GĜĞĠĢ HĤĦ IÌÍÎÏĨĪĬĮİ JĴ KĶ LĹĻĽĿŁ NÑŃŅŇ OÒÓÔÕÖØŌŎŐ RŔŖŘ SŚŜŞŠȘ TŢŤŦȚ UÙÚÛÜŨŪŬŮŰŲ WŴ YÝŶŸ ZŹŻŽ") {
+		base, _ := utf8.DecodeRuneInString(g)
+		for _, r := range g[1:] {
+			m[r] = base
+		}
+	}
+	return m
+}()
+
+// unaccent returns b with letters that carry a diacritic replaced by their
+// plain letter and combining marks dropped; b itself when it is ASCII.
+func unaccent(b []byte) []byte {
+	ascii := true
+	for _, c := range b {
+		if c >= utf8.RuneSelf {
+			ascii = false
+			break
+		}
+	}
+	if ascii {
+		return b
+	}
+	return bytes.Map(func(r rune) rune {
+		if p, ok := baseLetter[r]; ok {
+			return p
+		}
+		if unicode.Is(unicode.Mn, r) {
+			return -1
+		}
+		return r
+	}, b)
 }

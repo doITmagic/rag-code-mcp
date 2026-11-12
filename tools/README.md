@@ -57,7 +57,7 @@ Tests:
 
 | File | What it covers |
 |---|---|
-| [`grep_walk_test.go`](grep_walk_test.go) | the grep file cap counts only files git keeps; an unreadable directory does not end the walk. |
+| [`grep_walk_test.go`](grep_walk_test.go) | the grep file cap counts only files git keeps; an unreadable directory does not end the walk; a word without diacritics finds the text written with them, and the reverse. |
 | [`go_value_use_test.go`](go_value_use_test.go) | with the real Go analyzer, `rag_find_usages firmaJSON` counts `mux.HandleFunc(p, s.firmaJSON)` in `main.go` for a method declared in another file of the package. |
 | [`js_object_members_test.go`](js_object_members_test.go) | with the real JavaScript analyzer, `rag_find_usages getToken` counts `JwtService.getToken()` calls through `export default { getToken }` in each importer. |
 | [`roots_test.go`](roots_test.go) | an empty `workspace_root` from a client without the `roots` capability is answered at once, `roots/list` is not sent. |
@@ -135,7 +135,9 @@ drive under `/mnt` in WSL).
 `rag_search` (for an identifier query), `rag_find_usages` and
 `rag_call_hierarchy` start a text search of the source files beside the index
 lookup (`grep.go`, `startGrep`). It looks for the last segment of the name
-(`pkg.Foo` -> `Foo`) as a whole word, in the files an analyzer handles, by the
+(`pkg.Foo` -> `Foo`) as a whole word, case-sensitive and without regard to diacritics on
+either side (`Salveaza` finds `Salvează` and the reverse; Latin letters only, `unaccent`),
+in the files an analyzer handles, by the
 index skip rules (`sourceFiles`, shared with the not-indexed fallback), under
 `path_prefix` when `rag_search` has one. It is bounded by work, not by a
 clock: 5000 files (counted after git dropped the ignored ones) or 20 lines,

@@ -1,0 +1,62 @@
+package javascript
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+
+	"github.com/doITmagic/rag-code-mcp/v2/parser"
+)
+
+// Components and handlers used in a Vue <template> were no usages.
+func TestVueTemplateUsages(t *testing.T) {
+	src := `<template>
+  <div>
+    <VersionSelect v-model="ver" @change="setVersion(ver)" />
+    <status-card :label="format(x)" @click="toggle" v-if="isOn()"></status-card>
+    <button @click="counter.increment()">{{ label(n) }}</button>
+    <router-view />
+  </div>
+</template>
+
+<script setup>
+import VersionSelect from './VersionSelect.vue'
+import StatusCard from '../cards/status-card.vue'
+import { format } from '../lib/fmt'
+const counter = useCounter()
+function setVersion(v) {}
+function toggle() {}
+function isOn() { return true }
+</script>
+`
+	syms := analyze(t, "src/comp/Header.vue", src)
+	tpl := find(t, syms, "src/comp/Header.Header")
+	assert.Equal(t, parser.Relation{Kind: parser.RelUsesType, TargetName: "VersionSelect", TargetQualifiedName: "src/comp/VersionSelect.default", Line: 3}, rel(t, tpl, parser.RelUsesType, "VersionSelect"))
+	assert.Equal(t, parser.Relation{Kind: parser.RelUsesType, TargetName: "StatusCard", TargetQualifiedName: "src/cards/status-card.default", Line: 4}, rel(t, tpl, parser.RelUsesType, "StatusCard"))
+	assert.Equal(t, "src/comp/Header.setVersion", rel(t, tpl, parser.RelCall, "setVersion").TargetQualifiedName)
+	assert.Equal(t, 3, rel(t, tpl, parser.RelCall, "setVersion").Line)
+	assert.Equal(t, "src/lib/fmt.format", rel(t, tpl, parser.RelCall, "format").TargetQualifiedName)
+	assert.Equal(t, "src/comp/Header.toggle", rel(t, tpl, parser.RelCall, "toggle").TargetQualifiedName, "a bare handler name is a call")
+	assert.Equal(t, "src/comp/Header.isOn", rel(t, tpl, parser.RelCall, "isOn").TargetQualifiedName)
+	assert.Equal(t, "", rel(t, tpl, parser.RelCall, "increment").TargetQualifiedName, "a variable's type is never guessed")
+	assert.Equal(t, "", rel(t, tpl, parser.RelCall, "label").TargetQualifiedName)
+	assert.Equal(t, 5, rel(t, tpl, parser.RelCall, "label").Line)
+	assert.Equal(t, "", rel(t, tpl, parser.RelUsesType, "RouterView").TargetQualifiedName, "a global component: by name")
+	for _, r := range tpl.Relations {
+		assert.NotEqual(t, "div", r.TargetName)
+		assert.NotEqual(t, "ver", r.TargetName, "v-model binds, it does not call")
+	}
+}
+
+// An options-API component's methods are what its template handlers call.
+func TestVueTemplateOptionsAPIHandler(t *testing.T) {
+	src := `<template><button @click="go" v-on:keyup.enter="stop()">x</button></template>
+<script>
+export default { methods: { go() {}, stop() {} } }
+</script>
+`
+	syms := analyze(t, "src/todo-item.vue", src)
+	tpl := find(t, syms, "src/todo-item.TodoItem")
+	assert.Equal(t, "src/todo-item.TodoItem.go", rel(t, tpl, parser.RelCall, "go").TargetQualifiedName)
+	assert.Equal(t, "src/todo-item.TodoItem.stop", rel(t, tpl, parser.RelCall, "stop").TargetQualifiedName)
+}

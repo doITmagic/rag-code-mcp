@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"unicode"
 
@@ -70,8 +71,10 @@ func (analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 			tree *gotreesitter.Tree
 		}
 		var scripts []script
+		tplAt, tpl := -1, vueBlock{}
 		for _, b := range vueBlocks(f.Source) {
 			if b.template {
+				tplAt, tpl = len(syms), b
 				start, end := lineSpan(f.Source, b.start, b.end)
 				syms = append(syms, parser.Symbol{
 					Name: component, Kind: parser.KindTemplate, Module: module,
@@ -117,6 +120,13 @@ func (analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 		}
 		if setup != nil {
 			syms = appendDefault(syms, *setup)
+		}
+		if tplAt >= 0 {
+			var c *fileCtx // every block's names are shared, so any one resolves
+			if len(scripts) > 0 {
+				c = scripts[0].c
+			}
+			syms[tplAt].Relations = templateRels(f.Source, tpl, c, syms, component)
 		}
 		return parser.Finalize(f, syms), nil
 	}
@@ -374,6 +384,71 @@ func vueBlocks(src []byte) []vueBlock {
 		}
 	}
 	return out
+}
+
+var (
+	// reVueTag is a component tag: PascalCase (`<StatusCard`, `<ns.Comp`) or kebab-case with a dash (`<status-card`).
+	reVueTag = regexp.MustCompile(`<([A-Z][\w]*(?:\.[A-Z]\w*)?|[a-z][a-z0-9]*(?:-[a-z0-9]+)+)[\s/>]`)
+	// reVueExpr is a template expression: an event, bound or directive attribute value, or a {{ mustache }}.
+	reVueExpr = regexp.MustCompile(`\s(@[\w.:-]+|v-on:[\w.:-]+|:[\w.:-]+|v-bind:[\w.:-]+|v-(?:if|else-if|show|for|html|text))\s*=\s*"([^"]*)"|\{\{((?s:.*?))\}\}`)
+	reVueCall = regexp.MustCompile(`(?:^|[^\w$.])([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*\(`)
+	reVueName = regexp.MustCompile(`^\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*$`)
+)
+
+// templateRels lists what a Vue <template> uses: component tags (uses_type)
+// and the calls in its expressions, a bare event handler name (`@click="go"`)
+// counting as a call. Names resolve through the script blocks (c, nil
+// without one) or to an options-API method of the component.
+// shortcut: regex over the template text, like the block scanner; v-for and slot locals are not tracked.
+func templateRels(src []byte, b vueBlock, c *fileCtx, syms []parser.Symbol, component string) []parser.Relation {
+	text := src[b.start:b.end]
+	base := bytes.Count(src[:b.start], []byte{'\n'}) + 1
+	lineAt := func(off int) int { return base + bytes.Count(text[:off], []byte{'\n'}) }
+	resolve := func(dotted string) string {
+		if c != nil {
+			if qn := c.resolveDotted(dotted); qn != "" {
+				return qn
+			}
+		}
+		for _, s := range syms {
+			if s.Owner == component && s.Kind == parser.KindMethod && s.Name == dotted {
+				return s.QualifiedName
+			}
+		}
+		return ""
+	}
+	var rels []parser.Relation
+	for _, m := range reVueTag.FindAllSubmatchIndex(text, -1) {
+		name := string(text[m[2]:m[3]])
+		if !strings.Contains(name, ".") {
+			name = pascal(name)
+		}
+		qn := ""
+		if c != nil {
+			qn = c.resolveDotted(name)
+		}
+		rels = append(rels, parser.Relation{Kind: parser.RelUsesType, TargetName: name[strings.LastIndex(name, ".")+1:], TargetQualifiedName: qn, Line: lineAt(m[0])})
+	}
+	for _, m := range reVueExpr.FindAllSubmatchIndex(text, -1) {
+		from, to := m[4], m[5]
+		if from < 0 {
+			from, to = m[6], m[7]
+		}
+		expr := text[from:to]
+		var called [][]byte
+		event := m[2] >= 0 && (text[m[2]] == '@' || bytes.HasPrefix(text[m[2]:m[3]], []byte("v-on:")))
+		if n := reVueName.FindSubmatch(expr); event && n != nil {
+			called = append(called, n[1]) // @click="go": the handler itself
+		}
+		for _, cm := range reVueCall.FindAllSubmatch(expr, -1) {
+			called = append(called, cm[1])
+		}
+		for _, d := range called {
+			dotted := string(d)
+			rels = append(rels, parser.Relation{Kind: parser.RelCall, TargetName: dotted[strings.LastIndex(dotted, ".")+1:], TargetQualifiedName: resolve(dotted), Line: lineAt(from)})
+		}
+	}
+	return rels
 }
 
 func lineSpan(src []byte, start, end int) (int, int) {

@@ -1101,6 +1101,40 @@ func (s switchEmbedder) Embed(ctx context.Context, texts []string) ([][]float32,
 	return s.Fake.Embed(ctx, texts)
 }
 
+// sameEmbedder gives every text one vector, so every symbol is a semantic
+// neighbour of every query.
+type sameEmbedder struct{ switchEmbedder }
+
+func (s sameEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	out, err := s.switchEmbedder.Embed(ctx, texts)
+	for i := range out {
+		out[i] = s.Vector("same")
+	}
+	return out, err
+}
+
+// During a run, a name the index already has but the filters leave out is
+// explained by the filters, not by "a file not indexed yet".
+func TestSearchFilteredMissDuringRunNamesTheFilters(t *testing.T) {
+	sw := sameEmbedder{switchEmbedder{Fake: &embed.Fake{}, block: &atomic.Bool{}, release: make(chan struct{})}}
+	v := newEnvWith(t, sw, true, func(c *config.Config) { c.AutoIndex = false })
+	w, err := v.e.Workspace(v.root)
+	require.NoError(t, err)
+	sw.block.Store(true)
+	require.NoError(t, os.WriteFile(filepath.Join(v.root, "pkg/n.fk"), []byte("func N1\nfunc N2\n"), 0o644))
+	w.Index(false)
+	t.Cleanup(func() {
+		close(sw.release)
+		require.Eventually(t, func() bool { s := w.Status(); return !s.Running && !s.Queued }, 10*time.Second, 20*time.Millisecond)
+	})
+	require.Eventually(t, func() bool { return w.Status().Running }, 10*time.Second, 20*time.Millisecond)
+
+	r, _ := v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "Foo", "path_prefix": "other"})
+	assert.Contains(t, r.Message, "matches the kinds, language and path_prefix given", r.Message)
+	r, _ = v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "N1", "path_prefix": "other"})
+	assert.Contains(t, r.Message, "not indexed yet", r.Message)
+}
+
 // While a run is in progress on an existing index, the index tools answer
 // indexing (results may be incomplete), a search with no hits is not sent to
 // the not-indexed fallback, and rag_read_file_context stays ok.

@@ -107,8 +107,13 @@ func (t *tools) search(ctx context.Context, req *mcp.CallToolRequest, in SearchI
 			if in.Language != "" || len(ks) > 0 || f.PathPrefix != "" { // the name may exist outside the filters
 				msg = fmt.Sprintf("no symbol named %q matches the kinds, language and path_prefix given (it may exist outside them): the results are semantic neighbours only", in.Query)
 			}
+			filtered := msg
 			if st := indexInfo(w).State; st == "indexing" || st == "queued" {
 				msg = fmt.Sprintf("no symbol named %q in the files indexed so far: it may be in a file not indexed yet (grep finds it now); the results are semantic neighbours only", in.Query)
+				// The index already has the name outside the filters: they are the reason, not the run.
+				if any, _ := byName(ctx, w, store.Filter{}, in.Query, 1); len(merge(any)) > 0 {
+					msg = filtered
+				}
 			}
 		}
 		match := "exact"

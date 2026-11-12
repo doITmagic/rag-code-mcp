@@ -50,6 +50,9 @@ type file struct {
 	tparams map[string]bool   // type parameters of the declaration being walked
 	test    bool              // a _test.go file: nothing in it is package API
 	routers []*framework      // HTTP routers this file imports
+	// valueRels is each value relation by the start byte of the name it was
+	// read from, so a route's handler finds its own (a.Handle vs b.Handle).
+	valueRels map[uint32]parser.Relation
 
 	fwPkgs map[string]*framework // local import name -> the router of that import
 	// top-level vars and struct field names of a router type or set from a
@@ -75,6 +78,7 @@ func (Analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 		fields:  map[string]bool{},
 		test:    strings.HasSuffix(f.Path, "_test.go"),
 		fwPkgs:  map[string]*framework{}, routerVars: map[string]bool{}, routerFields: map[string]bool{},
+		valueRels: map[uint32]parser.Relation{},
 	}
 	root := tree.RootNode()
 	// Pass 1: import table, locally declared type names, and the names a
@@ -469,7 +473,9 @@ func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []pars
 		}
 		if name != "" && tqn != "" {
 			line, _ := parser.Lines(e)
-			rels = append(rels, parser.Relation{Kind: parser.RelCall, TargetName: name, TargetQualifiedName: tqn, Line: line, Value: true})
+			r := parser.Relation{Kind: parser.RelCall, TargetName: name, TargetQualifiedName: tqn, Line: line, Value: true}
+			rels = append(rels, r)
+			fc.valueRels[e.StartByte()] = r
 		}
 	}
 	var visit func(c *gotreesitter.Node) bool

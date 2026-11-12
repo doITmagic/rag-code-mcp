@@ -271,7 +271,7 @@ func (fc *file) route(call, fn *gotreesitter.Node, args []*gotreesitter.Node, gr
 		s := fc.base(call, name, parser.KindRoute, sym.Name)
 		s.Exported = !fc.test
 		s.Metadata = map[string]string{"framework": fw.name, "method": verb}
-		if r, ok := fc.handlerRelation(handler, sym.Relations); ok {
+		if r, ok := fc.handlerRelation(handler); ok {
 			s.Relations = []parser.Relation{r}
 		}
 		return s, true
@@ -282,7 +282,7 @@ func (fc *file) route(call, fn *gotreesitter.Node, args []*gotreesitter.Node, gr
 // handlerRelation is the value relation the enclosing declaration already
 // has for the handler argument (a function, method value or package
 // function); an inline func literal or an operand of unknown type has none.
-func (fc *file) handlerRelation(h *gotreesitter.Node, rels []parser.Relation) (parser.Relation, bool) {
+func (fc *file) handlerRelation(h *gotreesitter.Node) (parser.Relation, bool) {
 	if h == nil {
 		return parser.Relation{}, false
 	}
@@ -291,14 +291,8 @@ func (fc *file) handlerRelation(h *gotreesitter.Node, rels []parser.Relation) (p
 	} else if h.Type(fc.lang) != "identifier" {
 		return parser.Relation{}, false
 	}
-	name := fc.text(h)
-	line, _ := parser.Lines(h)
-	for _, r := range rels {
-		if r.Value && r.Line == line && r.TargetName == name {
-			return r, true
-		}
-	}
-	return parser.Relation{}, false
+	r, ok := fc.valueRels[h.StartByte()]
+	return r, ok
 }
 
 // groupPrefix returns the full prefix of "recv.Group(path, ...)" on a router.

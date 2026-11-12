@@ -349,3 +349,20 @@ func (s *server) load(store *Store) {
 		"echo POST web.load./field -> web.h",
 	}, routeList(t, "web/r.go", src))
 }
+
+func TestRouteHandlersOnOneLine(t *testing.T) {
+	src := `package routes
+import "net/http"
+type First struct{}
+type Second struct{}
+func (First) Handle(http.ResponseWriter, *http.Request) {}
+func (Second) Handle(http.ResponseWriter, *http.Request) {}
+func Register(mux *http.ServeMux, a First, b Second) {
+    mux.HandleFunc("/first", a.Handle); mux.HandleFunc("/second", b.Handle)
+}
+`
+	assert.Equal(t, []string{
+		"net/http HandleFunc routes.Register./first -> routes.First.Handle",
+		"net/http HandleFunc routes.Register./second -> routes.Second.Handle",
+	}, routeList(t, "routes/routes.go", src))
+}

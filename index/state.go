@@ -63,7 +63,11 @@ type Entry struct {
 // Go route registrations (Echo, Gin, Chi, net/http) are route symbols with a
 // handler relation; functions inside the IIFE or ready callback of a
 // classic browser script and window.f globals are symbols; inline html
-// handlers and Vue template tags, handlers and expressions are usages.
+// handlers and Vue template tags, handlers and expressions are usages; Laravel
+// routes carry group prefixes and link to their handler, view() links to the
+// Blade template, X::class, property types, relation model strings and
+// $listen are class usages, a call on a typed parameter or property targets
+// its class; a broken file keeps the declarations parsed before the break.
 const Format = 15
 
 // State is the per-root snapshot stored at Dir(root)/state.json. Only

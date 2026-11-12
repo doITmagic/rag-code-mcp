@@ -58,7 +58,8 @@ type Entry struct {
 // targets it; a JS re-exported namespace import no longer fails its importers.
 // 15: symbols with one qualified name on one line of a file get distinct IDs
 // (one used to overwrite the other); a malformed Python assignment gives no
-// nameless symbol.
+// nameless symbol; points carry the owner of every relation target
+// (rel_target_owner), which the stale-referrer lookup filters on.
 const Format = 15
 
 // State is the per-root snapshot stored at Dir(root)/state.json. Only

@@ -51,6 +51,7 @@ func storeContract(t *testing.T, s Store) {
 		{"target id", Filter{TargetIDs: []string{"c"}}, []string{"a"}},
 		{"target qualified name", Filter{TargetQualifiedNames: []string{"app.db.query"}}, []string{"a"}},
 		{"target name", Filter{TargetNames: []string{"query"}}, []string{"a"}},
+		{"target owner", Filter{TargetOwners: []string{"app.db"}}, []string{"a"}},
 		{"module+language", Filter{Module: "app", Language: "go"}, []string{"a", "b", "c"}},
 		{"miss", Filter{Name: "Nobody"}, nil},
 	}

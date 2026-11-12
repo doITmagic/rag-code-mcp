@@ -136,6 +136,7 @@ func fields(s *parser.Symbol) map[string][]string {
 		m["rel_target_id"] = append(m["rel_target_id"], r.TargetID)
 		m["rel_target_qualified_name"] = append(m["rel_target_qualified_name"], r.TargetQualifiedName)
 		m["rel_target_name"] = append(m["rel_target_name"], r.TargetName)
+		m["rel_target_owner"] = append(m["rel_target_owner"], TargetOwner(r.TargetQualifiedName))
 	}
 	return m
 }
@@ -177,6 +178,7 @@ func cond(f Filter) vecdb.Cond {
 	addAll("rel_target_id", f.TargetIDs)
 	addAll("rel_target_qualified_name", f.TargetQualifiedNames)
 	addAll("rel_target_name", f.TargetNames)
+	addAll("rel_target_owner", f.TargetOwners)
 	return c
 }
 

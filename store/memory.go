@@ -200,7 +200,10 @@ func (f Filter) matches(s *parser.Symbol) bool {
 		len(f.Kinds) > 0 && !slices.Contains(f.Kinds, s.Kind),
 		len(f.TargetIDs) > 0 && !slices.ContainsFunc(s.Relations, func(r parser.Relation) bool { return slices.Contains(f.TargetIDs, r.TargetID) }),
 		len(f.TargetQualifiedNames) > 0 && !slices.ContainsFunc(s.Relations, func(r parser.Relation) bool { return slices.Contains(f.TargetQualifiedNames, r.TargetQualifiedName) }),
-		len(f.TargetNames) > 0 && !slices.ContainsFunc(s.Relations, func(r parser.Relation) bool { return slices.Contains(f.TargetNames, r.TargetName) }):
+		len(f.TargetNames) > 0 && !slices.ContainsFunc(s.Relations, func(r parser.Relation) bool { return slices.Contains(f.TargetNames, r.TargetName) }),
+		len(f.TargetOwners) > 0 && !slices.ContainsFunc(s.Relations, func(r parser.Relation) bool {
+			return slices.Contains(f.TargetOwners, TargetOwner(r.TargetQualifiedName))
+		}):
 		return false
 	}
 	return true

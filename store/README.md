@@ -173,6 +173,7 @@ set of indexed keyword fields:
 | `rel_target_id` | the `TargetID` of every relation | `TargetIDs` |
 | `rel_target_qualified_name` | the `TargetQualifiedName` of every relation | `TargetQualifiedNames` |
 | `rel_target_name` | the `TargetName` of every relation | `TargetNames` |
+| `rel_target_owner` | `TargetOwner(TargetQualifiedName)` of every relation: the normalized name without its last segment | `TargetOwners` |
 
 Two fields are precomputed so that prefix and suffix lookups become exact
 keyword matches:

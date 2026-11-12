@@ -79,6 +79,7 @@ graph LR
 | `budget_test.go` | The parse byte budget is respected, and batches still resolve forward references. |
 | `go_value_use_test.go` | With the real Go analyzer, two files of one package: a method passed as `s.firmaJSON` (on a local `s := &server{}` and on the receiver) and a function passed as `handler` link exactly to their declarations in the other file, in a full run and from the store; a field read (also one named like a method of another type), a constant, a variable and `http.MethodGet` in the same positions leave no relation at all. |
 | `resolve_test.go` | A non-fresh run resolves more than 500 targets through the store; a JS `import { n }` of a default-exported declaration resolves by module and name, in a full run and from the store. |
+| `owners_test.go` | Files runs that must match a full run: both twins shifted by one line keep the caller on the first twin; with the real Python analyzer, `Repo.save()` loses its by-name link when class `Repo` is deleted and gains it when `Repo` is added, and `Child.save()` follows `Child` to its new base. |
 | `twins_test.go` | Twins in one file resolve to the widest (then first) by qualified name and by name, in a full run and from the store; a qualified name in two files stays ambiguous; a wider twin added later re-resolves the unchanged caller in a files run; `..delta` resolves by name (unique, then ambiguous), never exact. |
 | `resolve_files_test.go` | A files run sees the stored candidates too: a target ambiguous in a full run stays ambiguous by exact and suffix match; removing one of two candidates (file deleted, symbol edited away, or one of two same-named methods of one file) makes the unchanged caller unique. |
 | `resolve_fix_test.go` | Name and qualified resolution stay within one language (html may cross), targets defined later, inherited-member fallback, an ambiguous `self.m()` made exact by a base method added in a later run, a files run after a failed run widens to a full walk, symlinked `.ragcode` directories and device files are refused, an exact suffix match (Python) turned ambiguous by a new symbol with that suffix, a PHP suffix match only `unique`, a Python suffix never cut inside a package (`json.dumps` vs `src.flask.json.dumps`). |
@@ -367,6 +368,16 @@ re-parsed and re-resolved in the same run:
    another owner in that file (`Alpha.Close` after `Beta.Close` is deleted)
    or in another file of the run does not count as kept. The points of gone
    files are purged only after this step, so their names can still be read.
+6. Twins: the kept IDs of a qualified name the re-parsed file holds more
+   than once are looked up like vanished ones, since an edit may leave an ID
+   on a twin that is no longer the chosen one (the lines shifted, or the
+   other twin grew wider).
+7. Owners: `X.m()` resolves through its owner `X` (by name when `X` exists
+   without `m`, through `X`'s bases when it inherits `m`). For every symbol
+   the run adds or removes that is not a function or method, and for every
+   class of a re-parsed file whose bases differ from its old point's, query
+   for points with a relation whose `TargetOwners` holds the symbol's
+   qualified name or one of its suffixes.
 
 Lookups are batched: 500 values per query, and a batch whose hits reach
 `store.MaxScroll` is halved until nothing is cut off. At most 500 lookups are

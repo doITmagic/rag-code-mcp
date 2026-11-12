@@ -694,14 +694,37 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 		return true
 	}
 	now := map[string]bool{}
-	var oldOfGained []string // old ids of the files that gained an id
+	var oldOfGained []string  // old ids of the files that gained an id
+	var twins []string        // kept ids of twins: the chosen one may be another now
+	var oldOfClasses []string // old ids of the files that hold a class now
+	var owners []string       // names an owner-qualified target may start with, whose resolution the run changes
+	addOwner := func(s parser.Symbol) {
+		if s.Kind == parser.KindFunction || s.Kind == parser.KindMethod {
+			return
+		}
+		// every suffix: a target may name its owner by a short name
+		for n, i := parser.Normalize(s.QualifiedName), 0; i < len(n); i++ {
+			if i == 0 || n[i-1] == '.' {
+				owners = append(owners, n[i:])
+			}
+		}
+	}
 	for _, p := range files {
 		old := r.state.Files[p.path].IDs // the old ids until record()
 		vanished = append(vanished, old...)
-		gained := false
+		gained, count := false, map[string]int{}
 		for _, s := range p.syms {
 			now[s.ID] = true
 			gained = gained || !slices.Contains(old, s.ID)
+			count[s.QualifiedName]++
+		}
+		for _, s := range p.syms {
+			if count[s.QualifiedName] > 1 && slices.Contains(old, s.ID) {
+				twins = append(twins, s.ID)
+			}
+		}
+		if slices.ContainsFunc(p.syms, func(s parser.Symbol) bool { return s.Kind == parser.KindClass || s.Kind == parser.KindInterface }) {
+			oldOfClasses = append(oldOfClasses, old...)
 		}
 		if gained {
 			oldOfGained = append(oldOfGained, old...)
@@ -727,6 +750,7 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 					had[k]--
 				} else {
 					byLang[s.Language] = append(byLang[s.Language], s)
+					addOwner(s)
 				}
 			}
 		}
@@ -753,7 +777,7 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 			gone = append(gone, id)
 		}
 	}
-	ok := query(gone, func(v []string) store.Filter { return store.Filter{TargetIDs: v} }, add(all))
+	ok := query(append(twins, gone...), func(v []string) store.Filter { return store.Filter{TargetIDs: v} }, add(all))
 	// A candidate the run removes for good can turn an ambiguous call unique.
 	// Kept means still in its own file under its qualified name (it only
 	// moved there): the same name in another file of the run, or on another
@@ -772,6 +796,7 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 				lost[l] = map[string]bool{}
 			}
 			lost[l][n] = true
+			addOwner(h.Symbol)
 		}
 	})
 	for lang, names := range lost {
@@ -832,8 +857,39 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 			query(mods, func(v []string) store.Filter { return store.Filter{TargetQualifiedNames: v} }, add(script)) &&
 			query(nameList, func(v []string) store.Filter { return store.Filter{TargetNames: v, Language: lang} }, add(guessed))
 	}
+	// X.m() on an owner X resolves through X: by name when X exists without
+	// m, through X's bases when it inherits m. A class the run adds, removes
+	// or gives other bases changes that for callers that name it as owner.
+	oldBases := map[[2]string]string{}
+	ok = ok && query(oldOfClasses, func(v []string) store.Filter {
+		return store.Filter{IDs: v, Kinds: []parser.Kind{parser.KindClass, parser.KindInterface}}
+	}, func(h store.Hit) {
+		oldBases[[2]string{h.Symbol.FilePath, h.Symbol.QualifiedName}] = basesOf(h.Symbol)
+	})
+	for _, p := range files {
+		for _, s := range p.syms {
+			if was, had := oldBases[[2]string{p.path, s.QualifiedName}]; ok && had && was != basesOf(s) {
+				addOwner(s)
+			}
+		}
+	}
+	slices.Sort(owners)
+	_ = ok && query(slices.Compact(owners), func(v []string) store.Filter { return store.Filter{TargetOwners: v} }, add(all))
 	sort.Strings(out)
 	return out
+}
+
+// basesOf is what a class extends, implements or uses, as one comparable
+// string: the relations names() keeps.
+func basesOf(s parser.Symbol) string {
+	var b []string
+	for _, r := range s.Relations {
+		if (r.TargetQualifiedName != "" || r.TargetName != "") && (r.Kind == parser.RelExtends || r.Kind == parser.RelImplements || r.Kind == parser.RelUsesType) {
+			b = append(b, string(r.Kind)+" "+cmp.Or(r.TargetQualifiedName, r.TargetName))
+		}
+	}
+	slices.Sort(b)
+	return strings.Join(slices.Compact(b), "\n")
 }
 
 // names drops everything but the names (and kind, module, owner) of each

@@ -7,6 +7,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/doITmagic/rag-code-mcp/v2/parser"
 )
@@ -46,6 +47,14 @@ type Filter struct {
 	TargetIDs            []string // any relation with one of these target_ids
 	TargetQualifiedNames []string // any relation with one of these target_qualified_names
 	TargetNames          []string // any relation with one of these target_names
+	TargetOwners         []string // any relation whose target owner (TargetOwner) is one of these
+}
+
+// TargetOwner is the owner part of a relation's target qualified name,
+// normalized: "pkg.Repo" for "pkg.Repo.save", "" for a bare name.
+func TargetOwner(tqn string) string {
+	n := parser.Normalize(tqn)
+	return n[:max(strings.LastIndex(n, "."), 0)]
 }
 
 // Store is implemented by SQLite (on disk) and by the in-memory store used

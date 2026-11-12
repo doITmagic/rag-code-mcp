@@ -238,3 +238,11 @@ func TestEmbedThreads(t *testing.T) {
 	_, err = Load(path)
 	assert.ErrorContains(t, err, "embed_threads")
 }
+
+// Redacted hides the password of a user:password@ URL and leaves any other
+// value (a URL without one, a local path) as it is.
+func TestRedacted(t *testing.T) {
+	assert.Equal(t, "http://u:xxxxx@h:11434", Redacted("http://u:secret@h:11434"))
+	assert.Equal(t, "http://h:11434", Redacted("http://h:11434"))
+	assert.Equal(t, `C:\rel\latest.json`, Redacted(`C:\rel\latest.json`))
+}

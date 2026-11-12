@@ -164,3 +164,12 @@ func checkURL(field, raw string) error {
 	}
 	return nil
 }
+
+// Redacted returns raw with the password of a user:password@ URL replaced by
+// "xxxxx", for messages and logs; anything else is returned unchanged.
+func Redacted(raw string) string {
+	if u, err := url.Parse(raw); err == nil && u.User != nil {
+		return u.Redacted()
+	}
+	return raw
+}

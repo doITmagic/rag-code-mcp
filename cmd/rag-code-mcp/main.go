@@ -87,7 +87,7 @@ func updateNow(ctx context.Context, cfgPath string) error {
 	case err != nil:
 		return err
 	case v == "":
-		fmt.Println("no newer release than", Version, "at", src)
+		fmt.Println("no newer release than", Version, "at", config.Redacted(src))
 	default:
 		fmt.Printf("updated %s -> %s; restart the MCP clients to use it\n", Version, v)
 	}
@@ -112,7 +112,7 @@ func autoUpdate(ctx context.Context, source string, log *slog.Logger) {
 	v, err := update.Run(ctx, source, target, Version)
 	switch {
 	case err != nil && ctx.Err() == nil:
-		log.Warn("update: failed", "source", source, "err", err)
+		log.Warn("update: failed", "source", config.Redacted(source), "err", err)
 	case v != "":
 		log.Info("update: installed; restart the MCP clients to use it", "from", Version, "to", v)
 	}

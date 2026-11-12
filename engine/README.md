@@ -455,7 +455,7 @@ Keys from [internal/config](../internal/config/README.md):
 | `max_files` | `20000` | Passed to `index.Run` as `MaxFiles`: a full run over more indexable files fails and is not retried. `0` = no limit. |
 | `allowed_workspace_paths` (env `RAGCODE_ALLOWED_PATHS`) | empty | When set, roots must be under one of these. |
 | `auto_create_ide_rules` | `true` | Read by the index tool before it calls `WriteIDERules`. |
-| `ollama_base_url` | `http://localhost:11434` | Only named in the `Ready` message. |
+| `ollama_base_url` | `http://localhost:11434` | Only named in the `Ready` message, with the password of a `user:password@` URL shown as `xxxxx` (`config.Redacted`). |
 
 ### Files written
 

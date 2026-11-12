@@ -12,6 +12,7 @@ import (
 
 	"github.com/doITmagic/rag-code-mcp/v2/engine"
 	"github.com/doITmagic/rag-code-mcp/v2/index"
+	"github.com/doITmagic/rag-code-mcp/v2/internal/config"
 	"github.com/doITmagic/rag-code-mcp/v2/internal/update"
 	"github.com/doITmagic/rag-code-mcp/v2/parser"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -101,13 +102,13 @@ func (t *tools) serverInfo(ctx context.Context, _ *mcp.CallToolRequest, _ InfoIn
 }
 
 func (t *tools) probeOllama(ctx context.Context) Service {
-	s := Service{URL: t.cfg.OllamaBaseURL, Model: t.cfg.OllamaEmbed}
+	s := Service{URL: config.Redacted(t.cfg.OllamaBaseURL), Model: t.cfg.OllamaEmbed}
 	var body struct {
 		Models []struct {
 			Name string `json:"name"`
 		} `json:"models"`
 	}
-	if err := t.getJSON(ctx, strings.TrimRight(s.URL, "/")+"/api/tags", &body); err != nil {
+	if err := t.getJSON(ctx, strings.TrimRight(t.cfg.OllamaBaseURL, "/")+"/api/tags", &body); err != nil {
 		s.Error = err.Error() + ": start Ollama"
 		if errors.Is(err, context.DeadlineExceeded) { // it runs but is slow: not a reason to start it
 			s.Error = err.Error() + ": Ollama did not answer in time; the machine may be overloaded or low on memory"
@@ -137,7 +138,7 @@ func (t *tools) getJSON(ctx context.Context, url string, out any) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s returned %s", url, resp.Status)
+		return fmt.Errorf("%s returned %s", req.URL.Redacted(), resp.Status) // a user:password@ URL keeps its password out
 	}
 	if out == nil {
 		return nil

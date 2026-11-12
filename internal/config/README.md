@@ -40,7 +40,7 @@ graph LR
 
 | File | Contents |
 |:---|:---|
-| `config.go` | `Config`, `Default`, `HomeDir`, `DefaultPath`, `Load`, environment overrides (`applyEnv`), `Validate`. Embeds `default.yaml`. |
+| `config.go` | `Config`, `Default`, `HomeDir`, `DefaultPath`, `Load`, environment overrides (`applyEnv`), `Validate`, `Redacted` (a URL with its password shown as `xxxxx`, for messages and logs). Embeds `default.yaml`. |
 | `default.yaml` | The commented configuration written to `config.yaml` on first run. Mirrors `Default()` (a test checks it). |
 | `log.go` | `NewLogger` and `OpenLogFile` with the rotating `logFile` writer. |
 
@@ -48,7 +48,7 @@ Tests:
 
 | File | Covers |
 |:---|:---|
-| `config_test.go` | `default.yaml` equals `Default()`; loading a file; a missing file is written from the default; invalid YAML; environment overrides; every `Validate` rule; `HomeDir`/`DefaultPath` with and without `RAGCODE_HOME`; logger levels; log rotation on open, every 1000 writes, failed rotation keeps writing, following a rotation done by another process; old Qdrant keys from v1 are ignored; `embed_threads` default and `0`. |
+| `config_test.go` | `default.yaml` equals `Default()`; loading a file; a missing file is written from the default; invalid YAML; environment overrides; every `Validate` rule; `HomeDir`/`DefaultPath` with and without `RAGCODE_HOME`; logger levels; log rotation on open, every 1000 writes, failed rotation keeps writing, following a rotation done by another process; old Qdrant keys from v1 are ignored; `embed_threads` default and `0`; `Redacted` hides only a URL's password. |
 | `zz_verify_test.go` | Verification tests: odd inputs (empty file, wrong types, ...) error or load but never panic; path is a directory; missing file with an unwritable parent; environment values on a fresh file are validated; empty environment values do not override; YAML tags are snake_case; exact defaults; logger levels; `OpenLogFile` errors; concurrent writes across rotations; the logger through the log file. |
 
 ## Configuration keys

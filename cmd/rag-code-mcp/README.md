@@ -56,7 +56,7 @@ Tests:
 | `-log-level` | empty | `debug`, `info`, `warn` or `error`; overrides `log_level` from the config. |
 | `-version` | `false` | Print `rag-code-mcp <Version>` and exit. |
 | `-uninstall` | `false` | Run the uninstaller (interactive: it asks before deleting each workspace's `.ragcode`) and exit. |
-| `-update` | `false` | Install a newer release from `update_source` (GitHub when empty) over `~/.ragcode/bin/rag-code-mcp`, print the outcome and exit. It skips the daily cache. See [update](../../internal/update/README.md). |
+| `-update` | `false` | Install a newer release from `update_source` (GitHub when empty) over `~/.ragcode/bin/rag-code-mcp`, print the outcome and exit (a `user:password@` source is printed with the password as `xxxxx`). It skips the daily cache. See [update](../../internal/update/README.md). |
 
 Go's `flag` package accepts both `-flag` and `--flag`; IDE configs use
 `--config`. A positional argument is refused with exit code 2 (the flag parser
@@ -134,7 +134,7 @@ it asks GitHub at most once a day (the `update.json` cache shared with
 `rag_server_info`); a newer release is downloaded, checked against
 `checksums.txt`, run once with `-version` and moved over the installed
 binary. The log says `update: installed; restart the MCP clients to use it`
-or `update: failed`. This process and the other running servers keep the old
+or `update: failed` (its `source` with the password of a `user:password@` URL as `xxxxx`). This process and the other running servers keep the old
 binary until their client restarts them; each remembered the installed binary
 at start, so once it is replaced their tool answers end with "RagCode was
 updated on disk: restart this MCP server ...". Details in

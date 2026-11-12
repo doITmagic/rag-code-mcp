@@ -11,6 +11,7 @@ import (
 
 	"github.com/doITmagic/rag-code-mcp/v2/embed"
 	"github.com/doITmagic/rag-code-mcp/v2/index"
+	"github.com/doITmagic/rag-code-mcp/v2/internal/config"
 	"github.com/doITmagic/rag-code-mcp/v2/store"
 )
 
@@ -193,7 +194,7 @@ func (w *Workspace) Ready(ctx context.Context) (bool, string) {
 	if _, err := w.e.embed.Dimension(ctx); errors.Is(err, embed.ErrLowMemory) {
 		return false, err.Error()
 	} else if err != nil {
-		return false, fmt.Sprintf("embedder %s unavailable at %s (%v): start Ollama and pull the model", w.e.embed.Model(), w.e.cfg.OllamaBaseURL, err)
+		return false, fmt.Sprintf("embedder %s unavailable at %s (%v): start Ollama and pull the model", w.e.embed.Model(), config.Redacted(w.e.cfg.OllamaBaseURL), err)
 	}
 	exists, err := w.e.store.CollectionExists(ctx, w.Collection)
 	if err != nil {

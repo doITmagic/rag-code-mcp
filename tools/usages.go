@@ -277,8 +277,11 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 	ambiguous := ambiguousByName(ctx, w, sym)
 	data := map[string]any{"symbol": toCandidate(*sym), "files": files, "total": total, "ambiguous_by_name": ambiguous, "by_name": guessed, "truncated": cut}
 	msg := fmt.Sprintf("%d usages in %d files", total, len(files))
-	if cut {
+	switch {
+	case cut && in.Limit < store.MaxScroll-1:
 		msg += fmt.Sprintf("; only the first %d referencing symbols: raise limit for the rest", in.Limit)
+	case cut:
+		msg += fmt.Sprintf("; only the first %d referencing symbols, the most one answer holds: grep the name for the rest", len(callers))
 	}
 	if guessed > 0 {
 		msg += fmt.Sprintf("; %d matched by name only (no import, qualified name or known type links them; it may be another symbol of that name), marked by_name", guessed)

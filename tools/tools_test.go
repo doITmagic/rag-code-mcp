@@ -1496,4 +1496,7 @@ func TestUsagesTruncatedAtStoreCap(t *testing.T) {
 	if out.Total != 1001 && !out.Truncated {
 		t.Fatalf("incomplete usages reported as complete: total=%d, truncated=%v; want total=1001 or truncated=true", out.Total, out.Truncated)
 	}
+	// limit is already above what one answer holds: raising it cannot help
+	assert.NotContains(t, r.Message, "raise limit")
+	assert.Contains(t, r.Message, "only the first 999 referencing symbols")
 }

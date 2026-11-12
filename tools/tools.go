@@ -23,6 +23,7 @@ import (
 
 	"github.com/doITmagic/rag-code-mcp/v2/embed"
 	"github.com/doITmagic/rag-code-mcp/v2/engine"
+	"github.com/doITmagic/rag-code-mcp/v2/index"
 	"github.com/doITmagic/rag-code-mcp/v2/internal/config"
 	"github.com/doITmagic/rag-code-mcp/v2/internal/update"
 	"github.com/doITmagic/rag-code-mcp/v2/store"
@@ -272,11 +273,11 @@ func live(w *engine.Workspace, hits []store.Hit) []store.Hit {
 }
 
 // readLines returns the lines of an indexed file, nil when it cannot be read.
-// The file may have changed since indexing: a symlink out of the root, a FIFO
-// or a huge file is not read.
+// The file may have changed since indexing: a symlink out of the root or to
+// a secret file, a FIFO or a huge file is not read.
 func readLines(root, path string) []string {
 	p, err := insideRoot(root, path)
-	if err != nil {
+	if err != nil || index.Secret(p) {
 		return nil
 	}
 	if info, err := os.Stat(p); err != nil || !info.Mode().IsRegular() || info.Size() > maxReadSize {

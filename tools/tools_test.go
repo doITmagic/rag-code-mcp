@@ -1387,3 +1387,37 @@ func TestAnswerAsksRestartAfterUpdate(t *testing.T) {
 	r, _ = v.call(t, "rag_server_info", map[string]any{})
 	assert.Contains(t, r.Message, update.RestartNote)
 }
+
+// An indexed file replaced by a symlink to a secret file is not quoted in usages.
+func TestUsagesSkipSymlinkToSecret(t *testing.T) {
+	v := newEnv(t, true, func(c *config.Config) { c.AutoIndex = false })
+	secret := filepath.Join(v.root, ".env")
+	if err := os.WriteFile(secret, []byte("# settings\n# private\n# credentials\nAPI_TOKEN=repro-secret-token\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	caller := filepath.Join(v.root, "pkg/a.fk")
+	if err := os.Remove(caller); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, caller); err != nil {
+		t.Fatal(err)
+	}
+	// The direct file reader correctly refuses the same symlink.
+	_, direct := v.call(t, "rag_read_file_context", map[string]any{"workspace_root": v.root, "file_path": "pkg/a.fk", "start_line": 4, "end_line": 4})
+	if !direct.IsError {
+		t.Fatal("setup: direct file reader did not refuse the secret")
+	}
+	r, res := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "Foo"})
+	if res.IsError || r.Status != "ok" {
+		t.Fatalf("setup: usages failed: %s", r.Message)
+	}
+	var out struct{ Files []FileUsages }
+	data(t, r, &out)
+	for _, f := range out.Files {
+		for _, u := range f.Usages {
+			if strings.Contains(u.Text, "repro-secret-token") {
+				t.Fatalf("rag_find_usages leaked a refused .env secret: %q", u.Text)
+			}
+		}
+	}
+}

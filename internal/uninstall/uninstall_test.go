@@ -3,6 +3,8 @@ package uninstall
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -128,4 +130,40 @@ func TestUninstallRemovesIndexDir(t *testing.T) {
 	require.NoError(t, os.WriteFile(db, []byte("db"), 0o644))
 	require.NoError(t, Run(context.Background(), Options{Yes: true, Out: &bytes.Buffer{}}))
 	assert.NoDirExists(t, rag)
+}
+
+// A rules directory that is a symlink out of the workspace is left alone, as the writer leaves it.
+func TestUninstallKeepsRulesBehindDirSymlink(t *testing.T) {
+	home, root, shared := t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("RAGCODE_HOME", filepath.Join(home, ".ragcode"))
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	rag := filepath.Join(home, ".ragcode")
+	if err := os.MkdirAll(rag, 0755); err != nil {
+		t.Fatal(err)
+	}
+	roots, _ := json.Marshal([]string{root})
+	if err := os.WriteFile(filepath.Join(rag, "roots.json"), roots, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".cursor"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(shared, filepath.Join(root, ".cursor", "rules")); err != nil {
+		t.Fatal(err)
+	}
+	foreign := filepath.Join(shared, "ragcode.mdc")
+	content := []byte("---\nalwaysApply: true\n---\n" + engine.IDEPointer + "\n")
+	if err := os.WriteFile(foreign, content, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.WriteIDERules(root); err == nil {
+		t.Fatal("repro precondition: writer should refuse the external rules directory")
+	}
+	if err := Run(context.Background(), Options{Yes: true, Out: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(foreign); err != nil {
+		t.Fatal("uninstall deleted a shared rule outside the workspace through a parent-directory symlink")
+	}
 }

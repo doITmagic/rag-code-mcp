@@ -68,7 +68,7 @@ func Run(ctx context.Context, o Options) error {
 	}
 	for _, root := range rs {
 		for _, p := range engine.PointerFiles(root) {
-			if err := removePointer(p); err != nil {
+			if err := removePointer(root, p); err != nil {
 				warn(o.Out, err.Error())
 			}
 		}
@@ -177,8 +177,14 @@ func StopProcess(ctx context.Context, binary string) {
 
 // removePointer drops the engine.IDEPointer line WriteIDERules added to path,
 // and the file itself when only the ragcode.mdc header is left. Like the
-// writer, it never follows a symlink.
-func removePointer(path string) error {
+// writer, it never follows a symlink, of the file or of its directory out of
+// the workspace root.
+func removePointer(root, path string) error {
+	real, err := filepath.EvalSymlinks(root)
+	dir, derr := filepath.EvalSymlinks(filepath.Dir(path))
+	if err != nil || derr != nil || dir != real && !strings.HasPrefix(dir, real+string(filepath.Separator)) {
+		return nil
+	}
 	if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeSymlink != 0 {
 		return nil
 	}

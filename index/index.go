@@ -669,6 +669,10 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 					return false
 				}
 			default:
+				if len(hits) >= store.MaxScroll {
+					// shortcut: one key with more hits than a Scroll returns keeps the rest stale; page the store when a repo needs it
+					r.Log.Warn("index: more referrers of one symbol than one lookup returns, the rest keep stale target ids until a recreate", "cap", store.MaxScroll)
+				}
 				for _, h := range hits {
 					use(h)
 				}
@@ -738,16 +742,18 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 		}
 	}
 	ok := query(gone, func(v []string) store.Filter { return store.Filter{TargetIDs: v} }, add(all))
-	// A name the run removes for good can turn an ambiguous call unique.
-	kept := map[[2]string]bool{}
+	// A name the run removes for good can turn an ambiguous call unique. Kept
+	// means still in its own file (it only moved there): the same name in
+	// another file of the run does not replace a deleted candidate.
+	kept := map[[3]string]bool{}
 	for _, p := range files {
 		for _, s := range p.syms {
-			kept[[2]string{s.Language, s.Name}] = true
+			kept[[3]string{p.path, s.Language, s.Name}] = true
 		}
 	}
 	lost := map[string]map[string]bool{} // language -> names
 	ok = ok && query(gone, func(v []string) store.Filter { return store.Filter{IDs: v} }, func(h store.Hit) {
-		if l, n := h.Symbol.Language, h.Symbol.Name; !kept[[2]string{l, n}] {
+		if l, n := h.Symbol.Language, h.Symbol.Name; !kept[[3]string{h.Symbol.FilePath, l, n}] {
 			if lost[l] == nil {
 				lost[l] = map[string]bool{}
 			}
@@ -1006,7 +1012,12 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 	}
 	named := func(lang, name string) []string {
 		ids := byName[[2]string{lang, name}]
-		if len(collapse(ids)) < 2 {
+		// Two candidates of the run are ambiguous without the store, unless fit
+		// may drop them (variables, for a call): then a stored function decides.
+		callable := slices.DeleteFunc(slices.Clone(ids), func(id string) bool {
+			return kindOf[id] == parser.KindVariable || kindOf[id] == parser.KindConstant
+		})
+		if len(collapse(callable)) < 2 {
 			ids = append(ids, fromStore("n:"+lang+"\x00"+name, store.Filter{Name: name, Language: lang}, func(s parser.Symbol) bool {
 				return s.Name == name && s.Language == lang
 			})...)

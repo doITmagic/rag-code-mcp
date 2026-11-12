@@ -1411,3 +1411,51 @@ func TestParseDoesNotFollowFileReplacedBySymlink(t *testing.T) {
 		}
 	}
 }
+
+// Two same-named variables in the run do not hide the stored function a call binds to.
+func TestStoredFunctionWinsOverRunVariables(t *testing.T) {
+	t.Setenv("RAGCODE_HOME", t.TempDir())
+	e := newEnv(t)
+	caller := e.write(t, "caller.go", "func Caller -> Run\n")
+	target := e.write(t, "target.go", "func Run\n")
+	v1 := e.write(t, "v1.go", "var Run\n")
+	v2 := e.write(t, "v2.go", "var Run\n")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	want := e.symbols(t, target)["Run"].ID
+	require.Equal(t, want, e.symbols(t, caller)["Caller"].Relations[0].TargetID)
+	e.write(t, "caller.go", "func Caller -> Run\n\n")
+	e.write(t, "v1.go", "var Run\n\n")
+	e.write(t, "v2.go", "var Run\n\n")
+	_, err = e.run(t, func(o *Options) { o.Files = []string{caller, v1, v2} })
+	require.NoError(t, err)
+	rel := e.symbols(t, caller)["Caller"].Relations[0]
+	if rel.TargetID != want || rel.Resolution != parser.ResolutionUnique {
+		t.Fatalf("incremental run lost the unchanged callable target: target_id=%q resolution=%q; want the stored Run function", rel.TargetID, rel.Resolution)
+	}
+}
+
+// Deleting one of two candidates while the other only moves makes the call unique.
+func TestAmbiguityClearedWhenOtherCandidateDeleted(t *testing.T) {
+	t.Setenv("RAGCODE_HOME", t.TempDir())
+	e := newEnv(t)
+	caller := e.write(t, "caller.go", "func Caller -> Run\n")
+	keep := e.write(t, "keep.go", "func Run\n")
+	remove := e.write(t, "remove.go", "func Run\n")
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	require.Equal(t, parser.ResolutionAmbiguous, e.symbols(t, caller)["Caller"].Relations[0].Resolution)
+
+	e.write(t, "keep.go", "\nfunc Run\n")
+	require.NoError(t, os.Remove(remove))
+	_, err = e.run(t, func(o *Options) {
+		o.Files = []string{keep}
+		o.Deleted = []string{remove}
+	})
+	require.NoError(t, err)
+	want := e.symbols(t, keep)["Run"].ID
+	rel := e.symbols(t, caller)["Caller"].Relations[0]
+	if rel.TargetID != want || rel.Resolution != parser.ResolutionUnique {
+		t.Fatalf("caller remains %q with target_id=%q after ambiguity disappeared; want unique surviving target", rel.Resolution, rel.TargetID)
+	}
+}

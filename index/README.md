@@ -528,6 +528,11 @@ Files runs apply the same check to the listed files.
 - Only hidden directories are pruned; a hidden file with a source extension
   (`pkg/.hidden.py`) is indexed, with a qualified name such as
   `pkg..hidden.hidden_fn`.
+- A symbol with more than 1000 referring symbols (`store.MaxScroll`): when an
+  incremental run changes its id (its declaration moved to another line),
+  only the first 1000 referrers are re-resolved; the rest keep the old target
+  id until `rag_index_workspace` with `mode: "recreate"`. The run logs
+  "more referrers of one symbol than one lookup returns".
 
 ## On-disk layout
 

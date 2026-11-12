@@ -316,6 +316,10 @@ grouped by file, with the referencing symbol and the line.
 | `file_path` | string | the file that defines the symbol, to pick it when several share the name |
 | `limit` | int | maximum referencing symbols, default 100, at most 999 (one store scroll); when it cut, `data.truncated` is `true` and the message says to raise it, or, at 999, to grep the name for the rest; callers in files deleted from disk are not counted (the store is scrolled again up to its cap when they took rows), and when they still fill that scroll the answer is `truncated` with fewer than `limit` callers and the message says to grep, not to raise `limit` |
 
+A Vue component's name resolves to the `template` symbol of its `.vue`
+file; its usages (`import X from './X.vue'`, `<X />`) are those of the file's
+`default` symbol, so `rag_find_usages` answers for that one.
+
 The symbol is resolved first (`resolveSymbol`): up to 50 symbols whose
 qualified name ends with the query, plus, for a plain name, up to 50 named
 the query. None gives `ok` with a "try rag_search" message. `file_path` keeps

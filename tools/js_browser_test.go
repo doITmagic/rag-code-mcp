@@ -84,11 +84,14 @@ func TestUsagesOfVueSetupComponent(t *testing.T) {
 	var out struct {
 		Files []FileUsages `json:"files"`
 	}
-	r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "src/StatusCard.default"})
-	require.Equal(t, "ok", r.Status, r.Message)
-	data(t, r, &out)
-	require.Len(t, out.Files, 1, r.Message)
-	assert.Equal(t, filepath.Join(v.root, "src", "Dashboard.vue"), out.Files[0].FilePath)
+	// by the component's name too: it names the template symbol, the usages are the default symbol's
+	for _, q := range []string{"src/StatusCard.default", "StatusCard"} {
+		r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": q})
+		require.Equal(t, "ok", r.Status, r.Message)
+		data(t, r, &out)
+		require.Len(t, out.Files, 1, q+": "+r.Message)
+		assert.Equal(t, filepath.Join(v.root, "src", "Dashboard.vue"), out.Files[0].FilePath)
+	}
 }
 
 // A Jest test file relying on the global describe/test (no imports): the

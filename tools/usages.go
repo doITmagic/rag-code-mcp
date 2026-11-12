@@ -257,6 +257,13 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 	if res != nil {
 		return res, nil, nil
 	}
+	// A Vue component is used through its default symbol (import Card from
+	// './Card.vue', <Card />); the template symbol only carries its name.
+	if sym.Kind == parser.KindTemplate && strings.HasSuffix(sym.FilePath, ".vue") {
+		if d, err := byName(ctx, w, store.Filter{FilePath: sym.FilePath}, sym.Module+".default", 1); err == nil && len(live(w, d)) == 1 {
+			sym = &d[0].Symbol
+		}
+	}
 	callers, cut, err := referrers(ctx, w, sym, in.Limit)
 	if err != nil {
 		return storeErr(ctx, w, err)

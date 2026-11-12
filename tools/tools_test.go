@@ -1421,3 +1421,80 @@ func TestUsagesSkipSymlinkToSecret(t *testing.T) {
 		}
 	}
 }
+
+// A nested node merges the calls of its twins, as the root does.
+func TestHierarchyNestedTwinsKeepCalls(t *testing.T) {
+	v := newEnv(t, false, func(c *config.Config) { c.AutoIndex = false })
+	v.addFiles(t, map[string]string{
+		"tw/accessors.fk": "func Property\n  call m/tw.Read\nfunc Property\n  call m/tw.Write\nfunc Read\nfunc Write\nfunc Caller\n  call m/tw.Property\n",
+	})
+	var direct, nested struct{ Outgoing *Node }
+	r, _ := v.call(t, "rag_call_hierarchy", map[string]any{"workspace_root": v.root, "symbol": "m/tw.Property", "direction": "outgoing", "depth": 1})
+	data(t, r, &direct)
+	if direct.Outgoing == nil || len(direct.Outgoing.Children) != 2 {
+		t.Fatalf("setup: direct Property lookup should contain both accessor calls: %+v", direct.Outgoing)
+	}
+	r, _ = v.call(t, "rag_call_hierarchy", map[string]any{"workspace_root": v.root, "symbol": "m/tw.Caller", "direction": "outgoing", "depth": 2})
+	data(t, r, &nested)
+	if nested.Outgoing == nil || len(nested.Outgoing.Children) != 1 {
+		t.Fatalf("setup: Caller should call Property: %+v", nested.Outgoing)
+	}
+	property := nested.Outgoing.Children[0]
+	if len(property.Children) != 2 {
+		var got []string
+		for _, n := range property.Children {
+			got = append(got, n.QualifiedName)
+		}
+		t.Fatalf("nested Property lost accessor calls: got %v; want [m/tw.Read m/tw.Write]", got)
+	}
+}
+
+// file_path picks a symbol even when more than candidateLimit symbols share the name.
+func TestFilePathPicksSymbolPastCandidateLimit(t *testing.T) {
+	v := newEnv(t, false, func(c *config.Config) { c.AutoIndex = false })
+	files := map[string]string{}
+	for i := 0; i < 60; i++ {
+		files[fmt.Sprintf("p%02d/close.fk", i)] = "func Close\n"
+	}
+	v.addFiles(t, files)
+	w, err := v.e.Workspace(v.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, err := byName(context.Background(), w, store.Filter{}, "Close", 100)
+	if err != nil || len(all) != 60 {
+		t.Fatalf("setup: indexed Close symbols: %d, error: %v", len(all), err)
+	}
+	// Choose an indexed symbol after the first 50 in the store's stable order.
+	chosen := all[59].Symbol
+	rel, err := filepath.Rel(v.root, chosen.FilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "Close", "file_path": rel})
+	var out struct{ Symbol Candidate }
+	data(t, r, &out)
+	if out.Symbol.ID != chosen.ID {
+		t.Fatalf("indexed Close in requested file was reported missing (symbol.id=%q)", out.Symbol.ID)
+	}
+}
+
+// More callers than one Scroll returns are reported as truncated.
+func TestUsagesTruncatedAtStoreCap(t *testing.T) {
+	v := newEnv(t, false, func(c *config.Config) { c.AutoIndex = false })
+	var src strings.Builder
+	src.WriteString("func Target\n")
+	for i := 0; i < 1001; i++ {
+		fmt.Fprintf(&src, "func Caller%d\n  call m/many.Target\n", i)
+	}
+	v.addFiles(t, map[string]string{"many/callers.fk": src.String()})
+	r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "m/many.Target", "limit": 2000})
+	var out struct {
+		Total     int
+		Truncated bool
+	}
+	data(t, r, &out)
+	if out.Total != 1001 && !out.Truncated {
+		t.Fatalf("incomplete usages reported as complete: total=%d, truncated=%v; want total=1001 or truncated=true", out.Total, out.Truncated)
+	}
+}

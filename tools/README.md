@@ -291,7 +291,7 @@ grouped by file, with the referencing symbol and the line.
 | `workspace_root` | string | absolute project path |
 | `symbol` | string, required | name or qualified name, e.g. `User.find` or `App\Models\User::find` |
 | `file_path` | string | the file that defines the symbol, to pick it when several share the name |
-| `limit` | int | maximum referencing symbols, default 100; when it cut, `data.truncated` is `true` and the message says to raise it |
+| `limit` | int | maximum referencing symbols, default 100, at most 999 (one store scroll); when it cut, `data.truncated` is `true` and the message says to raise it |
 
 The symbol is resolved first (`resolveSymbol`): up to 50 symbols whose
 qualified name ends with the query, plus, for a plain name, up to 50 named

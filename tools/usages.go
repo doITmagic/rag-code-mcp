@@ -37,7 +37,19 @@ func toCandidate(s parser.Symbol) Candidate {
 // resolveSymbol finds the one symbol named by query. The result is nil with
 // a non-nil answer when there is none or several (ambiguous).
 func resolveSymbol(ctx context.Context, w *engine.Workspace, query, filePath string, g *grepRun) (*parser.Symbol, *mcp.CallToolResult) {
-	hits, err := byName(ctx, w, store.Filter{}, query, candidateLimit)
+	var in store.Filter // the file narrows the lookup itself: a common name has more symbols than candidateLimit
+	if filePath != "" {
+		p, err := insideRoot(w.Root, filePath)
+		if err != nil {
+			res, _, _ := fail(err.Error())
+			return nil, res
+		}
+		in.FilePath = p
+	}
+	hits, err := byName(ctx, w, in, query, candidateLimit)
+	if err == nil && len(live(w, hits)) == 0 && filePath != "" {
+		hits, err = byName(ctx, w, store.Filter{}, query, candidateLimit) // for the "elsewhere" answer below
+	}
 	if err != nil {
 		res, _, _ := storeErr(ctx, w, err)
 		return nil, res
@@ -52,12 +64,7 @@ func resolveSymbol(ctx context.Context, w *engine.Workspace, query, filePath str
 		res, _, _ := reply("ok", msg, data, w)
 		return nil, res
 	}
-	if filePath != "" {
-		p, err := insideRoot(w.Root, filePath)
-		if err != nil {
-			res, _, _ := fail(err.Error())
-			return nil, res
-		}
+	if p := in.FilePath; p != "" {
 		var same []store.Hit
 		for _, h := range hits {
 			if h.Symbol.FilePath == p {
@@ -322,6 +329,7 @@ func usedMembers(ctx context.Context, w *engine.Workspace, sym *parser.Symbol, t
 // referrers lists at most limit symbols with a relation to sym, by target
 // id and by target qualified name, deduplicated; cut says there were more.
 func referrers(ctx context.Context, w *engine.Workspace, sym *parser.Symbol, limit int) (out []parser.Symbol, cut bool, err error) {
+	limit = min(limit, store.MaxScroll-1) // one more than limit must fit a Scroll, or cut is never seen
 	byID, err := w.Scroll(ctx, store.Filter{TargetIDs: []string{sym.ID}}, limit+1)
 	if err != nil {
 		return nil, false, err
@@ -553,6 +561,10 @@ func (wk *walker) next(ctx context.Context, sym parser.Symbol, incoming bool) ([
 			}
 			seen[key] = true
 			hits, err := wk.w.Scroll(ctx, f, n)
+			if t := hits; err == nil && r.TargetID != "" && len(t) == 1 && t[0].Symbol.Kind != parser.KindChunk && t[0].Symbol.QualifiedName != "" {
+				// The target's twins (a getter and its setter) carry calls of their own.
+				hits, err = wk.w.Scroll(ctx, store.Filter{QualifiedName: t[0].Symbol.QualifiedName, FilePath: t[0].Symbol.FilePath}, candidateLimit)
+			}
 			if err != nil {
 				wk.err = err
 				return nil, nil

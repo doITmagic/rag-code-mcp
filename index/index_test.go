@@ -134,13 +134,17 @@ func newEnv(t *testing.T) *env {
 	return e
 }
 
+var writeTick = time.Now().Truncate(time.Second)
+
 func (e *env) write(t *testing.T, rel, content string) string {
 	t.Helper()
 	p := filepath.Join(e.root, rel)
 	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
 	require.NoError(t, os.WriteFile(p, []byte(content), 0o644))
 	// Edits inside the same timestamp tick would be invisible to the diff.
-	require.NoError(t, os.Chtimes(p, time.Now(), time.Now().Add(time.Second)))
+	// Whole seconds: ecryptfs (and other filesystems) drop sub-second mtimes set by Chtimes.
+	writeTick = writeTick.Add(time.Second)
+	require.NoError(t, os.Chtimes(p, writeTick, writeTick))
 	return p
 }
 

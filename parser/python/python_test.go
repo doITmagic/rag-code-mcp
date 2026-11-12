@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -404,15 +405,16 @@ func TestPackageReexportCached(t *testing.T) {
 	init := filepath.Join(root, "app", "__init__.py")
 	require.NoError(t, os.MkdirAll(filepath.Dir(init), 0o755))
 	require.NoError(t, os.WriteFile(init, []byte("from .user import User\n"), 0o644))
+	// Whole seconds: ecryptfs drops the sub-second part of a Chtimes, so restore a value it keeps.
+	mt := time.Now().Truncate(time.Second)
+	require.NoError(t, os.Chtimes(init, mt, mt))
 	find := func() string {
 		syms := analyze(t, filepath.Join(root, "a.py"), root, "from app import User\n\ndef v():\n    User.find()\n")
 		return targets(byQN(syms)["a.v"], parser.RelCall)["find"]
 	}
 	assert.Equal(t, "app.user.User.find", find())
-	info, err := os.Lstat(init)
-	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(init, []byte("from .usar import User\n"), 0o644))
-	require.NoError(t, os.Chtimes(init, info.ModTime(), info.ModTime()))
+	require.NoError(t, os.Chtimes(init, mt, mt))
 	assert.Equal(t, "app.user.User.find", find(), "same mtime+size: cached table reused")
 	require.NoError(t, os.WriteFile(init, []byte("from .person import User\n"), 0o644))
 	assert.Equal(t, "app.person.User.find", find(), "size changed: re-parsed")

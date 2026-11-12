@@ -403,8 +403,10 @@ func TestVerifyBladeLayout(t *testing.T) {
 	file := byQN["layouts.app"]
 	assert.Equal(t, "app", file.Name)
 	assert.Equal(t, "layouts", file.Module)
-	assert.Equal(t, []parser.Relation{{Kind: parser.RelImports, TargetName: "partials.footer", TargetQualifiedName: "partials.footer", Line: 11}}, file.Relations,
-		"@includeWhen/@includeFirst/@yield are not imports; @include with double quotes is")
+	assert.Equal(t, []parser.Relation{
+		{Kind: parser.RelImports, TargetName: "card", TargetQualifiedName: "card", Line: 7},
+		{Kind: parser.RelImports, TargetName: "partials.footer", TargetQualifiedName: "partials.footer", Line: 11},
+	}, file.Relations, "@includeWhen/@includeFirst/@yield are not imports; @component and @include with double quotes are")
 	sb, ok := byQN["layouts.app.sidebar"]
 	require.True(t, ok)
 	assert.Equal(t, 2, sb.StartLine)

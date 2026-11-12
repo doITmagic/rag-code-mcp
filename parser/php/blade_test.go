@@ -1,6 +1,7 @@
 package php
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/doITmagic/rag-code-mcp/v2/parser"
@@ -54,6 +55,7 @@ func TestBlade(t *testing.T) {
 		{Kind: parser.RelImports, TargetName: "partials.nav", TargetQualifiedName: "partials.nav", Line: 7},
 		{Kind: parser.RelImports, TargetName: "partials.flash", TargetQualifiedName: "partials.flash", Line: 8},
 		{Kind: parser.RelImports, TargetName: "users.row", TargetQualifiedName: "users.row", Line: 9},
+		{Kind: parser.RelImports, TargetName: "alert", TargetQualifiedName: "alert", Line: 13},
 	}, file.Relations)
 
 	tests := []struct {
@@ -98,6 +100,21 @@ func TestBladeEndLine(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, syms)
 	assert.Equal(t, 2, syms[0].EndLine)
+}
+
+// <x-...> tag components import their view under components/; directives
+// inside {{-- --}} comments are ignored, also over several lines.
+func TestBladeTagComponentsAndComments(t *testing.T) {
+	src := "{{-- @include('old.nav') --}}\n<x-alert type=\"error\" />\n{{--\n@extends('old.layout')\n@section('dead')\n--}}\n<x-forms.input-text name=\"a\"></x-forms.input-text>\n<x-slot name=\"title\">T</x-slot>\n<x-dynamic-component :component=\"$c\" />\n<x-mail::button />\n@include('partials.nav')\n"
+	syms, err := parser.Analyze(parser.File{Path: "/root/resources/views/p.blade.php", Root: "/root", Source: []byte(src)})
+	require.NoError(t, err)
+	require.Len(t, syms, 1, "no section from inside a comment")
+	var got []string
+	for _, r := range syms[0].Relations {
+		got = append(got, fmt.Sprintf("%s:%d", r.TargetQualifiedName, r.Line))
+	}
+	assert.Equal(t, []string{"components.alert:2", "components.forms.input-text:7", "partials.nav:11"}, got)
+	assert.Equal(t, src, syms[0].Content, "the content keeps the comments")
 }
 
 // A block nested inside a section does not take the section's end.

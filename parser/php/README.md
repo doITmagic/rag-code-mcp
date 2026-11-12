@@ -195,13 +195,16 @@ A closure handler, `Route::redirect` and a string that is not a class name
 ## Blade views
 
 `.blade.php` files are not parsed with tree-sitter. `blade.go` scans them line
-by line with one regular expression.
+by line with regular expressions.
 
 | Output | Details |
 |--------|---------|
 | One `template` symbol for the file | Name = file name without `.blade.php`; module = the dotted directory below the last `views` folder in the path (`resources/views/users/show.blade.php` -> module `users`, qualified name `users.show`). Content is the whole file. It ends on the last line; a final newline does not add an empty line. |
 | One `template` symbol per `@section('x')`, `@component('x')`, `@livewire('x')` | Owner = the view name. `@section` without a second argument and `@component` stay open until a closing directive (`@endsection`, `@endcomponent`, `@stop`, `@show`, `@append`, `@overwrite`); open blocks form a stack, so a closing directive ends the innermost one and a `@component` nested in a `@section` does not take the section's end. The inline `@section('x', 'v')` form and `@livewire` are one line. |
-| `imports` relation on the file symbol | For `@extends`, `@include`, `@includeIf`, `@each`; the target qualified name is the view name as written (`layouts.app`), which matches the qualified name of `resources/views/layouts/app.blade.php`. |
+| `imports` relation on the file symbol | For `@extends`, `@include`, `@includeIf`, `@each`, `@component`; the target qualified name is the view name as written (`layouts.app`), which matches the qualified name of `resources/views/layouts/app.blade.php`. A component tag `<x-alert>` or `<x-forms.input>` imports `components.alert` / `components.forms.input` (the anonymous component view, which is also the view of a class component); `<x-slot>`, `<x-dynamic-component>` and package components (`<x-mail::button>`) give none. |
+
+Directives inside `{{-- --}}` comments, also over several lines, are
+ignored; the symbols' content keeps them.
 
 A view outside any `views` folder has module `""`.
 
@@ -212,8 +215,9 @@ A view outside any `views` folder has module `""`.
   usages, because a relation needs an owning symbol (see below). A class
   named in a string anywhere else (`app('App\Svc')`, a `$routeMiddleware`
   string) is not a usage either.
-- Blade `@component('x.y')` makes no `imports` relation to the component view,
-  and `<x-alert />` tag components produce nothing.
+- A class component `<x-alert>` is linked to its view, not to its class
+  (`App\View\Components\Alert`), and a component whose class renders
+  another view is linked to `components.<name>` anyway.
 - `define('X', ...)` becomes a constant only at file level (also in a
   namespace or a top-level closure); inside a named function or method it
   produces no symbol.
@@ -238,8 +242,7 @@ A view outside any `views` folder has module `""`.
   `->middleware(...)`) are not turned into symbols.
 - `Route::group([...], fn)` has no string argument and produces no symbol
   of its own; it only prefixes the routes inside it.
-- The Blade scanner does not skip `{{-- --}}` comments, and a closing
-  directive ends the innermost open block whatever its kind.
+- A Blade closing directive ends the innermost open block whatever its kind.
 - File-level code is never a usage, because a relation needs an owning
   symbol: calls and `new X()` at the bottom of a class file, template or page
   files, and top-level closures (`add_action('plugins_loaded', function () {
@@ -265,7 +268,7 @@ A view outside any `views` folder has module `""`.
 | File | Covers |
 |------|--------|
 | `php_test.go` | Registration of both extensions; a controller fixture with group/function/const `use`, attributes, traits, enums, promoted properties, closures, anonymous classes, routes and hooks (kinds, owners, lines, docs, signatures, metadata, relation targets); `define()` inside a namespace is global; hook and route names only from a plain string literal in the name position; a plugin with braced namespaces and parse-error recovery; malformed input; global-namespace function calls; concurrency; parameter and return type uses; a class named with a reserved word (`class Object extends Base`) keeping its name and base (`TestReservedClassName`); the line of a `->` chain call split over lines (`TestChainedCallLine`). |
-| `blade_test.go` | A Blade view with sections, components and includes; a view outside a `views` folder; the file symbol's end line with a trailing newline; a `@component` nested in a `@section`. |
+| `blade_test.go` | A Blade view with sections, components and includes; `<x-...>` tag components and directives inside `{{-- --}}` comments (`TestBladeTagComponentsAndComments`); a view outside a `views` folder; the file symbol's end line with a trailing newline; a `@component` nested in a `@section`. |
 | `laravel_test.go` | Laravel route groups (array and fluent, nested, namespace) and handler relations (`C@m`, `uses`, `[C::class, m]`, invokable, resource, `Route::view`); `view()` / `View::make()` importing the template, not for a dynamic or package view name; `X::class`, property types, Eloquent relation strings and the `$listen` map as `uses_type` (`TestLaravelClassReferences`); calls on typed parameters, typed, promoted and constructor-assigned properties (`TestTypedReceivers`). |
 | `zz_verify_test.go` | Verification tests: name resolution, global-namespace WordPress code, robustness, a routes file, multiple namespaces in one file, Blade layouts, no shared state between calls. |
 

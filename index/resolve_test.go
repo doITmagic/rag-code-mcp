@@ -172,3 +172,58 @@ class Checkout {
 	}
 	assert.Equal(t, methodID, callTargetID)
 }
+
+// route('users.index') names the Laravel route whose metadata name is
+// users.index, whatever its URI: exact when one route has that name,
+// ambiguous when several, in a full run, from the store, and again when the
+// routes file gives an existing route that name later.
+func TestResolveRouteNameToRoute(t *testing.T) {
+	parser.Register(realPHP)
+	t.Cleanup(func() { parser.Register(lineAnalyzer{lang: "php", ext: ".php"}) })
+
+	e := newEnv(t)
+	routesSrc := `<?php
+use Illuminate\Support\Facades\Route;
+Route::get('/users', 'UserController@index')->name('users.index');
+Route::get('/a', 'UserController@a')->name('dup');
+Route::get('/b', 'UserController@b')->name('dup');
+Route::get('/later', 'UserController@later');
+`
+	routes := e.write(t, "routes/web.php", routesSrc)
+	ctrl := e.write(t, "app/C.php", `<?php
+namespace App;
+class C {
+    public function go() { return route('users.index'); }
+    public function dup() { return route('dup'); }
+    public function later() { return route('later.page'); }
+}
+`)
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	ref := func(file, fn string) parser.Relation {
+		for _, r := range e.symbols(t, file)[fn].Relations {
+			if r.Kind == parser.RelImports {
+				return r
+			}
+		}
+		t.Fatalf("%s has no route reference", fn)
+		return parser.Relation{}
+	}
+	users := e.symbols(t, routes)["/users"].ID
+	require.NotEmpty(t, users)
+	assert.Equal(t, users, ref(ctrl, "go").TargetID, "full run")
+	assert.Equal(t, parser.ResolutionExact, ref(ctrl, "go").Resolution)
+	assert.Equal(t, parser.ResolutionAmbiguous, ref(ctrl, "dup").Resolution)
+	assert.Empty(t, ref(ctrl, "later").TargetID)
+
+	other := e.write(t, "app/D.php", "<?php\nnamespace App;\nclass D { public function go() { return route('users.index'); } }\n")
+	_, err = e.run(t, nil)
+	require.NoError(t, err)
+	assert.Equal(t, users, ref(other, "go").TargetID, "from the store")
+
+	// The route keeps its line, so its id: only the name is new.
+	e.write(t, "routes/web.php", strings.Replace(routesSrc, "'UserController@later');", "'UserController@later')->name('later.page');", 1))
+	_, err = e.run(t, nil)
+	require.NoError(t, err)
+	assert.Equal(t, e.symbols(t, routes)["/later"].ID, ref(ctrl, "later").TargetID, "a caller of a name the run adds")
+}

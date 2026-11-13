@@ -32,7 +32,7 @@ func isRouteRecv(recv, recvFQN string) bool {
 func frameworkSymbols(calls []rawCall) []parser.Symbol {
 	var groups []rawCall // Route groups adding a prefix or namespace, outer first (the walk is preorder)
 	for _, call := range calls {
-		if call.name == "group" && isRouteRecv(call.recv, call.recvFQN) && (call.route.prefix != "" || call.route.ns != "" || call.route.ctrlFQN != "") {
+		if call.name == "group" && isRouteRecv(call.recv, call.recvFQN) && (call.route.prefix != "" || call.route.ns != "" || call.route.ctrlFQN != "" || call.route.name != "") {
 			groups = append(groups, call)
 		}
 	}
@@ -50,7 +50,11 @@ func frameworkSymbols(calls []rawCall) []parser.Symbol {
 		case isRouteRecv(call.recv, call.recvFQN) && routeMethods[call.name]:
 			s.Kind = parser.KindRoute
 			s.Metadata = map[string]string{"framework": "laravel", "method": call.name}
-			s.Name, s.Relations = route(call, groups)
+			var name string
+			s.Name, name, s.Relations = route(call, groups)
+			if name != "" {
+				s.Metadata["name"] = name
+			}
 		case call.recv == "" && (call.name == "add_action" || call.name == "add_filter"):
 			s.Kind = parser.KindHook
 			s.Metadata = map[string]string{"framework": "wordpress", "kind": strings.TrimPrefix(call.name, "add_")}
@@ -63,15 +67,18 @@ func frameworkSymbols(calls []rawCall) []parser.Symbol {
 }
 
 // route returns the route's URI with the prefixes of the groups around it,
-// normalized as Laravel registers it (Route::get('users') is /users)
+// normalized as Laravel registers it (Route::get('users') is /users), its
+// name with the groups' name prefixes ("" when it has none of its own)
 // and the relation to its handler: a call to the controller method, a
 // uses_type to a resource or invokable controller, an import of a view.
-func route(call rawCall, groups []rawCall) (string, []parser.Relation) {
+func route(call rawCall, groups []rawCall) (string, string, []parser.Relation) {
 	var prefixes, nss []string
+	var names string     // the groups' name prefixes, joined as Laravel does: admin. + posts.
 	var groupCtrl string // the innermost Route::controller(C::class) group's C
 	for _, g := range groups {
 		if g.from <= call.from && call.to <= g.to && (g.from != call.from || g.to != call.to) {
 			groupCtrl = cmp.Or(g.route.ctrlFQN, groupCtrl)
+			names += g.route.name
 			if p := strings.Trim(g.route.prefix, "/"); p != "" {
 				prefixes = append(prefixes, p)
 			}
@@ -86,6 +93,10 @@ func route(call rawCall, groups []rawCall) (string, []parser.Relation) {
 	}
 	uri := "/" + strings.Join(prefixes, "/")
 	r, line := call.route, call.start
+	name := ""
+	if r.name != "" {
+		name = names + r.name
+	}
 	if groupCtrl != "" && r.ctrl != "" && r.action == "" && !strings.Contains(r.ctrl, `\`) && call.name != "resource" && call.name != "apiResource" {
 		// Inside a controller group a string action without @ is a method of it.
 		r.ctrlFQN, r.ctrl, r.action = groupCtrl, "", r.ctrl
@@ -93,9 +104,9 @@ func route(call rawCall, groups []rawCall) (string, []parser.Relation) {
 	fqn := r.ctrlFQN
 	switch {
 	case r.view != "":
-		return uri, []parser.Relation{{Kind: parser.RelImports, TargetName: r.view, TargetQualifiedName: r.view, Line: line}}
+		return uri, name, []parser.Relation{{Kind: parser.RelImports, TargetName: r.view, TargetQualifiedName: r.view, Line: line}}
 	case fqn == "" && r.ctrl == "":
-		return uri, nil
+		return uri, name, nil
 	case fqn == "" && strings.HasPrefix(r.ctrl, `\`):
 		fqn = r.ctrl[1:]
 	case fqn == "":
@@ -104,9 +115,9 @@ func route(call rawCall, groups []rawCall) (string, []parser.Relation) {
 		fqn = strings.Join(append(nss, r.ctrl), `\`)
 	}
 	if r.action == "" {
-		return uri, []parser.Relation{{Kind: parser.RelUsesType, TargetName: short(fqn), TargetQualifiedName: qualified(fqn), Line: line}}
+		return uri, name, []parser.Relation{{Kind: parser.RelUsesType, TargetName: short(fqn), TargetQualifiedName: qualified(fqn), Line: line}}
 	}
-	return uri, []parser.Relation{{Kind: parser.RelCall, TargetName: r.action, TargetQualifiedName: qualified(fqn) + "." + r.action, Line: line}}
+	return uri, name, []parser.Relation{{Kind: parser.RelCall, TargetName: r.action, TargetQualifiedName: qualified(fqn) + "." + r.action, Line: line}}
 }
 
 // routeInfo reads a Route::<name>(...) call: the prefix and namespace of a
@@ -121,6 +132,7 @@ func (c *collector) routeInfo(n *gotreesitter.Node, name string, pos int, owner 
 			keyed, _ := c.arrayElems(args[0])
 			ri.prefix, ri.ns = c.literal(keyed["prefix"]), c.literal(keyed["namespace"])
 			ri.ctrlFQN = c.classConst(keyed["controller"], owner)
+			ri.name = c.literal(keyed["as"])
 		}
 	case pos+1 >= len(args):
 	case name == "view":
@@ -144,6 +156,7 @@ func (c *collector) handler(h *gotreesitter.Node, owner string, ri *routeInfo) {
 		ri.ctrlFQN = c.classConst(h, owner)
 	case "array_creation_expression":
 		keyed, list := c.arrayElems(h)
+		ri.name = c.literal(keyed["as"])
 		if u := keyed["uses"]; u != nil {
 			c.handler(u, owner, ri)
 		} else if len(list) == 2 {
@@ -193,7 +206,7 @@ func (c *collector) arrayElems(arr *gotreesitter.Node) (map[string]*gotreesitter
 // inside take its prefix and controller.
 func (c *collector) fluentGroup(n *gotreesitter.Node) {
 	var prefixes, nss []string
-	var ctrl string
+	var ctrl, names string
 	for o := c.field(n, "object"); ; {
 		t := c.typ(o)
 		if t != "member_call_expression" && t != "scoped_call_expression" {
@@ -204,6 +217,8 @@ func (c *collector) fluentGroup(n *gotreesitter.Node) {
 			prefixes = append([]string{arg}, prefixes...)
 		case "namespace":
 			nss = append([]string{arg}, nss...)
+		case "name":
+			names = arg + names
 		case "controller":
 			if args := c.args(o); len(args) > 0 {
 				ctrl = c.classConst(args[0], "")
@@ -213,11 +228,23 @@ func (c *collector) fluentGroup(n *gotreesitter.Node) {
 			recv := c.text(c.field(o, "scope"))
 			if isRouteRecv(recv, c.resolve(recv, c.classes, "")) {
 				c.calls = append(c.calls, rawCall{recv: "Route", name: "group", from: n.StartByte(), to: n.EndByte(),
-					route: routeInfo{prefix: strings.Join(prefixes, "/"), ns: strings.Join(nss, `\`), ctrlFQN: ctrl}})
+					route: routeInfo{prefix: strings.Join(prefixes, "/"), ns: strings.Join(nss, `\`), ctrlFQN: ctrl, name: names}})
 			}
 			return
 		}
 		o = c.field(o, "object")
+	}
+}
+
+// routeName records ->name('x') of a Route::get(...)->...->name('x') chain
+// for the route call at its root, which the walk reaches after this call.
+func (c *collector) routeName(n *gotreesitter.Node) {
+	o := c.field(n, "object")
+	for c.typ(o) == "member_call_expression" {
+		o = c.field(o, "object")
+	}
+	if c.typ(o) == "scoped_call_expression" {
+		c.names[o.StartByte()] = c.stringArg(n, 0)
 	}
 }
 

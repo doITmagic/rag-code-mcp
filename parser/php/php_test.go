@@ -173,7 +173,7 @@ func TestController(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, routes)
-	assert.Equal(t, map[string]string{"framework": "laravel", "method": "post"}, syms["route "+ns+"./users"].Metadata)
+	assert.Equal(t, map[string]string{"framework": "laravel", "method": "post", "name": "x"}, syms["route "+ns+"./users"].Metadata)
 	assert.Equal(t, map[string]string{"framework": "wordpress", "kind": "action"}, syms["hook "+ns+".init"].Metadata)
 	assert.Equal(t, map[string]string{"framework": "wordpress", "kind": "filter"}, syms["hook "+ns+".the_content"].Metadata)
 	assert.Contains(t, syms["class "+ns+".UserController"].Content, "#[Attr]\nfinal class")

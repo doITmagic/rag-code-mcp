@@ -4,6 +4,7 @@
 package php
 
 import (
+	"cmp"
 	"maps"
 	"strings"
 
@@ -29,7 +30,7 @@ func (analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 		return nil, err
 	}
 	defer tree.Release()
-	c := &collector{src: f.Source, lang: lang}
+	c := &collector{src: f.Source, lang: lang, names: map[uint32]string{}}
 	c.resetImports()
 	c.walkTop(tree.RootNode())
 	c.syms = append(c.syms, frameworkSymbols(c.calls)...)
@@ -52,6 +53,7 @@ type collector struct {
 	syms    []parser.Symbol
 	calls   []rawCall
 	vars    map[string]string // receiver -> declared class FQN in the body being walked: "$p", "$this->x"
+	names   map[uint32]string // start byte of a Route::get(...) call -> the name ->name('x') gives it
 }
 
 // rawCall is one function or static call seen anywhere in the file, kept for
@@ -76,6 +78,7 @@ type routeInfo struct {
 	ctrlFQN    string // controller resolved from C::class; for a group, its Route::controller(C::class)
 	action     string // controller method, "" for a resource or an invokable controller
 	view       string // Route::view template name
+	name       string // the route's name ('as', ->name()); for a group, the name prefix
 }
 
 func (c *collector) resetImports() {
@@ -748,6 +751,7 @@ func (c *collector) call(n *gotreesitter.Node, sym *parser.Symbol, owner string)
 	kind, track := parser.RelCall, false // track: plain and static calls feed the framework pass
 	var recv, recvFQN, name, target string
 	viewCall := false // view('x') or View::make('x')
+	routeRef := false // route('x'), to_route('x'), redirect()->route('x'), URL::route('x')
 	at := n           // the node whose line the relation takes
 	switch n.Type(c.lang) {
 	case "function_call_expression":
@@ -759,6 +763,7 @@ func (c *collector) call(n *gotreesitter.Node, sym *parser.Symbol, owner string)
 		raw := c.text(fn)
 		name, target = short(raw), qualified(c.resolve(raw, c.funcs, owner))
 		viewCall = raw == "view" || raw == `\view`
+		routeRef = strings.TrimPrefix(raw, `\`) == "route" || strings.TrimPrefix(raw, `\`) == "to_route"
 		if _, imported := c.funcs[raw]; c.ns != "" && !imported && !strings.ContainsRune(raw, '\\') {
 			// PHP falls back to the global function at runtime, so the
 			// namespace is only a guess: leave the target to a name lookup.
@@ -782,6 +787,7 @@ func (c *collector) call(n *gotreesitter.Node, sym *parser.Symbol, owner string)
 			target = qualified(recvFQN) + "." + name
 		}
 		viewCall = name == "make" && (recv == "View" || recvFQN == `Illuminate\Support\Facades\View`)
+		routeRef = name == "route" && (recv == "URL" || recv == "Redirect" || recvFQN == `Illuminate\Support\Facades\URL` || recvFQN == `Illuminate\Support\Facades\Redirect`)
 	case "member_call_expression", "nullsafe_member_call_expression":
 		fn := c.field(n, "name")
 		if c.typ(fn) != "name" {
@@ -801,6 +807,13 @@ func (c *collector) call(n *gotreesitter.Node, sym *parser.Symbol, owner string)
 		// A Mailable's $this->view('x') / ->markdown('x'), also a
 		// MailMessage's or response()->view('x'): the template rendered.
 		viewCall = owner != "" && (name == "view" || name == "markdown")
+		// redirect()->route('x'); $request->route('id') reads a parameter.
+		if obj := c.field(n, "object"); name == "route" && c.typ(obj) == "function_call_expression" {
+			routeRef = strings.TrimPrefix(c.text(c.field(obj, "function")), `\`) == "redirect"
+		}
+		if name == "name" {
+			c.routeName(n)
+		}
 	case "object_creation_expression":
 		kind = parser.RelUsesType
 		cls := n.NamedChild(0)
@@ -830,6 +843,12 @@ func (c *collector) call(n *gotreesitter.Node, sym *parser.Symbol, owner string)
 				}
 			}
 		}
+		// The index resolves route:x to the route whose metadata name is x.
+		if v := c.stringArg(n, 0); routeRef && v != "" {
+			sym.Relations = append(sym.Relations, parser.Relation{
+				Kind: parser.RelImports, TargetName: v, TargetQualifiedName: "route:" + v, Line: line,
+			})
+		}
 		if v := c.viewName(n, viewCall); v != "" {
 			sym.Relations = append(sym.Relations, parser.Relation{
 				Kind: parser.RelImports, TargetName: v, TargetQualifiedName: v, Line: line,
@@ -852,6 +871,7 @@ func (c *collector) call(n *gotreesitter.Node, sym *parser.Symbol, owner string)
 		}
 		if isRouteRecv(recv, recvFQN) {
 			rc.route = c.routeInfo(n, name, pos, owner)
+			rc.route.name = cmp.Or(c.names[n.StartByte()], rc.route.name)
 		}
 		c.calls = append(c.calls, rc)
 	}

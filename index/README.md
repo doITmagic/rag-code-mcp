@@ -80,7 +80,7 @@ graph LR
 | `racy_test.go` | Racy clean: a file indexed within 2 s of its mtime and replaced by other bytes of the same size under the same mtime is re-indexed, in full and files runs; one whose bytes turned binary leaves the index; an old-mtime file replaced the same way is not opened and not seen (as in git); a racy file left untouched is read again until its mtime is past the window, then its hash is dropped and saved and it is no longer opened; a `state.json` without hashes loads and runs unchanged. `clock` is fixed by the tests. |
 | `budget_test.go` | The parse byte budget is respected, and batches still resolve forward references. |
 | `go_value_use_test.go` | With the real Go analyzer, two files of one package: a method passed as `s.firmaJSON` (on a local `s := &server{}` and on the receiver) and a function passed as `handler` link exactly to their declarations in the other file, in a full run and from the store; a field read (also one named like a method of another type), a constant, a variable and `http.MethodGet` in the same positions leave no relation at all. |
-| `resolve_test.go` | A non-fresh run resolves more than 500 targets through the store; an html call to `window.f` resolves by name to the JavaScript global function `f` (never a variable, a method or module function of that name, a Go symbol, nor from a JS caller), in a full run and from the store; nor a symbol of a Go package or JS module called `window` (real Go, JavaScript and HTML analyzers); a JS `import { n }` of a default-exported declaration resolves by module and name, in a full run and from the store; with the real PHP analyzer, `$cart->items()` binds to the method `items`, not the wider property `$items`. |
+| `resolve_test.go` | A non-fresh run resolves more than 500 targets through the store; an html call to `window.f` resolves by name to the JavaScript global function `f` (never a variable, a method or module function of that name, a Go symbol, nor from a JS caller), in a full run and from the store; nor a symbol of a Go package or JS module called `window` (real Go, JavaScript and HTML analyzers); a JS `import { n }` of a default-exported declaration resolves by module and name, in a full run and from the store; with the real PHP analyzer, `$cart->items()` binds to the method `items`, not the wider property `$items`; `route('x')` binds to the route named `x` (exact, ambiguous for two, from the store, and after a files run gives an existing route that name, `TestResolveRouteNameToRoute`). |
 | `owners_test.go` | Files runs that must match a full run: both twins shifted by one line keep the caller on the first twin; with the real Python analyzer, `Repo.save()` loses its by-name link when class `Repo` is deleted and gains it when `Repo` is added, and `Child.save()` follows `Child` to its new base; with the real JavaScript analyzer, `Repo.save()` on a default-exported function `Repo` loses its by-name link when `repo.js` is deleted and gets it back when the file returns. |
 | `cross_language_referrers_test.go` | Files runs that must match a full run for `html` and `docs` callers of JavaScript symbols (line analyzers for `.js`, `.fkh`, `.fkd`): removing one of two definitions of `f` turns `onclick`-style `window.f` and `util.f` callers from ambiguous to the remaining one; adding a second definition makes them ambiguous; a function that becomes a browser global, or stops being one, links or unlinks the `onclick` caller. |
 | `twins_test.go` | Twins in one file resolve to the widest (then first) by qualified name and by name, in a full run and from the store; a qualified name in two files stays ambiguous; a wider twin added later re-resolves the unchanged caller in a files run; `..delta` resolves by name (unique, then ambiguous), never exact. |
@@ -227,7 +227,7 @@ one qualified name on one line of a file get distinct IDs; points carry
 or ready callback of a classic browser script and `window.f` globals are
 symbols, the browser globals flagged `global` in their metadata; inline html
 handlers (reaching only those globals) and Vue template tags, handlers and
-expressions are usages; Laravel routes carry group prefixes and link to their handler,
+expressions are usages; Laravel routes carry group prefixes and their name and link to their handler, `route('x')` links to the route named `x`,
 `view()` links to the Blade template, `X::class`, property types, relation
 model strings and `$listen` are class usages, a call on a typed parameter or
 property targets its class; a broken file keeps the declarations parsed
@@ -402,7 +402,11 @@ re-parsed and re-resolved in the same run:
    language (`onclick="f()"` names a JavaScript `f`), as resolve does.
    A kept JavaScript function whose `global` metadata differs from its
    stored point (it became a browser global, or stopped being one) adds the
-   `html` points with its `TargetName`.
+   `html` points with its `TargetName`. A Laravel route name (metadata
+   `name`) whose route IDs the run changes (the old route points of deleted
+   files and of the run's `.php` files against the new ones: a name given,
+   dropped or moved) adds the points with a `route:<name>` relation to it
+   (`TargetName` is the name).
 5. Read the names of the vanished IDs; for a vanished candidate that is not
    still in its own file under the same qualified name (it only moved), query
    for points with that `TargetName` whose relation is ambiguous: one
@@ -471,7 +475,12 @@ each relation:
   `window.f` global, never a method nor a function of an ES module), by name
   (`ResolutionUnique`; ambiguous when several files define it), and only so:
   the qualified lookups are skipped, so a Go package or a JavaScript module
-  called `window` holding an `f` never takes it. When the run
+  called `window` holding an `f` never takes it. Likewise a PHP (or Blade)
+  `route:x` (`route('x')`, see [php](../parser/php/README.md)) takes the
+  Laravel routes whose metadata `name` is `x`, whatever their URI (the
+  route's qualified name): `ResolutionExact` when one, ambiguous when
+  several, none otherwise; the store is scrolled once per run for its named
+  PHP routes, up to `MaxScroll`. When the run
   itself holds two or more other callables named `f`, the store is not asked,
   so a global only in the store is missed.
 - A `TargetQualifiedName` that normalizes to a bare name (`..delta`) has no

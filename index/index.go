@@ -671,6 +671,7 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 	if r.fresh {
 		return nil
 	}
+	oldRoutes := slices.Clone(vanished) // where a route may have been: deleted files, then the run's PHP files
 	lookups := 0
 	scroll := func(f store.Filter) ([]store.Hit, bool) {
 		if lookups >= maxLookups {
@@ -912,6 +913,40 @@ func (r *run) staleReferrers(ctx context.Context, files []parsed, vanished []str
 		}
 	})
 	ok = ok && query(flipped, func(v []string) store.Filter { return store.Filter{TargetNames: v} }, add(func(h parser.Symbol) bool { return h.Language == "html" }))
+	// route('x') links to the Laravel routes named x (metadata name): a name
+	// whose route ids the run changes (a name given, dropped, a route moved)
+	// changes the callers that name it.
+	routeIDs := map[string][]string{} // name -> ids now, then the old ones removed
+	for _, p := range files {
+		if strings.HasSuffix(p.path, ".php") {
+			oldRoutes = append(oldRoutes, r.state.Files[p.path].IDs...)
+		}
+		for _, s := range p.syms {
+			if n := s.Metadata["name"]; s.Kind == parser.KindRoute && n != "" {
+				routeIDs[n] = append(routeIDs[n], s.ID)
+			}
+		}
+	}
+	renamed := map[string]bool{}
+	ok = ok && query(oldRoutes, func(v []string) store.Filter { return store.Filter{IDs: v, Kinds: []parser.Kind{parser.KindRoute}} }, func(h store.Hit) {
+		n := h.Symbol.Metadata["name"]
+		if i := slices.Index(routeIDs[n], h.Symbol.ID); i >= 0 {
+			routeIDs[n] = slices.Delete(routeIDs[n], i, i+1)
+		} else if n != "" {
+			renamed[n] = true
+		}
+	})
+	for n, ids := range routeIDs {
+		if len(ids) > 0 {
+			renamed[n] = true
+		}
+	}
+	ok = ok && query(slices.Collect(maps.Keys(renamed)), func(v []string) store.Filter { return store.Filter{TargetNames: v} }, add(func(h parser.Symbol) bool {
+		return slices.ContainsFunc(h.Relations, func(rel parser.Relation) bool {
+			n, ok := strings.CutPrefix(rel.TargetQualifiedName, "route:")
+			return ok && renamed[n]
+		})
+	}))
 	// X.m() on an owner X resolves through X: by name when X exists without
 	// m, through X's bases when it inherits m. A class the run adds, removes
 	// or gives other bases changes that for callers that name it as owner.
@@ -979,6 +1014,8 @@ type nameIndex struct {
 	kind      map[string]parser.Kind // symbol id -> kind, for fit
 	place     map[string]place       // symbol id -> where it is, for twins
 	global    map[string]bool        // symbol id -> a browser global an inline html handler reaches (metadata global)
+	routes    map[string][]string    // Laravel route name (metadata name) -> route ids of the run, for route('x')
+	route     map[string]string      // route id -> its Laravel route name, store hits included
 	bases     map[string][]string    // class id -> what it extends, implements or uses (traits): qualified name, else bare name
 	changed   map[string]bool        // files of the run: their stored points are stale
 }
@@ -999,7 +1036,7 @@ func placeOf(s parser.Symbol) place {
 
 func newNameIndex(files []parsed) nameIndex {
 	idx := nameIndex{byQN: map[string][]string{}, bySuffix: map[string][]string{}, byName: map[[2]string][]string{}, byModule: map[string][]string{},
-		byModName: map[[2]string][]string{}, lang: map[string]string{}, kind: map[string]parser.Kind{}, place: map[string]place{}, global: map[string]bool{}, bases: map[string][]string{}, changed: make(map[string]bool, len(files))}
+		byModName: map[[2]string][]string{}, lang: map[string]string{}, kind: map[string]parser.Kind{}, place: map[string]place{}, global: map[string]bool{}, routes: map[string][]string{}, route: map[string]string{}, bases: map[string][]string{}, changed: make(map[string]bool, len(files))}
 	for i := range files {
 		idx.changed[files[i].path] = true
 		for _, s := range files[i].syms {
@@ -1008,6 +1045,9 @@ func newNameIndex(files []parsed) nameIndex {
 			idx.kind[s.ID] = s.Kind
 			idx.place[s.ID] = placeOf(s)
 			idx.global[s.ID] = s.Metadata["global"] == "true"
+			if n := s.Metadata["name"]; s.Kind == parser.KindRoute && n != "" {
+				idx.routes[n] = append(idx.routes[n], s.ID)
+			}
 			if s.Kind == parser.KindClass || s.Kind == parser.KindInterface {
 				for _, r := range s.Relations {
 					// Go promotes only an embedded type's methods (extends), not a named field's.
@@ -1043,14 +1083,14 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 	// file changes. One store error stops the lookups for the run.
 	failed := false
 	cache := map[string][]string{}
-	fromStore := func(key string, f store.Filter, match func(parser.Symbol) bool) []string {
+	fromStore := func(key string, f store.Filter, limit int, match func(parser.Symbol) bool) []string {
 		if r.fresh || failed {
 			return nil
 		}
 		if ids, ok := cache[key]; ok {
 			return ids
 		}
-		hits, err := r.Store.Scroll(ctx, r.Collection, f, 20)
+		hits, err := r.Store.Scroll(ctx, r.Collection, f, limit)
 		if err != nil {
 			if ctx.Err() == nil { // a cancelled run (server stopping) resumes next start
 				r.Log.Warn("index: relation lookup failed, remaining targets stay unresolved", "err", err)
@@ -1067,6 +1107,7 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 				kindOf[h.Symbol.ID] = h.Symbol.Kind
 				idx.place[h.Symbol.ID] = placeOf(h.Symbol)
 				idx.global[h.Symbol.ID] = h.Symbol.Metadata["global"] == "true"
+				idx.route[h.Symbol.ID] = h.Symbol.Metadata["name"]
 			}
 		}
 		cache[key] = ids
@@ -1110,7 +1151,7 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 	lookup := func(lang string, run []string, key string, f store.Filter, match func(parser.Symbol) bool) []string {
 		ids := keep(lang, run)
 		if len(collapse(ids)) < 2 {
-			ids = append(ids, keep(lang, fromStore(key, f, match))...)
+			ids = append(ids, keep(lang, fromStore(key, f, 20, match))...)
 		}
 		return ids
 	}
@@ -1164,7 +1205,7 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 			return kindOf[id] == parser.KindVariable || kindOf[id] == parser.KindConstant
 		})
 		if len(collapse(callable)) < 2 {
-			ids = append(ids, fromStore("n:"+lang+"\x00"+name, store.Filter{Name: name, Language: lang}, func(s parser.Symbol) bool {
+			ids = append(ids, fromStore("n:"+lang+"\x00"+name, store.Filter{Name: name, Language: lang}, 20, func(s parser.Symbol) bool {
 				return s.Name == name && s.Language == lang
 			})...)
 		}
@@ -1217,6 +1258,20 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 					// never a method, a function of an ES module, nor a symbol
 					// whose qualified name is window.f (a module called window).
 					ids, nameOnly = slices.DeleteFunc(slices.Clone(named("javascript", name)), func(id string) bool { return !idx.global[id] }), true
+				} else if name, ok := strings.CutPrefix(rel.TargetQualifiedName, "route:"); ok && lang == "php" {
+					// route('x') in PHP or Blade names the Laravel route whose
+					// name (metadata name) is x; its qualified name is its URI.
+					resolution, ids = parser.ResolutionExact, slices.Clone(idx.routes[name])
+					if len(collapse(ids)) < 2 {
+						// shortcut: one scroll of the named routes, more than MaxScroll of them in the store miss the rest; a store filter on the name if a repo needs it
+						for _, id := range fromStore("routes", store.Filter{Language: "php", Kinds: []parser.Kind{parser.KindRoute}}, store.MaxScroll, func(s parser.Symbol) bool {
+							return s.Metadata["name"] != ""
+						}) {
+							if idx.route[id] == name {
+								ids = append(ids, id)
+							}
+						}
+					}
 				} else if tqn := rel.TargetQualifiedName; tqn != "" {
 					resolution = parser.ResolutionExact
 					ids = exact(lang, tqn)

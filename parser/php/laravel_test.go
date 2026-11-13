@@ -366,3 +366,52 @@ Route::get('/plain', 'InvokableController');
 		assert.Equal(t, rels, targets(s), name)
 	}
 }
+
+// A route's name (->name('x'), 'as' => 'x') with the name prefixes of its
+// groups is the route's metadata name; route('x'), to_route('x'),
+// redirect()->route('x') and URL::route('x') reference it.
+func TestRouteNames(t *testing.T) {
+	syms := analyze(t, "/root/routes/web.php", `<?php
+use Illuminate\Support\Facades\Route;
+
+Route::get('/users', 'UserController@index')->middleware('auth')->name('users.index');
+Route::get('/plain', 'UserController@plain');
+Route::group(['as' => 'admin.', 'prefix' => 'admin'], function () {
+    Route::get('/stats', ['as' => 'stats', 'uses' => 'StatsController@index']);
+    Route::name('posts.')->prefix('posts')->group(function () {
+        Route::get('/', 'PostController@index')->name('index');
+    });
+});
+`)
+	assert.Equal(t, "users.index", syms["route /users"].Metadata["name"])
+	assert.NotContains(t, syms["route /plain"].Metadata, "name")
+	assert.Equal(t, "admin.stats", syms["route /admin/stats"].Metadata["name"])
+	assert.Equal(t, "admin.posts.index", syms["route /admin/posts"].Metadata["name"])
+
+	syms = analyze(t, "/root/app/Http/Controllers/UserController.php", `<?php
+namespace App\Http\Controllers;
+use Illuminate\Support\Facades\URL;
+class UserController
+{
+    public function store($request)
+    {
+        $a = route('users.index');
+        $b = redirect()->route('admin.stats');
+        $c = to_route('users.show', 1);
+        $d = URL::route('admin.posts.index');
+        $e = $request->route('id');
+        $f = route($name);
+    }
+}
+`)
+	var refs []string
+	for _, r := range syms[`method App\Http\Controllers.UserController.store`].Relations {
+		if r.Kind == parser.RelImports {
+			refs = append(refs, r.TargetName+" "+r.TargetQualifiedName)
+		}
+	}
+	assert.Equal(t, []string{
+		"users.index route:users.index", "admin.stats route:admin.stats",
+		"users.show route:users.show", "admin.posts.index route:admin.posts.index",
+	}, refs)
+}

@@ -25,6 +25,10 @@ var bladeTag = regexp.MustCompile(`<x-([\w.-]+)(?:[\s/>]|$)`)
 // <livewire:dir.name>; group 1 is the name.
 var bladeLivewire = regexp.MustCompile(`<livewire:([\w.-]+)(?:[\s/>]|$)`)
 
+// bladeRoute matches route('name') or to_route('name'), not ->route('id')
+// (request()->route reads a parameter); group 1 is the name.
+var bladeRoute = regexp.MustCompile(`(?:^|[^\w>:$])(?:to_)?route\(\s*['"]([^'"$]+)['"]`)
+
 // componentClass is the class a component name maps to by convention under
 // namespace ns: Livewire 3's "forum.post-list" is App\Livewire\Forum\PostList,
 // a Blade class component's "forms.input" App\View\Components\Forms\Input.
@@ -116,6 +120,11 @@ func blade(f parser.File) []parser.Symbol {
 					open = open[:k]
 				}
 			}
+		}
+		for _, m := range bladeRoute.FindAllStringSubmatch(line, -1) {
+			syms[0].Relations = append(syms[0].Relations, parser.Relation{
+				Kind: parser.RelImports, TargetName: m[1], TargetQualifiedName: "route:" + m[1], Line: ln,
+			})
 		}
 		for _, m := range bladeLivewire.FindAllStringSubmatch(line, -1) {
 			component("livewire", `App\Livewire\`, m[1], ln)

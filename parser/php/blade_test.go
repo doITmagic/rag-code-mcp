@@ -151,3 +151,13 @@ func TestBladeClassComponentTag(t *testing.T) {
 		`uses_type InputText App\View\Components\Forms\InputText:2`,
 	}, got)
 }
+
+// route('x') in a view references the route named x.
+func TestBladeRouteReference(t *testing.T) {
+	src := "<a href=\"{{ route('users.index') }}\">U</a>\n{{-- route('old.page') --}}\n{{ request()->route('id') }}\n"
+	syms, err := parser.Analyze(parser.File{Path: "/root/resources/views/p.blade.php", Root: "/root", Source: []byte(src)})
+	require.NoError(t, err)
+	assert.Equal(t, []parser.Relation{
+		{Kind: parser.RelImports, TargetName: "users.index", TargetQualifiedName: "route:users.index", Line: 1},
+	}, syms[0].Relations)
+}

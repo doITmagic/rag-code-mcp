@@ -228,3 +228,22 @@ func TestUsagesOfLivewireComponent(t *testing.T) {
 		assert.Contains(t, r.Message, strconv.Itoa(lines)+" usages", symbol)
 	}
 }
+
+// route('users.index') in a controller and in a Blade view are usages of the
+// route named users.index.
+func TestUsagesOfNamedLaravelRoute(t *testing.T) {
+	v := newEnv(t, false, nil)
+	v.addFiles(t, map[string]string{
+		"routes/web.php": "<?php\nRoute::get('/users', 'UserController@index')->name('users.index');\n",
+		"app/Http/Controllers/HomeController.php": "<?php\nnamespace App\\Http\\Controllers;\nclass HomeController { public function go() { return redirect()->route('users.index'); } }\n",
+		"resources/views/home.blade.php":          "<a href=\"{{ route('users.index') }}\">Users</a>\n",
+	})
+	files := usagesOf(t, v, "/users")
+	var callers []string
+	for _, f := range files {
+		for _, u := range f.Usages {
+			callers = append(callers, u.Caller+":"+strconv.Itoa(u.Line))
+		}
+	}
+	assert.ElementsMatch(t, []string{`App\Http\Controllers.HomeController.go:3`, "home:1"}, callers)
+}

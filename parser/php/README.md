@@ -245,12 +245,21 @@ A view outside any `views` folder has module `""`.
   produces no symbol.
 - The names `Route::resource` / `apiResource` give their routes
   (`photos.index`) are not stored, so `route('photos.index')` links to
-  nothing. Routes registered inside a method (a
+  nothing. The actions of a `resource` / `apiResource` controller
+  (`PostsController::index`) get no usage from that route; only the class
+  does. Two routes with one name (a GET and a POST `contact`) are both
+  stored, and `route('contact')` links to the first, while Laravel takes the
+  last; their URIs are usually the same. Routes registered inside a method (a
   `RouteServiceProvider` mapping) are not placed in the groups of another
   file: the prefix, namespace, controller or middleware a provider wraps
   around `routes/*.php` is not added. Inside a controller group, an
   invokable controller written as a plain string (`'InvokableController'`)
   is read as a method name, as it is when Laravel cannot find that class.
+- Namespaces and class names are matched case-sensitively, while PHP
+  ignores their case: a file declaring `namespace app\Core;` next to files
+  in `App\Core` is a separate module for `rag_list_package_exports` (asking
+  by directory lists both), and a `use App\Core\T;` of its trait links
+  calls to `T` members by name only.
 - A static call to a member a class inherits from outside the workspace
   (`Authority::all()` on an Eloquent model) is not a usage of the class.
 - Receiver types come only from declarations and classes written in the

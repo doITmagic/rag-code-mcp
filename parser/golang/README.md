@@ -167,7 +167,8 @@ evidence: a method named `GET` in a file that imports no router is no route.
   package itself or `http.DefaultServeMux` (also held in a local:
   `mux := http.DefaultServeMux`). So `c.File("/var/www/index.html")` on an `echo.Context` and
   `cache.Get("/docs/1", out)` are no routes; a router reached any other way
-  (returned by a project function, a field of a type declared elsewhere)
+  (returned by a project function, a field of a type declared elsewhere, or
+  a Gin `Use(...)` result such as `g.Group("/").Use(auth).POST("/message", h)`)
   gives no route either. A receiver keeps the framework it came from (its
   constructor, its parameter type, the router it is a group of; `http` and
   `http.DefaultServeMux` are net/http), and only that framework's methods,

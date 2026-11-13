@@ -387,6 +387,35 @@ func F[T any](x T) {
 	}, syms["F"].Relations)
 }
 
+// A parameter inside a func type is no local, and a closure's parameter types
+// no use outside that closure: s.Get() there is on the package-level s.
+func TestClosureParamTypesOnlyItsClosure(t *testing.T) {
+	root := t.TempDir()
+	src := `package g
+
+var s = &Store{}
+
+func Do(fn func(s *Server)) int {
+	return s.Get()
+}
+
+func Later() int {
+	f := func(s *Server) int { return s.Get() }
+	_ = f
+	return s.Get()
+}
+
+func Inner() {
+	_ = func(s *Server) { s.Get() }
+}
+`
+	syms := analyze(t, root, filepath.Join(root, "g.go"), src)
+	assert.Contains(t, syms["Do"].Relations, rel(parser.RelCall, "Get", "", 6))
+	assert.Contains(t, syms["Later"].Relations, rel(parser.RelCall, "Get", "", 10))
+	assert.Contains(t, syms["Later"].Relations, rel(parser.RelCall, "Get", "", 12))
+	assert.Contains(t, syms["Inner"].Relations, rel(parser.RelCall, "Get", "Server.Get", 16))
+}
+
 // A parameter or local named like an import shadows it: its method call
 // targets the local's declared type, not the package function of that name,
 // and has no target when the type is not declared (x := f()).

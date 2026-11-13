@@ -352,16 +352,22 @@ func (fc *file) names(n *gotreesitter.Node) []string {
 // locals returns the parameter and variable names declared inside n, and the
 // qualified type of those declared with one type only (s *T, var s T,
 // s := &T{...}, never reassigned to something else), "" for the others.
+// The parameters of a func type (fn func(s *T)) are no locals; a name a
+// closure declares and the code outside it also uses has no type, since
+// outside it is another variable (a package-level one, an outer local).
 // shortcut: one set for the whole declaration, so a local shadows a package
 // function or an import of the same name everywhere in it, not only after its
 // declaration.
 func (fc *file) locals(n *gotreesitter.Node) (map[string]bool, map[string]string) {
 	out, types := map[string]bool{}, map[string]string{}
+	decls, uses := map[uint32]string{}, map[string][]uint32{} // by start byte, by name
+	var closures []*gotreesitter.Node
 	idents := func(c, typ *gotreesitter.Node) {
 		_, tqn := fc.resolveType(typ)
 		for _, id := range parser.NamedChildren(c) {
 			if id.Type(fc.lang) == "identifier" {
 				name := fc.text(id)
+				decls[id.StartByte()] = name
 				if t, ok := types[name]; ok && t != tqn {
 					tqn = ""
 				}
@@ -375,6 +381,12 @@ func (fc *file) locals(n *gotreesitter.Node) (map[string]bool, map[string]string
 			return false
 		}
 		switch c.Type(fc.lang) {
+		case "function_type", "method_elem":
+			return false
+		case "func_literal":
+			closures = append(closures, c)
+		case "identifier":
+			uses[fc.text(c)] = append(uses[fc.text(c)], c.StartByte())
 		case "parameter_declaration", "var_spec":
 			typ := parser.Field(c, fc.lang, "type")
 			if v := parser.NamedChildren(parser.Field(c, fc.lang, "value")); typ == nil && len(v) == 1 {
@@ -409,6 +421,19 @@ func (fc *file) locals(n *gotreesitter.Node) (map[string]bool, map[string]string
 		}
 		return true
 	})
+	for _, l := range closures {
+		for at, name := range decls {
+			if at < l.StartByte() || at >= l.EndByte() {
+				continue
+			}
+			for _, u := range uses[name] {
+				if u < l.StartByte() || u >= l.EndByte() {
+					types[name] = ""
+					break
+				}
+			}
+		}
+	}
 	return out, types
 }
 

@@ -303,6 +303,22 @@ First full indexing of a real project, model `embeddinggemma-2:270m`:
 
 Later runs index only the files that changed.
 
+### Lighter than v1
+
+Requirements as each version's README states them; model sizes as Ollama
+reports them.
+
+| | v1.1.21 | v2 | Difference |
+|---|---|---|---|
+| Services to run | Ollama and Qdrant (Docker required) | Ollama only (Docker or native) | no database server |
+| Models to download | `phi3:medium` (7.9 GB) and `nomic-embed-text` (274 MB) | `embeddinggemma-2:270m` (303 MB) | about 96% less |
+| Minimum RAM | 16 GB | 8 GB | 50% less |
+| Recommended RAM | 32 GB | 16 GB | 50% less |
+
+In our measurement a Qdrant server holding six indexed projects used about
+425 MB of RAM all the time; v2 keeps each index in one SQLite file and has no
+such process.
+
 ---
 
 ## 📚 Documentation

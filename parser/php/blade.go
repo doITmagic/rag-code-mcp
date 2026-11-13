@@ -25,10 +25,10 @@ var bladeTag = regexp.MustCompile(`<x-([\w.-]+)(?:[\s/>]|$)`)
 // <livewire:dir.name>; group 1 is the name.
 var bladeLivewire = regexp.MustCompile(`<livewire:([\w.-]+)(?:[\s/>]|$)`)
 
-// bladeRoute matches route('name') or to_route('name'); group 1 is the
-// helper, group 2 the name.
+// bladeRoute matches route('name') or to_route('name'), also with space
+// before "(" as PHP allows; group 1 is the helper, group 2 the name.
 // bladeRoutes drops ->route('id') (request()->route reads a parameter).
-var bladeRoute = regexp.MustCompile(`(?:^|[^\w$])((?:to_)?route)\(\s*['"]([^'"$]+)['"]`)
+var bladeRoute = regexp.MustCompile(`(?:^|[^\w$])((?:to_)?route)\s*\(\s*['"]([^'"$]+)['"]`)
 
 // bladeRoutes returns the route names line references through the route
 // helpers, skipping a method or static call (->route, :: route), which PHP

@@ -156,10 +156,10 @@ func TestBladeClassComponentTag(t *testing.T) {
 	}, got)
 }
 
-// route('x') in a view references the route named x; ->route('id'), with or
+// route('x') in a view, also route ('x'), references the route named x; ->route('id'), with or
 // without space after the operator, reads a request parameter.
 func TestBladeRouteReference(t *testing.T) {
-	src := "<a href=\"{{ route('users.index') }}\">U</a>\n{{-- route('old.page') --}}\n{{ request()->route('id') }}\n" +
+	src := "<a href=\"{{ route ('users.index') }}\">U</a>\n{{-- route('old.page') --}}\n{{ request()->route('id') }}\n" +
 		"{{ $request-> route('user') }} {{ $r?->\troute('id') }} {{ Foo:: route('x') }}\n"
 	syms, err := parser.Analyze(parser.File{Path: "/root/resources/views/p.blade.php", Root: "/root", Source: []byte(src)})
 	require.NoError(t, err)

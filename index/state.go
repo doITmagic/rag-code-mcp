@@ -74,7 +74,8 @@ type Entry struct {
 // $listen are class usages, a call on a typed parameter or property targets
 // its class; a broken file keeps the declarations parsed before the break.
 // 16: a Go route path may name a same-file string const or path.Join of such;
-// a Gin Use(mw) result keeps its router's prefix.
+// a Gin Use(mw) result keeps its router's prefix; a chi sub-router mounted
+// in the same function gets the Mount path, and chi drops a prefix's trailing /.
 const Format = 16
 
 // State is the per-root snapshot stored at Dir(root)/state.json. Only

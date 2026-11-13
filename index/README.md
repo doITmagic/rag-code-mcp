@@ -239,7 +239,9 @@ property targets its class; a broken file keeps the declarations parsed
 before the break; a route path is one segment of the normalized qualified
 name (`qn_suffixes`). Version 16: a Go route path may name a string const declared
 at the top of the same file, or `path.Join` of such consts and literals; a
-Gin `Use(mw)` result is a router with its receiver's prefix.
+Gin `Use(mw)` result is a router with its receiver's prefix; a chi sub-router
+mounted in the same function gets the `Mount` path as its prefix, and a chi
+prefix's trailing `/` is dropped before the path is joined.
 
 ---
 

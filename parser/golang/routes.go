@@ -54,6 +54,9 @@ func (fw *framework) join(prefix, rel string) string {
 	if fw.name == "echo" && prefix+rel != "" && !strings.HasPrefix(prefix+rel, "/") {
 		return "/" + prefix + rel
 	}
+	if fw.name == "chi" { // Mount and Route serve the sub-router under the prefix less its trailing "/"
+		return strings.TrimSuffix(prefix, "/") + rel
+	}
 	if fw.name != "gin" || rel == "" {
 		return prefix + rel
 	}
@@ -163,6 +166,7 @@ func (fc *file) routes(decls []*gotreesitter.Node, at []int, syms []parser.Symbo
 func (fc *file) declRoutes(decl *gotreesitter.Node, sym *parser.Symbol, params map[int]string, seen map[string]map[int]string, out []parser.Symbol) []parser.Symbol {
 	groups := map[string]grp{}
 	fc.declLocals, _ = fc.locals(decl)
+	mounts := fc.mounts(decl)
 	i := 0
 	for _, pd := range parser.NamedChildren(parser.Field(decl, fc.lang, "parameters")) {
 		fw := fc.routerType(parser.Field(pd, fc.lang, "type"))
@@ -208,6 +212,12 @@ func (fc *file) declRoutes(decl *gotreesitter.Node, sym *parser.Symbol, params m
 				ok := false
 				if len(l) == 1 && len(r) == 1 {
 					p, ok = fc.router(r[0], groups)
+					// r := chi.NewRouter() mounted below at one path: its routes are served under it
+					if m := mounts[fc.text(l[0])]; ok && m != nil && fc.newRouter(r[0]) != nil && p.fw.name == "chi" {
+						if at, ok := fc.router(m.recv, groups); ok {
+							p.prefix = p.fw.join(at.prefix, m.path)
+						}
+					}
 				}
 				for _, v := range l {
 					switch name := fc.text(v); {
@@ -506,4 +516,35 @@ func (fc *file) static(n *gotreesitter.Node) (string, bool) {
 		return path.Join(parts...), true
 	}
 	return fc.stringLit([]*gotreesitter.Node{n})
+}
+
+// mount is where a router variable is mounted: recv.Mount(path, name).
+type mount struct {
+	recv *gotreesitter.Node
+	path string
+}
+
+// mounts returns the chi sub-routers decl mounts by variable name; a name
+// mounted at two paths has none (the path stays as written).
+func (fc *file) mounts(decl *gotreesitter.Node) map[string]*mount {
+	out := map[string]*mount{}
+	parser.Walk(parser.Field(decl, fc.lang, "body"), func(c *gotreesitter.Node) bool {
+		if c.Type(fc.lang) != "call_expression" {
+			return true
+		}
+		fn := parser.Field(c, fc.lang, "function")
+		args := parser.NamedChildren(parser.Field(c, fc.lang, "arguments"))
+		if fn.Type(fc.lang) != "selector_expression" || fc.text(parser.Field(fn, fc.lang, "field")) != "Mount" || len(args) != 2 || args[1].Type(fc.lang) != "identifier" {
+			return true
+		}
+		p, ok := fc.static(args[0])
+		name := fc.text(args[1])
+		if m, dup := out[name]; !ok || dup && (m == nil || m.path != p) {
+			out[name] = nil
+		} else {
+			out[name] = &mount{parser.Field(fn, fc.lang, "operand"), p}
+		}
+		return true
+	})
+	return out
 }

@@ -691,3 +691,55 @@ func Create(g *gin.Engine) {
 		"gin GET router.Create./api/x -> router.create",
 	}, routeList(t, "router/router.go", src))
 }
+
+func TestChiMountedSubRouter(t *testing.T) {
+	src := `package routes
+
+import (
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+)
+
+type H struct{}
+
+func (h *H) Get(w http.ResponseWriter, r *http.Request) {}
+
+func (h *H) RegisterRoutes(router chi.Router) {
+	r := chi.NewRouter()
+	r.Get("/", h.Get)
+	r.Get("/webauthn/options", h.Get)
+	router.Mount("/settings", r)
+
+	pub := chi.NewRouter()
+	pub.Get("/success", h.Get)
+	priv := chi.NewRouter()
+	priv.Post("/checkout", h.Get)
+	pub.Mount("/", priv)
+	router.Mount("/subscription", pub)
+
+	av := chi.NewRouter()
+	av.Get("/avatar/{hash}.svg", h.Get)
+	router.Mount("/", av)
+
+	two := chi.NewRouter()
+	two.Get("/t", h.Get) // mounted at two paths: as written
+	router.Mount("/a", two)
+	router.Mount("/b", two)
+}
+`
+	assert.Equal(t, []string{
+		"chi Get routes.RegisterRoutes./settings/ -> routes.H.Get",
+		"chi Get routes.RegisterRoutes./settings/webauthn/options -> routes.H.Get",
+		"chi Mount routes.RegisterRoutes./settings ->",
+		"chi Get routes.RegisterRoutes./subscription/success -> routes.H.Get",
+		"chi Post routes.RegisterRoutes./subscription/checkout -> routes.H.Get",
+		"chi Mount routes.RegisterRoutes./subscription/ ->",
+		"chi Mount routes.RegisterRoutes./subscription ->",
+		"chi Get routes.RegisterRoutes./avatar/{hash}.svg -> routes.H.Get",
+		"chi Mount routes.RegisterRoutes./ ->",
+		"chi Get routes.RegisterRoutes./t -> routes.H.Get",
+		"chi Mount routes.RegisterRoutes./a ->",
+		"chi Mount routes.RegisterRoutes./b ->",
+	}, routeList(t, "routes/settings.go", src))
+}

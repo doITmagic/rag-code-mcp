@@ -49,6 +49,14 @@ func resolveSymbol(ctx context.Context, w *engine.Workspace, query, filePath str
 	hits, err := byName(ctx, w, in, query, candidateLimit)
 	if err == nil && len(live(w, hits)) == 0 && isID(query) { // a candidate's id from an ambiguous answer
 		hits, err = w.Scroll(ctx, store.Filter{IDs: []string{query}}, 1)
+		if l := live(w, hits); err == nil && len(l) == 1 && twinOf(&l[0].Symbol).file != "" {
+			// its twins (getter and setter) join it, as they do when the name selects it
+			k := twinOf(&l[0].Symbol)
+			var twins []store.Hit
+			if twins, err = byName(ctx, w, store.Filter{FilePath: k.file}, k.qn, candidateLimit); err == nil {
+				hits = slices.DeleteFunc(twins, func(h store.Hit) bool { return twinOf(&h.Symbol) != k })
+			}
+		}
 	}
 	if err == nil && len(live(w, hits)) == 0 && filePath != "" {
 		hits, err = byName(ctx, w, store.Filter{}, query, candidateLimit) // for the "elsewhere" answer below

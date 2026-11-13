@@ -187,3 +187,47 @@ func TestFindUsagesTruncatedOnlyWhenMoreExist(t *testing.T) {
 		assert.Contains(t, r.Message, "grep the name for the rest")
 	})
 }
+
+// A candidate ID from an ambiguous answer selects the same merged getter/setter
+// symbol as its qualified name, with the relations of both twins.
+func TestCandidateIDKeepsTwinRelations(t *testing.T) {
+	v := newEnv(t, false, nil)
+	v.addFiles(t, map[string]string{
+		"src/a.ts": `export class Cart {
+    get entry() { return read(); }
+    set entry(value) { write(value); }
+}
+function read() { return 1; }
+function write(value) {}
+`,
+		"src/b.ts": "export class Other { get entry() { return 2; } }\n",
+	})
+	var h struct {
+		Outgoing *Node `json:"outgoing"`
+	}
+	r, _ := v.call(t, "rag_call_hierarchy", map[string]any{"workspace_root": v.root, "symbol": "src/a.Cart.entry", "direction": "outgoing", "depth": 1})
+	require.Equal(t, "ok", r.Status, r.Message)
+	data(t, r, &h)
+	require.Len(t, h.Outgoing.Children, 2, "control: selecting by qualified name merges the getter and setter")
+	r, _ = v.call(t, "rag_call_hierarchy", map[string]any{"workspace_root": v.root, "symbol": "entry", "direction": "outgoing", "depth": 1})
+	require.Equal(t, "ambiguous", r.Status, r.Message)
+	var amb struct {
+		Candidates []Candidate `json:"candidates"`
+	}
+	data(t, r, &amb)
+	var id string
+	for _, c := range amb.Candidates {
+		if c.QualifiedName == "src/a.Cart.entry" {
+			id = c.ID
+		}
+	}
+	require.NotEmpty(t, id)
+	r, _ = v.call(t, "rag_call_hierarchy", map[string]any{"workspace_root": v.root, "symbol": id, "direction": "outgoing", "depth": 1})
+	require.Equal(t, "ok", r.Status, r.Message)
+	data(t, r, &h)
+	var names []string
+	for _, child := range h.Outgoing.Children {
+		names = append(names, child.QualifiedName)
+	}
+	assert.ElementsMatch(t, []string{"src/a.read", "src/a.write"}, names, "a candidate id must select the same merged symbol as its qualified name and file")
+}

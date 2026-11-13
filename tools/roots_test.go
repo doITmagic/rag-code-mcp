@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -57,6 +58,16 @@ func TestEmptyRootClientWithoutRootsCapability(t *testing.T) {
 	assert.Zero(t, asked.Load(), "roots/list was sent to a client that did not declare roots")
 }
 
+// fileURI is the file:// URI of the local path p on host: a Windows drive
+// path gets the leading slash RFC 8089 puts before it (file:///C:/x).
+func fileURI(host, p string) string {
+	p = filepath.ToSlash(p)
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	return "file://" + host + p
+}
+
 // A client root file://<host>/path names a path on another machine: outside
 // Windows (where it is a UNC path) it is refused with an error naming the URI
 // and asking for workspace_root, never opened as the local path. A root on
@@ -79,12 +90,15 @@ func TestClientRootFileURIHost(t *testing.T) {
 		return res
 	}
 
-	assert.False(t, call("file://localhost"+filepath.ToSlash(v.root)).IsError, "file://localhost/ is this machine")
+	assert.False(t, call(fileURI("localhost", v.root)).IsError, "file://localhost/ is this machine")
 
 	if runtime.GOOS == "windows" {
+		// VS Code sends the drive colon percent-encoded: file:///c%3A/Users/x.
+		enc := "file:///" + strings.Replace(filepath.ToSlash(v.root), ":", "%3A", 1)
+		assert.False(t, call(enc).IsError, enc)
 		return // file://host/share/x is the UNC path \\host\share\x there
 	}
-	remote := "file://remote-host.example" + filepath.ToSlash(v.root)
+	remote := fileURI("remote-host.example", v.root)
 	res := call(remote)
 	require.True(t, res.IsError, "a root on another host must not open the local %s", v.root)
 	msg := res.Content[0].(*mcp.TextContent).Text

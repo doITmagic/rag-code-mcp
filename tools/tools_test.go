@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -171,7 +172,7 @@ func newEnvWith(t *testing.T, em embed.Embedder, index bool, tweak func(*config.
 	_, err = server.Connect(context.Background(), st, nil)
 	require.NoError(t, err)
 	client := mcp.NewClient(&mcp.Implementation{Name: "c", Version: "0"}, nil)
-	client.AddRoots(&mcp.Root{URI: "file://" + filepath.ToSlash(root)})
+	client.AddRoots(&mcp.Root{URI: fileURI("", root)})
 	// Roots can only be listed from a tool call on the pre-2026 protocol.
 	cs, err := client.Connect(context.Background(), ct, &mcp.ClientSessionOptions{ProtocolVersion: "2025-11-25"})
 	require.NoError(t, err)
@@ -863,7 +864,7 @@ func TestResolveByNameAndFile(t *testing.T) {
 
 	r, _ = v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "tick", "file_path": "web/sleep.fk"})
 	assert.Equal(t, "ok", r.Status)
-	assert.Contains(t, r.Message, "web/sleep.fk", "no tick there: say so, do not pick the one elsewhere")
+	assert.Contains(t, r.Message, filepath.FromSlash("web/sleep.fk"), "no tick there: say so, do not pick the one elsewhere")
 
 	var s struct{ Results []SearchHit }
 	r, _ = v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "sleep", "path_prefix": "web"})
@@ -1034,7 +1035,7 @@ func TestExportsShortDirOfFileModules(t *testing.T) {
 	v.addFiles(t, map[string]string{"config/app.fkm": "\n"})
 	r, _ := v.call(t, "rag_list_package_exports", map[string]any{"workspace_root": v.root, "package": "config"})
 	assert.Contains(t, r.Message, "directory config has no exported symbols")
-	if os.Geteuid() != 0 { // root reads a 000 directory
+	if os.Geteuid() != 0 && runtime.GOOS != "windows" { // root reads a 000 directory; Windows has no Unix read bit
 		cfgDir := filepath.Join(v.root, "config")
 		require.NoError(t, os.Chmod(cfgDir, 0o000))
 		r, _ = v.call(t, "rag_list_package_exports", map[string]any{"workspace_root": v.root, "package": "config"})

@@ -416,6 +416,41 @@ func Inner() {
 	assert.Contains(t, syms["Inner"].Relations, rel(parser.RelCall, "Get", "Server.Get", 16))
 }
 
+// A name declared in the function itself, or only in closures and used only
+// inside them, keeps its single type: t of TestX and its t.Run closure,
+// s := &Store{} in two closures, w of two handler closures.
+func TestClosureLocalsKeepTheirType(t *testing.T) {
+	root := t.TempDir()
+	src := `package g
+
+import (
+	"net/http"
+	"testing"
+)
+
+func TestX(t *testing.T) {
+	t.Run("a", func(t *testing.T) { t.Log("x") })
+}
+
+func Twice() {
+	func() { s := &Store{}; _ = s.Get() }()
+	func() { s := &Store{}; _ = s.Get() }()
+}
+
+func Handlers(mux *http.ServeMux) {
+	mux.HandleFunc("/a", func(w http.ResponseWriter, r *http.Request) { w.Write(nil) })
+	mux.HandleFunc("/b", func(w http.ResponseWriter, r *http.Request) { w.Write(nil) })
+}
+`
+	syms := analyze(t, root, filepath.Join(root, "g_test.go"), src)
+	assert.Contains(t, syms["TestX"].Relations, rel(parser.RelCall, "Run", "testing.T.Run", 9))
+	assert.Contains(t, syms["TestX"].Relations, rel(parser.RelCall, "Log", "testing.T.Log", 9))
+	assert.Contains(t, syms["Twice"].Relations, rel(parser.RelCall, "Get", "Store.Get", 13))
+	assert.Contains(t, syms["Twice"].Relations, rel(parser.RelCall, "Get", "Store.Get", 14))
+	assert.Contains(t, syms["Handlers"].Relations, rel(parser.RelCall, "Write", "net/http.ResponseWriter.Write", 18))
+	assert.Contains(t, syms["Handlers"].Relations, rel(parser.RelCall, "Write", "net/http.ResponseWriter.Write", 19))
+}
+
 // A parameter or local named like an import shadows it: its method call
 // targets the local's declared type, not the package function of that name,
 // and has no target when the type is not declared (x := f()).

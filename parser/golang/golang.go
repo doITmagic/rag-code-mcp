@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -352,9 +353,9 @@ func (fc *file) names(n *gotreesitter.Node) []string {
 // locals returns the parameter and variable names declared inside n, and the
 // qualified type of those declared with one type only (s *T, var s T,
 // s := &T{...}, never reassigned to something else), "" for the others.
-// The parameters of a func type (fn func(s *T)) are no locals; a name a
-// closure declares and the code outside it also uses has no type, since
-// outside it is another variable (a package-level one, an outer local).
+// The parameters of a func type (fn func(s *T)) are no locals; a name only
+// closures declare that is also used outside them has no type, since there
+// it is a package-level name.
 // shortcut: one set for the whole declaration, so a local shadows a package
 // function or an import of the same name everywhere in it, not only after its
 // declaration.
@@ -421,16 +422,29 @@ func (fc *file) locals(n *gotreesitter.Node) (map[string]bool, map[string]string
 		}
 		return true
 	})
-	for _, l := range closures {
-		for at, name := range decls {
-			if at < l.StartByte() || at >= l.EndByte() {
-				continue
+	// innermost is the closure holding byte at, nil outside every closure.
+	innermost := func(at uint32) *gotreesitter.Node {
+		var in *gotreesitter.Node
+		for _, l := range closures {
+			if at >= l.StartByte() && at < l.EndByte() && (in == nil || l.StartByte() > in.StartByte()) {
+				in = l
 			}
-			for _, u := range uses[name] {
-				if u < l.StartByte() || u >= l.EndByte() {
-					types[name] = ""
-					break
-				}
+		}
+		return in
+	}
+	own, scopes := map[string]bool{}, map[string][]*gotreesitter.Node{} // declared in the function itself, closures declaring it
+	for at, name := range decls {
+		if l := innermost(at); l == nil {
+			own[name] = true
+		} else {
+			scopes[name] = append(scopes[name], l)
+		}
+	}
+	for name, ls := range scopes {
+		for _, u := range uses[name] {
+			if !own[name] && !slices.ContainsFunc(ls, func(l *gotreesitter.Node) bool { return u >= l.StartByte() && u < l.EndByte() }) {
+				types[name] = "" // used where no closure declares it: a package-level name
+				break
 			}
 		}
 	}

@@ -19,6 +19,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMain(m *testing.M) {
+	// Models dirs are mounted symlink-resolved; on macOS TMPDIR sits under the
+	// /var -> /private/var symlink, so t.TempDir() must be resolved too.
+	if d, err := filepath.EvalSymlinks(os.TempDir()); err == nil {
+		os.Setenv("TMPDIR", d)
+	}
+	os.Exit(m.Run())
+}
+
 // env sets up a temp HOME, a fake docker on PATH that logs its arguments and
 // fails on --gpus, and an httptest Ollama. It returns the home, the
 // docker log path and the pulled model names.

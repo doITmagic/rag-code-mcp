@@ -93,6 +93,11 @@ func (a lineAnalyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 }
 
 func TestMain(m *testing.M) {
+	// The product resolves roots with EvalSymlinks; on macOS TMPDIR sits under
+	// the /var -> /private/var symlink, so t.TempDir() must be resolved too.
+	if d, err := filepath.EvalSymlinks(os.TempDir()); err == nil {
+		os.Setenv("TMPDIR", d)
+	}
 	// Backstop: a test that forgets RAGCODE_HOME must not write index files
 	// into the real ~/.ragcode.
 	home, err := os.MkdirTemp("", "ragcode-home-")

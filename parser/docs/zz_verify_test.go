@@ -119,7 +119,9 @@ func TestVerifyTiming(t *testing.T) {
 		d := time.Since(start)
 		t.Logf("%s: %d bytes -> %d syms in %s", tc.path, len(tc.src), len(syms), d)
 		require.NoError(t, err)
-		assert.Less(t, d, 5*time.Second, tc.path)
+		// A hang guard, not a benchmark: these inputs are 4x the 256 KiB the index
+		// reads, and -race on a Windows runner parsed big.yaml in 5.1 s.
+		assert.Less(t, d, 20*time.Second, tc.path)
 		assert.LessOrEqual(t, len(syms), maxSymbols)
 	}
 }

@@ -64,16 +64,12 @@ func TestResolveGDScriptSuperThroughClassNameBases(t *testing.T) {
 	require.NoError(t, err)
 	t.Run("full run", check)
 
-	// Only pickup.gd is re-parsed: BaseTrigger is in the store, whose bases
-	// are not followed, so run is matched by name.
+	// Only pickup.gd is re-parsed: BaseTrigger is in the store and brings its
+	// stored bases, so run resolves exactly, as in the full run.
 	e.write(t, "pickup.gd", src+"\n")
 	_, err = e.run(t, func(o *Options) { o.Files = []string{pick} })
 	require.NoError(t, err)
-	t.Run("files run", func(t *testing.T) {
-		r := e.symbols(t, pick)["_go"].Relations[0]
-		assert.Equal(t, e.symbols(t, cut)["run"].ID, r.TargetID)
-		assert.Equal(t, parser.ResolutionUnique, r.Resolution)
-	})
+	t.Run("files run", check)
 }
 
 // A scene node's attached script (script = ExtResource(...)) is a use of the

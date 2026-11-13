@@ -89,7 +89,7 @@ graph LR
 | `twins_test.go` | Twins in one file resolve to the widest (then first) by qualified name and by name, in a full run and from the store; a qualified name in two files stays ambiguous; a wider twin added later re-resolves the unchanged caller in a files run; `..delta` resolves by name (unique, then ambiguous), never exact. |
 | `resolve_files_test.go` | A files run sees the stored candidates too: a target ambiguous in a full run stays ambiguous by exact and suffix match; removing one of two candidates (file deleted, symbol edited away, or one of two same-named methods of one file) makes the unchanged caller unique. |
 | `resolve_fix_test.go` | Name and qualified resolution stay within one language (html may cross), targets defined later, inherited-member fallback, an ambiguous `self.m()` made exact by a base method added in a later run, a files run after a failed run widens to a full walk, symlinked `.ragcode` directories and device files are refused, an exact suffix match (Python) turned ambiguous by a new symbol with that suffix, a PHP suffix match only `unique`, a Python suffix never cut inside a package (`json.dumps` vs `src.flask.json.dumps`). |
-| `gdscript_test.go` | `extends "res://x.gd"` resolves to the script's class, named by `class_name` or after the file, in full and files runs; `super.run()` in a `class_name` hierarchy (`BaseTrigger.run`, defined in the base's base `Cutscene`) resolves exactly through the bases, and by name when the owner is only in the store; a scene node's attached script resolves to the script's class; a script added in a later incremental run re-resolves the unchanged `extends` and scene files that name it by path. |
+| `gdscript_test.go` | `extends "res://x.gd"` resolves to the script's class, named by `class_name` or after the file, in full and files runs; `super.run()` in a `class_name` hierarchy (`BaseTrigger.run`, defined in the base's base `Cutscene`) resolves exactly through the bases, also in a files run where the owner is only in the store; a scene node's attached script resolves to the script's class; a script added in a later incremental run re-resolves the unchanged `extends` and scene files that name it by path. |
 | `prefix_test.go` | `Run` adds the model's document prefix before embedding. |
 | `lock_unix_test.go` | A second run on a locked root gets `ErrLocked`. Build tag `unix`. |
 | `lock_test.go` | Two holders of `index.lock` exclude each other, on every platform. |
@@ -459,8 +459,9 @@ each relation:
   without a namespace calling `Status::run()` of a global `\Status` would
   otherwise bind as exact to `HealthCheck\WP_CLI\Status::run`). If the owner (`a.b` of `a.b.m`,
   matched exactly or by suffix) does not define the member (inherited through
-  a parent class, trait or embedded type), the bases the owner declares in
-  this run (one level) are tried as `<base>.m`, exactly or by suffix
+  a parent class, trait or embedded type), the bases the owner declares
+  (one level; an owner in the store, not in this run, brings its stored
+  bases, so a files run of the caller alone answers as a full run) are tried as `<base>.m`, exactly or by suffix
   (`ResolutionExact`). A base is the qualified name of an `extends`,
   `implements` or `uses_type` relation, or its bare name when it has none
   (GDScript `class_name Pickup extends BaseTrigger`). In Go only `extends` (an
@@ -474,9 +475,8 @@ each relation:
   owner that embeds a type no workspace symbol matches (an external one,
   `struct{ suite.Suite }`): the member most likely comes from it, so the call
   stays unresolved instead of linking a testify `s.T()` to a workspace
-  `CustomTime.T`. Bases of bases,
-  and an owner whose class is only in the store (not in this run), are not
-  followed: their call resolves by name, when the name is unique. An `extends` whose target is a whole module (GDScript
+  `CustomTime.T`. Bases of bases are not followed: their call resolves by
+  name, when the name is unique. An `extends` whose target is a whole module (GDScript
   `extends "res://x/y.gd"`), or a GDScript `uses_type` of one (a scene node's
   attached script), takes that module's one top-level class
   (`ResolutionUnique`). In JavaScript, `m.n` with no match takes module `m`'s

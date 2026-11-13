@@ -1,8 +1,10 @@
 package tools
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	_ "github.com/doITmagic/rag-code-mcp/v2/parser/golang"
 	"github.com/stretchr/testify/assert"
@@ -53,4 +55,32 @@ func main() {
 		callers = append(callers, u.Caller)
 	}
 	assert.ElementsMatch(t, []string{"example.com/app/cmd/api.main", "example.com/app/cmd/api.main./firma.json"}, callers)
+}
+
+// s.T() on a struct embedding the external suite.Suite is promoted from it, so
+// it is no by-name usage of an unrelated T(): neither after the full run nor
+// after a files run of the caller alone.
+func TestGoExternalEmbeddingSurvivesCallerIncremental(t *testing.T) {
+	v := newEnv(t, false, nil)
+	caller := "package app\nfunc Check(s *MySuite) { _ = s.T() }\n"
+	v.addFiles(t, map[string]string{
+		"go.mod": "module example.com/app\n\ngo 1.26\n",
+		"types.go": `package app
+import "github.com/stretchr/testify/suite"
+type MySuite struct { suite.Suite }
+type CustomTime struct{}
+func (CustomTime) T() int { return 0 }
+`,
+		"caller.go": caller,
+	})
+	assert.Empty(t, usagesOf(t, v, "example.com/app.CustomTime.T"), "full run control: s.T is promoted from external suite.Suite")
+	p := filepath.Join(v.root, "caller.go")
+	require.NoError(t, os.WriteFile(p, []byte(caller+"// unrelated edit\n"), 0o644))
+	require.NoError(t, os.Chtimes(p, time.Now(), time.Now().Add(time.Second)))
+	w, err := v.e.Workspace(v.root)
+	require.NoError(t, err)
+	w.IndexFiles([]string{p}, nil)
+	require.Eventually(t, func() bool { s := w.Status(); return !s.Running && !s.Queued }, 10*time.Second, 20*time.Millisecond)
+	require.Equal(t, "done", w.Status().Phase)
+	assert.Empty(t, usagesOf(t, v, "example.com/app.CustomTime.T"), "caller-only incremental must preserve the full-run result")
 }

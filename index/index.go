@@ -1058,6 +1058,19 @@ func placeOf(s parser.Symbol) place {
 	return place{s.FilePath, parser.Normalize(s.QualifiedName), s.Kind == parser.KindFunction || s.Kind == parser.KindMethod, s.StartLine, s.EndLine}
 }
 
+// addBases records what class or interface s extends, implements or uses.
+func (idx nameIndex) addBases(s parser.Symbol) {
+	if s.Kind != parser.KindClass && s.Kind != parser.KindInterface {
+		return
+	}
+	for _, r := range s.Relations {
+		// Go promotes only an embedded type's methods (extends), not a named field's.
+		if b := cmp.Or(r.TargetQualifiedName, r.TargetName); b != "" && (r.Kind == parser.RelExtends || s.Language != "go" && (r.Kind == parser.RelImplements || r.Kind == parser.RelUsesType)) {
+			idx.bases[s.ID] = append(idx.bases[s.ID], b)
+		}
+	}
+}
+
 func newNameIndex(files []parsed) nameIndex {
 	idx := nameIndex{byQN: map[string][]string{}, bySuffix: map[string][]string{}, byName: map[[2]string][]string{}, byModule: map[string][]string{},
 		byModName: map[[2]string][]string{}, lang: map[string]string{}, kind: map[string]parser.Kind{}, place: map[string]place{}, global: map[string]bool{}, routes: map[string][]string{}, route: map[string]string{}, bases: map[string][]string{}, changed: make(map[string]bool, len(files))}
@@ -1072,14 +1085,7 @@ func newNameIndex(files []parsed) nameIndex {
 			if n := s.Metadata["name"]; s.Kind == parser.KindRoute && n != "" {
 				idx.routes[n] = append(idx.routes[n], s.ID)
 			}
-			if s.Kind == parser.KindClass || s.Kind == parser.KindInterface {
-				for _, r := range s.Relations {
-					// Go promotes only an embedded type's methods (extends), not a named field's.
-					if b := cmp.Or(r.TargetQualifiedName, r.TargetName); b != "" && (r.Kind == parser.RelExtends || s.Language != "go" && (r.Kind == parser.RelImplements || r.Kind == parser.RelUsesType)) {
-						idx.bases[s.ID] = append(idx.bases[s.ID], b)
-					}
-				}
-			}
+			idx.addBases(s)
 			idx.byQN[qn] = append(idx.byQN[qn], s.ID)
 			for j := 0; j < len(qn); j++ {
 				if j == 0 || qn[j-1] == '.' {
@@ -1132,6 +1138,9 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 				idx.place[h.Symbol.ID] = placeOf(h.Symbol)
 				idx.global[h.Symbol.ID] = h.Symbol.Metadata["global"] == "true"
 				idx.route[h.Symbol.ID] = h.Symbol.Metadata["name"]
+				if _, ok := idx.bases[h.Symbol.ID]; !ok { // an unchanged owner's bases, as a full run has them
+					idx.addBases(h.Symbol)
+				}
 			}
 		}
 		cache[key] = ids
@@ -1334,9 +1343,9 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 					// $this->m(), self.m(), this.m() on a member the owner
 					// inherits name the owner, which exists but does not
 					// define it: first the owner's declared bases (parent
-					// class, trait, embedded type), one level, when the owner
-					// is in this run (a method's class is in its file). Owner
-					// and base may be short names (GDScript class_name).
+					// class, trait, embedded type), one level, of an owner in
+					// this run or in the store. Owner and base may be short
+					// names (GDScript class_name).
 					if dot := strings.LastIndex(tqn, "."); len(ids) == 0 && dot > 0 && rel.TargetName != "" {
 						seen := map[string]bool{}
 						for _, o := range qualified(lang, tqn[:dot]) {

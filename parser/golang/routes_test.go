@@ -566,5 +566,60 @@ func Load() {
 	_ = chi.NewRouter()
 }
 `
-	assert.Equal(t, []string{"echo GET api.Load./ok -> api.eh"}, routeList(t, "api/r.go", withChi))
+	assert.Equal(t, []string{"echo GET api.Load./users -> api.eh", "echo GET api.Load./ok -> api.eh"}, routeList(t, "api/r.go", withChi),
+		"e comes from echo.New: echo's path rule, whatever else the file imports")
+
+	// A router whose framework the file does not show (a struct field) needs
+	// every imported router to serve a path without the "/" (chi panics on it).
+	untied := `package api
+
+import (
+	"github.com/go-chi/chi/v5"
+	"github.com/labstack/echo/v4"
+)
+
+type S struct{ e *echo.Echo }
+
+func eh(c echo.Context) error { return nil }
+
+func (s *S) Load() {
+	s.e.GET("users", eh)
+	s.e.GET("/ok", eh)
+	_ = chi.NewRouter()
+}
+`
+	assert.Equal(t, []string{"echo GET api.Load./ok -> api.eh"}, routeList(t, "api/r.go", untied))
+
+	// w2 (WSL, Z13): gin and echo groups in one function each keep their own
+	// join; the gin ones were /apiping and /v1//index.
+	both := `package api
+
+import (
+	"github.com/gin-gonic/gin"
+	"github.com/labstack/echo/v4"
+)
+
+func h(c *gin.Context)         {}
+func eh(c echo.Context) error { return nil }
+
+func Load() {
+	r := gin.Default()
+	g := r.Group("/api")
+	g.GET("ping", h)
+	r.Group("v1/").GET("/index", h)
+	e := echo.New()
+	eg := e.Group("/api")
+	eg.GET("ping", eh)
+}
+
+func Mount(rg *gin.RouterGroup) {
+	rg.GET("x", h)
+}
+`
+	assert.Equal(t, []string{
+		"gin GET api.Load./api/ping -> api.h",
+		"gin GET api.Load./v1/index -> api.h",
+		"echo GET api.Load./apiping -> api.eh",
+		"gin GET api.Mount./x -> api.h",
+	}, routeList(t, "api/r.go", both))
 }

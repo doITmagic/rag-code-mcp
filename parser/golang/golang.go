@@ -109,7 +109,7 @@ func (Analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 			}
 			parser.Walk(n, func(c *gotreesitter.Node) bool {
 				if c.Type(lang) == "field_declaration" {
-					router := fc.routerType(parser.Field(c, lang, "type"))
+					router := fc.routerType(parser.Field(c, lang, "type")) != nil
 					for _, name := range fc.names(c) {
 						fc.fields[name] = true
 						fc.routerFields[name] = fc.routerFields[name] || router
@@ -120,7 +120,7 @@ func (Analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 		case "var_declaration", "const_declaration":
 			for _, spec := range fc.specs(n, "var_spec", "const_spec") {
 				v := parser.NamedChildren(parser.Field(spec, lang, "value"))
-				router := fc.routerType(parser.Field(spec, lang, "type")) || len(v) == 1 && fc.newRouter(v[0])
+				router := fc.routerType(parser.Field(spec, lang, "type")) != nil || len(v) == 1 && fc.newRouter(v[0]) != nil
 				for _, name := range fc.names(spec) {
 					fc.values[name] = true
 					fc.routerVars[name] = fc.routerVars[name] || router

@@ -88,29 +88,49 @@ func (fc *file) addFramework(path string) *framework {
 	return nil
 }
 
-// routerType is true for a type naming a router type of an imported
-// framework: *echo.Group, chi.Router.
-func (fc *file) routerType(t *gotreesitter.Node) bool {
+// routerType returns the framework of a type naming a router type of an
+// imported framework (*echo.Group, chi.Router), nil for any other type.
+func (fc *file) routerType(t *gotreesitter.Node) *framework {
 	t = fc.bare(t)
 	if t == nil || t.Type(fc.lang) != "qualified_type" {
-		return false
+		return nil
 	}
-	fw := fc.fwPkgs[fc.text(parser.Field(t, fc.lang, "package"))]
-	return fw != nil && fw.types[fc.text(parser.Field(t, fc.lang, "name"))]
+	if fw := fc.fwPkgs[fc.text(parser.Field(t, fc.lang, "package"))]; fw != nil && fw.types[fc.text(parser.Field(t, fc.lang, "name"))] {
+		return fw
+	}
+	return nil
 }
 
-// newRouter is true for a call of a framework's router constructor:
-// echo.New(), chi.NewRouter(), http.NewServeMux().
-func (fc *file) newRouter(e *gotreesitter.Node) bool {
+// newRouter returns the framework of a call of its router constructor
+// (echo.New(), chi.NewRouter(), http.NewServeMux()), nil for any other call.
+func (fc *file) newRouter(e *gotreesitter.Node) *framework {
 	if e.Type(fc.lang) != "call_expression" {
-		return false
+		return nil
 	}
 	fn := parser.Field(e, fc.lang, "function")
 	if fn.Type(fc.lang) != "selector_expression" {
-		return false
+		return nil
 	}
-	fw := fc.fwPkgs[fc.text(parser.Field(fn, fc.lang, "operand"))]
-	return fw != nil && fw.ctors[fc.text(parser.Field(fn, fc.lang, "field"))]
+	if fw := fc.fwPkgs[fc.text(parser.Field(fn, fc.lang, "operand"))]; fw != nil && fw.ctors[fc.text(parser.Field(fn, fc.lang, "field"))] {
+		return fw
+	}
+	return nil
+}
+
+// grp is a router expression: its path prefix and its framework, nil when the
+// file does not show it (a top-level var or a struct field).
+type grp struct {
+	prefix string
+	fw     *framework
+}
+
+// frameworks returns the imported frameworks a router of g's framework may
+// use: only its own when known.
+func (fc *file) frameworksOf(g grp) []*framework {
+	if g.fw != nil {
+		return []*framework{g.fw}
+	}
+	return fc.routers
 }
 
 // routes returns one route symbol per registration call in the function and
@@ -141,21 +161,21 @@ func (fc *file) routes(decls []*gotreesitter.Node, at []int, syms []parser.Symbo
 // declRoutes walks one declaration in source order, tracking the prefix of
 // each group variable (by its text, so s.api works too).
 func (fc *file) declRoutes(decl *gotreesitter.Node, sym *parser.Symbol, params map[int]string, seen map[string]map[int]string, out []parser.Symbol) []parser.Symbol {
-	groups := map[string]string{}
+	groups := map[string]grp{}
 	i := 0
 	for _, pd := range parser.NamedChildren(parser.Field(decl, fc.lang, "parameters")) {
-		typed := fc.routerType(parser.Field(pd, fc.lang, "type"))
+		fw := fc.routerType(parser.Field(pd, fc.lang, "type"))
 		for _, name := range fc.names(pd) {
-			if typed {
-				groups[name] = params[i] // "" when no call in the file shows its prefix
+			if fw != nil {
+				groups[name] = grp{params[i], fw} // "" when no call in the file shows its prefix
 			}
 			i++
 		}
 	}
 	// declared holds the names declared with := in the scope n opens, so an
 	// inner api := r.Group("/x") ends with its block.
-	var walk func(n *gotreesitter.Node, groups map[string]string, declared map[string]bool)
-	walk = func(n *gotreesitter.Node, groups map[string]string, declared map[string]bool) {
+	var walk func(n *gotreesitter.Node, groups map[string]grp, declared map[string]bool)
+	walk = func(n *gotreesitter.Node, groups map[string]grp, declared map[string]bool) {
 		parser.Walk(n, func(c *gotreesitter.Node) bool {
 			switch c.Type(fc.lang) {
 			case "block", "if_statement", "for_statement", "expression_switch_statement", "type_switch_statement", "select_statement":
@@ -183,7 +203,8 @@ func (fc *file) declRoutes(decl *gotreesitter.Node, sym *parser.Symbol, params m
 					}
 					r = parser.NamedChildren(parser.Field(c, fc.lang, "value"))
 				}
-				p, ok := "", false
+				var p grp
+				ok := false
 				if len(l) == 1 && len(r) == 1 {
 					p, ok = fc.router(r[0], groups)
 				}
@@ -236,9 +257,9 @@ func (fc *file) declRoutes(decl *gotreesitter.Node, sym *parser.Symbol, params m
 // scope matches chi's r.Route("/x", func(r chi.Router) {...}) and
 // r.Group(func(r chi.Router) {...}): the closure body, its router
 // parameter's name and that router's prefix.
-func (fc *file) scope(call, fn *gotreesitter.Node, args []*gotreesitter.Node, groups map[string]string) (*gotreesitter.Node, string, string, bool) {
+func (fc *file) scope(call, fn *gotreesitter.Node, args []*gotreesitter.Node, groups map[string]grp) (*gotreesitter.Node, string, grp, bool) {
 	if len(args) == 0 || args[len(args)-1].Type(fc.lang) != "func_literal" {
-		return nil, "", "", false
+		return nil, "", grp{}, false
 	}
 	lit := args[len(args)-1]
 	var param string
@@ -259,24 +280,24 @@ func (fc *file) scope(call, fn *gotreesitter.Node, args []*gotreesitter.Node, gr
 			return parser.Field(lit, fc.lang, "body"), param, p, true
 		}
 	}
-	return nil, "", "", false
+	return nil, "", grp{}, false
 }
 
 // route builds the symbol of "recv.Method(path, handler, ...)" when recv is
 // a router the file shows, Method is a registration method of a router the
 // file imports and path is a string literal that looks like one.
-func (fc *file) route(call, fn *gotreesitter.Node, args []*gotreesitter.Node, groups map[string]string, sym *parser.Symbol) (parser.Symbol, bool) {
-	prefix, ok := fc.router(parser.Field(fn, fc.lang, "operand"), groups)
+func (fc *file) route(call, fn *gotreesitter.Node, args []*gotreesitter.Node, groups map[string]grp, sym *parser.Symbol) (parser.Symbol, bool) {
+	recv, ok := fc.router(parser.Field(fn, fc.lang, "operand"), groups)
 	if !ok { // c.File(path) on an echo.Context, cache.Get(key, v)
 		return parser.Symbol{}, false
 	}
 	method := fc.text(parser.Field(fn, fc.lang, "field"))
-	for _, fw := range fc.routers {
+	for _, fw := range fc.frameworksOf(recv) {
 		idx, ok := fw.methods[method]
 		if !ok || idx >= len(args) {
 			continue
 		}
-		path, ok := fc.pathLiteral(args[idx], fw)
+		path, ok := fc.pathLiteral(args[idx], fw, recv.fw != nil)
 		if !ok {
 			continue
 		}
@@ -300,7 +321,7 @@ func (fc *file) route(call, fn *gotreesitter.Node, args []*gotreesitter.Node, gr
 				handler = args[len(args)-1]
 			}
 		}
-		name := fw.join(prefix, path)
+		name := fw.join(recv.prefix, path)
 		if name == "" {
 			name = "/"
 		}
@@ -331,31 +352,34 @@ func (fc *file) handlerRelation(h *gotreesitter.Node) (parser.Relation, bool) {
 	return r, ok
 }
 
-// groupPrefix returns the full prefix of "recv.Group(path, ...)" on a router.
-func (fc *file) groupPrefix(e *gotreesitter.Node, groups map[string]string) (string, bool) {
+// groupPrefix returns the router of "recv.Group(path, ...)" on a router:
+// the full prefix, and the framework whose group method it is.
+func (fc *file) groupPrefix(e *gotreesitter.Node, groups map[string]grp) (grp, bool) {
 	if e.Type(fc.lang) != "call_expression" {
-		return "", false
+		return grp{}, false
 	}
 	fn := parser.Field(e, fc.lang, "function")
 	if fn.Type(fc.lang) != "selector_expression" {
-		return "", false
+		return grp{}, false
 	}
 	method := fc.text(parser.Field(fn, fc.lang, "field"))
-	for _, fw := range fc.routers {
+	args := parser.NamedChildren(parser.Field(e, fc.lang, "arguments"))
+	if len(args) == 0 {
+		return grp{}, false
+	}
+	recv, ok := fc.router(parser.Field(fn, fc.lang, "operand"), groups)
+	if !ok {
+		return grp{}, false
+	}
+	for _, fw := range fc.frameworksOf(recv) {
 		if fw.group != method {
 			continue
 		}
-		args := parser.NamedChildren(parser.Field(e, fc.lang, "arguments"))
-		if len(args) == 0 {
-			continue
-		}
-		if path, ok := fc.pathLiteral(args[0], fw); ok {
-			if p, ok := fc.router(parser.Field(fn, fc.lang, "operand"), groups); ok {
-				return fw.join(p, path), true
-			}
+		if path, ok := fc.pathLiteral(args[0], fw, recv.fw != nil); ok {
+			return grp{fw.join(recv.prefix, path), fw}, true
 		}
 	}
-	return "", false
+	return grp{}, false
 }
 
 // router returns the path prefix of a router expression and whether the
@@ -366,14 +390,14 @@ func (fc *file) groupPrefix(e *gotreesitter.Node, groups map[string]string) (str
 // show (a parameter, a field set elsewhere).
 // shortcut: a local that is no router shadows a top-level router var or the
 // http import of its name only in the tracked groups, not in that fallback.
-func (fc *file) router(e *gotreesitter.Node, groups map[string]string) (string, bool) {
-	if p, ok := fc.groupPrefix(e, groups); ok {
-		return p, true
+func (fc *file) router(e *gotreesitter.Node, groups map[string]grp) (grp, bool) {
+	if g, ok := fc.groupPrefix(e, groups); ok {
+		return g, true
 	}
 	switch e.Type(fc.lang) {
 	case "call_expression": // r.With(mw).Get(...)
-		if fc.newRouter(e) {
-			return "", true
+		if fw := fc.newRouter(e); fw != nil {
+			return grp{fw: fw}, true
 		}
 		if fn := parser.Field(e, fc.lang, "function"); fn.Type(fc.lang) == "selector_expression" {
 			for _, fw := range fc.routers {
@@ -383,35 +407,38 @@ func (fc *file) router(e *gotreesitter.Node, groups map[string]string) (string, 
 			}
 		}
 	case "selector_expression":
-		if p, ok := groups[fc.text(e)]; ok {
-			return p, true
+		if g, ok := groups[fc.text(e)]; ok {
+			return g, true
 		}
 		field := fc.text(parser.Field(e, fc.lang, "field"))
 		if fw := fc.fwPkgs[fc.text(parser.Field(e, fc.lang, "operand"))]; fw != nil && fw.vars[field] {
-			return "", true
+			return grp{fw: fw}, true
 		}
-		return "", fc.routerFields[field]
+		return grp{}, fc.routerFields[field]
 	case "identifier":
 		name := fc.text(e)
-		if p, ok := groups[name]; ok {
-			return p, true
+		if g, ok := groups[name]; ok {
+			return g, true
 		}
-		fw := fc.fwPkgs[name]
-		return "", fc.routerVars[name] || fw != nil && fw.pattern // http.HandleFunc
+		if fw := fc.fwPkgs[name]; fw != nil && fw.pattern { // http.HandleFunc
+			return grp{fw: fw}, true
+		}
+		return grp{}, fc.routerVars[name]
 	}
-	return "", false
+	return grp{}, false
 }
 
 // prefix is the path prefix of a router expression, "" for anything else.
-func (fc *file) prefix(recv *gotreesitter.Node, groups map[string]string) string {
-	p, _ := fc.router(recv, groups)
-	return p
+func (fc *file) prefix(recv *gotreesitter.Node, groups map[string]grp) string {
+	g, _ := fc.router(recv, groups)
+	return g.prefix
 }
 
 // pathLiteral unquotes a string literal that is "" or starts with "/"; a
 // pattern may also be "[METHOD ][host]/path" (net/http since Go 1.22), and a
-// gin or echo path any string (gin joins it to "/", echo adds the "/").
-func (fc *file) pathLiteral(n *gotreesitter.Node, fw *framework) (string, bool) {
+// gin or echo path any string (gin joins it to "/", echo adds the "/"). tied
+// says the receiver's framework is known to be fw.
+func (fc *file) pathLiteral(n *gotreesitter.Node, fw *framework, tied bool) (string, bool) {
 	if !strings.HasSuffix(n.Type(fc.lang), "string_literal") {
 		return "", false
 	}
@@ -426,10 +453,10 @@ func (fc *file) pathLiteral(n *gotreesitter.Node, fw *framework) (string, bool) 
 			p = p[i:] // a host pattern: example.com/x, localhost/x
 		}
 	}
-	// shortcut: a receiver is not tied to its framework, so a path without the
-	// "/" needs every router the file imports (net/http aside) to serve it
-	// (chi panics on it); tie receivers to frameworks if mixed files show up.
-	relative := fw.relative && !slices.ContainsFunc(fc.routers, func(o *framework) bool { return !o.relative && !o.pattern })
+	// A receiver of unknown framework (a top-level var, a struct field) needs
+	// every router the file imports (net/http aside) to serve a path without
+	// the "/" (chi panics on it).
+	relative := fw.relative && (tied || !slices.ContainsFunc(fc.routers, func(o *framework) bool { return !o.relative && !o.pattern }))
 	if s != "" && !relative && (p == "" || p[0] != '/') {
 		return "", false
 	}

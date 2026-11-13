@@ -483,6 +483,12 @@ func (c *collector) localTypes(params, body *gotreesitter.Node, owner string) ma
 			set(c.text(l), t)
 		case "augmented_assignment_expression", "reference_assignment_expression":
 			assigned(c.field(n, "left"))
+		case "catch_clause": // catch (E $e) rebinds $e; the body is walked as usual
+			for _, ch := range parser.NamedChildren(n) {
+				if ch.Type(c.lang) == "variable_name" {
+					set(c.text(ch), "")
+				}
+			}
 		case "foreach_statement": // every variable after the iterated expression, but the body
 			for i, ch := range parser.NamedChildren(n) {
 				if i > 0 && ch != c.field(n, "body") {

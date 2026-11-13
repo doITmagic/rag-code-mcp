@@ -311,6 +311,8 @@ class Sync
         $x->h();
         $s = new \App\Sms();
         $s->i();
+        $e = new Mailer();
+        try { $e->j(); } catch (\RuntimeException | \LogicException $e) { $e->k(); $m->l(); }
     }
 }
 `)
@@ -325,6 +327,9 @@ class Sync
 		"call g": `App\Services.Mailer.g`,
 		"call h": "",
 		"call i": `App.Sms.i`,
+		"call j": "",
+		"call k": "",
+		"call l": `App\Services.Mailer.l`,
 	} {
 		assert.Equal(t, want, got[call], call)
 	}

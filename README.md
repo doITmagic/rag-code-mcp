@@ -247,6 +247,12 @@ reference: [tools/README.md](tools/README.md).
 Each workspace has its own isolated index; one server serves several
 workspaces. See [engine](engine/README.md).
 
+### 🗺️ Planned for v2.1
+
+Full WordPress support beyond `add_action` / `add_filter` hooks: custom post
+types, taxonomies, shortcodes, Gutenberg blocks, widgets, admin pages and REST
+routes, **WooCommerce** and **Oxygen Builder**.
+
 ---
 
 ## 💻 IDE Integration

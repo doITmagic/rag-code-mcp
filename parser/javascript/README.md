@@ -269,7 +269,7 @@ call `fetch` -> `src/services/api.default.fetch`.
 | `window.f()` | `call` | As `f()`: `<module>.f` when this file declares `f` (also through `window.f = function`), else `""` (the index binds it by name). After `window.f = g` it resolves as `g()`; the last such assignment of the file wins, wherever the call sits. |
 | `new Foo()` | `uses_type` | Same resolution as a name. |
 | `<Comp />`, `<ns.Comp>` in JSX | `uses_type` | Only for capitalized or dotted tag names. |
-| `<StatusCard>`, `<status-card>`, `<Ns.Comp>`, `<widgets.Button>` in a Vue `<template>` (PascalCase, dotted, or kebab-case with a dash, turned PascalCase; a dotted tag with a lowercase first part only when that part is an import of the file, such as `import * as widgets`) | `uses_type`, on the `template` symbol | Through the script blocks' imports and names (`./status-card.vue` default import -> `<dir>/status-card.default`, the `<script setup>` symbol); `""` for a global component (`<router-view>`), which the index binds by name. |
+| `<StatusCard>`, `<status-card>`, `<Ns.Comp>`, `<widgets.Button>` in a Vue `<template>` (PascalCase, dotted, or kebab-case with a dash, turned PascalCase; a dotted tag with a lowercase first part only when that part is an import of the file, such as `import * as widgets`) | `uses_type`, on the `template` symbol | Through the script blocks' imports and names (`./status-card.vue` default import -> `<dir>/status-card.default`, the `<script setup>` symbol); `""` for a global component (`<router-view>`) or a Nuxt auto-imported one: the index leaves it unresolved (only an `imports` relation may target a `template` symbol), and `rag_find_usages` of the component lists it by name. |
 | The component's own name as a tag in its template (`<TreeNode>` in `TreeNode.vue`, a recursive component, no import) | `uses_type` | `<module>.default` of the same file |
 | Calls in a Vue `<template>` expression (`@click="f(x)"`, `:label="format(x)"`, `v-if="isOn()"`, `{{ label(n) }}`) and a bare handler name (`@click="go"`, `v-on:keyup.enter="go"`) | `call`, on the `template` symbol, on the line of the name | Through the script blocks like a call in them; else an options-API method of the component (`<module>.<Component>.go`); `obj.m()` of a variable has `""`. |
 | TypeScript type in a parameter or return annotation, a top-level `const` / `let` / `var` annotation (`const c: Foo[] = ...`), a generic argument (`useState<Plant[]>`), the body of an `interface` or a `type` alias | `uses_type` | Only types an import or this file defines; type parameters and globals are dropped. |
@@ -334,7 +334,10 @@ literal's values are not walked, its methods own their calls.
   `rag_find_usages` of the component's name answers for that `default` symbol
   (`rag_call_hierarchy` for the `template` symbol). A `.vue` file without a
   script has no `default` symbol, so a tag of it links to nothing.
-- Nuxt auto-imports (no import statement) resolve by name only.
+- Nuxt auto-imports (no import statement) resolve by name only; an
+  auto-imported component tag is listed by `rag_find_usages` of that
+  component, marked `by_name` (see [tools](../../tools/README.md)), and has
+  no incoming edge in `rag_call_hierarchy`.
 - tsconfig `paths` targets are relative to the `baseUrl` of the config that
   defines `paths` (or its directory), not to a `baseUrl` inherited through
   `extends`; package `extends` (`@tsconfig/node20`) are not followed, nor is

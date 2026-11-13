@@ -334,7 +334,14 @@ grouped by file, with the referencing symbol and the line.
 
 A Vue component's name resolves to the `template` symbol of its `.vue`
 file; its usages (`import X from './X.vue'`, `<X />`) are those of the file's
-`default` symbol, so `rag_find_usages` answers for that one.
+`default` symbol, so `rag_find_usages` answers for that one. A tag of the
+component with no import (a Nuxt auto-import or a globally registered
+component) stays an unresolved bare name in the index; the tags of `.vue`
+files naming the component (the `template` symbol's name, PascalCase) with
+no target are added as its usages, marked `by_name` (another component of
+that name, in another folder, may be the one registered). They count toward
+`limit`. A `.vue` file without a script has no `default` symbol, so its
+tags are not listed.
 
 The symbol is resolved first (`resolveSymbol`): up to 50 symbols whose
 qualified name ends with the query, plus, for a plain name, up to 50 named

@@ -275,10 +275,10 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 	byFile := map[string]*FileUsages{}
 	lines := map[string][]string{}
 	total, guessed := 0, 0
-	add := func(callers []parser.Symbol, sym *parser.Symbol, via string) {
+	add := func(callers []parser.Symbol, sym *parser.Symbol, via string, match func(parser.Relation) bool) {
 		for _, c := range callers {
 			for _, r := range c.Relations {
-				if r.TargetID != sym.ID && (r.TargetQualifiedName == "" || r.TargetQualifiedName != sym.QualifiedName) {
+				if !match(r) {
 					continue
 				}
 				g := byFile[c.FilePath]
@@ -299,15 +299,37 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 			}
 		}
 	}
-	add(callers, sym, "")
-	viaCount, n := total, len(callers) // n: referencing symbols, direct and via, within one limit
+	add(callers, sym, "", targets(sym))
+	n := len(callers) // referencing symbols, direct, by tag and via, within one limit
+	// A tag of a component no import names (Nuxt auto-import, global
+	// registration) stays an unresolved bare name: a usage by name.
+	if comp := vueComponent(ctx, w, sym); comp != "" && n < in.Limit {
+		hits, err := w.Scroll(ctx, store.Filter{Language: "javascript", TargetNames: []string{comp}}, min(in.Limit-n, store.MaxScroll-1)+1)
+		if err != nil {
+			return storeErr(ctx, w, err)
+		}
+		var tags []parser.Symbol
+		for _, h := range live(w, hits) {
+			if strings.HasSuffix(h.Symbol.FilePath, ".vue") {
+				tags = append(tags, h.Symbol)
+			}
+		}
+		if len(tags) > in.Limit-n {
+			tags, cut = tags[:in.Limit-n], true
+		}
+		n += len(tags)
+		add(tags, sym, "", func(r parser.Relation) bool {
+			return r.Kind == parser.RelUsesType && r.TargetName == comp && r.TargetID == "" && r.TargetQualifiedName == ""
+		})
+	}
+	viaCount := total
 	for _, m := range viaInterfaces(ctx, w, sym) {
 		vc, vcut, err := referrers(ctx, w, &m, in.Limit-n)
 		if err != nil {
 			return storeErr(ctx, w, err)
 		}
 		cut, n = cut || vcut, n+len(vc)
-		add(vc, &m, ownerQN(&m))
+		add(vc, &m, ownerQN(&m), targets(&m))
 	}
 	viaCount = total - viaCount
 	files := make([]FileUsages, 0, len(byFile))
@@ -345,6 +367,26 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 		msg += "; reads of constants and variables are not tracked, only calls, type uses and inheritance (an import is not a usage): try rag_search"
 	}
 	return reply("ok", msg, data, w)
+}
+
+// targets matches the relations linked to sym by id or qualified name.
+func targets(sym *parser.Symbol) func(parser.Relation) bool {
+	return func(r parser.Relation) bool {
+		return r.TargetID == sym.ID || (r.TargetQualifiedName != "" && r.TargetQualifiedName == sym.QualifiedName)
+	}
+}
+
+// vueComponent is the component name of the template of sym's .vue file
+// when sym is that file's default symbol, "" otherwise.
+func vueComponent(ctx context.Context, w *engine.Workspace, sym *parser.Symbol) string {
+	if sym.Name != "default" || sym.Owner != "" || !strings.HasSuffix(sym.FilePath, ".vue") {
+		return ""
+	}
+	hits, err := w.Scroll(ctx, store.Filter{FilePath: sym.FilePath, Kinds: []parser.Kind{parser.KindTemplate}}, 1)
+	if hits = live(w, hits); err != nil || len(hits) == 0 {
+		return ""
+	}
+	return hits[0].Symbol.Name
 }
 
 // isID is true for a symbol id: 32 lowercase hex digits.

@@ -129,3 +129,28 @@ func TestGoOverrideHasNoInterfaceUsage(t *testing.T) {
 	assert.True(t, files[0].Usages[0].ByName)
 	assert.Empty(t, files[0].Usages[0].Via)
 }
+
+// gotify's shape: the handler ApplicationAPI.CreateApplication calls
+// a.DB.CreateApplication() through a field typed with the workspace
+// interface ApplicationDatabase, and a test fake shares the name; the
+// implementation lists the call via the interface instead of answering 0
+// with unresolved relations.
+func TestUsagesOfGoFieldThroughInterface(t *testing.T) {
+	v := newEnv(t, false, nil)
+	v.addFiles(t, map[string]string{
+		"go.mod": goMod,
+		"api/application.go": "package api\n\ntype ApplicationDatabase interface {\n\tCreateApplication(name string) error\n}\n\n" +
+			"type ApplicationAPI struct {\n\tDB ApplicationDatabase\n}\n\nfunc (a *ApplicationAPI) CreateApplication() {\n\t_ = a.DB.CreateApplication(\"x\")\n}\n",
+		"database/application.go": "package database\n\ntype GormDatabase struct{}\n\nfunc (d *GormDatabase) CreateApplication(name string) error { return nil }\n",
+		"test/fake.go":            "package test\n\ntype failingDB struct{}\n\nfunc (failingDB) CreateApplication(name string) error { return nil }\n",
+	})
+	r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "database.GormDatabase.CreateApplication"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	var out struct {
+		Files     []FileUsages `json:"files"`
+		Ambiguous int          `json:"ambiguous_by_name"`
+	}
+	data(t, r, &out)
+	assert.Equal(t, map[string]string{"example.com/app/api.ApplicationAPI.CreateApplication": "example.com/app/api.ApplicationDatabase"}, viaOf(out.Files), r.Message)
+	assert.Zero(t, out.Ambiguous, r.Message)
+}

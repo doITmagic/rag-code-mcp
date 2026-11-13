@@ -938,3 +938,87 @@ type Repo interface {
 		rel(parser.RelExtends, "Closer", "io.Closer", 8),
 	}, r.Relations)
 }
+
+// A call through a named field of a struct this file declares (s.repo.Find()
+// on the receiver or on a local of that struct) targets the field's declared
+// type. Fields of generic structs, embedded fields, slices and maps, structs
+// declared in another file and a local shadowing the receiver keep an empty
+// target.
+func TestFieldOperandTargetsFieldType(t *testing.T) {
+	root := t.TempDir()
+	src := `package g
+
+import (
+	"database/sql"
+
+	"example.com/app/models"
+)
+
+type Service struct {
+	repo  Repo
+	db    *Gorm
+	m     models.Store
+	sqldb *sql.DB
+	items []Repo
+	byID  map[int]Repo
+	Base
+}
+
+type Box[T any] struct{ v T }
+
+func (s *Service) Get() {
+	s.repo.Find(1)
+	s.db.Create()
+	s.m.Get()
+	s.sqldb.Exec("")
+	s.items.Len()
+	s.byID.Len()
+	s.Base.Run()
+	run(s.repo.Find)
+}
+
+func (s *Service) Each(list []*Service) {
+	for _, s := range list {
+		s.repo.Find(2)
+	}
+}
+
+func (b *Box[T]) Use() { b.v.M() }
+
+func (o *Other) Use() { o.repo.Find(3) }
+
+func Local() {
+	svc := &Service{}
+	svc.repo.Find(4)
+}
+`
+	syms := analyze(t, root, filepath.Join(root, "g.go"), src)
+	calls := func(qn string) map[string]string {
+		out := map[string]string{}
+		for _, r := range syms[qn].Relations {
+			if r.Kind == parser.RelCall {
+				k := fmt.Sprintf("%s@%d", r.TargetName, r.Line)
+				if r.Value {
+					k += " value"
+				}
+				out[k] = r.TargetQualifiedName
+			}
+		}
+		return out
+	}
+	assert.Equal(t, map[string]string{
+		"Find@22":       "Repo.Find",
+		"Create@23":     "Gorm.Create",
+		"Get@24":        "example.com/app/models.Store.Get",
+		"Exec@25":       "database/sql.DB.Exec",
+		"Len@26":        "",
+		"Len@27":        "",
+		"Run@28":        "",
+		"run@29":        "run",
+		"Find@29 value": "Repo.Find",
+	}, calls("Service.Get"))
+	assert.Equal(t, map[string]string{"Find@34": ""}, calls("Service.Each"))
+	assert.Equal(t, map[string]string{"M@38": ""}, calls("Box.Use"))
+	assert.Equal(t, map[string]string{"Find@40": ""}, calls("Other.Use"))
+	assert.Equal(t, map[string]string{"Find@44": "Repo.Find"}, calls("Local"))
+}

@@ -95,3 +95,45 @@ func TestGoNameOnlySkipsInterfaceMethods(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, want, goRelsOf(t, e, use, "UseLocal"), "files run, the interface from the store")
 }
+
+// A call through a field of an external type (s.db.Exec() with db *sql.DB)
+// is no usage of a workspace method that only shares the name, and one
+// through a field typed with a workspace interface embedding an external one
+// is exact for the interface's own method, unresolved for the external one's.
+func TestGoFieldCallTargetsFieldType(t *testing.T) {
+	parser.Register(realGo)
+	t.Cleanup(func() { parser.Register(lineAnalyzer{"go", ".go"}) })
+	e := newEnv(t)
+	e.write(t, "go.mod", "module example.com/app\n\ngo 1.25\n")
+	e.write(t, "api/local.go", "package api\n\ntype local struct{}\n\nfunc (local) Exec(q string) {}\n\nfunc (local) Close() error { return nil }\n\nfunc (local) Save() {}\n")
+	svc := e.write(t, "api/svc.go", `package api
+
+import (
+	"database/sql"
+	"io"
+)
+
+type Store interface {
+	io.Closer
+	Save()
+}
+
+type Svc struct {
+	db *sql.DB
+	st Store
+}
+
+func (s *Svc) Run() {
+	s.db.Exec("")
+	s.st.Save()
+	_ = s.st.Close()
+}
+`)
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	assert.Equal(t, map[string][2]string{
+		"Exec":  {"", ""},
+		"Save":  {string(parser.ResolutionExact), "example.com/app/api.Store.Save"},
+		"Close": {"", ""},
+	}, goRelsOf(t, e, svc, "Run"))
+}

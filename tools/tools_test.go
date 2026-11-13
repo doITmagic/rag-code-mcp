@@ -1031,6 +1031,11 @@ func TestExportsShortDirOfFileModules(t *testing.T) {
 	base := filepath.Base(v.root) // a package named like the root: its directory, never the root's own files
 	v.addFiles(t, map[string]string{"top.fkm": "func Top\n", base + "/in.fkm": "func Inner\n"})
 	assert.Equal(t, []string{"Inner"}, names(base))
+	// A module whose symbols are all unexported is indexed: not "no match".
+	v.addFiles(t, map[string]string{"pv.fk": "package ex.com/pv\nfunc hidden\n"})
+	r0, _ := v.call(t, "rag_list_package_exports", map[string]any{"workspace_root": v.root, "package": "ex.com/pv"})
+	assert.Contains(t, r0.Message, `"ex.com/pv" has no exported symbols`)
+	assert.NotContains(t, r0.Message, "no indexed module")
 	// A directory whose files export nothing exists: not "no match".
 	v.addFiles(t, map[string]string{"config/app.fkm": "\n"})
 	r, _ := v.call(t, "rag_list_package_exports", map[string]any{"workspace_root": v.root, "package": "config"})

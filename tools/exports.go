@@ -100,6 +100,8 @@ func (t *tools) listExports(ctx context.Context, req *mcp.CallToolRequest, in Ex
 		if abs := filepath.Join(w.Root, filepath.FromSlash(file)); !indexed(func(p string) bool { return p == abs }) {
 			msg = fmt.Sprintf("%s is not indexed (%s)", file, notIndexed)
 		}
+	} else if len(mods) == 0 && len(hits) > 0 { // indexed, only unexported symbols
+		msg = fmt.Sprintf("%q has no exported symbols (only unexported ones)", pkg)
 	} else if len(mods) == 0 {
 		msg = fmt.Sprintf("no indexed module or directory matches %q; pass the full module path or a directory of the workspace", pkg)
 		if abs, err := insideRoot(w.Root, strings.TrimRight(pkg, "/\\")); err == nil && abs != w.Root {

@@ -526,7 +526,10 @@ of the workspace (one a parser handles), also spelled as a module (the
 root-relative path without its extension, `src/index` for `src/index.ts`,
 matched against the indexed files), lists its own exports; with none the
 message is `<file> has no exported symbols of its own (it may only re-export
-others)`, as for a barrel file. When `kinds` leaves nothing but the module,
+others)`, as for a barrel file. A module whose indexed symbols are all
+unexported (a Python module of `_private` functions, `pkg.priv`) answers
+`"X" has no exported symbols (only unexported ones)`, not the no-match
+message. When `kinds` leaves nothing but the module,
 directory or file has exported symbols of other kinds, the message is `"X" has
 no exported symbols of kinds [..]; drop kinds to list them all`. A directory
 of the workspace whose files export nothing (Laravel `config/`) answers

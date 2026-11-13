@@ -61,7 +61,7 @@ func (t *tools) listExports(ctx context.Context, req *mcp.CallToolRequest, in Ex
 	n := 0
 	for _, h := range hits {
 		s := h.Symbol
-		if !s.Exported {
+		if !s.Exported || s.Metadata["interface"] == "true" { // a Go interface's method: the interface row lists it
 			continue
 		}
 		if n++; n > exportsCap {

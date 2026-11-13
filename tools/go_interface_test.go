@@ -154,3 +154,27 @@ func TestUsagesOfGoFieldThroughInterface(t *testing.T) {
 	assert.Equal(t, map[string]string{"example.com/app/api.ApplicationAPI.CreateApplication": "example.com/app/api.ApplicationDatabase"}, viaOf(out.Files), r.Message)
 	assert.Zero(t, out.Ambiguous, r.Message)
 }
+
+// rag_list_package_exports leaves a Go interface's methods to the interface,
+// whose content lists them: as rows of their own they filled the 300 cap of a
+// large package (wakapi services) and pushed classes and functions out.
+func TestExportsLeaveOutGoInterfaceMethods(t *testing.T) {
+	v := newEnv(t, false, nil)
+	v.addFiles(t, map[string]string{
+		"go.mod":   goMod,
+		"api/a.go": "package api\n\ntype Repo interface {\n\tFind(id int) string\n\tSave()\n}\n\ntype Sql struct{}\n\nfunc (Sql) Find(id int) string { return \"\" }\n",
+	})
+	var out struct {
+		Exports map[string][]Export `json:"exports"`
+	}
+	r, _ := v.call(t, "rag_list_package_exports", map[string]any{"workspace_root": v.root, "package": "example.com/app/api"})
+	require.Equal(t, "ok", r.Status, r.Message)
+	data(t, r, &out)
+	var methods []string
+	for _, e := range out.Exports["method"] {
+		methods = append(methods, e.QualifiedName)
+	}
+	assert.Equal(t, []string{"example.com/app/api.Sql.Find"}, methods)
+	assert.Len(t, out.Exports["interface"], 1)
+	assert.Contains(t, r.Message, "3 exported symbols")
+}

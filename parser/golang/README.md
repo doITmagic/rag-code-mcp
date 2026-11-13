@@ -12,8 +12,8 @@ registration in a file that imports a router ([Routes](#routes)).
 It uses the tree-sitter `go` grammar (through the shared helpers in
 [`parser/ts.go`](../README.md#tree-sitter-helpers-tsgo)), not `go/ast` or
 `go/types`. That keeps it fast and tolerant of broken files, at the cost of
-having no type information: a call on a variable whose type is unknown keeps
-an empty `TargetQualifiedName`.
+having no type information: a call on a variable whose type the file does
+not declare keeps an empty `TargetQualifiedName`.
 
 ## Where it sits
 
@@ -122,13 +122,14 @@ another); `Start` calls `Stop` ->
 | `pkg.F(x)` | `call` | Through the import table: `<import path>.F`, unless a parameter or local named `pkg` shadows the import (then `""`). |
 | `recv.M()` inside a method | `call` | Receiver variable: `<module>.<Owner>.M`. |
 | `T.M(...)`, `(*T).M(...)`, `T{}.M()` | `call` | Type declared in the file: `<module>.T.M`. |
+| `s.M()` on a local or parameter declared with one type (`s *T`, `var s T`, `s := &T{...}`, `s := T{...}`, `c echo.Context`, `r Repo` of an interface) | `call` | `<module of T>.T.M`: this module for an unqualified type, the import path for `pkg.T`. A local set from a function call (`x := f()`), reassigned to anything but a literal of the same type (`s = &Other{}`, `s = f()`), or of a slice, map or func type has no declared type. An external type matches no workspace symbol, so the index leaves `c.JSON()` unresolved instead of linking it by name to a workspace `JSON` ([index](../../index/README.md#6-resolve)). |
 | `x.M()` on anything else | `call` | Target name only, qualified name `""`. |
 | `F[int](x)` / `pkg.F[T](x)` | `call` (or `uses_type` when `F` is a local type) | Generic calls parse as conversions; classified by whether `F` is a type declared here. |
 | `T` in any type position (field, parameter, result, `var`, composite literal, `new(T)`, type switch) | `uses_type` | `<module>.T`: not predeclared (`int`, `error`, `any`, `comparable`, ...) and not a type parameter, so declared in the same package, in this file or another. The declared name of a type and a method's receiver type are not uses. |
 | `pkg.T` in any type position | `uses_type` | `<import path>.T`, or `""` when `pkg` is not imported. |
 | Embedded struct field | `extends` | Same-package type or imported type. |
 | Embedded interface (`fmt.Stringer`) | `extends` | Same rule. |
-| `f`, `recv.M`, `s.M`, `T.M`, `pkg.F` named as a value: a call argument, the right side of `=`, `:=` or `var`, a composite literal value (keyed or not, never the key), a `return` value | `call` with `Value: true` | The target a call on the same expression gets (rows above), plus `s.M` on a local declared with one type (`s *T`, `var s T`, `s := &T{...}`): `<module>.T.M`. Not emitted: an operand of unknown type (no qualified target, so it could never link exactly), and what the file shows is no function (built-ins, locals and parameters, types, top-level vars and consts declared here, a selector named like a struct field declared here and no method here). The index keeps the relation only when it links exactly to a function or method ([index](../../index/README.md#6-resolve)). |
+| `f`, `recv.M`, `s.M`, `T.M`, `pkg.F` named as a value: a call argument, the right side of `=`, `:=` or `var`, a composite literal value (keyed or not, never the key), a `return` value | `call` with `Value: true` | The target a call on the same expression gets (rows above), plus `s.M` on a local declared with one type (the `s.M()` row): `<module of T>.T.M`. Not emitted: an operand of unknown type (no qualified target, so it could never link exactly), and what the file shows is no function (built-ins, locals and parameters, types, top-level vars and consts declared here, a selector named like a struct field declared here and no method here). The index keeps the relation only when it links exactly to a function or method ([index](../../index/README.md#6-resolve)). |
 
 Relations of a `var` or `const` spec are shared by every name in that spec.
 
@@ -202,8 +203,11 @@ evidence: a method named `GET` in a file that imports no router is no route.
 
 ## Known limitations visible in the code
 
-- No type inference: calls on variables, fields or return values
-  (`s.Inner.Do()`, `a.Do()`) keep an empty target qualified name.
+- No type inference: calls on fields, return values and locals whose type
+  the file does not declare (`s.Inner.Do()`, `a := f(); a.Do()`) keep an
+  empty target qualified name. A call on an interface-typed operand targets
+  the interface's method name, which is no symbol (see the interface
+  limitation below).
 - Function and method values: only the positions in the table count. Not
   covered: a method value on an operand of unknown type (a local from a
   function call, `s := newServer(); mux.HandleFunc(p, s.h)`, a package-level
@@ -237,7 +241,9 @@ evidence: a method named `GET` in a file that imports no router is no route.
 - Interface methods are not symbols of their own: they are only listed in the
   interface's `Metadata["methods"]`. `rag_find_usages` on a method declared
   only in an interface (no implementation) answers "no indexed symbol named";
-  calls through the interface (`repo.M()`) stay unresolved (`x.M()` rule).
+  a call through the interface (`repo.M()` with `repo Repo`) targets
+  `<module>.Repo.M`, which the index, finding no such method, resolves by
+  name when one implementation has that name.
 - An import without an alias is known by the goimports guess of its name
   (`assumedName`), not by the imported package's `package` clause; a
   package whose real name differs from that guess gets calls with an empty

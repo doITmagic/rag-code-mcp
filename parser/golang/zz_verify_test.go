@@ -103,7 +103,7 @@ func TestProbeResolution(t *testing.T) {
 	t.Logf("New relations:\n%s", dump(syms[mod+".New"].Relations))
 	assert.Contains(t, n[26], rel(parser.RelUsesType, "Context", "context.Context", 26))
 	assert.Contains(t, n[27], rel(parser.RelUsesType, "Repo", mod+".Repo", 27))
-	assert.Contains(t, n[28], rel(parser.RelCall, "Ping", "", 28), "r is a local of unknown type")
+	assert.Contains(t, n[28], rel(parser.RelCall, "Ping", mod+".Repo.Ping", 28), "r := &Repo{} declares its type")
 	assert.Contains(t, n[29], rel(parser.RelCall, "Ping", mod+".Repo.Ping", 29))
 	assert.Contains(t, n[30], rel(parser.RelCall, "Ping", mod+".Repo.Ping", 30))
 	assert.Contains(t, n[31], rel(parser.RelCall, "New", mod+".New", 31), "generic call New[int]()")
@@ -126,10 +126,10 @@ func TestProbeResolution(t *testing.T) {
 	assert.Equal(t, []parser.Relation{rel(parser.RelCall, "Exec", "", 46)}, s[46])
 	assert.Equal(t, []parser.Relation{rel(parser.RelCall, "Ping", "", 47)}, s[47])
 	assert.Equal(t, []parser.Relation{rel(parser.RelCall, "Ping", mod+".Repo.Ping", 48)}, s[48])
-	assert.Equal(t, []parser.Relation{rel(parser.RelCall, "Done", "", 49)}, s[49])
+	assert.Equal(t, []parser.Relation{rel(parser.RelCall, "Done", "context.Context.Done", 49)}, s[49], "ctx is declared context.Context")
 
 	tk := byLine(syms[mod+".take"])
-	assert.Contains(t, tk[53], rel(parser.RelCall, "Save", "", 53), "param of local type must not be guessed")
+	assert.Contains(t, tk[53], rel(parser.RelCall, "Save", mod+".Repo.Save", 53), "a parameter declared *Repo is no guess")
 	assert.Contains(t, tk[53], rel(parser.RelUsesType, "Repo", mod+".Repo", 53))
 }
 

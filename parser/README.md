@@ -173,10 +173,13 @@ type Relation struct {
 | `RelImports` | `imports` | Blade `@extends`/`@include`, PHP `view('x.y')` and Laravel route handlers naming a view, HTML script/stylesheet links, Markdown links |
 
 Analyzers resolve `TargetQualifiedName` only from evidence in the file (its
-imports, its own declarations, `self`/`this`). They never guess the type of a
-variable; an unknown receiver leaves the field empty. One exception is
-the Go value use below: a local declared with a single type (`s *T`,
-`var s T`, `s := &T{...}`) gives `s.m` the target `T.m`. PHP reads declared
+imports, its own declarations, `self`/`this`, a type the file declares for a
+variable). A declared type is not a guess; an undeclared one is never guessed:
+an unknown receiver leaves the field empty. In Go a local or parameter
+declared with a single type (`s *T`, `var s T`, `s := &T{...}`,
+`c echo.Context`) gives both the call `s.m()` and the value use `s.m` the
+target `<module of T>.T.m`; a local set from a function call (`x := f()`) or
+reassigned to another value (`s = f()`) has none. PHP reads declared
 types the same way: a parameter typed with one class (`Request $r`) and a
 property typed with one class, promoted from or assigned from such a
 constructor parameter (`$this->repo = $repo`), give `$r->m()` and

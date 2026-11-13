@@ -97,3 +97,53 @@ func (s *server) routes(mux *http.ServeMux, c cfg) {
 	require.NoError(t, err)
 	check("files run, targets from the store")
 }
+
+// A call on a parameter of an external type (c echo.Context; c.JSON()) has a
+// qualified target no workspace symbol matches, so it is no usage of a
+// workspace method that only shares the name. A parameter of a workspace type
+// (r *Repo; r.Find()) links exactly to that type's method.
+func TestGoCallOnDeclaredTypeOperand(t *testing.T) {
+	parser.Register(realGo)
+	t.Cleanup(func() { parser.Register(lineAnalyzer{"go", ".go"}) })
+	e := newEnv(t)
+	e.write(t, "go.mod", "module example.com/app\n\ngo 1.25\n")
+	e.write(t, "api/resp.go", `package api
+
+type Resp struct{}
+
+func (Resp) JSON(code int, v any) error { return nil }
+
+type Repo struct{}
+
+func (*Repo) Find() {}
+
+type Other struct{}
+
+func (Other) Find() {}
+`)
+	h := e.write(t, "api/h.go", `package api
+
+import "github.com/labstack/echo/v4"
+
+func h(c echo.Context, r *Repo) error {
+	r.Find()
+	return c.JSON(200, nil)
+}
+`)
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	seen := map[string]bool{}
+	for _, r := range e.symbols(t, h)["h"].Relations {
+		switch r.TargetName {
+		case "JSON":
+			assert.Empty(t, r.TargetID, "c.JSON on echo.Context is no usage of Resp.JSON")
+			assert.NotEqual(t, parser.ResolutionUnique, r.Resolution)
+		case "Find":
+			if assert.Equal(t, parser.ResolutionExact, r.Resolution) {
+				assert.Equal(t, "example.com/app/api.Repo.Find", e.byID(t, r.TargetID).QualifiedName)
+			}
+		}
+		seen[r.TargetName] = true
+	}
+	assert.True(t, seen["JSON"] && seen["Find"])
+}

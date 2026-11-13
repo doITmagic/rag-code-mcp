@@ -351,7 +351,7 @@ func (fc *file) names(n *gotreesitter.Node) []string {
 // the returned names are interface method names when n is an interface.
 // locals returns the parameter and variable names declared inside n, and the
 // qualified type of those declared with one type only (s *T, var s T,
-// s := &T{...}), "" for the others.
+// s := &T{...}, never reassigned to something else), "" for the others.
 // shortcut: one set for the whole declaration, so a local shadows a package
 // function or an import of the same name everywhere in it, not only after its
 // declaration.
@@ -389,6 +389,19 @@ func (fc *file) locals(n *gotreesitter.Node) (map[string]bool, map[string]string
 				typ = fc.literalType(v[0])
 			}
 			idents(parser.Field(c, fc.lang, "left"), typ)
+		case "assignment_statement": // s = &Other{} or s = f(): s has no single type any more
+			left, right := parser.NamedChildren(parser.Field(c, fc.lang, "left")), parser.NamedChildren(parser.Field(c, fc.lang, "right"))
+			for i, id := range left {
+				if name := fc.text(id); id.Type(fc.lang) == "identifier" && out[name] {
+					var tqn string
+					if len(left) == len(right) {
+						_, tqn = fc.resolveType(fc.literalType(right[i]))
+					}
+					if tqn != types[name] {
+						types[name] = ""
+					}
+				}
+			}
 		case "range_clause", "receive_statement":
 			idents(parser.Field(c, fc.lang, "left"), nil)
 		case "type_switch_statement":
@@ -437,6 +450,15 @@ func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []pars
 		return true
 	})
 	locals, localTypes := fc.locals(n)
+	// target is callTarget, then the single declared type of a local or
+	// parameter operand (s *T, var s T, s := &T{...}): s.M is <module of T>.T.M.
+	target := func(op *gotreesitter.Node, name string) string {
+		tqn := fc.callTarget(op, name, recv, owner, locals)
+		if t := localTypes[fc.text(op)]; tqn == "" && t != "" && op.Type(fc.lang) == "identifier" {
+			tqn = t + "." + name
+		}
+		return tqn
+	}
 	// value records a function or method named as a value (passed,
 	// assigned, returned, put in a literal: mux.HandleFunc(p, s.h)) with the
 	// target a call on it would get, marked Value: only the index sees the
@@ -465,10 +487,7 @@ func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []pars
 				return
 			}
 			if name = fc.text(e); !fc.fields[name] {
-				tqn = fc.callTarget(op, name, recv, owner, locals)
-				if t := localTypes[fc.text(op)]; tqn == "" && t != "" && op.Type(fc.lang) == "identifier" {
-					tqn = t + "." + name // s := &server{}; HandleFunc(p, s.h)
-				}
+				tqn = target(op, name) // s := &server{}; HandleFunc(p, s.h)
 			}
 		}
 		if name != "" && tqn != "" {
@@ -517,7 +536,7 @@ func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []pars
 				field := parser.Field(fn, fc.lang, "field")
 				name := fc.text(field)
 				// at the field: a chain split over lines is on the method name's line
-				add(parser.RelCall, name, fc.callTarget(parser.Field(fn, fc.lang, "operand"), name, recv, owner, locals), field)
+				add(parser.RelCall, name, target(parser.Field(fn, fc.lang, "operand"), name), field)
 			}
 		case "composite_literal", "type_conversion_expression":
 			t := parser.Field(c, fc.lang, "type")

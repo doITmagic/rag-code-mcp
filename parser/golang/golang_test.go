@@ -387,8 +387,9 @@ func F[T any](x T) {
 	}, syms["F"].Relations)
 }
 
-// A parameter or local named like an import shadows it: its method call has
-// an unknown target, not the package function of that name.
+// A parameter or local named like an import shadows it: its method call
+// targets the local's declared type, not the package function of that name,
+// and has no target when the type is not declared (x := f()).
 func TestLocalShadowsImport(t *testing.T) {
 	root := t.TempDir()
 	src := `package g
@@ -402,9 +403,15 @@ func F(db *Conn) {
 func G() {
 	db.Close()
 }
+
+func H() {
+	db := open()
+	db.Close()
+}
 `
 	syms := analyze(t, root, filepath.Join(root, "g.go"), src)
-	assert.Contains(t, syms["F"].Relations, rel(parser.RelCall, "Close", "", 6))
+	assert.Contains(t, syms["F"].Relations, rel(parser.RelCall, "Close", "Conn.Close", 6))
+	assert.Contains(t, syms["H"].Relations, rel(parser.RelCall, "Close", "", 15))
 	assert.Equal(t, []parser.Relation{rel(parser.RelCall, "Close", "github.com/acme/app/pkg/db.Close", 10)}, syms["G"].Relations)
 }
 
@@ -756,4 +763,50 @@ func TestGoModSymlinkOutsideRootIgnored(t *testing.T) {
 			assert.Equal(t, parser.Qualify(tc.want, "", "Run"), syms[0].QualifiedName)
 		})
 	}
+}
+
+// A call on a local or parameter whose single type the file declares targets
+// that type's method, for same-package and imported types; a local set from
+// a call or given two types keeps an empty target.
+func TestCallOnDeclaredTypeOperand(t *testing.T) {
+	root := t.TempDir()
+	src := `package g
+
+import "github.com/labstack/echo/v4"
+
+func F(c echo.Context, r Repo) {
+	c.JSON(200, nil)
+	r.Find()
+	var s Store
+	s.Save()
+	u := &User{}
+	u.Save()
+	v := User{}
+	v.Load()
+	x := open()
+	x.Close()
+	y := &User{}
+	y = &Admin{}
+	y.Save()
+	go func(e echo.Context) { e.String(200, "") }(c)
+}
+`
+	syms := analyze(t, root, filepath.Join(root, "g.go"), src)
+	calls := map[string]string{}
+	for _, r := range syms["F"].Relations {
+		if r.Kind == parser.RelCall {
+			calls[fmt.Sprintf("%s@%d", r.TargetName, r.Line)] = r.TargetQualifiedName
+		}
+	}
+	assert.Equal(t, map[string]string{
+		"JSON@6":    "github.com/labstack/echo/v4.Context.JSON",
+		"Find@7":    "Repo.Find",
+		"Save@9":    "Store.Save",
+		"Save@11":   "User.Save",
+		"Load@13":   "User.Load",
+		"open@14":   "open",
+		"Close@15":  "",
+		"Save@18":   "",
+		"String@19": "github.com/labstack/echo/v4.Context.String",
+	}, calls)
 }

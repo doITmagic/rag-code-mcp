@@ -196,12 +196,17 @@ func Run(ctx context.Context, o Options) error {
 	return nil
 }
 
-// windowsPathHint is a command that appends binDir to the user Path only.
-// setx PATH "%PATH%;..." would copy the machine PATH into it and truncate it
-// at 1024 characters in cmd, and store a literal %PATH% in PowerShell.
+// windowsPathHint is a command that appends binDir to the user Path, pasted
+// in cmd or PowerShell alike (no $ for an outer PowerShell to expand). It
+// reads the raw registry value and writes it back as REG_EXPAND_SZ, so
+// entries such as %USERPROFILE%\AppData\Local\Microsoft\WindowsApps stay
+// expandable; setting and clearing a throwaway variable broadcasts the change
+// to new windows. setx PATH "%PATH%;..." would copy the machine PATH into it
+// and truncate it at 1024 characters in cmd, and store a literal %PATH% in
+// PowerShell; [Environment]::SetEnvironmentVariable would freeze every %VAR%.
 func windowsPathHint(binDir string) string {
-	return `powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path','User') + ';` +
-		strings.ReplaceAll(binDir, "'", "''") + `', 'User')"`
+	return `powershell -NoProfile -Command "[Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment').SetValue('Path', [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment').GetValue('Path', '', 'DoNotExpandEnvironmentNames') + ';` +
+		strings.ReplaceAll(binDir, "'", "''") + `', 'ExpandString'); [Environment]::SetEnvironmentVariable('RAGCODE_PATH_REFRESH', '1', 'User'); [Environment]::SetEnvironmentVariable('RAGCODE_PATH_REFRESH', '', 'User')"`
 }
 
 // copyFile writes next to dst and renames over it, so a binary an IDE still

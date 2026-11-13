@@ -326,7 +326,8 @@ func TestWaitHTTPHidesPassword(t *testing.T) {
 // and no %PATH% (stored literally by PowerShell).
 func TestWindowsPathHint(t *testing.T) {
 	h := windowsPathHint(`C:\Users\O'Brien\.ragcode\bin`)
-	assert.Equal(t, `powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path','User') + ';C:\Users\O''Brien\.ragcode\bin', 'User')"`, h)
+	assert.Equal(t, `powershell -NoProfile -Command "[Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment').SetValue('Path', [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment').GetValue('Path', '', 'DoNotExpandEnvironmentNames') + ';C:\Users\O''Brien\.ragcode\bin', 'ExpandString'); [Environment]::SetEnvironmentVariable('RAGCODE_PATH_REFRESH', '1', 'User'); [Environment]::SetEnvironmentVariable('RAGCODE_PATH_REFRESH', '', 'User')"`, h)
 	assert.NotContains(t, h, "setx")
 	assert.NotContains(t, h, "%PATH%")
+	assert.NotContains(t, h, "$", "an outer PowerShell would expand it")
 }

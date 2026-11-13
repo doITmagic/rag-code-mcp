@@ -154,7 +154,7 @@ cfgPath)`. IDEs that are not installed are skipped silently; other errors
 | OS | Behaviour |
 |:---|:---|
 | Linux, macOS | Appends `# RagCode MCP` and `export PATH="<bin dir>:$PATH"` to `~/.zshrc` when `$SHELL` is zsh, else `~/.bashrc`. Skipped when the rc file already mentions the bin directory. |
-| Windows | Only prints a hint, nothing is changed: `powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path','User') + ';<bin dir>', 'User')"`, which appends to the user Path only and works pasted in cmd or PowerShell (`windowsPathHint`). Not `setx PATH "%PATH%;..."`: cmd expands machine+user PATH and truncates the result at 1024 characters, PowerShell stores `%PATH%` literally. |
+| Windows | Only prints a hint, nothing is changed (`windowsPathHint`): a `powershell -NoProfile -Command "..."` line that reads the raw user `Path` from `HKCU\Environment` (`DoNotExpandEnvironmentNames`), appends `;<bin dir>`, writes it back as `ExpandString`, and sets and clears a throwaway user variable so new windows get the change. It has no `$`, so it works pasted in cmd or PowerShell, and entries such as `%USERPROFILE%\AppData\Local\Microsoft\WindowsApps` stay expandable. Not `setx PATH "%PATH%;..."` (cmd copies machine+user PATH in and truncates at 1024 characters, PowerShell stores `%PATH%` literally) and not `[Environment]::SetEnvironmentVariable` (it writes the expanded value as plain `REG_SZ`, freezing every `%VAR%`). |
 
 ### Summary
 

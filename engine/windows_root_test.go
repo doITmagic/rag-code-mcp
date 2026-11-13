@@ -102,6 +102,9 @@ func TestWSLBroadDir(t *testing.T) {
 // root takes the spelling its directories list, so both are one root and one
 // index. Tested on the helper: a case-sensitive temp dir lists the names.
 func TestDiskCase(t *testing.T) {
+	if runtime.GOOS != "linux" { // it needs Both and both side by side: a case-sensitive file system; diskCase serves WSL only
+		t.Skip("needs a case-sensitive file system")
+	}
 	base := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(base, "Users", "scdoi", "doITmagic"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(base, "Users", "Both"), 0o755))

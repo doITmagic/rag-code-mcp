@@ -34,7 +34,8 @@ type watcher struct {
 	unlock func()            // releases watch.lock; called once, by Stop
 	once   sync.Once
 
-	dirs map[string]bool // watched directories; the engine's watch loop owns it
+	dirs     map[string]bool // watched directories; the engine's watch loop owns it
+	noEvents bool            // the root's file system reports no changes (noNotify): addTree walks nothing
 
 	mu      sync.Mutex
 	timer   *time.Timer
@@ -94,12 +95,13 @@ func (e *Engine) startWatcher(w *Workspace) (leader bool, err error) {
 	}
 	e.mu.Lock()
 	fsw, err := e.watchFS()
+	noEvents := w.noEvents != ""
 	e.mu.Unlock()
 	if err != nil {
 		unlock()
 		return false, err
 	}
-	wt := &watcher{ws: w, fsw: fsw, unlock: unlock, dirs: map[string]bool{}, changed: map[string]bool{}, deleted: map[string]bool{}}
+	wt := &watcher{ws: w, fsw: fsw, unlock: unlock, noEvents: noEvents, dirs: map[string]bool{}, changed: map[string]bool{}, deleted: map[string]bool{}}
 	if err := wt.addTree(w.Root, false); err != nil {
 		wt.Stop()
 		wt.forget()
@@ -211,7 +213,7 @@ func (e *Engine) watchLoop(fsw *fsnotify.Watcher) {
 // moved into the tree emits no events for its contents.
 func (wt *watcher) addTree(dir string, collect bool) error {
 	home := index.OwnHome()
-	if index.InOwnHome(dir, home) {
+	if wt.noEvents || index.InOwnHome(dir, home) {
 		return nil
 	}
 	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {

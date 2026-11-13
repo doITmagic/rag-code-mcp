@@ -17,6 +17,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"sync"
 	"syscall"
 	"time"
 
@@ -173,9 +174,13 @@ func run(ctx context.Context, cfgPath, httpAddr, logLevel string) error {
 		go autoUpdate(ctx, cfg.UpdateSource, log)
 	}
 
+	// The SDK waits for in-flight calls before it returns; closing the engine
+	// first ends a call stuck in a watcher walk (fsnotify refuses new watches).
+	defer context.AfterFunc(ctx, a.Engine.Close)()
 	if httpAddr == "" {
 		go a.Engine.Resume(ctx)
-		err = a.Server.Run(ctx, &mcp.StdioTransport{})
+		closeEngine := sync.OnceFunc(func() { go a.Engine.Close() })
+		err = a.Server.Run(ctx, &mcp.IOTransport{Reader: onEOF{os.Stdin, closeEngine}, Writer: nopWriteCloser{os.Stdout}})
 	} else {
 		err = serveHTTP(ctx, httpAddr, a, log)
 	}
@@ -186,6 +191,25 @@ func run(ctx context.Context, cfgPath, httpAddr, logLevel string) error {
 	log.Info("rag-code-mcp stopped")
 	return nil
 }
+
+// onEOF runs f when the client closes stdin.
+type onEOF struct {
+	io.ReadCloser
+	f func()
+}
+
+func (r onEOF) Read(p []byte) (int, error) {
+	n, err := r.ReadCloser.Read(p)
+	if errors.Is(err, io.EOF) {
+		r.f()
+	}
+	return n, err
+}
+
+// nopWriteCloser keeps stdout open, as mcp.StdioTransport does.
+type nopWriteCloser struct{ io.Writer }
+
+func (nopWriteCloser) Close() error { return nil }
 
 // httpHandler serves the MCP endpoint at / and GET /health.
 func httpHandler(server *mcp.Server, log *slog.Logger) http.Handler {

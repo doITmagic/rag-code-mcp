@@ -315,6 +315,31 @@ func wslWindowsSystemDir(p string) bool {
 	})
 }
 
+// wslBroadDir says why p, a cleaned Linux path, is a Windows drive seen from
+// WSL that holds more than one project: /mnt (every drive), a drive mount
+// /mnt/c (C:\), /mnt/c/Users and a Windows user home /mnt/c/Users/<name>.
+// "" otherwise. Users is matched case-insensitively, as drvfs opens it.
+func wslBroadDir(p string) string {
+	parts := strings.Split(strings.TrimPrefix(p, "/"), "/")
+	switch {
+	case parts[0] != "mnt":
+		return ""
+	case len(parts) == 1:
+		return "is a filesystem root (every WSL drive mount)"
+	case len(parts[1]) != 1 || !('a' <= parts[1][0] && parts[1][0] <= 'z' || 'A' <= parts[1][0] && parts[1][0] <= 'Z'):
+		return ""
+	case len(parts) == 2:
+		return "is a filesystem root (the Windows drive " + strings.ToUpper(parts[1]) + ":)"
+	case !strings.EqualFold(parts[2], "Users"):
+		return ""
+	case len(parts) == 3:
+		return "contains the home directory (the Windows users directory)"
+	case len(parts) == 4:
+		return "is the home directory (a Windows user home)"
+	}
+	return ""
+}
+
 // validateRoot returns the cleaned, symlink-resolved root or a *RootError.
 func validateRoot(cfg config.Config, root string) (string, error) {
 	root = strings.TrimSpace(root)
@@ -349,6 +374,8 @@ func validateRoot(cfg config.Config, root string) (string, error) {
 		return real == p || strings.HasPrefix(real, p+"/")
 	}):
 		reason = "is a system directory (" + real + ")"
+	case runtime.GOOS == "linux" && wslBroadDir(real) != "":
+		reason = wslBroadDir(real)
 	case runtime.GOOS == "windows" && (windowsSystemDir(real, os.Getenv) || windowsSystemDir(filepath.Clean(root), os.Getenv)),
 		runtime.GOOS == "linux" && wslWindowsSystemDir(real):
 		reason = "is a system directory (" + real + ")"

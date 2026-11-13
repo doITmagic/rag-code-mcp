@@ -71,3 +71,29 @@ func TestValidateRootRefusesWindowsSystemDirs(t *testing.T) {
 		assert.Contains(t, re.Reason, "system directory", root)
 	}
 }
+
+// F4 (WSL, Z13): the whole drive, every drive and the Windows user home seen
+// from WSL are refused like C:\ and the home; projects below them are not.
+func TestWSLBroadDir(t *testing.T) {
+	for p, want := range map[string]string{
+		"/mnt":                  "filesystem root",
+		"/mnt/c":                "filesystem root",
+		"/mnt/d":                "filesystem root",
+		"/mnt/c/Users":          "contains the home directory",
+		"/mnt/c/users/scdoi":    "home directory",
+		"/mnt/c/Users/scdoi":    "home directory",
+		"/mnt/c/Users/scdoi/go": "",
+		"/mnt/c/proj":           "",
+		"/mnt/data":             "",
+		"/mnt/data/Users/me":    "",
+		"/home/me":              "",
+		"/mntx":                 "",
+	} {
+		got := wslBroadDir(p)
+		if want == "" {
+			assert.Empty(t, got, p)
+		} else {
+			assert.Contains(t, got, want, p)
+		}
+	}
+}

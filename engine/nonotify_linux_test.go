@@ -3,6 +3,8 @@ package engine
 import (
 	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -69,4 +71,23 @@ func TestWatcherWarnsOnceOnNoNotifyFS(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, quiet.String(), "level=WARN")
 	assert.Equal(t, "", w2.Status().Unwatched)
+}
+
+// F4 (WSL, Z13): on 9p the watcher walks nothing; inotify reports no change
+// there and the walk over a whole /mnt/c drive took minutes.
+func TestWatcherSkipsTreeOnNoNotifyFS(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.WatchEnabled = true
+	fakeStatfs(t, 0x01021997, nil)
+	e := New(cfg, store.NewMemory(), &embed.Fake{}, nil)
+	defer e.Close()
+	e.run = (&runRecorder{}).run
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "a", "b"), 0o755))
+	w, err := e.Workspace(root)
+	require.NoError(t, err)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	require.NotNil(t, w.watch, "still the leader")
+	assert.Empty(t, w.watch.dirs)
 }

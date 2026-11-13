@@ -43,7 +43,7 @@ Tests:
 
 | File | Covers |
 |:---|:---|
-| `main_test.go` | `versionLine` output; `GET /health` returns the version and the PID as JSON. |
+| `main_test.go` | `versionLine` output; `GET /health` returns the version and the PID as JSON; `onEOF` runs its hook when stdin ends. |
 | `memlimit_test.go` | `setMemoryLimit` sets 1 GiB when `GOMEMLIMIT` is unset and leaves the runtime limit alone when it is set. |
 | `zz_verify_test.go` | Verification tests: `serveHTTP` fails fast on an unusable address, serves `/health` and the MCP endpoint (not 404), and stops cleanly on context cancel; `run` returns a config error (bad `ollama_base_url`) without touching the network; a mistyped `-log-level` flag is an error naming `log_level`, not a silent fall back to `info`. |
 
@@ -82,11 +82,11 @@ sequenceDiagram
     end
     alt stdio
         M->>E: go Resume(ctx)
-        M->>A: Server.Run(ctx, StdioTransport)
+        M->>A: Server.Run(ctx, stdin/stdout; EOF on stdin closes the engine)
     else -http
         M->>M: serveHTTP: ListenAndServe + go Resume(ctx)
     end
-    Note over M: SIGINT / SIGTERM cancels ctx
+    Note over M: SIGINT / SIGTERM cancels ctx and closes the engine
     M->>A: Close (waits for the engine)
 ```
 
@@ -155,7 +155,11 @@ once and the process exits with status 1.
 
 ### Shutdown
 
-`SIGINT` and `SIGTERM` cancel the root context. The HTTP server gets 10 s
+`SIGINT` and `SIGTERM` cancel the root context and close the engine at
+once; so does the end of stdin (the client exited) with the stdio transport.
+The SDK waits for in-flight tool calls before `Run` returns, and a call stuck
+in a long watcher start walk would otherwise keep the process alive: a closed
+engine refuses new watches, so the walk stops. The HTTP server gets 10 s
 (`closeTimeout`) to drain, because a streaming client never closes its
 connection by itself; then `app.Close` waits for the engine to stop (its
 cancelled run returns; no clock, so a slow disk is not cut off) before the

@@ -193,7 +193,9 @@ flowchart TD
    names the URI and asks for `workspace_root`.
 3. [engine](../engine/README.md) then validates it and resolves symlinks. It
    rejects a root that is empty, not absolute, missing, not a directory, a
-   filesystem root, the home directory or a parent of it, the temp directory,
+   filesystem root (also `/mnt` and a drive mount `/mnt/c` in WSL), the home
+   directory or a parent of it (also the Windows user home
+   `/mnt/c/Users/<name>` in WSL), the temp directory,
    under `/proc`, `/sys` or `/dev`, exactly one of the broad system directories
    (`/etc`, `/usr`, `/var`, ...; list in the engine README), a Windows system
    directory (`%SystemRoot%` and below, exactly `%ProgramFiles%`,

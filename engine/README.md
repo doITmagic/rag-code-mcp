@@ -76,13 +76,13 @@ graph TD
 | `engine_test.go` | Root validation, auto-index on first contact, request coalescing, `ErrHeadChanged` re-queue, retry of failed runs, a failed recreate that resumes without dropping again, no watcher without `auto_index`, recreate, embedding model change, concurrent root registration from several engines, a search refused on an index of another model with the same vector size, a lock held by another engine, `Resume`, no goroutines left after `Close`, `WriteIDERules` (tracked files, symlinks, symlinked parent directories, continuing after a refused file), backoff, a run waiting for the slot counts as queued, the end of a run logged with its counts and duration, another process's run shown as running and a dead run's phase shown as `interrupted` (`TestStatusOfAnotherProcessRun`), the first retry after another process's lock within seconds (`TestLockedRetrySoon`), parents of home and broad system directories refused as roots (`TestValidateRootRefusesBroadDirs`), the watcher's full run logged once while queued, a request queued while the runner exits is still picked up, a run failing because the root was deleted is not retried and the root is caught up when it is back, a query after the store reopened a replaced collection file queues an incremental run (`TestQueryAfterReopenQueuesResync`), a root over `max_files` refused once, without a retry (`TestMaxFilesRefusedWithoutRetry`). `TestMain` points `RAGCODE_HOME` at a temp dir. |
 | `newer_format_test.go` | A leader that meets an index of a newer Format leaves `index_status.json` as it is and gives up `watch.lock`; the follower of the newer version then indexes the next edit. |
 | `watch_test.go` | The watcher end to end, a `.gitignore` edit queues a full run, a directory that becomes a linked worktree after it was watched is dropped with a full run (`TestWatcherLinkedWorktreeAdded`), a `.git` created after start queues a full run and is watched with its refs (`TestWatcherGitInitAfterStart`), a ref moved through its `.lock` file queues one full run (`TestWatcherRefUpdateQueuesOneFullRun`), RagCode's own home inside a root neither watched nor accepted as a root (`TestWatcherIgnoresOwnHome`), root removed, root that comes back, unreadable subdirectory, watcher restart retried, `Close` beginning during `Resume`'s watcher setup (no catch-up, no warning), only one of two servers on a root watches and indexes a save (`TestWatcherOneLeaderPerRoot`), the follower takes over with a catch-up run when the leader exits (`TestWatcherFollowerTakesOver`), `Resume` in a follower queues no catch-up (`TestResumeFollowerSkipsCatchUp`). |
-| `nonotify_linux_test.go` | A root on 9p is named by `noNotify`, warned once per process and reported in `Status.Unwatched`; other file systems are not. Build: Linux. |
+| `nonotify_linux_test.go` | A root on 9p is named by `noNotify`, warned once per process and reported in `Status.Unwatched`; its watcher walks no directory; other file systems are not. Build: Linux. |
 | `watch_linux_test.go` | All roots share one inotify instance (nested roots both see an event, `Close` releases it); a watcher that cannot start is retried; an event overflow re-walks the tree so new directories are watched again. |
 | `iderules_fifo_test.go` | Build tag `unix`. A FIFO at `CLAUDE.md` is refused by `WriteIDERules` instead of blocking it, and `AGENTS.md` still gets the pointer. |
 | `prefix_test.go` | `Search` adds the model's query prefix. |
 | `roots_bom_test.go` | A `roots.json` with a UTF-8 BOM is read and kept; an invalid one is moved to `roots.json.bad` before the new list is written. |
 | `unsure_root_test.go` | A subdirectory of a repository, a directory holding several projects and a subdirectory of a known root are refused with candidates; a confirmed or known root is not asked again. |
-| `windows_root_test.go` | Windows system directories refused as roots: `windowsSystemDir` and `wslWindowsSystemDir` as pure functions on every OS, and through `validateRoot` on Windows only. |
+| `windows_root_test.go` | Windows system directories refused as roots: `windowsSystemDir`, `wslWindowsSystemDir` and `wslBroadDir` (`/mnt`, a drive mount, the Windows user home seen from WSL) as pure functions on every OS, and through `validateRoot` on Windows only. |
 | `zz_verify_test.go` | Verification tests: concurrent `Workspace` calls, cancelled contexts, enqueue during a lock retry, recreate while locked, a directory moved out and the forced debounce flush, status read from disk before any run, home symlink guard, `Close` cancelling a blocked run, junk `roots.json`, a files run with only deletions, junk paths, `Ready` remediation text, a failed query embed does not enqueue, recreate absorbing queued files, catch-up with and without `auto_index`, double `Close`, `.git/refs` plus hidden and excluded directories, kernel file systems refused. |
 
 ---
@@ -162,8 +162,8 @@ refuses it with a `*RootError` when it:
 | is empty | after trimming spaces |
 | is not absolute | relative paths are never guessed |
 | does not exist / is not a directory | `EvalSymlinks` and `Stat` |
-| is a filesystem root | `/`, `C:\` |
-| is the home directory | compared after resolving symlinks |
+| is a filesystem root | `/`, `C:\`; on Linux also `/mnt` (every WSL drive) and a WSL drive mount `/mnt/<letter>` (`C:\` seen from WSL) |
+| is the home directory | compared after resolving symlinks; on Linux also a Windows user home seen from WSL, `/mnt/<letter>/Users/<name>` (`Users` in any case), whose parent `/mnt/<letter>/Users` "contains the home directory" |
 | is the temp directory | `os.TempDir()`, resolved |
 | is inside RagCode's own data directory | the root is `index.OwnHome()` (`RAGCODE_HOME`, resolved) or below it |
 | contains the home directory | a parent of `os.UserHomeDir()` (`/home`, `/Users`) |
@@ -330,7 +330,12 @@ or the catch-up run at the next server start; retrying on later calls`): a
 hidden directories, directories named in `exclude_patterns` and linked git
 worktrees; it also watches `.git` and the `.git/refs` tree, from start or from
 the moment they are created (`git init` after start). A subdirectory
-that cannot be watched is logged and skipped.
+that cannot be watched is logged and skipped. On a root whose file system
+reports no changes (`noNotify`: 9p, the WSL `/mnt` drives) it watches no
+directory at all: the walk over 9p took minutes on a large tree and its
+watches would never fire. It still takes `watch.lock`. The walk stops when
+`Close` closes the shared `fsnotify` instance (new watches fail with
+`ErrClosed`); the server closes the engine on a signal or the end of stdin.
 
 **One watcher per root across processes.** Every MCP client session starts
 its own server, and the index of a root is shared by all of them. Only the

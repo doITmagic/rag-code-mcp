@@ -2,9 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -36,4 +39,16 @@ func TestHealth(t *testing.T) {
 	require.NoError(t, json.NewDecoder(res.Body).Decode(&body))
 	assert.Equal(t, Version, body.Version)
 	assert.Equal(t, os.Getpid(), body.PID)
+}
+
+// F4 (WSL, Z13): the end of stdin closes the engine at once; the SDK waits for
+// in-flight calls, and one stuck in a watcher walk kept the process alive.
+func TestStdinEOFRunsHook(t *testing.T) {
+	n := 0
+	r := onEOF{io.NopCloser(strings.NewReader("x")), sync.OnceFunc(func() { n++ })}
+	b, err := io.ReadAll(r)
+	require.NoError(t, err)
+	assert.Equal(t, "x", string(b))
+	_, _ = r.Read(make([]byte, 1))
+	assert.Equal(t, 1, n)
 }

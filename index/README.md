@@ -242,7 +242,7 @@ name (`qn_suffixes`). Version 16: a Go route path may name a string const declar
 at the top of the same file, or `path.Join` of such consts and literals; a
 Gin `Use(mw)` result is a router with its receiver's prefix; a chi sub-router
 mounted in the same function gets the `Mount` path as its prefix, and a chi
-prefix's trailing `/` is dropped before the path is joined.
+prefix's trailing `/` is dropped before the path is joined; Go interface methods are method symbols (metadata `interface`) that a name-only match never takes, so a call through a parameter or local typed with a workspace interface links exactly to the interface's method; a Go call through a named field of a non-generic struct declared in the same file targets the field's declared type, so `s.repo.Find()` links to `Repo.Find` and `s.db.Exec()` on an external type is no longer bound by name.
 
 ---
 

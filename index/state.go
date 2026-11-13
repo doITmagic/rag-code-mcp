@@ -75,7 +75,12 @@ type Entry struct {
 // its class; a broken file keeps the declarations parsed before the break.
 // 16: a Go route path may name a same-file string const or path.Join of such;
 // a Gin Use(mw) result keeps its router's prefix; a chi sub-router mounted
-// in the same function gets the Mount path, and chi drops a prefix's trailing /.
+// in the same function gets the Mount path, and chi drops a prefix's trailing /;
+// Go interface methods are method symbols (metadata interface) that a
+// name-only match never takes, so a call through a parameter or local typed
+// with a workspace interface links exactly to the interface's method; a Go
+// call through a named field of a non-generic struct declared in the same
+// file targets the field's declared type.
 const Format = 16
 
 // State is the per-root snapshot stored at Dir(root)/state.json. Only

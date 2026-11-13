@@ -503,7 +503,7 @@ func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []pars
 			value(e.NamedChild(1))
 			return
 		case "identifier":
-			if name = fc.text(e); !builtins[name] && !locals[name] && !fc.types[name] && !fc.values[name] {
+			if name = fc.text(e); !builtins[name] && !locals[name] && name != recv && !fc.types[name] && !fc.values[name] {
 				tqn = parser.Qualify(fc.module, "", name)
 			}
 		case "selector_expression":
@@ -551,7 +551,7 @@ func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []pars
 			case "identifier":
 				name := fc.text(fn)
 				switch {
-				case builtins[name], locals[name]: // a local func value is no package symbol
+				case builtins[name], locals[name], name == recv: // a local or receiver func value is no package symbol
 				case fc.types[name]: // conversion to a local type
 					add(parser.RelUsesType, name, parser.Qualify(fc.module, "", name), c)
 				default:

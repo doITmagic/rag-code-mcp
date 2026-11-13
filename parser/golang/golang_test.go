@@ -444,6 +444,29 @@ func H() {
 	assert.Equal(t, []parser.Relation{rel(parser.RelCall, "Close", "github.com/acme/app/pkg/db.Close", 10)}, syms["G"].Relations)
 }
 
+// A func-typed receiver called or passed as a value is that value, not the
+// package function of its name (func (h Handler) Serve() error { return h() }).
+func TestReceiverShadowsPackageFunc(t *testing.T) {
+	root := t.TempDir()
+	src := `package g
+
+func h() error { return nil }
+
+type Handler func() error
+
+func (h Handler) Serve() error {
+	return h()
+}
+
+func (h Handler) Self() Handler {
+	return h
+}
+`
+	syms := analyze(t, root, filepath.Join(root, "g.go"), src)
+	assert.Empty(t, syms["Handler.Serve"].Relations)
+	assert.Equal(t, []parser.Relation{rel(parser.RelUsesType, "Handler", "Handler", 11)}, syms["Handler.Self"].Relations)
+}
+
 // A local named like the receiver shadows it: its method call has an
 // unknown target, not the receiver type's method; the receiver still binds
 // where nothing shadows it.

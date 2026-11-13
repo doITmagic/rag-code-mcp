@@ -47,6 +47,9 @@ func resolveSymbol(ctx context.Context, w *engine.Workspace, query, filePath str
 		in.FilePath = p
 	}
 	hits, err := byName(ctx, w, in, query, candidateLimit)
+	if err == nil && len(live(w, hits)) == 0 && isID(query) { // a candidate's id from an ambiguous answer
+		hits, err = w.Scroll(ctx, store.Filter{IDs: []string{query}}, 1)
+	}
 	if err == nil && len(live(w, hits)) == 0 && filePath != "" {
 		hits, err = byName(ctx, w, store.Filter{}, query, candidateLimit) // for the "elsewhere" answer below
 	}
@@ -131,10 +134,10 @@ func resolveSymbol(ctx context.Context, w *engine.Workspace, query, filePath str
 			cands[i] = toCandidate(h.Symbol)
 		}
 		sort.Slice(cands, func(i, j int) bool { return cands[i].QualifiedName < cands[j].QualifiedName })
-		msg := fmt.Sprintf("%d symbols match %q: pass the full qualified name or file_path", len(hits), query)
+		msg := fmt.Sprintf("%d symbols match %q: pass the full qualified name or file_path, or a candidate's id as symbol", len(hits), query)
 		if c := cands[0]; c.QualifiedName == cands[len(cands)-1].QualifiedName && !slices.ContainsFunc(cands, func(o Candidate) bool { return o.FilePath != c.FilePath }) {
 			// neither a longer name nor file_path tells them apart (routes of one path, doc sections with one heading)
-			msg = fmt.Sprintf("%d symbols in %s share the qualified name %q: data.candidates lists each with its line", len(hits), c.FilePath, c.QualifiedName)
+			msg = fmt.Sprintf("%d symbols in %s share the qualified name %q: data.candidates lists each with its line; pass a candidate's id as symbol", len(hits), c.FilePath, c.QualifiedName)
 		}
 		res, _, _ := reply("ambiguous", msg, map[string]any{"candidates": cands}, w)
 		return nil, res
@@ -218,7 +221,7 @@ func byName(ctx context.Context, w *engine.Workspace, f store.Filter, query stri
 // UsagesInput is the input of rag_find_usages.
 type UsagesInput struct {
 	WorkspaceRoot string `json:"workspace_root,omitempty" jsonschema:"Absolute path of the top directory of the project the user is working in (required), the same on every call. Find it as the folder opened in the editor, or the nearest parent directory that holds .git (in a monorepo that is the repository root, not a package inside it); without git, the nearest parent that holds a project file (go.mod, package.json, composer.json, pyproject.toml, project.godot); with neither, the smallest directory that holds the files being worked on. Never go up to a directory that holds other projects, the home or a system directory, and never pass a subdirectory of the project."`
-	Symbol        string `json:"symbol" jsonschema:"Name or qualified name of the symbol, e.g. User.find or App\\Models\\User::find."`
+	Symbol        string `json:"symbol" jsonschema:"Name or qualified name of the symbol, e.g. User.find or App\\Models\\User::find, or a candidate id from an ambiguous answer."`
 	FilePath      string `json:"file_path,omitempty" jsonschema:"File that defines the symbol, to pick it when several share the name."`
 	Limit         int    `json:"limit,omitempty" jsonschema:"Maximum referencing symbols, default 100."`
 }
@@ -342,6 +345,11 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 		msg += "; reads of constants and variables are not tracked, only calls, type uses and inheritance (an import is not a usage): try rag_search"
 	}
 	return reply("ok", msg, data, w)
+}
+
+// isID is true for a symbol id: 32 lowercase hex digits.
+func isID(s string) bool {
+	return len(s) == 32 && strings.Trim(s, "0123456789abcdef") == ""
 }
 
 // ownerQN is the qualified name of the class that declares member s.
@@ -549,7 +557,7 @@ func lineText(lines []string, n int) string {
 // HierarchyInput is the input of rag_call_hierarchy.
 type HierarchyInput struct {
 	WorkspaceRoot string `json:"workspace_root,omitempty" jsonschema:"Absolute path of the top directory of the project the user is working in (required), the same on every call. Find it as the folder opened in the editor, or the nearest parent directory that holds .git (in a monorepo that is the repository root, not a package inside it); without git, the nearest parent that holds a project file (go.mod, package.json, composer.json, pyproject.toml, project.godot); with neither, the smallest directory that holds the files being worked on. Never go up to a directory that holds other projects, the home or a system directory, and never pass a subdirectory of the project."`
-	Symbol        string `json:"symbol" jsonschema:"Name or qualified name of the function or method."`
+	Symbol        string `json:"symbol" jsonschema:"Name or qualified name of the function or method, or a candidate id from an ambiguous answer."`
 	Direction     string `json:"direction,omitempty" jsonschema:"incoming (callers), outgoing (callees) or both; default incoming."`
 	Depth         int    `json:"depth,omitempty" jsonschema:"Levels to expand, default 2, max 4."`
 	FilePath      string `json:"file_path,omitempty" jsonschema:"File that defines the symbol, to pick it when several share the name."`

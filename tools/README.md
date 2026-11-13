@@ -313,7 +313,7 @@ grouped by file, with the referencing symbol and the line.
 | Input | Type | Description |
 |---|---|---|
 | `workspace_root` | string | absolute project path |
-| `symbol` | string, required | name or qualified name, e.g. `User.find` or `App\Models\User::find` |
+| `symbol` | string, required | name or qualified name, e.g. `User.find` or `App\Models\User::find`, or the `id` of a candidate from an `ambiguous` answer (the only way to pick one of several routes of one URI in one file) |
 | `file_path` | string | the file that defines the symbol, to pick it when several share the name |
 | `limit` | int | maximum referencing symbols, default 100, at most 999 (one store scroll); when it cut, `data.truncated` is `true` and the message says to raise it, or, at 999, to grep the name for the rest; callers in files deleted from disk are not counted (the store is scrolled again up to its cap when they took rows), and when they still fill that scroll the answer is `truncated` with fewer than `limit` callers and the message says to grep, not to raise `limit` |
 
@@ -340,7 +340,7 @@ property are not tracked. When several are left and
 exactly one has a normalized qualified name equal to the query, it is taken
 over those that only end with it (`components.zzalert` against
 `zzprobe.card.components.zzalert`). Several left give `ambiguous`
-with `data.candidates` (`id, qualified_name, kind, file_path, start_line`);
+with `data.candidates` (`id, qualified_name, kind, file_path, start_line`), and the message says a candidate's `id` can be passed as `symbol` (32 hex digits, taken as an id only when no symbol has that name);
 when all of them share the qualified name and the file, the message says so
 instead of advising a fuller name or `file_path`.
 
@@ -418,7 +418,7 @@ Callers (incoming) and callees (outgoing) of a function as a tree.
 | Input | Type | Description |
 |---|---|---|
 | `workspace_root` | string | absolute project path |
-| `symbol` | string, required | name or qualified name of the function or method |
+| `symbol` | string, required | name or qualified name of the function or method, or a candidate `id` from an `ambiguous` answer |
 | `direction` | string | `incoming` (default), `outgoing` or `both` |
 | `depth` | int | levels to expand, default 2, at most 4 |
 | `file_path` | string | the defining file, to pick the symbol when several share the name |

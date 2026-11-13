@@ -247,3 +247,31 @@ func TestUsagesOfNamedLaravelRoute(t *testing.T) {
 	}
 	assert.ElementsMatch(t, []string{`App\Http\Controllers.HomeController.go:3`, "home:1"}, callers)
 }
+
+// Routes sharing a URI stay ambiguous by name; a candidate's id picks one.
+func TestUsagesOfRouteByCandidateID(t *testing.T) {
+	v := newEnv(t, false, nil)
+	v.addFiles(t, map[string]string{
+		"routes/web.php": "<?php\nRoute::get('login', 'AuthController@show')->name('login');\nRoute::post('login', 'AuthController@store')->name('login.post');\n",
+		"app/Http/Controllers/HomeController.php": "<?php\nnamespace App\\Http\\Controllers;\nclass HomeController { public function go() { return redirect()->route('login.post'); } }\n",
+	})
+	r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": "/login"})
+	require.Equal(t, "ambiguous", r.Status, r.Message)
+	assert.Contains(t, r.Message, "pass a candidate's id as symbol")
+	var amb struct {
+		Candidates []Candidate `json:"candidates"`
+	}
+	data(t, r, &amb)
+	require.Len(t, amb.Candidates, 2)
+	post := amb.Candidates[0]
+	if post.StartLine != 3 {
+		post = amb.Candidates[1]
+	}
+	var callers []string
+	for _, f := range usagesOf(t, v, post.ID) {
+		for _, u := range f.Usages {
+			callers = append(callers, u.Caller)
+		}
+	}
+	assert.Equal(t, []string{`App\Http\Controllers.HomeController.go`}, callers)
+}

@@ -238,13 +238,16 @@ func (c *collector) fluentGroup(n *gotreesitter.Node) {
 
 // routeName records ->name('x') of a Route::get(...)->...->name('x') chain
 // for the route call at its root, which the walk reaches after this call.
+// Each ->name() appends to the name as Laravel's Route::name does; the walk
+// is preorder, so the last call of the chain comes first and an earlier one
+// goes in front: ->name('users.')->name('index') is users.index.
 func (c *collector) routeName(n *gotreesitter.Node) {
 	o := c.field(n, "object")
 	for c.typ(o) == "member_call_expression" {
 		o = c.field(o, "object")
 	}
 	if c.typ(o) == "scoped_call_expression" {
-		c.names[o.StartByte()] = c.stringArg(n, 0)
+		c.names[o.StartByte()] = c.stringArg(n, 0) + c.names[o.StartByte()]
 	}
 }
 

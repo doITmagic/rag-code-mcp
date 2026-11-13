@@ -372,8 +372,8 @@ Route::get('/plain', 'InvokableController');
 	}
 }
 
-// A route's name (->name('x'), 'as' => 'x') with the name prefixes of its
-// groups is the route's metadata name; route('x'), to_route('x'),
+// A route's name (->name('x'), 'as' => 'x', each ->name() appending) with
+// the name prefixes of its groups is the route's metadata name; route('x'), to_route('x'),
 // redirect()->route('x') and URL::route('x') reference it.
 func TestRouteNames(t *testing.T) {
 	syms := analyze(t, "/root/routes/web.php", `<?php
@@ -387,11 +387,15 @@ Route::group(['as' => 'admin.', 'prefix' => 'admin'], function () {
         Route::get('/', 'PostController@index')->name('index');
     });
 });
+Route::get('/chained', 'UserController@chained')->name('users.')->middleware('auth')->name('chained');
+Route::get('/as-name', ['as' => 'users.', 'uses' => 'UserController@asName'])->name('as_name');
 `)
 	assert.Equal(t, "users.index", syms["route /users"].Metadata["name"])
 	assert.NotContains(t, syms["route /plain"].Metadata, "name")
 	assert.Equal(t, "admin.stats", syms["route /admin/stats"].Metadata["name"])
 	assert.Equal(t, "admin.posts.index", syms["route /admin/posts"].Metadata["name"])
+	assert.Equal(t, "users.chained", syms["route /chained"].Metadata["name"], "->name() appends, as Laravel's Route::name does")
+	assert.Equal(t, "users.as_name", syms["route /as-name"].Metadata["name"], "->name() appends to 'as'")
 
 	syms = analyze(t, "/root/app/Http/Controllers/UserController.php", `<?php
 namespace App\Http\Controllers;

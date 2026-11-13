@@ -4,7 +4,6 @@
 package php
 
 import (
-	"cmp"
 	"maps"
 	"strings"
 
@@ -902,7 +901,7 @@ func (c *collector) call(n *gotreesitter.Node, sym *parser.Symbol, owner string)
 		}
 		if isRouteRecv(recv, recvFQN) {
 			rc.route = c.routeInfo(n, name, pos, owner)
-			rc.route.name = cmp.Or(c.names[n.StartByte()], rc.route.name)
+			rc.route.name += c.names[n.StartByte()] // 'as' => 'users.' then ->name('index'): users.index
 		}
 		c.calls = append(c.calls, rc)
 	}

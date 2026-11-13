@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -104,7 +105,8 @@ func TestQnSuffixesAndDirParts(t *testing.T) {
 	assert.Equal(t, []string{"a.b.c", "b.c", "c"}, qnSuffixes("a.b.c"))
 	assert.Equal(t, []string{"c"}, qnSuffixes("c"))
 	assert.Nil(t, qnSuffixes(""))
-	assert.Equal(t, []string{"/w/models", "/w", "/"}, dirParts("/w/models/user.go"))
-	assert.Equal(t, []string{"/"}, dirParts("/user.go"))
+	// Directories use the OS separator, as FilePath and the cleaned PathPrefix do.
+	assert.Equal(t, []string{filepath.FromSlash("/w/models"), filepath.FromSlash("/w"), filepath.FromSlash("/")}, dirParts("/w/models/user.go"))
+	assert.Equal(t, []string{filepath.FromSlash("/")}, dirParts("/user.go"))
 	assert.Equal(t, []string{"x", "."}, dirParts("x/y.go"))
 }

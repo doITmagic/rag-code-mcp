@@ -187,7 +187,8 @@ keyword matches:
   `qn_suffixes` never holds `""`.
 - `dir_parts`: `/w/pkg/sub/x.go` gives `/w/pkg/sub`, `/w/pkg`, `/w`, `/`. A
   `PathPrefix` filter is cleaned with `filepath.Clean` and must equal one of
-  them.
+  them. Both use the OS separator (`\` on Windows, where the example gives
+  `\w\pkg\sub` ... `\`).
 
 **Queries.** `Filter` is translated to a `vecdb.Cond` (one `Match` per set
 field, AND between them). `Search` and `Scroll` decode each payload back into

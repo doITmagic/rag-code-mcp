@@ -263,10 +263,23 @@ evidence: a method named `GET` in a file that imports no router is no route.
 - Routes: only the frameworks in [Routes](#routes) are read. Routes
   registered through a project's own helper or a table of structs, a router
   returned by a project's own constructor (`r := newRouter()`), a router
-  held in a field of a type declared in another file, a group passed to a
-  method (`s.register(g)`) and a path built at run time (`"/v" + n`) produce
-  no route or keep the path as written. A path naming a const declared in
-  another file, a `var`, or built with `+` gives no route.
+  held in a field of a type declared in another file and a group passed to a
+  method (`s.register(g)`) produce no route or keep the path as written.
+- Routes: a router passed to a function or method in another file keeps the
+  path written in that function. In wakapi, `main.go` mounts
+  `router.Mount("/api", apiRouter)` and calls
+  `healthApiHandler.RegisterRoutes(apiRouter)` on a local built by a
+  constructor of another package; the route in `RegisterRoutes` is `/health`,
+  not `/api/health`, and `rag_search` for `/api/health` finds `/health` only
+  as a neighbour. The `Mount` symbol `/api` itself is indexed. Joining the two
+  would need the receiver's type from another file, and the many
+  `RegisterRoutes` methods get routers with different prefixes.
+- Routes: a path built at run time gives no route: `"/v" + n`, a path read
+  from config (listmonk `srv.Static(uploadFsURI, ...)` and
+  `path.Join(publicURL, "/:filepath")`), routes added in a loop
+  over `r.Routes()` (wakapi `routes/api/heartbeat.go`), or `path.Join` with
+  any part that is not a literal or a same-file string const. A path naming a
+  const declared in another file or a `var` gives no route either.
 - Interface methods are not symbols of their own: they are only listed in the
   interface's `Metadata["methods"]`. `rag_find_usages` on a method declared
   only in an interface (no implementation) answers "no indexed symbol named";

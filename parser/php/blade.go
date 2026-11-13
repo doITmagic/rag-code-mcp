@@ -25,9 +25,24 @@ var bladeTag = regexp.MustCompile(`<x-([\w.-]+)(?:[\s/>]|$)`)
 // <livewire:dir.name>; group 1 is the name.
 var bladeLivewire = regexp.MustCompile(`<livewire:([\w.-]+)(?:[\s/>]|$)`)
 
-// bladeRoute matches route('name') or to_route('name'), not ->route('id')
-// (request()->route reads a parameter); group 1 is the name.
-var bladeRoute = regexp.MustCompile(`(?:^|[^\w>:$])(?:to_)?route\(\s*['"]([^'"$]+)['"]`)
+// bladeRoute matches route('name') or to_route('name'); group 1 is the
+// helper, group 2 the name.
+// bladeRoutes drops ->route('id') (request()->route reads a parameter).
+var bladeRoute = regexp.MustCompile(`(?:^|[^\w$])((?:to_)?route)\(\s*['"]([^'"$]+)['"]`)
+
+// bladeRoutes returns the route names line references through the route
+// helpers, skipping a method or static call (->route, :: route), which PHP
+// allows to have space after its operator.
+func bladeRoutes(line string) []string {
+	var names []string
+	for _, m := range bladeRoute.FindAllStringSubmatchIndex(line, -1) {
+		before := strings.TrimRight(line[:m[2]], " \t")
+		if !strings.HasSuffix(before, "->") && !strings.HasSuffix(before, ":") {
+			names = append(names, line[m[4]:m[5]])
+		}
+	}
+	return names
+}
 
 // componentClass is the class a component name maps to by convention under
 // namespace ns: Livewire 3's "forum.post-list" is App\Livewire\Forum\PostList,
@@ -123,9 +138,9 @@ func blade(f parser.File) []parser.Symbol {
 				}
 			}
 		}
-		for _, m := range bladeRoute.FindAllStringSubmatch(line, -1) {
+		for _, name := range bladeRoutes(line) {
 			syms[0].Relations = append(syms[0].Relations, parser.Relation{
-				Kind: parser.RelImports, TargetName: m[1], TargetQualifiedName: "route:" + m[1], Line: ln,
+				Kind: parser.RelImports, TargetName: name, TargetQualifiedName: "route:" + name, Line: ln,
 			})
 		}
 		for _, m := range bladeLivewire.FindAllStringSubmatch(line, -1) {

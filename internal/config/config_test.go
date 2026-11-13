@@ -57,17 +57,25 @@ func TestLoadInvalidYAML(t *testing.T) {
 
 func TestEnvOverrides(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	require.NoError(t, os.WriteFile(path, []byte("ollama_embed: file-embed\nallowed_workspace_paths: [/from/file]\n"), 0o644))
+	require.NoError(t, os.WriteFile(path, []byte("ollama_embed: file-embed\nallowed_workspace_paths: ['"+abs("/from/file")+"']\n"), 0o644))
 	t.Setenv("OLLAMA_BASE_URL", "http://env:11434")
 	t.Setenv("OLLAMA_EMBED", "env-embed")
 	t.Setenv("MCP_LOG_LEVEL", "warn")
-	t.Setenv("RAGCODE_ALLOWED_PATHS", strings.Join([]string{"/a", " /b ", ""}, string(os.PathListSeparator)))
+	t.Setenv("RAGCODE_ALLOWED_PATHS", strings.Join([]string{abs("/a"), " " + abs("/b") + " ", ""}, string(os.PathListSeparator)))
 	cfg, err := Load(path)
 	require.NoError(t, err)
 	assert.Equal(t, "http://env:11434", cfg.OllamaBaseURL)
 	assert.Equal(t, "env-embed", cfg.OllamaEmbed, "env wins over file")
 	assert.Equal(t, "warn", cfg.LogLevel)
-	assert.Equal(t, []string{"/a", "/b"}, cfg.AllowedWorkspacePaths)
+	assert.Equal(t, []string{abs("/a"), abs("/b")}, cfg.AllowedWorkspacePaths)
+}
+
+// abs makes a Unix-style absolute test path absolute on Windows too (C:\a).
+func abs(p string) string {
+	if runtime.GOOS == "windows" {
+		return "C:" + filepath.FromSlash(p)
+	}
+	return p
 }
 
 func TestValidate(t *testing.T) {

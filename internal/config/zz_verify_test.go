@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -67,6 +68,9 @@ func TestVerifyLoadMissingFileUnwritableParent(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores permissions")
 	}
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no directory write bit: chmod cannot make a directory unwritable")
+	}
 	dir := t.TempDir()
 	require.NoError(t, os.Chmod(dir, 0o500))
 	t.Cleanup(func() { os.Chmod(dir, 0o700) })
@@ -119,7 +123,7 @@ func TestVerifyYAMLTagsSnakeCase(t *testing.T) {
 		"log_max_size_mb: 3",
 		"exclude_patterns: [a, b]",
 		"max_files: 5",
-		"allowed_workspace_paths: [/x]",
+		"allowed_workspace_paths: ['" + abs("/x") + "']",
 		"auto_index: false",
 		"watch_enabled: false",
 		"watch_debounce: 2m",
@@ -133,7 +137,7 @@ func TestVerifyYAMLTagsSnakeCase(t *testing.T) {
 	assert.Equal(t, Config{
 		OllamaBaseURL: "http://o:1", OllamaEmbed: "m", EmbedThreads: 3, MinFreeMemoryMB: 7,
 		LogLevel: "error", LogMaxSizeMB: 3, ExcludePatterns: []string{"a", "b"}, MaxFiles: 5,
-		AllowedWorkspacePaths: []string{"/x"}, AutoIndex: false, WatchEnabled: false,
+		AllowedWorkspacePaths: []string{abs("/x")}, AutoIndex: false, WatchEnabled: false,
 		WatchDebounce: 2 * time.Minute, AutoCreateIDERules: false,
 		AutoUpdate: false, UpdateSource: "/dist",
 	}, cfg)

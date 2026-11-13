@@ -1,20 +1,12 @@
 package tools
 
 import (
-	"path/filepath"
 	"testing"
 
 	_ "github.com/doITmagic/rag-code-mcp/v2/parser/javascript"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func r3oDump(n *Node, depth int, out *[]string) {
-	for _, c := range n.Children {
-		*out = append(*out, filepath.Base(c.FilePath)+"|"+c.QualifiedName+"|"+string(rune('0'+depth)))
-		r3oDump(c, depth+1, out)
-	}
-}
 
 func TestR3oVueHierarchyDepth(t *testing.T) {
 	v := newEnv(t, false, nil)

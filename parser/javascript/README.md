@@ -284,6 +284,10 @@ literal's values are not walked, its methods own their calls.
 
 ## Known limitations visible in the code
 
+- A `.vue` file with no `<script>` (template only) has no `default`
+  symbol, so neither `import X from './X.vue'` nor a `<X />` tag is a usage
+  of it: `rag_find_usages` answers 0 usages and `rag_call_hierarchy` shows
+  no callers for it.
 - A function passed as a value (`computed(getDefault)`) is not a usage of it.
 - A class field holding a non-function (`match: typeof match = match`) is not
   a symbol.

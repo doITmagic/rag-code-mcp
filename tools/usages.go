@@ -306,7 +306,7 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 	for _, c := range callers {
 		seen[c.ID] = true
 	}
-	tags, isTag, err := vueTags(ctx, w, sym, in.Limit-len(seen))
+	tags, isTag, err := vueTags(ctx, w, sym, in.Limit)
 	if err != nil {
 		return storeErr(ctx, w, err)
 	}
@@ -386,13 +386,15 @@ func vueDefault(ctx context.Context, w *engine.Workspace, sym *parser.Symbol) *p
 // vueTags lists up to limit+1 symbols of .vue files with a tag of the
 // component sym is the default symbol of that no import names (Nuxt
 // auto-import, global registration): it stays an unresolved bare name, a
-// usage by name. isTag matches those tags among their relations.
+// usage by name. isTag matches those tags among their relations. limit is
+// the whole limit, not what is left: some hits may be callers already
+// counted, and keepWithin needs one hit past the limit to report a cut.
 func vueTags(ctx context.Context, w *engine.Workspace, sym *parser.Symbol, limit int) (tags []parser.Symbol, isTag func(parser.Relation) bool, err error) {
 	comp := vueComponent(ctx, w, sym)
 	isTag = func(r parser.Relation) bool {
 		return r.Kind == parser.RelUsesType && r.TargetName == comp && r.TargetID == "" && r.TargetQualifiedName == ""
 	}
-	if comp == "" || limit <= 0 {
+	if comp == "" {
 		return nil, isTag, nil
 	}
 	hits, err := w.Scroll(ctx, store.Filter{Language: "javascript", TargetNames: []string{comp}}, min(limit, store.MaxScroll-1)+1)
@@ -806,7 +808,7 @@ func (wk *walker) next(ctx context.Context, sym parser.Symbol, incoming bool) ([
 				}
 			}
 		}
-		tags, _, err := vueTags(ctx, wk.w, &sym, candidateLimit-len(seen)) // by name: never marked exact
+		tags, _, err := vueTags(ctx, wk.w, &sym, candidateLimit) // by name: never marked exact
 		if err != nil {
 			wk.err = err
 			return nil, nil, nil

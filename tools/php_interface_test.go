@@ -106,3 +106,16 @@ func TestUsagesThroughInterfaceRespectLimit(t *testing.T) {
 		assert.NotContains(t, r.Message, "deleted from disk")
 	}
 }
+
+// A method a class gets from a trait it uses implements the class's
+// interfaces too: the interface's callers are the trait method's, marked via.
+func TestUsagesOfPhpTraitMethodThroughInterface(t *testing.T) {
+	v := newEnv(t, false, nil)
+	v.addFiles(t, map[string]string{
+		"src/All.php": "<?php\nnamespace App;\ninterface SubscriptionAble { public function subs(); }\n" +
+			"trait ProvidesSubscriptions { public function subs() { return []; } }\n" +
+			"final class Thread implements SubscriptionAble { use ProvidesSubscriptions; }\n" +
+			"final class Subscribe {\n    public function __construct(private SubscriptionAble $s) {}\n    public function handle() { return $this->s->subs(); }\n}\n",
+	})
+	assert.Equal(t, map[string]string{`App.Subscribe.handle`: `App.SubscriptionAble`}, viaOf(usagesOf(t, v, `App\ProvidesSubscriptions::subs`)))
+}

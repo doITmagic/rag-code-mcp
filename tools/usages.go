@@ -349,7 +349,7 @@ func ownerQN(s *parser.Symbol) string { return strings.TrimSuffix(s.QualifiedNam
 
 // viaInterfaces lists the methods named like sym of the workspace interfaces
 // its PHP class implements: directly, through a parent class or through an
-// interface extending them. A call through an interface-typed variable
+// interface extending them; for a trait method, the classes using the trait. A call through an interface-typed variable
 // targets the interface's method only, so its callers are sym's too.
 // shortcut: PHP only, other languages' implements relations are not walked; extend when one asks for it.
 func viaInterfaces(ctx context.Context, w *engine.Workspace, sym *parser.Symbol) (out []parser.Symbol) {
@@ -357,7 +357,19 @@ func viaInterfaces(ctx context.Context, w *engine.Workspace, sym *parser.Symbol)
 		return nil
 	}
 	seen := map[string]bool{}
-	queue := []store.Filter{{Language: "php", Kinds: []parser.Kind{parser.KindClass}, QualifiedName: ownerQN(sym)}}
+	owner := ownerQN(sym)
+	queue := []store.Filter{{Language: "php", Kinds: []parser.Kind{parser.KindClass}, QualifiedName: owner}}
+	// and the classes using it as a trait: a class's only uses_type relations
+	// are its "use T;" lines (types in bodies belong to its members)
+	if users, err := w.Scroll(ctx, store.Filter{Language: "php", Kinds: []parser.Kind{parser.KindClass}, TargetQualifiedNames: []string{owner}}, candidateLimit); err == nil {
+		for _, h := range live(w, users) {
+			if slices.ContainsFunc(h.Symbol.Relations, func(r parser.Relation) bool {
+				return r.Kind == parser.RelUsesType && r.TargetQualifiedName == owner
+			}) {
+				queue = append(queue, store.Filter{IDs: []string{h.Symbol.ID}})
+			}
+		}
+	}
 	for len(queue) > 0 && len(seen) < candidateLimit {
 		hits, err := w.Scroll(ctx, queue[0], candidateLimit)
 		queue = queue[1:]

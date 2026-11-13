@@ -789,8 +789,12 @@ func (c *collector) call(n *gotreesitter.Node, sym *parser.Symbol, owner string)
 		}
 		raw := c.text(fn)
 		name, target = short(raw), qualified(c.resolve(raw, c.funcs, owner))
-		viewCall = raw == "view" || raw == `\view`
-		routeRef = strings.TrimPrefix(raw, `\`) == "route" || strings.TrimPrefix(raw, `\`) == "to_route"
+		helper := strings.TrimPrefix(raw, `\`) // the Laravel helper called, unless use function binds the name elsewhere
+		if fqn, imported := c.funcs[raw]; imported {
+			helper = fqn
+		}
+		viewCall = helper == "view"
+		routeRef = helper == "route" || helper == "to_route"
 		if _, imported := c.funcs[raw]; c.ns != "" && !imported && !strings.ContainsRune(raw, '\\') {
 			// PHP falls back to the global function at runtime, so the
 			// namespace is only a guess: leave the target to a name lookup.

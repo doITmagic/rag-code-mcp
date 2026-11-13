@@ -443,3 +443,27 @@ function run() {
 	assert.Equal(t, "", got["call keep"], "inside the closure $y is new Foo and new Bar")
 	assert.Equal(t, "", got["call lost"], "inside the closure $z is new Foo and a call result")
 }
+
+// A file that imports its own route() or view() (use function X\route)
+// calls that function, not Laravel's helper; an alias of the global helper
+// is still the helper.
+func TestImportedHelperFunction(t *testing.T) {
+	syms := analyze(t, "/root/app/caller.php", `<?php
+namespace App;
+use function Telemetry\route;
+use function Telemetry\view;
+use function to_route as go;
+function run() {
+    route('users.index');
+    view('users.show');
+    go('users.edit');
+}
+`)
+	var refs []string
+	for _, r := range syms["function App.run"].Relations {
+		if r.Kind == parser.RelImports {
+			refs = append(refs, r.TargetQualifiedName)
+		}
+	}
+	assert.Equal(t, []string{"route:users.edit"}, refs)
+}

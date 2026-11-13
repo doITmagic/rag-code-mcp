@@ -232,6 +232,7 @@ type Usage struct {
 	CallerID  string `json:"caller_id"`
 	CallerDef int    `json:"caller_start_line"`
 	ByName    bool   `json:"by_name,omitempty"` // matched by name only: the receiver's type is unknown, check it
+	Via       string `json:"via,omitempty"`     // a call of this interface's method (qualified name), which the symbol implements
 }
 
 // FileUsages groups the usages of one file.
@@ -271,28 +272,41 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 	byFile := map[string]*FileUsages{}
 	lines := map[string][]string{}
 	total, guessed := 0, 0
-	for _, c := range callers {
-		for _, r := range c.Relations {
-			if r.TargetID != sym.ID && (r.TargetQualifiedName == "" || r.TargetQualifiedName != sym.QualifiedName) {
-				continue
-			}
-			g := byFile[c.FilePath]
-			if g == nil {
-				g = &FileUsages{FilePath: c.FilePath}
-				byFile[c.FilePath] = g
-			}
-			if _, ok := lines[c.FilePath]; !ok {
-				lines[c.FilePath] = readLines(w.Root, c.FilePath)
-			}
-			guess := !exactRel(r, sym.QualifiedName)
-			g.Usages = append(g.Usages, Usage{Caller: c.QualifiedName, Kind: string(r.Kind), Line: r.Line,
-				Text: lineText(lines[c.FilePath], r.Line), CallerID: c.ID, CallerDef: c.StartLine, ByName: guess})
-			total++
-			if guess {
-				guessed++
+	add := func(callers []parser.Symbol, sym *parser.Symbol, via string) {
+		for _, c := range callers {
+			for _, r := range c.Relations {
+				if r.TargetID != sym.ID && (r.TargetQualifiedName == "" || r.TargetQualifiedName != sym.QualifiedName) {
+					continue
+				}
+				g := byFile[c.FilePath]
+				if g == nil {
+					g = &FileUsages{FilePath: c.FilePath}
+					byFile[c.FilePath] = g
+				}
+				if _, ok := lines[c.FilePath]; !ok {
+					lines[c.FilePath] = readLines(w.Root, c.FilePath)
+				}
+				guess := !exactRel(r, sym.QualifiedName)
+				g.Usages = append(g.Usages, Usage{Caller: c.QualifiedName, Kind: string(r.Kind), Line: r.Line,
+					Text: lineText(lines[c.FilePath], r.Line), CallerID: c.ID, CallerDef: c.StartLine, ByName: guess, Via: via})
+				total++
+				if guess {
+					guessed++
+				}
 			}
 		}
 	}
+	add(callers, sym, "")
+	viaCount := total
+	for _, m := range viaInterfaces(ctx, w, sym) {
+		vc, vcut, err := referrers(ctx, w, &m, in.Limit)
+		if err != nil {
+			return storeErr(ctx, w, err)
+		}
+		cut = cut || vcut
+		add(vc, &m, ownerQN(&m))
+	}
+	viaCount = total - viaCount
 	files := make([]FileUsages, 0, len(byFile))
 	for _, g := range byFile {
 		sort.Slice(g.Usages, func(i, j int) bool { return g.Usages[i].Line < g.Usages[j].Line })
@@ -310,6 +324,9 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 	case cut: // fewer than limit: rows of files deleted from disk filled the store's scroll
 		msg += fmt.Sprintf("; the store scroll (%d rows) filled up with callers in files deleted from disk, more may follow: grep the name for the rest", store.MaxScroll)
 	}
+	if viaCount > 0 {
+		msg += fmt.Sprintf("; %d are calls of an interface's method it implements, marked via (the object may be another implementation)", viaCount)
+	}
 	if guessed > 0 {
 		msg += fmt.Sprintf("; %d matched by name only (no import, qualified name or known type links them; it may be another symbol of that name), marked by_name", guessed)
 	}
@@ -325,6 +342,53 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 		msg += "; reads of constants and variables are not tracked, only calls, type uses and inheritance (an import is not a usage): try rag_search"
 	}
 	return reply("ok", msg, data, w)
+}
+
+// ownerQN is the qualified name of the class that declares member s.
+func ownerQN(s *parser.Symbol) string { return strings.TrimSuffix(s.QualifiedName, "."+s.Name) }
+
+// viaInterfaces lists the methods named like sym of the workspace interfaces
+// its PHP class implements: directly, through a parent class or through an
+// interface extending them. A call through an interface-typed variable
+// targets the interface's method only, so its callers are sym's too.
+// shortcut: PHP only, other languages' implements relations are not walked; extend when one asks for it.
+func viaInterfaces(ctx context.Context, w *engine.Workspace, sym *parser.Symbol) (out []parser.Symbol) {
+	if sym.Language != "php" || sym.Kind != parser.KindMethod || sym.Owner == "" {
+		return nil
+	}
+	seen := map[string]bool{}
+	queue := []store.Filter{{Language: "php", Kinds: []parser.Kind{parser.KindClass}, QualifiedName: ownerQN(sym)}}
+	for len(queue) > 0 && len(seen) < candidateLimit {
+		hits, err := w.Scroll(ctx, queue[0], candidateLimit)
+		queue = queue[1:]
+		if err != nil {
+			return out
+		}
+		for _, h := range live(w, hits) {
+			t := h.Symbol
+			if seen[t.ID] || (t.Kind != parser.KindClass && t.Kind != parser.KindInterface) {
+				continue
+			}
+			seen[t.ID] = true
+			if t.Kind == parser.KindInterface {
+				if m, err := w.Scroll(ctx, store.Filter{Language: "php", Kinds: []parser.Kind{parser.KindMethod}, QualifiedName: t.QualifiedName + "." + sym.Name}, candidateLimit); err == nil {
+					for _, h := range live(w, m) {
+						out = append(out, h.Symbol)
+					}
+				}
+			}
+			for _, r := range t.Relations {
+				switch {
+				case r.Kind != parser.RelExtends && r.Kind != parser.RelImplements:
+				case r.TargetID != "":
+					queue = append(queue, store.Filter{IDs: []string{r.TargetID}})
+				case r.TargetQualifiedName != "":
+					queue = append(queue, store.Filter{Language: "php", QualifiedName: r.TargetQualifiedName})
+				}
+			}
+		}
+	}
+	return out
 }
 
 // usedMembers names the members of an unused constant or variable (an object
@@ -483,6 +547,7 @@ type HierarchyInput struct {
 type Node struct {
 	Candidate
 	ByName   bool    `json:"by_name,omitempty"` // linked by name only: the receiver's type is unknown, check it
+	Via      string  `json:"via,omitempty"`     // calls this interface's method (qualified name), which the parent implements
 	Children []*Node `json:"children,omitempty"`
 }
 
@@ -562,12 +627,12 @@ func (wk *walker) walk(ctx context.Context, root *Node, sym parser.Symbol, incom
 		if it.depth == 0 {
 			continue
 		}
-		next, exact := wk.next(ctx, it.sym, incoming)
+		next, exact, via := wk.next(ctx, it.sym, incoming)
 		for _, s := range next {
 			if wk.nodes >= maxNodes {
 				break
 			}
-			child := &Node{Candidate: toCandidate(s), ByName: !exact[twinOf(&s)]}
+			child := &Node{Candidate: toCandidate(s), ByName: !exact[twinOf(&s)], Via: via[twinOf(&s)]}
 			it.n.Children = append(it.n.Children, child)
 			wk.nodes++
 			if wk.visited[s.ID] {
@@ -581,22 +646,32 @@ func (wk *walker) walk(ctx context.Context, root *Node, sym parser.Symbol, incom
 
 // next lists sym's neighbours, sorted, twins merged: the symbols referring
 // to it (incoming) or the resolved targets of its own relations (outgoing),
-// and which of them are linked by a qualified name.
-func (wk *walker) next(ctx context.Context, sym parser.Symbol, incoming bool) ([]parser.Symbol, map[twinKey]bool) {
+// which of them are linked by a qualified name, and which only call an
+// interface's method sym implements (via, as in rag_find_usages).
+func (wk *walker) next(ctx context.Context, sym parser.Symbol, incoming bool) ([]parser.Symbol, map[twinKey]bool, map[twinKey]string) {
 	var next []parser.Symbol
 	exact := map[twinKey]bool{} // linked by at least one relation naming a qualified name
+	via := map[twinKey]string{}
 	if incoming {
-		callers, cut, err := referrers(ctx, wk.w, &sym, candidateLimit)
-		wk.cut = wk.cut || cut
-		if err != nil {
-			wk.err = err
-			return nil, nil
-		}
-		next = callers
-		for _, c := range callers {
-			for _, r := range c.Relations {
-				if (r.TargetID == sym.ID || r.TargetQualifiedName == sym.QualifiedName) && exactRel(r, sym.QualifiedName) {
-					exact[twinOf(&c)] = true
+		direct := map[twinKey]bool{}
+		for i, m := range append([]parser.Symbol{sym}, viaInterfaces(ctx, wk.w, &sym)...) {
+			callers, cut, err := referrers(ctx, wk.w, &m, candidateLimit)
+			wk.cut = wk.cut || cut
+			if err != nil {
+				wk.err = err
+				return nil, nil, nil
+			}
+			next = append(next, callers...)
+			for _, c := range callers {
+				if k := twinOf(&c); i == 0 {
+					direct[k] = true
+				} else if !direct[k] {
+					via[k] = ownerQN(&m)
+				}
+				for _, r := range c.Relations {
+					if (r.TargetID == m.ID || r.TargetQualifiedName == m.QualifiedName) && exactRel(r, m.QualifiedName) {
+						exact[twinOf(&c)] = true
+					}
 				}
 			}
 		}
@@ -631,7 +706,7 @@ func (wk *walker) next(ctx context.Context, sym parser.Symbol, incoming bool) ([
 			}
 			if err != nil {
 				wk.err = err
-				return nil, nil
+				return nil, nil, nil
 			}
 			for _, h := range live(wk.w, hits) {
 				// As the index resolves: code never calls across languages.
@@ -646,13 +721,16 @@ func (wk *walker) next(ctx context.Context, sym parser.Symbol, incoming bool) ([
 	}
 	next = mergeTwins(next, func(s *parser.Symbol) *parser.Symbol { return s })
 	sort.Slice(next, func(i, j int) bool { return next[i].QualifiedName < next[j].QualifiedName })
-	return next, exact
+	return next, exact, via
 }
 
 func writeTree(b *strings.Builder, n *Node, indent int) {
 	mark := ""
 	if n.ByName {
 		mark = " [by name only]"
+	}
+	if n.Via != "" {
+		mark += " [via " + n.Via + "]"
 	}
 	fmt.Fprintf(b, "%s%s (%s:%d)%s\n", strings.Repeat("  ", indent), n.QualifiedName, n.FilePath, n.StartLine, mark)
 	for _, c := range n.Children {

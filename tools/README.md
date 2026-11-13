@@ -354,7 +354,7 @@ and mark the answer `truncated`. The
 source line of each reference is read from disk and cut at 200 bytes.
 
 Output `data`: `{symbol, files: [{file_path, usages: [{caller, kind, line,
-text, caller_id, caller_start_line, by_name?}]}], total, ambiguous_by_name,
+text, caller_id, caller_start_line, by_name?, via?}]}], total, ambiguous_by_name,
 by_name, truncated}`. A usage with `by_name: true` was matched by name only: the index
 did not resolve it by qualified name (its `resolution` is not `exact`) and it
 does not name the symbol's qualified name itself. Either the call has no
@@ -385,6 +385,16 @@ name are that symbol's; neither is counted here. For a JavaScript browser
 global it also counts the html inline handlers (`onclick="f()"`) that call a
 name several globals share: they bind to none, and each of those globals
 reports them.
+
+A PHP method of a class that implements a workspace interface (directly,
+through a parent class, or through an interface extending it) also lists the
+callers of that interface's method of the same name (`viaInterfaces`): a call
+on a variable typed with the interface (`UserRepositoryInterface $repo;
+$repo->find()`) targets only the interface's method. Those usages carry
+`via` (the interface's qualified name) and the message counts them; the object
+may be another implementation. The interface's own method answers as before,
+and an interface outside the workspace adds nothing. Other languages are not
+walked; each interface's callers are scrolled with their own `limit`.
 
 ```json
 {"name": "rag_find_usages", "arguments": {
@@ -424,12 +434,13 @@ Callers (incoming) and callees (outgoing) of a function as a tree.
 
 Output `data`: `{symbol, direction, depth, incoming?, outgoing?, text}`. Each
 tree node has `id, qualified_name, kind, file_path, start_line, by_name?,
-children`; `by_name` marks a node linked to its parent only by name, as in
+via?, children`; `via` marks an incoming node that calls an interface's
+method its parent implements, as in `rag_find_usages`; `by_name` marks a node linked to its parent only by name, as in
 `rag_find_usages` (outgoing: a call the index resolved by name only; a
 call naming a qualified name shared by several symbols is exact). `text` is the same tree as lines: a
 `<direction>:` header, then one `qualified_name (file_path:start_line)` line
-per node indented two spaces per level, with ` [by name only]` on those
-nodes, and `… capped at 100 nodes` when the cap was hit.
+per node indented two spaces per level, with ` [by name only]` and
+` [via <interface>]` on those nodes, and `… capped at 100 nodes` when the cap was hit.
 
 ```json
 {"name": "rag_call_hierarchy", "arguments": {

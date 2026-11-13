@@ -2,6 +2,10 @@ module github.com/doITmagic/rag-code-mcp/v2
 
 go 1.26.0
 
+// Go 1.23+ no longer resolves NTFS junctions in filepath.EvalSymlinks; the root and
+// workspace-boundary checks rely on it (a junction root, a file read through a junction).
+godebug winsymlink=0
+
 require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/modelcontextprotocol/go-sdk v1.8.0

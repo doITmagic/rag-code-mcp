@@ -83,6 +83,7 @@ graph TD
 | `roots_bom_test.go` | A `roots.json` with a UTF-8 BOM is read and kept; an invalid one is moved to `roots.json.bad` before the new list is written. |
 | `unsure_root_test.go` | A subdirectory of a repository, a directory holding several projects and a subdirectory of a known root are refused with candidates; a confirmed or known root is not asked again. |
 | `windows_root_test.go` | Windows system directories refused as roots: `windowsSystemDir`, `wslWindowsSystemDir` and `wslBroadDir` (`/mnt`, a drive mount, the Windows user home seen from WSL) and `diskCase` (the on-disk spelling, on a temp dir) as pure functions on every OS, and through `validateRoot` on Windows only. |
+| `junction_windows_test.go` | (Windows only) a root that is an NTFS junction, or lies below one, is accepted by `validateRoot` and resolved to the real directory. |
 | `zz_verify_test.go` | Verification tests: concurrent `Workspace` calls, cancelled contexts, enqueue during a lock retry, recreate while locked, a directory moved out and the forced debounce flush, status read from disk before any run, home symlink guard, `Close` cancelling a blocked run, junk `roots.json`, a files run with only deletions, junk paths, `Ready` remediation text, a failed query embed does not enqueue, recreate absorbing queued files, catch-up with and without `auto_index`, double `Close`, `.git/refs` plus hidden and excluded directories, kernel file systems refused. |
 
 ---
@@ -194,6 +195,11 @@ On Windows the home, temp and exact `allowed_workspace_paths` matches compare
 case-insensitively; the "everything below it" match of an
 `allowed_workspace_paths` entry is a plain prefix test and stays
 case-sensitive.
+
+A root that is an NTFS junction (`mklink /J`), or lies below one, resolves to
+the real directory like a symlink. This needs `godebug winsymlink=0`, set in
+`go.mod`: since Go 1.23 `filepath.EvalSymlinks` leaves junctions alone, and
+such a root was indexed with 0 files or refused as "does not exist".
 
 The first call for a root creates the `Workspace`, adds the root to
 `roots.json` and, when both `watch_enabled` and `auto_index` are on, starts

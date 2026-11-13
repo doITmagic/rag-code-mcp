@@ -72,6 +72,7 @@ Tests:
 | [`source_files_test.go`](source_files_test.go) | the not-indexed fallback and the text search skip a non-hidden `RAGCODE_HOME` inside the root, and find nothing under a `path_prefix` in an excluded, hidden or linked-worktree directory |
 | [`ollama_password_test.go`](ollama_password_test.go) | the password of an `ollama_base_url` with basic auth is not in `rag_server_info` (`ollama.url`, `ollama.error`) nor in the `dependency_down` message |
 | [`inside_root_test.go`](inside_root_test.go) | `within`: with case folding (Windows) a path differing from the root only in case is inside it and gets the root's spelling; without it, outside; a sibling sharing the root's name prefix is never inside |
+| [`junction_windows_test.go`](junction_windows_test.go) | (Windows only) a file reached through an NTFS junction inside the root that points outside it is refused by `insideRoot` |
 | [`fifo_unix_test.go`](fifo_unix_test.go) | the not-indexed fallback keeps the index skip rules: no symlink out of the root, no fifo, no secret file (Unix only) |
 | [`index_unix_test.go`](index_unix_test.go) | (`//go:build unix`) a known root with no `ended_at` is `interrupted` only when nobody holds its lock |
 
@@ -233,7 +234,11 @@ as `package`) may be absolute, relative to the root, or start with Godot's
 `res://` (relative to the root). `insideRoot` cleans them, follows symlinks and refuses
 anything that ends up outside the root. On Windows the comparison ignores case
 (`within`), so `c:\proj\x` is inside the root `C:\proj` even when `x` does not
-exist, and the path is given back with the root's spelling.
+exist, and the path is given back with the root's spelling. NTFS junctions
+(`mklink /J`) are followed like symlinks: Go 1.23+ resolves them in
+`filepath.EvalSymlinks` only with `godebug winsymlink=0`, which `go.mod` sets
+for the binaries and tests, so `linkout\outside.go` through a junction to a
+directory outside the root is refused.
 
 **Deleted files.** `live` drops every hit whose file no longer exists on disk
 (deleted with the watcher off, while the server was down, or within the

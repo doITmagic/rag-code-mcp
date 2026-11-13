@@ -438,7 +438,10 @@ the method's type, declared or promoted from a type it embeds, or of a type
 embedding it that does not declare its own method of that name
 (`SessionTask{BaseTask}` makes `BaseTask.Name` reach `Task.Name`'s callers).
 Matching is by names, not signatures, so a small interface with a common name
-(`Close`) may give a false `via`; the methods of an embedded external
+(`Close`) may give a false `via`; a call on an operand typed with an
+interface that embeds another (`s Store`, `s.Find()` with `Find` declared in
+the embedded `Finder`) is a `via` usage of every type that satisfies `Finder`,
+also one that is no `Store`; the methods of an embedded external
 interface (`io.Closer`) are not required; at most `MaxScroll` methods of the
 name are read. Other languages are not
 walked; `limit` counts the direct and the via referencing symbols together

@@ -527,6 +527,7 @@ func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []pars
 		return true
 	})
 	locals, localTypes := fc.locals(n)
+	own := parser.Field(n, fc.lang, "type") // of a type spec: an inline interface inside it lists another type's methods
 	// target is callTarget, then the single declared type of a local or
 	// parameter operand (s *T, var s T, s := &T{...}): s.M is <module of T>.T.M,
 	// then the field type of a struct this file declares, on the receiver or
@@ -540,7 +541,7 @@ func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []pars
 			st, t := "", localTypes[fc.text(x)]
 			if s := t[strings.LastIndex(t, ".")+1:]; fc.text(x) == recv && !locals[recv] {
 				st = owner
-			} else if t != "" && parser.Qualify(fc.module, "", s) == t {
+			} else if fc.text(x) != recv && t != "" && parser.Qualify(fc.module, "", s) == t { // not the shadow's struct for the receiver's field
 				st = s
 			}
 			if ft := fc.fieldTypes[st][fc.text(parser.Field(op, fc.lang, "field"))]; ft != "" {
@@ -657,7 +658,9 @@ func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []pars
 					name, tqn := fc.resolveType(e.NamedChild(0))
 					add(parser.RelExtends, name, tqn, e)
 				case "method_elem":
-					methods = append(methods, e)
+					if own != nil && c.StartByte() == own.StartByte() {
+						methods = append(methods, e)
+					}
 					parser.Walk(e, visit)
 				}
 			}

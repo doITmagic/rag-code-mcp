@@ -546,7 +546,10 @@ func phpVia(ctx context.Context, w *engine.Workspace, sym *parser.Symbol) (out [
 // sym's owner, or one of its inheritors, satisfies: it has, declared or
 // promoted from an embedded type, every method the interface and the
 // workspace interfaces it embeds declare.
-// shortcut: method names, not signatures; unknown methods of an external
+// shortcut: method names, not signatures; a call through an interface that
+// embeds the declaring one (s Store; s.Find() of Finder) counts for every type
+// satisfying Finder, upgrade by keeping the operand's interface on the
+// relation; unknown methods of an external
 // embedded interface are not required; the first MaxScroll methods of sym's
 // name only.
 func goVia(ctx context.Context, w *engine.Workspace, sym *parser.Symbol) (out []parser.Symbol) {

@@ -1022,3 +1022,61 @@ func Local() {
 	assert.Equal(t, map[string]string{"Find@40": ""}, calls("Other.Use"))
 	assert.Equal(t, map[string]string{"Find@44": "Repo.Find"}, calls("Local"))
 }
+
+// Only the methods an interface type itself lists are its method symbols: an
+// inline interface in a struct field or in a method's parameter adds none, so
+// a struct's real method keeps its qualified name to itself.
+func TestInlineInterfaceAddsNoMethodSymbol(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "g.go")
+	src := `package g
+
+type Conn struct{ c interface{ Close() error } }
+
+func (k *Conn) Close() error { return k.c.Close() }
+
+type I interface {
+	M(f interface{ X() })
+}
+`
+	list, err := Analyzer{}.Analyze(parser.File{Path: path, Root: root, Source: []byte(src), Language: "go"})
+	require.NoError(t, err)
+	var names []string
+	for _, s := range list {
+		names = append(names, s.QualifiedName)
+	}
+	assert.ElementsMatch(t, []string{"Conn", "Conn.Close", "I", "I.M"}, names)
+	syms := analyze(t, root, path, src)
+	assert.Equal(t, 5, syms["Conn.Close"].StartLine)
+	assert.Empty(t, syms["Conn.Close"].Metadata)
+	assert.Empty(t, syms["Conn"].Metadata)
+	assert.Equal(t, map[string]string{"methods": "M"}, syms["I"].Metadata)
+}
+
+// A local that shadows the receiver anywhere in the method (locals are one set
+// per declaration) leaves recv.f.M() with an empty target: the shadow's struct
+// must not type the receiver's field.
+func TestShadowedReceiverFieldCallKeepsEmptyTarget(t *testing.T) {
+	root := t.TempDir()
+	src := `package g
+
+type Svc struct{ repo Repo }
+
+type Other struct{ repo Local }
+
+func (s *Svc) Run() {
+	s.repo.Find()
+	h(s.repo.Find)
+	{
+		s := &Other{}
+		s.repo.Find()
+	}
+}
+`
+	syms := analyze(t, root, filepath.Join(root, "g.go"), src)
+	for _, r := range syms["Svc.Run"].Relations {
+		if r.TargetName == "Find" {
+			assert.Empty(t, r.TargetQualifiedName, "line %d", r.Line)
+		}
+	}
+}

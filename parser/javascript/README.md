@@ -331,13 +331,13 @@ literal's values are not walked, its methods own their calls.
   on one has `""`, or the target of a script name it shadows), single-quoted
   attribute values are skipped, and a component tag resolves to the
   `<script setup>` `default` symbol of its file, not to its `template` symbol:
-  `rag_find_usages` of the component's name answers for that `default` symbol
-  (`rag_call_hierarchy` for the `template` symbol). A `.vue` file without a
+  `rag_find_usages` and incoming `rag_call_hierarchy` of the component's name
+  answer for that `default` symbol. A `.vue` file without a
   script has no `default` symbol, so a tag of it links to nothing.
 - Nuxt auto-imports (no import statement) resolve by name only; an
   auto-imported component tag is listed by `rag_find_usages` of that
-  component, marked `by_name` (see [tools](../../tools/README.md)), and has
-  no incoming edge in `rag_call_hierarchy`.
+  component and as an incoming node of its `rag_call_hierarchy`, marked
+  `by_name` (see [tools](../../tools/README.md)).
 - tsconfig `paths` targets are relative to the `baseUrl` of the config that
   defines `paths` (or its directory), not to a `baseUrl` inherited through
   `extends`; package `extends` (`@tsconfig/node20`) are not followed, nor is

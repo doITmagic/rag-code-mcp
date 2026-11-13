@@ -269,13 +269,7 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 	if res != nil {
 		return res, nil, nil
 	}
-	// A Vue component is used through its default symbol (import Card from
-	// './Card.vue', <Card />); the template symbol only carries its name.
-	if sym.Kind == parser.KindTemplate && strings.HasSuffix(sym.FilePath, ".vue") {
-		if d, err := byName(ctx, w, store.Filter{FilePath: sym.FilePath}, sym.Module+".default", 1); err == nil && len(live(w, d)) == 1 {
-			sym = &d[0].Symbol
-		}
-	}
+	sym = vueDefault(ctx, w, sym)
 	callers, cut, err := referrers(ctx, w, sym, in.Limit)
 	if err != nil {
 		return storeErr(ctx, w, err)
@@ -312,25 +306,13 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 	for _, c := range callers {
 		seen[c.ID] = true
 	}
-	// A tag of a component no import names (Nuxt auto-import, global
-	// registration) stays an unresolved bare name: a usage by name.
-	if comp := vueComponent(ctx, w, sym); comp != "" && len(seen) < in.Limit {
-		hits, err := w.Scroll(ctx, store.Filter{Language: "javascript", TargetNames: []string{comp}}, min(in.Limit-len(seen), store.MaxScroll-1)+1)
-		if err != nil {
-			return storeErr(ctx, w, err)
-		}
-		var tags []parser.Symbol
-		for _, h := range live(w, hits) {
-			if strings.HasSuffix(h.Symbol.FilePath, ".vue") {
-				tags = append(tags, h.Symbol)
-			}
-		}
-		tags, dropped := keepWithin(tags, seen, in.Limit)
-		cut = cut || dropped
-		add(tags, sym, "", func(r parser.Relation) bool {
-			return r.Kind == parser.RelUsesType && r.TargetName == comp && r.TargetID == "" && r.TargetQualifiedName == ""
-		})
+	tags, isTag, err := vueTags(ctx, w, sym, in.Limit-len(seen))
+	if err != nil {
+		return storeErr(ctx, w, err)
 	}
+	tags, dropped := keepWithin(tags, seen, in.Limit)
+	cut = cut || dropped
+	add(tags, sym, "", isTag)
 	viaCount := total
 	for _, m := range viaInterfaces(ctx, w, sym) {
 		// at most len(seen) of them were counted already: in.Limit rows hold every new one that fits
@@ -386,6 +368,43 @@ func targets(sym *parser.Symbol) func(parser.Relation) bool {
 	return func(r parser.Relation) bool {
 		return r.TargetID == sym.ID || (r.TargetQualifiedName != "" && r.TargetQualifiedName == sym.QualifiedName)
 	}
+}
+
+// vueDefault is the default symbol of sym's .vue file when sym is that
+// file's template symbol, sym otherwise: a Vue component is used through its
+// default symbol (import Card from './Card.vue', <Card />); the template
+// symbol only carries its name.
+func vueDefault(ctx context.Context, w *engine.Workspace, sym *parser.Symbol) *parser.Symbol {
+	if sym.Kind == parser.KindTemplate && strings.HasSuffix(sym.FilePath, ".vue") {
+		if d, err := byName(ctx, w, store.Filter{FilePath: sym.FilePath}, sym.Module+".default", 1); err == nil && len(live(w, d)) == 1 {
+			return &d[0].Symbol
+		}
+	}
+	return sym
+}
+
+// vueTags lists up to limit+1 symbols of .vue files with a tag of the
+// component sym is the default symbol of that no import names (Nuxt
+// auto-import, global registration): it stays an unresolved bare name, a
+// usage by name. isTag matches those tags among their relations.
+func vueTags(ctx context.Context, w *engine.Workspace, sym *parser.Symbol, limit int) (tags []parser.Symbol, isTag func(parser.Relation) bool, err error) {
+	comp := vueComponent(ctx, w, sym)
+	isTag = func(r parser.Relation) bool {
+		return r.Kind == parser.RelUsesType && r.TargetName == comp && r.TargetID == "" && r.TargetQualifiedName == ""
+	}
+	if comp == "" || limit <= 0 {
+		return nil, isTag, nil
+	}
+	hits, err := w.Scroll(ctx, store.Filter{Language: "javascript", TargetNames: []string{comp}}, min(limit, store.MaxScroll-1)+1)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, h := range live(w, hits) {
+		if strings.HasSuffix(h.Symbol.FilePath, ".vue") {
+			tags = append(tags, h.Symbol)
+		}
+	}
+	return tags, isTag, nil
 }
 
 // vueComponent is the component name of the template of sym's .vue file
@@ -762,6 +781,7 @@ func (wk *walker) next(ctx context.Context, sym parser.Symbol, incoming bool) ([
 	exact := map[twinKey]bool{} // linked by at least one relation naming a qualified name
 	via := map[twinKey]string{}
 	if incoming {
+		sym := *vueDefault(ctx, wk.w, &sym) // as rag_find_usages answers for a component's name
 		direct := map[twinKey]bool{}
 		seen := map[string]bool{} // one limit for distinct direct and via callers
 		for i, m := range append([]parser.Symbol{sym}, viaInterfaces(ctx, wk.w, &sym)...) {
@@ -786,6 +806,14 @@ func (wk *walker) next(ctx context.Context, sym parser.Symbol, incoming bool) ([
 				}
 			}
 		}
+		tags, _, err := vueTags(ctx, wk.w, &sym, candidateLimit-len(seen)) // by name: never marked exact
+		if err != nil {
+			wk.err = err
+			return nil, nil, nil
+		}
+		tags, dropped := keepWithin(tags, seen, candidateLimit)
+		wk.cut = wk.cut || dropped
+		next = append(next, tags...)
 	} else {
 		// An ambiguous call naming a qualified name (build-tagged variants
 		// of one function) lists every variant, as incoming does.

@@ -40,3 +40,30 @@ func TestUsagesOfAutoImportedVueComponent(t *testing.T) {
 	data(t, r, &out)
 	assert.Equal(t, 1, out.Total, "a recursive component uses itself: %s", r.Message)
 }
+
+// rag_call_hierarchy incoming of a Vue component's name resolved to its
+// template symbol and listed no caller, and of its default symbol missed the
+// tags with no import, while rag_find_usages listed both parents.
+func TestHierarchyOfAutoImportedVueComponent(t *testing.T) {
+	v := newEnv(t, false, nil)
+	v.addFiles(t, map[string]string{
+		"AvatarCard.vue":     "<script setup>\nconst props = defineProps(['name'])\n</script>\n<template><b>{{ props.name }}</b></template>\n",
+		"AutoParent.vue":     "<template><AvatarCard /></template>\n",
+		"ExplicitParent.vue": "<script setup>\nimport AvatarCard from './AvatarCard.vue'\n</script>\n<template><AvatarCard /></template>\n",
+	})
+	for _, symbol := range []string{"AvatarCard", "AvatarCard.default"} {
+		var out struct {
+			Incoming *Node  `json:"incoming"`
+			Text     string `json:"text"`
+		}
+		r, _ := v.call(t, "rag_call_hierarchy", map[string]any{"workspace_root": v.root, "symbol": symbol, "direction": "incoming", "depth": 1})
+		require.Equal(t, "ok", r.Status, r.Message)
+		data(t, r, &out)
+		require.NotNil(t, out.Incoming)
+		got := map[string]bool{}
+		for _, c := range out.Incoming.Children {
+			got[filepath.Base(c.FilePath)] = c.ByName
+		}
+		assert.Equal(t, map[string]bool{"AutoParent.vue": true, "ExplicitParent.vue": false}, got, "%s: %s", symbol, out.Text)
+	}
+}

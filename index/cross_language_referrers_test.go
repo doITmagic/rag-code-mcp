@@ -2,6 +2,7 @@ package index
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/doITmagic/rag-code-mcp/v2/parser"
@@ -41,7 +42,7 @@ func crossRels(t *testing.T, files map[string]string) (page, doc parser.Relation
 	}
 	_, err := f.run(t, nil)
 	require.NoError(t, err)
-	return f.symbols(t, f.root+"/page.fkh")["page"].Relations[0], f.symbols(t, f.root+"/guide.fkd")["guide"].Relations[0]
+	return f.symbols(t, filepath.Join(f.root, "page.fkh"))["page"].Relations[0], f.symbols(t, filepath.Join(f.root, "guide.fkd"))["guide"].Relations[0]
 }
 
 // html and docs callers resolve across languages (onclick="f()" names a
@@ -58,8 +59,8 @@ func TestFilesRunCrossLanguageCallerAfterDefinitionRemoved(t *testing.T) {
 	b := e.write(t, "lib/util.js", "func f as global")
 	_, err := e.run(t, nil)
 	require.NoError(t, err)
-	require.Equal(t, parser.ResolutionAmbiguous, e.symbols(t, e.root+"/page.fkh")["page"].Relations[0].Resolution, "precondition")
-	require.Equal(t, parser.ResolutionAmbiguous, e.symbols(t, e.root+"/guide.fkd")["guide"].Relations[0].Resolution, "precondition")
+	require.Equal(t, parser.ResolutionAmbiguous, e.symbols(t, filepath.Join(e.root, "page.fkh"))["page"].Relations[0].Resolution, "precondition")
+	require.Equal(t, parser.ResolutionAmbiguous, e.symbols(t, filepath.Join(e.root, "guide.fkd"))["guide"].Relations[0].Resolution, "precondition")
 
 	require.NoError(t, os.Remove(b))
 	_, err = e.run(t, func(o *Options) { o.Files = []string{}; o.Deleted = []string{b} })
@@ -72,8 +73,8 @@ func TestFilesRunCrossLanguageCallerAfterDefinitionRemoved(t *testing.T) {
 	wantPage, wantDoc := crossRels(t, files)
 	require.NotEmpty(t, wantPage.TargetID, "full run")
 	require.NotEmpty(t, wantDoc.TargetID, "full run")
-	page, doc := e.symbols(t, e.root+"/page.fkh")["page"].Relations[0], e.symbols(t, e.root+"/guide.fkd")["guide"].Relations[0]
-	a := e.symbols(t, e.root+"/src/util.js")["f"].ID
+	page, doc := e.symbols(t, filepath.Join(e.root, "page.fkh"))["page"].Relations[0], e.symbols(t, filepath.Join(e.root, "guide.fkd"))["guide"].Relations[0]
+	a := e.symbols(t, filepath.Join(e.root, "src/util.js"))["f"].ID
 	assert.Equal(t, a, page.TargetID, "html caller")
 	assert.Equal(t, wantPage.Resolution, page.Resolution, "html caller")
 	assert.Equal(t, a, doc.TargetID, "docs caller")
@@ -91,7 +92,7 @@ func TestFilesRunCrossLanguageCallerAfterDefinitionAdded(t *testing.T) {
 	e.write(t, "src/util.js", "func f as global")
 	_, err := e.run(t, nil)
 	require.NoError(t, err)
-	require.NotEmpty(t, e.symbols(t, e.root+"/page.fkh")["page"].Relations[0].TargetID, "precondition")
+	require.NotEmpty(t, e.symbols(t, filepath.Join(e.root, "page.fkh"))["page"].Relations[0].TargetID, "precondition")
 
 	b := e.write(t, "lib/util.js", "func f as global")
 	_, err = e.run(t, func(o *Options) { o.Files = []string{b} })
@@ -104,7 +105,7 @@ func TestFilesRunCrossLanguageCallerAfterDefinitionAdded(t *testing.T) {
 	wantPage, wantDoc := crossRels(t, files)
 	require.Empty(t, wantPage.TargetID, "full run")
 	require.Empty(t, wantDoc.TargetID, "full run")
-	page, doc := e.symbols(t, e.root+"/page.fkh")["page"].Relations[0], e.symbols(t, e.root+"/guide.fkd")["guide"].Relations[0]
+	page, doc := e.symbols(t, filepath.Join(e.root, "page.fkh"))["page"].Relations[0], e.symbols(t, filepath.Join(e.root, "guide.fkd"))["guide"].Relations[0]
 	assert.Equal(t, wantPage.TargetID, page.TargetID, "html caller")
 	assert.Equal(t, wantPage.Resolution, page.Resolution, "html caller")
 	assert.Equal(t, wantDoc.TargetID, doc.TargetID, "docs caller")
@@ -120,13 +121,13 @@ func TestFilesRunCrossLanguageCallerAfterGlobalChanged(t *testing.T) {
 	a := e.write(t, "src/util.js", "func f")
 	_, err := e.run(t, nil)
 	require.NoError(t, err)
-	require.Empty(t, e.symbols(t, e.root+"/page.fkh")["page"].Relations[0].TargetID, "precondition")
+	require.Empty(t, e.symbols(t, filepath.Join(e.root, "page.fkh"))["page"].Relations[0].TargetID, "precondition")
 
 	for _, src := range []string{"func f as global", "func f"} {
 		e.write(t, "src/util.js", src)
 		_, err = e.run(t, func(o *Options) { o.Files = []string{a} })
 		require.NoError(t, err)
-		page := e.symbols(t, e.root+"/page.fkh")["page"].Relations[0]
+		page := e.symbols(t, filepath.Join(e.root, "page.fkh"))["page"].Relations[0]
 		assert.Equal(t, src != "func f", page.TargetID != "", src)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -160,6 +161,9 @@ func TestWatcherUnreadableSubdir(t *testing.T) {
 
 // A failed restart (the root came back unreadable) is retried on a later call.
 func TestWatcherRestartRetried(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows ignores directory permission bits: a 0o100 root stays listable, so the watch cannot be made to fail")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("root reads everything")
 	}

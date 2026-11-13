@@ -247,6 +247,7 @@ func TestVerifyHomeSymlinkGuard(t *testing.T) {
 	link := filepath.Join(t.TempDir(), "homelink")
 	require.NoError(t, os.Symlink(realHome, link))
 	t.Setenv("HOME", link)
+	t.Setenv("USERPROFILE", link) // os.UserHomeDir reads USERPROFILE on Windows
 	_, err := validateRoot(cfg, realHome)
 	var re *RootError
 	require.ErrorAs(t, err, &re, "the resolved home directory must be rejected")

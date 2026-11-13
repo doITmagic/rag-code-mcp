@@ -779,6 +779,9 @@ func TestRunFilesSkipsSymlink(t *testing.T) {
 // An unreadable directory is skipped with a WARN: its files leave the index
 // and nothing else would say why.
 func TestWalkWarnsUnreadableDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows ignores directory permission bits: a 000 directory stays listable")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("root reads a 000 directory")
 	}

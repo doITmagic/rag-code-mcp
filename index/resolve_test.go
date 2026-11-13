@@ -2,6 +2,7 @@ package index
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -67,7 +68,7 @@ func TestResolveByModuleAndName(t *testing.T) {
 	_, err = e.run(t, nil)
 	require.NoError(t, err)
 	assert.Equal(t, target, e.symbols(t, c)["G"].Relations[0].TargetID, "from the store")
-	assert.Empty(t, e.symbols(t, e.root+"/g.go")["H"].Relations[0].TargetID)
+	assert.Empty(t, e.symbols(t, filepath.Join(e.root, "g.go"))["H"].Relations[0].TargetID)
 }
 
 // onclick="toggle()" in a page names the browser global window.toggle: the

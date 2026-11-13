@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"sync"
 	"testing"
@@ -345,6 +346,9 @@ func BenchmarkSearch15k(b *testing.B) {
 // a handle is open: the handle must not keep writing into the unlinked file.
 // Reads see the collection gone and the next write lands in a new file on disk.
 func TestReopensDeletedFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows refuses to delete or replace a file another handle holds open, so the stale handle cannot arise")
+	}
 	dir := t.TempDir()
 	a := New(dir)
 	defer a.Close()

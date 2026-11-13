@@ -143,7 +143,7 @@ func TestWorkspaceValidation(t *testing.T) {
 		{"relative", "foo/bar", cfg, "", "is not absolute"},
 		{"missing", filepath.Join(good, "nope"), cfg, "", "does not exist"},
 		{"file", file, cfg, "", "is not a directory"},
-		{"fs root", "/", cfg, "", "is a filesystem root"},
+		{"fs root", filepath.VolumeName(good) + string(filepath.Separator), cfg, "", "is a filesystem root"},
 		{"home", home, cfg, "", "is the home directory"},
 		{"temp", os.TempDir(), cfg, "", "is the temp directory"},
 		{"inside allowed", filepath.Join(good), allowed, good, ""},

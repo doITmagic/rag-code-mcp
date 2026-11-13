@@ -84,6 +84,9 @@ snapshot:
   version_template: "{{ incpatch .Version }}-next"
 
 changelog:
+  # v2 rewrites v1: notes generated from the last v1 tag would list the abandoned
+  # dev line, so the release text is the header and footer only.
+  disable: true
   sort: asc
   use: github
   filters:
@@ -121,7 +124,7 @@ release:
 
     **Upgrading from v1:** run `./rag-code-install` from the archive. Do not use v1's `rag-code-mcp --update` or `brew upgrade`: they replace only the binary and leave the v1 setup (Qdrant, old config, IDE entries) behind.
     
-    Semantic code navigation using RAG (Retrieval-Augmented Generation).
+    Local semantic code navigation for AI clients over MCP: an embedded SQLite index per workspace and one Ollama embedding model.
     
     ### Installation
     
@@ -136,6 +139,13 @@ release:
     curl -L https://github.com/doITmagic/rag-code-mcp/releases/download/{{.Tag}}/rag-code-mcp_darwin_arm64.tar.gz | tar xz
     ./rag-code-install -y
     ```
+
+    **Windows (PowerShell):**
+    ```powershell
+    Invoke-WebRequest -Uri "https://github.com/doITmagic/rag-code-mcp/releases/download/{{.Tag}}/rag-code-mcp_windows_amd64.zip" -OutFile "ragcode.zip"; Expand-Archive ragcode.zip -DestinationPath ragcode -Force; .\ragcode\rag-code-install.exe -y
+    ```
+
+    **WSL:** install inside WSL (Linux archive) when your MCP client runs in WSL; install natively on Windows for Windows IDEs.
     
     **Or download the archive for your platform below.**
   

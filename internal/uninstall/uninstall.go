@@ -54,7 +54,12 @@ func Run(ctx context.Context, o Options) error {
 	StopProcess(ctx, Binary(home))
 
 	step(o.Out, "Removing IDE entries")
-	for _, t := range idepaths.Targets() {
+	targets := idepaths.Targets()
+	if appData := os.Getenv("APPDATA"); appData != "" {
+		// Earlier Windows installs wrote Cursor's entry here; Cursor never read it.
+		targets = append(targets, idepaths.Target{Name: "Cursor (old path)", Path: filepath.Join(appData, "Cursor", "mcp.json"), Keys: []string{"mcpServers"}})
+	}
+	for _, t := range targets {
 		if err := t.Remove(); err != nil {
 			warn(o.Out, t.Name+": "+err.Error())
 		}

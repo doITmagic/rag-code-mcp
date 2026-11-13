@@ -51,15 +51,15 @@ func Targets() []Target {
 	if codexHome == "" {
 		codexHome = j(home, ".codex")
 	}
-	cursor := j(home, ".cursor")
 	claudeDesktop, zed, vscode := j(cfgDir, "Claude"), j(home, ".config", "zed"), j(cfgDir, "Code", "User")
 	if runtime.GOOS == "windows" && appData != "" {
-		cursor, claudeDesktop, zed, vscode = j(appData, "Cursor"), j(appData, "Claude"), j(appData, "Zed"), j(appData, "Code", "User")
+		// Not Cursor: it reads ~/.cursor/mcp.json on Windows too.
+		claudeDesktop, zed, vscode = j(appData, "Claude"), j(appData, "Zed"), j(appData, "Code", "User")
 	}
 
 	mcp := []string{"mcpServers"}
 	ts := []Target{
-		{Key: "cursor", Name: "Cursor", Path: j(cursor, "mcp.json"), Keys: mcp},
+		{Key: "cursor", Name: "Cursor", Path: j(home, ".cursor", "mcp.json"), Keys: mcp},
 		{Key: "windsurf", Name: "Windsurf", Path: j(home, ".codeium", "windsurf", "mcp_config.json"), Keys: mcp},
 		{Key: "claude-code", Name: "Claude Code", Path: j(home, ".claude.json"), Dir: j(home, ".claude"), Keys: mcp},
 		{Key: "claude-desktop", Name: "Claude Desktop", Path: j(claudeDesktop, "claude_desktop_config.json"), Keys: mcp},

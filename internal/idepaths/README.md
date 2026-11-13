@@ -50,7 +50,7 @@ Tests:
 
 | File | Covers |
 |:---|:---|
-| `idepaths_test.go` | Linux paths of all 14 targets and `CODEX_HOME`; write/merge/remove for each JSON shape, keeping other keys; v1's env keys dropped, user keys and v2 overrides kept (`TestWriteDropsV1Env`); `ErrNotInstalled` creates no file; invalid JSON and a non-object servers key are refused and the file left untouched; Codex through a fake `codex` script (add, remove, missing CLI). |
+| `idepaths_test.go` | Linux paths of all 14 targets and `CODEX_HOME`; on Windows Cursor stays at `~/.cursor/mcp.json` while Claude Desktop, VS Code and Zed are under `%APPDATA%` (`TestTargetsPathsWindows`); write/merge/remove for each JSON shape, keeping other keys; v1's env keys dropped, user keys and v2 overrides kept (`TestWriteDropsV1Env`); `ErrNotInstalled` creates no file; invalid JSON and a non-object servers key are refused and the file left untouched; Codex through a fake `codex` script (add, remove, missing CLI). |
 | `zz_verify_test.go` | Verification tests: odd files on `Write` (truncated, binary, top-level array or `null` are refused and left untouched; whitespace-only and BOM-only files load as empty); `Remove` on a file without the servers key leaves it byte-for-byte unchanged; Zed path on macOS; table sanity (14 targets, unique keys, all fields set, `Dir` that is a plain file counts as not installed, IDE-side flags such as `disabled` survive a rewrite); a symlinked config stays a symlink and keeps its mode. |
 
 ## The targets
@@ -76,10 +76,13 @@ Tests:
 | `copilot` | GitHub Copilot CLI | `~/.copilot/mcp-config.json` | `mcpServers` |
 | `openhands` | OpenHands | `~/.openhands/mcp.json` | `mcpServers` |
 
-**Windows:** when `%APPDATA%` is set, Cursor, Claude Desktop, Zed and VS Code
-(and so Cline and Roo, which live under VS Code's `globalStorage`) move under
-it: `%APPDATA%\Cursor`, `%APPDATA%\Claude`, `%APPDATA%\Zed`,
-`%APPDATA%\Code\User`. The others stay under the user profile.
+**Windows:** when `%APPDATA%` is set, Claude Desktop, Zed and VS Code (and so
+Cline and Roo, which live under VS Code's `globalStorage`) move under it:
+`%APPDATA%\Claude`, `%APPDATA%\Zed`, `%APPDATA%\Code\User`. The others stay
+under the user profile, Cursor included: Cursor reads
+`%USERPROFILE%\.cursor\mcp.json` on Windows too. Earlier installs wrote it to
+`%APPDATA%\Cursor\mcp.json`; the [uninstaller](../uninstall/README.md) also
+removes the `ragcode` entry there.
 
 ## Key types and functions
 

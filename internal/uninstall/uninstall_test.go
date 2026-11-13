@@ -54,9 +54,18 @@ func setup(t *testing.T) *fixture {
 
 func TestRun(t *testing.T) {
 	f := setup(t)
+	// Earlier Windows installs wrote Cursor's entry here, a file Cursor never reads.
+	appData := t.TempDir()
+	t.Setenv("APPDATA", appData)
+	oldCursor := filepath.Join(appData, "Cursor", "mcp.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(oldCursor), 0o755))
+	require.NoError(t, os.WriteFile(oldCursor, []byte(`{"mcpServers":{"ragcode":{"command":"x"},"other":{"command":"y"}}}`), 0o644))
 	var out bytes.Buffer
 	require.NoError(t, Run(context.Background(), Options{Yes: true, Docker: true, Out: &out}), out.String())
 
+	old, _ := os.ReadFile(oldCursor)
+	assert.NotContains(t, string(old), "ragcode", "entry in the old %APPDATA% Cursor file")
+	assert.Contains(t, string(old), "other")
 	assert.NoDirExists(t, filepath.Join(f.root, ".ragcode"))
 	assert.FileExists(t, filepath.Join(f.root, "keep.go"))
 	assert.NoDirExists(t, filepath.Join(f.home, ".ragcode"))

@@ -69,6 +69,20 @@ func TestTargetsPaths(t *testing.T) {
 	assert.Equal(t, "/opt/codex/config.toml", byKey(t, "codex").Path)
 }
 
+// On Windows Cursor reads %USERPROFILE%\.cursor\mcp.json like on every OS;
+// only Claude Desktop, VS Code and Zed live under %APPDATA%.
+func TestTargetsPathsWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows paths")
+	}
+	home := tempHome(t)
+	appData := filepath.Join(home, "AppData", "Roaming")
+	assert.Equal(t, filepath.Join(home, ".cursor", "mcp.json"), byKey(t, "cursor").Path)
+	assert.Equal(t, filepath.Join(appData, "Claude", "claude_desktop_config.json"), byKey(t, "claude-desktop").Path)
+	assert.Equal(t, filepath.Join(appData, "Code", "User", "mcp.json"), byKey(t, "vscode").Path)
+	assert.Equal(t, filepath.Join(appData, "Zed", "settings.json"), byKey(t, "zed").Path)
+}
+
 func TestWriteMergeAndRemove(t *testing.T) {
 	tempHome(t)
 	cases := []struct {

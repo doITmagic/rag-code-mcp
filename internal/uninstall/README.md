@@ -47,7 +47,7 @@ Tests:
 
 | File | Covers |
 |:---|:---|
-| `uninstall_test.go` | Full run with a fake `docker`: workspace `.ragcode` and `~/.ragcode` removed, other workspace files kept, the pointer line stripped from `CLAUDE.md` and `.cursor/rules/ragcode.mdc` deleted, only the installer's PATH pair removed from `.bashrc`, other Cursor servers kept, exact Docker commands; the prompt for each workspace's `.ragcode`; every file `WriteIDERules` touched gets the pointer stripped; the index under `RAGCODE_HOME/index` goes with the home and no Qdrant is called. |
+| `uninstall_test.go` | Full run with a fake `docker`: workspace `.ragcode` and `~/.ragcode` removed, other workspace files kept, the pointer line stripped from `CLAUDE.md` and `.cursor/rules/ragcode.mdc` deleted, only the installer's PATH pair removed from `.bashrc`, other Cursor servers kept, the `ragcode` entry in the old `%APPDATA%\Cursor\mcp.json` removed (other servers kept), exact Docker commands; the prompt for each workspace's `.ragcode`; every file `WriteIDERules` touched gets the pointer stripped; the index under `RAGCODE_HOME/index` goes with the home and no Qdrant is called. |
 | `fifo_test.go` | Build tag `unix`. A FIFO at `AGENTS.md` in a known root is skipped instead of blocking `Run`; `CLAUDE.md` still loses its pointer. |
 | `stop_unix_test.go` | Build tag `!windows`. `StopProcess` stops the server binary but not processes that only mention its path (a shell, `tail -f`, a launcher wrapper). |
 | `stop_test.go` | `sameExe`: the same path in another case or with `..` matches, a same-named file in another folder does not. Runs on every OS. |
@@ -103,6 +103,13 @@ flowchart TD
     E --> F{-docker?}
     F -- yes --> G[docker rm -f and volume rm:<br/>ragcode-qdrant, ragcode-ollama]
 ```
+
+### IDE entries
+
+`Remove` on every `idepaths.Targets()` entry, plus `%APPDATA%\Cursor\mcp.json`
+when `APPDATA` is set: earlier Windows installs wrote Cursor's entry there, a
+file Cursor never reads (it reads `~/.cursor/mcp.json` on every OS). Other
+servers in each file are kept.
 
 ### Per-workspace data
 

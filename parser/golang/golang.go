@@ -311,12 +311,16 @@ func (fc *file) appendTypes(syms []parser.Symbol, decl *gotreesitter.Node) []par
 			kind = parser.KindInterface
 		}
 		s := fc.base(node, name, kind, "")
-		var methods []string
-		s.Relations, methods = fc.relations(spec, "", "")
-		if len(methods) > 0 {
-			s.Metadata = map[string]string{"methods": strings.Join(methods, ",")}
+		rels, elems := fc.relations(spec, "", "")
+		s.Relations = rels
+		var methods []parser.Symbol // no relations: the interface symbol holds its type uses once
+		for _, e := range elems {
+			m := fc.base(e, fc.text(parser.Field(e, fc.lang, "name")), parser.KindMethod, name)
+			m.Metadata = map[string]string{"interface": "true"}
+			methods = append(methods, m)
+			s.Metadata = map[string]string{"methods": strings.TrimPrefix(s.Metadata["methods"]+","+m.Name, ",")}
 		}
-		syms = append(syms, s)
+		syms = append(append(syms, s), methods...)
 	}
 	return syms
 }
@@ -356,7 +360,7 @@ func (fc *file) names(n *gotreesitter.Node) []string {
 
 // relations collects calls, type uses and embeddings under n. recv is the
 // enclosing method's receiver variable (calls on it resolve to owner), and
-// the returned names are interface method names when n is an interface.
+// the returned nodes are its method_elem nodes when n is an interface.
 // locals returns the parameter and variable names declared inside n, and the
 // qualified type of those declared with one type only (s *T, var s T,
 // s := &T{...}, never reassigned to something else), "" for the others.
@@ -469,7 +473,7 @@ func (fc *file) literalType(e *gotreesitter.Node) *gotreesitter.Node {
 	return parser.Field(e, fc.lang, "type")
 }
 
-func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []parser.Relation, methods []string) {
+func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []parser.Relation, methods []*gotreesitter.Node) {
 	add := func(kind parser.RelationKind, name, tqn string, at *gotreesitter.Node) {
 		if name == "" {
 			return
@@ -613,7 +617,7 @@ func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []pars
 					name, tqn := fc.resolveType(e.NamedChild(0))
 					add(parser.RelExtends, name, tqn, e)
 				case "method_elem":
-					methods = append(methods, fc.text(parser.Field(e, fc.lang, "name")))
+					methods = append(methods, e)
 					parser.Walk(e, visit)
 				}
 			}

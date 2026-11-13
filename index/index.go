@@ -1038,6 +1038,7 @@ type nameIndex struct {
 	kind      map[string]parser.Kind // symbol id -> kind, for fit
 	place     map[string]place       // symbol id -> where it is, for twins
 	global    map[string]bool        // symbol id -> a browser global an inline html handler reaches (metadata global)
+	iface     map[string]bool        // symbol id -> a Go interface's method (metadata interface), never matched by name alone
 	routes    map[string][]string    // Laravel route name (metadata name) -> route ids of the run, for route('x')
 	route     map[string]string      // route id -> its Laravel route name, store hits included
 	bases     map[string][]string    // class id -> what it extends, implements or uses (traits): qualified name, else bare name
@@ -1073,7 +1074,7 @@ func (idx nameIndex) addBases(s parser.Symbol) {
 
 func newNameIndex(files []parsed) nameIndex {
 	idx := nameIndex{byQN: map[string][]string{}, bySuffix: map[string][]string{}, byName: map[[2]string][]string{}, byModule: map[string][]string{},
-		byModName: map[[2]string][]string{}, lang: map[string]string{}, kind: map[string]parser.Kind{}, place: map[string]place{}, global: map[string]bool{}, routes: map[string][]string{}, route: map[string]string{}, bases: map[string][]string{}, changed: make(map[string]bool, len(files))}
+		byModName: map[[2]string][]string{}, lang: map[string]string{}, kind: map[string]parser.Kind{}, place: map[string]place{}, global: map[string]bool{}, iface: map[string]bool{}, routes: map[string][]string{}, route: map[string]string{}, bases: map[string][]string{}, changed: make(map[string]bool, len(files))}
 	for i := range files {
 		idx.changed[files[i].path] = true
 		for _, s := range files[i].syms {
@@ -1082,6 +1083,7 @@ func newNameIndex(files []parsed) nameIndex {
 			idx.kind[s.ID] = s.Kind
 			idx.place[s.ID] = placeOf(s)
 			idx.global[s.ID] = s.Metadata["global"] == "true"
+			idx.iface[s.ID] = s.Metadata["interface"] == "true"
 			if n := s.Metadata["name"]; s.Kind == parser.KindRoute && n != "" {
 				idx.routes[n] = append(idx.routes[n], s.ID)
 			}
@@ -1137,6 +1139,7 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 				kindOf[h.Symbol.ID] = h.Symbol.Kind
 				idx.place[h.Symbol.ID] = placeOf(h.Symbol)
 				idx.global[h.Symbol.ID] = h.Symbol.Metadata["global"] == "true"
+				idx.iface[h.Symbol.ID] = h.Symbol.Metadata["interface"] == "true"
 				idx.route[h.Symbol.ID] = h.Symbol.Metadata["name"]
 				if _, ok := idx.bases[h.Symbol.ID]; !ok { // an unchanged owner's bases, as a full run has them
 					idx.addBases(h.Symbol)
@@ -1249,7 +1252,9 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 	// by name alone, or naming a variable that has a function or method of
 	// its qualified name in its file (a PHP property and its method), binds
 	// only to something callable
-	// (an exact match alone may name a variable holding a function).
+	// (an exact match alone may name a variable holding a function), and
+	// never to a Go interface's method: a call on an operand of unknown type
+	// is on a concrete value as often as not.
 	fit := func(rk parser.RelationKind, nameOnly bool, ids []string) []string {
 		if rk == parser.RelImports {
 			return ids
@@ -1264,6 +1269,9 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 		}
 		out := ids[:0:0]
 		for _, id := range ids {
+			if nameOnly && idx.iface[id] {
+				continue
+			}
 			switch kindOf[id] {
 			case parser.KindTemplate, parser.KindScene, parser.KindChunk, parser.KindRoute, parser.KindHook:
 				continue

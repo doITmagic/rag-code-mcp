@@ -236,7 +236,7 @@ reference: [tools/README.md](tools/README.md).
 
 | Language | Extensions | What is indexed | Docs |
 |----------|-----------|-----------------|------|
-| **Go** | `.go` | Functions, methods, types, vars, consts; calls, type uses, embedding; Echo, Gin, Chi and net/http routes | [parser/golang](parser/golang/README.md) |
+| **Go** | `.go` | Functions, methods, types, interfaces and their methods, vars, consts; calls, type uses, embedding, interface implementations by method set; Echo, Gin, Chi and net/http routes | [parser/golang](parser/golang/README.md) |
 | **PHP + Laravel** | `.php`, `.blade.php` | Classes, interfaces, traits, enums, functions, methods; Laravel routes (with names and groups), Blade views and components, Livewire, WordPress hooks | [parser/php](parser/php/README.md) |
 | **Python** | `.py`, `.pyi` | Functions, classes, methods, module-level assignments, decorators; calls and base classes, `__init__.py` re-exports | [parser/python](parser/python/README.md) |
 | **JavaScript / TypeScript / Vue** | `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.tsx`, `.vue` | Functions, classes, methods, interfaces, type aliases, enums, CommonJS exports, Vue components and templates; `tsconfig` path aliases | [parser/javascript](parser/javascript/README.md) |

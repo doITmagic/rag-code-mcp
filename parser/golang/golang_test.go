@@ -127,6 +127,8 @@ func TestFixtureSymbols(t *testing.T) {
 	}{
 		{mod + ".Server", parser.KindClass, "", true, 14, 18, "type Server[K comparable] struct", "Server doc.\nSecond line."},
 		{mod + ".Handler", parser.KindInterface, "", true, 21, 25, "type Handler interface", "Handler doc"},
+		{mod + ".Handler.Handle", parser.KindMethod, "Handler", true, 23, 23, "Handle(ctx int) error", ""},
+		{mod + ".Handler.Close", parser.KindMethod, "Handler", true, 24, 24, "Close()", ""},
 		{mod + ".ID", parser.KindType, "", true, 29, 29, "ID = int", "ID doc"},
 		{mod + ".Names", parser.KindType, "", true, 30, 30, "Names []string", ""},
 		{mod + ".x", parser.KindVariable, "", false, 33, 33, "var x, y = 1, helper()", ""},
@@ -352,7 +354,7 @@ func TestConcurrent(t *testing.T) {
 			for j := 0; j < 5; j++ {
 				syms, err := Analyzer{}.Analyze(parser.File{Path: filepath.Join(root, "f.go"), Root: root, Source: []byte(fixture), Language: "go"})
 				assert.NoError(t, err)
-				assert.Len(t, syms, 13)
+				assert.Len(t, syms, 15)
 			}
 		}()
 	}
@@ -896,4 +898,43 @@ func F(c echo.Context, r Repo) {
 		"Save@18":   "",
 		"String@19": "github.com/labstack/echo/v4.Context.String",
 	}, calls)
+}
+
+// Each method of an interface is a method symbol owned by the interface,
+// marked interface=true and without relations: the interface symbol keeps
+// its own (extends, uses_type) and its method list.
+func TestInterfaceMethodsAreSymbols(t *testing.T) {
+	root := t.TempDir()
+	src := `package g
+
+import "io"
+
+type Repo interface {
+	// finds
+	Find(id int) (User, error)
+	io.Closer
+}
+`
+	syms := analyze(t, root, filepath.Join(root, "g.go"), src)
+	require.Len(t, syms, 2)
+	m, ok := syms["Repo.Find"]
+	require.True(t, ok, "missing Repo.Find")
+	assert.Equal(t, parser.KindMethod, m.Kind)
+	assert.Equal(t, "Repo", m.Owner)
+	assert.Equal(t, map[string]string{"interface": "true"}, m.Metadata)
+	assert.Equal(t, "Find(id int) (User, error)", m.Signature)
+	assert.Equal(t, "Find(id int) (User, error)", m.Content)
+	assert.Equal(t, "finds", m.Doc)
+	assert.Equal(t, 7, m.StartLine)
+	assert.Equal(t, 7, m.EndLine)
+	assert.True(t, m.Exported)
+	assert.Empty(t, m.Relations)
+
+	r := syms["Repo"]
+	assert.Equal(t, parser.KindInterface, r.Kind)
+	assert.Equal(t, map[string]string{"methods": "Find"}, r.Metadata)
+	assert.Equal(t, []parser.Relation{
+		rel(parser.RelUsesType, "User", "User", 7),
+		rel(parser.RelExtends, "Closer", "io.Closer", 8),
+	}, r.Relations)
 }

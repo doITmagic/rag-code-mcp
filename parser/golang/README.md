@@ -68,6 +68,7 @@ graph TD
 | `func (r *T) M()` | `method` | `T` | Owner is the receiver base type with pointer and type parameters stripped. |
 | `type T struct{...}` | `class` | | |
 | `type I interface{...}` | `interface` | | `Metadata["methods"]` lists the interface's method names, comma separated. |
+| A method of `type I interface{ M(x int) error }` | `method` | `I` | `<module>.I.M`; content and signature are the method's line (`M(x int) error`), doc the comment right above it. `Metadata["interface"]="true"`, so the index never binds a call matched by name alone to it ([index](../../index/README.md#6-resolve)). No relations: the interface symbol keeps the type uses of its methods. |
 | `type A = B`, `type N []string` | `type` | | Any other type spec, aliases included. |
 | `var x, y = ...` | `variable` | | One symbol per name; `_` is skipped unless the spec has relations (`var _ = Describe(...)` in Ginkgo tests, `var _ I = (*T)(nil)`): their calls and type uses would be lost otherwise. |
 | `const ...` | `constant` | | One symbol per name; `_` is skipped unless the spec has relations, as for `var`. |
@@ -231,9 +232,10 @@ evidence: a method named `GET` in a file that imports no router is no route.
 
 - No type inference: calls on fields, return values and locals whose type
   the file does not declare (`s.Inner.Do()`, `a := f(); a.Do()`) keep an
-  empty target qualified name. A call on an interface-typed operand targets
-  the interface's method name, which is no symbol (see the interface
-  limitation below).
+  empty target qualified name. A call on an interface-typed operand
+  targets the interface's method; which implementations it reaches is
+  worked out at query time by method names only
+  ([tools](../../tools/README.md#rag_find_usages)).
 - Function and method values: only the positions in the table count. Not
   covered: a method value on an operand of unknown type (a local from a
   function call, `s := newServer(); mux.HandleFunc(p, s.h)`, a package-level
@@ -280,12 +282,10 @@ evidence: a method named `GET` in a file that imports no router is no route.
   over `r.Routes()` (wakapi `routes/api/heartbeat.go`), or `path.Join` with
   any part that is not a literal or a same-file string const. A path naming a
   const declared in another file or a `var` gives no route either.
-- Interface methods are not symbols of their own: they are only listed in the
-  interface's `Metadata["methods"]`. `rag_find_usages` on a method declared
-  only in an interface (no implementation) answers "no indexed symbol named";
-  a call through the interface (`repo.M()` with `repo Repo`) targets
-  `<module>.Repo.M`, which the index, finding no such method, resolves by
-  name when one implementation has that name.
+- A bare method name shared by an interface and its implementation (`Find`)
+  names two symbols, so `rag_find_usages Find` asks to pick one; a call on an
+  operand of unknown type (`x := f(); x.Find()`) still binds by name to the
+  implementation only.
 - An import without an alias is known by the goimports guess of its name
   (`assumedName`), not by the imported package's `package` clause; a
   package whose real name differs from that guess gets calls with an empty
@@ -302,7 +302,7 @@ evidence: a method named `GET` in a file that imports no router is no route.
 
 | File | Covers |
 |------|--------|
-| `golang_test.go` | A fixture with grouped declarations, generics, embedded types, aliased/dot/blank imports: symbol kinds, owners, lines, signatures, docs, IDs, metadata; every relation and its target; module path without `go.mod`, nested `go.mod` stopping at the root; malformed input; analyzing the real `parser.go` of this repo; registration; concurrency; generic calls; `Exported` for test files and unexported owners; calls through local function values; a parameter shadowing an import; a func-type or closure parameter typing no use outside it, while a name the function and its closures declare with one type (`t *testing.T` and `t.Run(..., func(t *testing.T))`, `w` of two handler closures) keeps it; a local shadowing the receiver; a func-typed receiver called or named as a value shadowing a package function; the line of a chained call split over lines; functions and methods named as values (arguments, assignments, literals, returns), with fields, vars, consts, type switch and select locals skipped; an external test package as its own module; a renamed module seen without a restart; same-package types declared in another file, type parameters (receiver ones too) and the receiver skipped; blank vars keeping their relations; goimports-style assumed import names; a `go.mod` symlinked out of the root ignored, one symlinked inside it read. |
+| `golang_test.go` | A fixture with grouped declarations, generics, embedded types, aliased/dot/blank imports: symbol kinds, owners, lines, signatures, docs, IDs, metadata; every relation and its target; interface methods as method symbols (owner, signature, doc, line, `interface` metadata, no relations) with the interface symbol unchanged; module path without `go.mod`, nested `go.mod` stopping at the root; malformed input; analyzing the real `parser.go` of this repo; registration; concurrency; generic calls; `Exported` for test files and unexported owners; calls through local function values; a parameter shadowing an import; a func-type or closure parameter typing no use outside it, while a name the function and its closures declare with one type (`t *testing.T` and `t.Run(..., func(t *testing.T))`, `w` of two handler closures) keeps it; a local shadowing the receiver; a func-typed receiver called or named as a value shadowing a package function; the line of a chained call split over lines; functions and methods named as values (arguments, assignments, literals, returns), with fields, vars, consts, type switch and select locals skipped; an external test package as its own module; a renamed module seen without a restart; same-package types declared in another file, type parameters (receiver ones too) and the receiver skipped; blank vars keeping their relations; goimports-style assumed import names; a `go.mod` symlinked out of the root ignored, one symlinked inside it read. |
 | `routes_test.go` | net/http (Go 1.22 method and host patterns, a lowercase method, a tab after the method, a host without a dot, `http.HandleFunc`, `mux.Handle` with a wrapped handler, two method-value handlers of one name on one line); Chi routes (nested `Route` closures shadowing the outer router, `With`, `Group`, `Method`, `HandleFunc`, `Mount`; a sub-router mounted in the same function, nested mounts, `Mount("/", r)` giving no `//`, a sub-router mounted at two paths keeping its paths); Gin routes (nested groups in `{}` blocks, `Handle`, middleware before the handler, static files, `Use(mw)` chained or assigned keeping the group's prefix, no route from a `Use` middleware closure); Echo routes: nested and inline groups, a group in a struct field, a group passed to a function (and the prefix left out when two calls disagree), each handler form (function, method value, package function, inline closure), `Match` / `Add` / `Static` / `File`; a group variable shadowed in a block keeping the outer prefix after it; Echo and Gin paths without a leading slash (none in a file that also imports Chi for a struct-field router; Gin and Echo groups in one function each with their own join); the receiver evidence (a top-level var from a constructor, a router-typed struct field; no route on an `echo.Context`, a cache in a chi file or a parameter of another type); a router and groups declared with `var`, alone or in a `var (...)` block; no route in a file without a router import, in a test file, or for `Header().Add` / `time.Now().Add`; paths from a same-file string const and `path.Join` of consts and literals (Echo registrations and group prefixes; no route for a `var`, a run-time `path.Join` part, a local shadowing the const, or `+` on a parameter shadowing the `path` import). |
 | `zz_verify_test.go` | Verification tests: resolution probes, an unclean (non-normalized) root path, robustness on garbage and edge input, a second round of edge cases, very large and deeply nested files. |
 

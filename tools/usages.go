@@ -429,7 +429,8 @@ func ownerQN(s *parser.Symbol) string { return strings.TrimSuffix(s.QualifiedNam
 
 // viaInterfaces lists the methods named like sym of the workspace interfaces
 // its PHP class implements: directly, through a parent class or through an
-// interface extending them; for a trait method, the classes using the trait. A call through an interface-typed variable
+// interface extending them; also those of the subclasses and the classes using
+// it as a trait that do not declare their own method of that name. A call through an interface-typed variable
 // targets the interface's method only, so its callers are sym's too.
 // shortcut: PHP only, other languages' implements relations are not walked; extend when one asks for it.
 func viaInterfaces(ctx context.Context, w *engine.Workspace, sym *parser.Symbol) (out []parser.Symbol) {
@@ -439,20 +440,31 @@ func viaInterfaces(ctx context.Context, w *engine.Workspace, sym *parser.Symbol)
 	seen := map[string]bool{}
 	owner := ownerQN(sym)
 	queue := []store.Filter{{Language: "php", Kinds: []parser.Kind{parser.KindClass}, QualifiedName: owner}}
-	// and the classes using it as a trait: a class's only uses_type relations
-	// are its "use T;" lines (types in bodies belong to its members), unless
-	// they declare their own, which overrides the trait's
+	// and the classes that have sym unchanged: subclasses and classes using it
+	// as a trait (a class's only uses_type relations are its "use T;" lines,
+	// types in bodies belong to its members), unless they declare their own
 	declares := func(cls string) bool {
 		m, err := w.Scroll(ctx, store.Filter{Language: "php", Kinds: []parser.Kind{parser.KindMethod}, QualifiedName: cls + "." + sym.Name}, 1)
 		return err != nil || len(live(w, m)) > 0
 	}
-	if users, err := w.Scroll(ctx, store.Filter{Language: "php", Kinds: []parser.Kind{parser.KindClass}, TargetQualifiedNames: []string{owner}}, candidateLimit); err == nil {
+	down, inherits := []string{owner}, map[string]bool{owner: true}
+	for len(down) > 0 && len(inherits) < candidateLimit {
+		q := down[0]
+		down = down[1:]
+		users, err := w.Scroll(ctx, store.Filter{Language: "php", Kinds: []parser.Kind{parser.KindClass}, TargetQualifiedNames: []string{q}}, candidateLimit)
+		if err != nil {
+			break
+		}
 		for _, h := range live(w, users) {
-			if slices.ContainsFunc(h.Symbol.Relations, func(r parser.Relation) bool {
-				return r.Kind == parser.RelUsesType && r.TargetQualifiedName == owner
-			}) && !declares(h.Symbol.QualifiedName) {
-				queue = append(queue, store.Filter{IDs: []string{h.Symbol.ID}})
+			c := h.Symbol
+			if inherits[c.QualifiedName] || !slices.ContainsFunc(c.Relations, func(r parser.Relation) bool {
+				return (r.Kind == parser.RelUsesType || r.Kind == parser.RelExtends) && r.TargetQualifiedName == q
+			}) || declares(c.QualifiedName) {
+				continue
 			}
+			inherits[c.QualifiedName] = true
+			down = append(down, c.QualifiedName)
+			queue = append(queue, store.Filter{IDs: []string{c.ID}})
 		}
 	}
 	for len(queue) > 0 && len(seen) < candidateLimit {

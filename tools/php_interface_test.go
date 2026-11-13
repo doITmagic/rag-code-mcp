@@ -161,3 +161,21 @@ function run(Repo $repo, Finder $finder) {
 	assert.Equal(t, 2, out.Total, "both calls belong to the same referencing symbol run")
 	assert.False(t, out.Truncated, r.Message)
 }
+
+// Repo implements Finder with the find() it inherits from BaseRepo, so the
+// interface's callers are usages of BaseRepo::find.
+func TestInheritedMethodImplementsChildInterface(t *testing.T) {
+	v := newEnv(t, false, nil)
+	v.addFiles(t, map[string]string{"src/all.php": `<?php
+namespace App;
+interface Finder { public function find(); }
+class BaseRepo { public function find() {} }
+class Repo extends BaseRepo implements Finder {}
+function run(Finder $repo) { $repo->find(); }
+`})
+	files := usagesOf(t, v, `App\BaseRepo::find`)
+	require.Len(t, files, 1, "Repo implements Finder using BaseRepo::find")
+	require.Len(t, files[0].Usages, 1)
+	assert.Equal(t, "App.run", files[0].Usages[0].Caller)
+	assert.Equal(t, "App.Finder", files[0].Usages[0].Via)
+}

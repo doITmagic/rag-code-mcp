@@ -394,7 +394,9 @@ $repo->find()`) targets only the interface's method. Those usages carry
 `via` (the interface's qualified name) and the message counts them; the object
 may be another implementation. The interface's own method answers as before,
 and an interface outside the workspace adds nothing. Other languages are not
-walked; each interface's callers are scrolled with their own `limit`.
+walked; `limit` counts the direct and the via referencing symbols together
+(direct ones first), and a cut through the via ones is reported like any
+other (`truncated`, raise `limit`).
 
 ```json
 {"name": "rag_find_usages", "arguments": {

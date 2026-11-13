@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -80,4 +81,28 @@ func TestUsagesOfPhpMethodThroughInterface(t *testing.T) {
 	w.IndexFiles([]string{p}, nil)
 	require.Eventually(t, func() bool { s := w.Status(); return !s.Running && !s.Queued }, 10*time.Second, 20*time.Millisecond)
 	check()
+}
+
+// limit counts the direct and the via callers together: a cut through an
+// interface's callers says to raise limit, never that files were deleted.
+func TestUsagesThroughInterfaceRespectLimit(t *testing.T) {
+	v := newEnv(t, false, nil)
+	v.addFiles(t, map[string]string{
+		"src/All.php": "<?php\nnamespace App;\ninterface Finder { public function find(); }\nclass Repo implements Finder { public function find() {} }\n" +
+			"class A { public function a(Finder $f) { $f->find(); } }\nclass B { public function b(Finder $f) { $f->find(); } }\n" +
+			"class C { public function c(Repo $r) { $r->find(); } }\n",
+	})
+	for _, limit := range []int{1, 2} {
+		r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": `App\Repo::find`, "limit": limit})
+		require.Equal(t, "ok", r.Status, r.Message)
+		var out struct {
+			Total     int  `json:"total"`
+			Truncated bool `json:"truncated"`
+		}
+		data(t, r, &out)
+		assert.Equal(t, limit, out.Total, r.Message)
+		assert.True(t, out.Truncated)
+		assert.Contains(t, r.Message, fmt.Sprintf("only the first %d referencing symbols: raise limit", limit))
+		assert.NotContains(t, r.Message, "deleted from disk")
+	}
 }

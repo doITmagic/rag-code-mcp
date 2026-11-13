@@ -297,13 +297,13 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 		}
 	}
 	add(callers, sym, "")
-	viaCount := total
+	viaCount, n := total, len(callers) // n: referencing symbols, direct and via, within one limit
 	for _, m := range viaInterfaces(ctx, w, sym) {
-		vc, vcut, err := referrers(ctx, w, &m, in.Limit)
+		vc, vcut, err := referrers(ctx, w, &m, in.Limit-n)
 		if err != nil {
 			return storeErr(ctx, w, err)
 		}
-		cut = cut || vcut
+		cut, n = cut || vcut, n+len(vc)
 		add(vc, &m, ownerQN(&m))
 	}
 	viaCount = total - viaCount
@@ -317,10 +317,10 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 	data := map[string]any{"symbol": toCandidate(*sym), "files": files, "total": total, "ambiguous_by_name": ambiguous, "by_name": guessed, "truncated": cut}
 	msg := fmt.Sprintf("%d usages in %d files", total, len(files))
 	switch {
-	case cut && len(callers) == in.Limit && in.Limit < store.MaxScroll-1:
+	case cut && n == in.Limit && in.Limit < store.MaxScroll-1:
 		msg += fmt.Sprintf("; only the first %d referencing symbols: raise limit for the rest", in.Limit)
-	case cut && len(callers) == store.MaxScroll-1:
-		msg += fmt.Sprintf("; only the first %d referencing symbols, the most one answer holds: grep the name for the rest", len(callers))
+	case cut && n == store.MaxScroll-1:
+		msg += fmt.Sprintf("; only the first %d referencing symbols, the most one answer holds: grep the name for the rest", n)
 	case cut: // fewer than limit: rows of files deleted from disk filled the store's scroll
 		msg += fmt.Sprintf("; the store scroll (%d rows) filled up with callers in files deleted from disk, more may follow: grep the name for the rest", store.MaxScroll)
 	}
@@ -655,7 +655,7 @@ func (wk *walker) next(ctx context.Context, sym parser.Symbol, incoming bool) ([
 	if incoming {
 		direct := map[twinKey]bool{}
 		for i, m := range append([]parser.Symbol{sym}, viaInterfaces(ctx, wk.w, &sym)...) {
-			callers, cut, err := referrers(ctx, wk.w, &m, candidateLimit)
+			callers, cut, err := referrers(ctx, wk.w, &m, candidateLimit-len(next)) // one limit for direct and via callers
 			wk.cut = wk.cut || cut
 			if err != nil {
 				wk.err = err

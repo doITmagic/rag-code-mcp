@@ -416,7 +416,8 @@ those by the route's name, not its URI.
 A PHP method of a class that implements a workspace interface (directly,
 through a parent class, or through an interface extending it) also lists the
 callers of that interface's method of the same name (`viaInterfaces`); a
-method of a trait counts for every class that uses the trait (`use T;`): a call
+method of a trait counts for every class that uses the trait (`use T;`) and
+does not declare its own method of that name, which overrides it: a call
 on a variable typed with the interface (`UserRepositoryInterface $repo;
 $repo->find()`) targets only the interface's method. Those usages carry
 `via` (the interface's qualified name) and the message counts them; the object

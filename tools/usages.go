@@ -440,12 +440,17 @@ func viaInterfaces(ctx context.Context, w *engine.Workspace, sym *parser.Symbol)
 	owner := ownerQN(sym)
 	queue := []store.Filter{{Language: "php", Kinds: []parser.Kind{parser.KindClass}, QualifiedName: owner}}
 	// and the classes using it as a trait: a class's only uses_type relations
-	// are its "use T;" lines (types in bodies belong to its members)
+	// are its "use T;" lines (types in bodies belong to its members), unless
+	// they declare their own, which overrides the trait's
+	declares := func(cls string) bool {
+		m, err := w.Scroll(ctx, store.Filter{Language: "php", Kinds: []parser.Kind{parser.KindMethod}, QualifiedName: cls + "." + sym.Name}, 1)
+		return err != nil || len(live(w, m)) > 0
+	}
 	if users, err := w.Scroll(ctx, store.Filter{Language: "php", Kinds: []parser.Kind{parser.KindClass}, TargetQualifiedNames: []string{owner}}, candidateLimit); err == nil {
 		for _, h := range live(w, users) {
 			if slices.ContainsFunc(h.Symbol.Relations, func(r parser.Relation) bool {
 				return r.Kind == parser.RelUsesType && r.TargetQualifiedName == owner
-			}) {
+			}) && !declares(h.Symbol.QualifiedName) {
 				queue = append(queue, store.Filter{IDs: []string{h.Symbol.ID}})
 			}
 		}

@@ -120,6 +120,24 @@ func TestUsagesOfPhpTraitMethodThroughInterface(t *testing.T) {
 	assert.Equal(t, map[string]string{`App.Subscribe.handle`: `App.SubscriptionAble`}, viaOf(usagesOf(t, v, `App\ProvidesSubscriptions::subs`)))
 }
 
+// A class that uses a trait but declares its own find() overrides the trait
+// method, so a call through the interface reaches Repo::find, not Finds::find.
+func TestTraitOverrideHasNoInterfaceUsage(t *testing.T) {
+	v := newEnv(t, false, nil)
+	v.addFiles(t, map[string]string{"src/all.php": `<?php
+namespace App;
+interface Finder { public function find(); }
+trait Finds { public function find() {} }
+class Repo implements Finder {
+    use Finds;
+    public function find() {}
+}
+function run(Finder $repo) { $repo->find(); }
+`})
+	assert.Empty(t, usagesOf(t, v, `App\Finds::find`), "Repo overrides Finds::find; interface dispatch cannot reach the trait method")
+	assert.NotEmpty(t, usagesOf(t, v, `App\Repo::find`), "control: interface dispatch can reach Repo::find")
+}
+
 // limit counts distinct referencing symbols: one caller with a direct and a via
 // call is one symbol, so limit 1 keeps both usages.
 func TestInterfaceLimitCountsDistinctCallers(t *testing.T) {

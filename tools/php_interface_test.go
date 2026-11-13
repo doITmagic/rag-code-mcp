@@ -119,3 +119,27 @@ func TestUsagesOfPhpTraitMethodThroughInterface(t *testing.T) {
 	})
 	assert.Equal(t, map[string]string{`App.Subscribe.handle`: `App.SubscriptionAble`}, viaOf(usagesOf(t, v, `App\ProvidesSubscriptions::subs`)))
 }
+
+// limit counts distinct referencing symbols: one caller with a direct and a via
+// call is one symbol, so limit 1 keeps both usages.
+func TestInterfaceLimitCountsDistinctCallers(t *testing.T) {
+	v := newEnv(t, false, nil)
+	v.addFiles(t, map[string]string{"src/all.php": `<?php
+namespace App;
+interface Finder { public function find(); }
+class Repo implements Finder { public function find() {} }
+function run(Repo $repo, Finder $finder) {
+    $repo->find();
+    $finder->find();
+}
+`})
+	r, _ := v.call(t, "rag_find_usages", map[string]any{"workspace_root": v.root, "symbol": `App\Repo::find`, "limit": 1})
+	require.Equal(t, "ok", r.Status, r.Message)
+	var out struct {
+		Total     int  `json:"total"`
+		Truncated bool `json:"truncated"`
+	}
+	data(t, r, &out)
+	assert.Equal(t, 2, out.Total, "both calls belong to the same referencing symbol run")
+	assert.False(t, out.Truncated, r.Message)
+}

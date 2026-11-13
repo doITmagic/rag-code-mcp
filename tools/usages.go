@@ -308,11 +308,14 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 		}
 	}
 	add(callers, sym, "", targets(sym))
-	n := len(callers) // referencing symbols, direct, by tag and via, within one limit
+	seen := map[string]bool{} // distinct referencing symbols, direct, by tag and via, within one limit
+	for _, c := range callers {
+		seen[c.ID] = true
+	}
 	// A tag of a component no import names (Nuxt auto-import, global
 	// registration) stays an unresolved bare name: a usage by name.
-	if comp := vueComponent(ctx, w, sym); comp != "" && n < in.Limit {
-		hits, err := w.Scroll(ctx, store.Filter{Language: "javascript", TargetNames: []string{comp}}, min(in.Limit-n, store.MaxScroll-1)+1)
+	if comp := vueComponent(ctx, w, sym); comp != "" && len(seen) < in.Limit {
+		hits, err := w.Scroll(ctx, store.Filter{Language: "javascript", TargetNames: []string{comp}}, min(in.Limit-len(seen), store.MaxScroll-1)+1)
 		if err != nil {
 			return storeErr(ctx, w, err)
 		}
@@ -322,23 +325,24 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 				tags = append(tags, h.Symbol)
 			}
 		}
-		if len(tags) > in.Limit-n {
-			tags, cut = tags[:in.Limit-n], true
-		}
-		n += len(tags)
+		tags, dropped := keepWithin(tags, seen, in.Limit)
+		cut = cut || dropped
 		add(tags, sym, "", func(r parser.Relation) bool {
 			return r.Kind == parser.RelUsesType && r.TargetName == comp && r.TargetID == "" && r.TargetQualifiedName == ""
 		})
 	}
 	viaCount := total
 	for _, m := range viaInterfaces(ctx, w, sym) {
-		vc, vcut, err := referrers(ctx, w, &m, in.Limit-n)
+		// at most len(seen) of them were counted already: in.Limit rows hold every new one that fits
+		vc, vcut, err := referrers(ctx, w, &m, in.Limit)
 		if err != nil {
 			return storeErr(ctx, w, err)
 		}
-		cut, n = cut || vcut, n+len(vc)
+		vc, dropped := keepWithin(vc, seen, in.Limit)
+		cut = cut || vcut || dropped
 		add(vc, &m, ownerQN(&m), targets(&m))
 	}
+	n := len(seen)
 	viaCount = total - viaCount
 	files := make([]FileUsages, 0, len(byFile))
 	for _, g := range byFile {
@@ -395,6 +399,24 @@ func vueComponent(ctx context.Context, w *engine.Workspace, sym *parser.Symbol) 
 		return ""
 	}
 	return hits[0].Symbol.Name
+}
+
+// keepWithin keeps the callers already in seen and the new ones while seen
+// holds fewer than limit, adding them to seen; dropped says a new one did not fit.
+// One symbol calling sym directly and through an interface counts once.
+func keepWithin(callers []parser.Symbol, seen map[string]bool, limit int) (kept []parser.Symbol, dropped bool) {
+	for _, c := range callers {
+		switch {
+		case seen[c.ID]:
+		case len(seen) >= limit:
+			dropped = true
+			continue
+		default:
+			seen[c.ID] = true
+		}
+		kept = append(kept, c)
+	}
+	return kept, dropped
 }
 
 // isID is true for a symbol id: 32 lowercase hex digits.
@@ -724,13 +746,15 @@ func (wk *walker) next(ctx context.Context, sym parser.Symbol, incoming bool) ([
 	via := map[twinKey]string{}
 	if incoming {
 		direct := map[twinKey]bool{}
+		seen := map[string]bool{} // one limit for distinct direct and via callers
 		for i, m := range append([]parser.Symbol{sym}, viaInterfaces(ctx, wk.w, &sym)...) {
-			callers, cut, err := referrers(ctx, wk.w, &m, candidateLimit-len(next)) // one limit for direct and via callers
-			wk.cut = wk.cut || cut
+			callers, cut, err := referrers(ctx, wk.w, &m, candidateLimit)
 			if err != nil {
 				wk.err = err
 				return nil, nil, nil
 			}
+			callers, dropped := keepWithin(callers, seen, candidateLimit)
+			wk.cut = wk.cut || cut || dropped
 			next = append(next, callers...)
 			for _, c := range callers {
 				if k := twinOf(&c); i == 0 {

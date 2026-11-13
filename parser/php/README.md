@@ -198,6 +198,7 @@ The argument after the URI gives the route one relation to its handler:
 | `'C@m'`, `['as' => ..., 'uses' => 'C@m']` | `call` `m` | `<group namespaces>\C` + `.m`, without the application's controller namespace (`App\Http\Controllers`, set in another file), so the indexer links it as a qualified suffix (`by_name` in the tools, but only that controller). A leading `\` makes `C` fully qualified. |
 | `[C::class, 'm']`, also under `'uses'` | `call` `m` | `C` resolved through the import table, `.m` (exact) |
 | `C::class` or `'C'` (invokable controller, `resource`, `apiResource`) | `uses_type` `C` | the class, as above |
+| `'m'` (no `@`, no `\`) inside `Route::controller(C::class)->group(fn)` (also chained with `prefix` / `namespace`, nested, or `Route::group(['controller' => C::class], fn)`; the innermost group's controller) | `call` `m` | `C` resolved through the import table, `.m` (exact); `resource` / `apiResource` keep their class |
 | `Route::view('/about', 'pages.about')` | `imports` | the view name, which is the template's qualified name |
 
 A closure handler, `Route::redirect` and a string that is not a class name
@@ -243,8 +244,10 @@ A view outside any `views` folder has module `""`.
   (`'as' => 'x'`, `->name('x')`) are not stored, so `route('x')` is not a
   usage of the route. Routes registered inside a method (a
   `RouteServiceProvider` mapping) are not placed in the groups of another
-  file, and `Route::controller(C::class)->group(...)` does not give the
-  routes inside it their controller.
+  file: the prefix, namespace, controller or middleware a provider wraps
+  around `routes/*.php` is not added. Inside a controller group, an
+  invokable controller written as a plain string (`'InvokableController'`)
+  is read as a method name, as it is when Laravel cannot find that class.
 - A static call to a member a class inherits from outside the workspace
   (`Authority::all()` on an Eloquent model) is not a usage of the class.
 - Receiver types come only from declarations and classes written in the
@@ -289,7 +292,7 @@ A view outside any `views` folder has module `""`.
 |------|--------|
 | `php_test.go` | Registration of both extensions; a controller fixture with group/function/const `use`, attributes, traits, enums, promoted properties, closures, anonymous classes, routes and hooks (kinds, owners, lines, docs, signatures, metadata, relation targets); `define()` inside a namespace is global; hook and route names only from a plain string literal in the name position; a plugin with braced namespaces and parse-error recovery; malformed input; global-namespace function calls; concurrency; parameter and return type uses; a class named with a reserved word (`class Object extends Base`) keeping its name and base (`TestReservedClassName`); the line of a `->` chain call split over lines (`TestChainedCallLine`). |
 | `blade_test.go` | A Blade view with sections, components and includes; `<x-...>` tag components and directives inside `{{-- --}}` comments (`TestBladeTagComponentsAndComments`); a component tag as a usage of its conventional class (`TestBladeClassComponentTag`); a view outside a `views` folder; the file symbol's end line with a trailing newline; a `@component` nested in a `@section`. |
-| `laravel_test.go` | Laravel route groups (array and fluent, nested, namespace) and handler relations (`C@m`, `uses`, `[C::class, m]`, invokable, resource, `Route::view`); `view()` / `View::make()` importing the template, not for a dynamic or package view name; a Mailable's `$this->view()` / `->markdown()` importing it (`TestMailableViewImportsTemplate`); `X::class`, property types, Eloquent relation strings and the `$listen` map as `uses_type` (`TestLaravelClassReferences`); escaped class strings (`'App\\User'`, `'App\\Controller@show'`) in Eloquent relations and route handlers (`TestEscapedClassStrings`); a double-quoted `$listen` map (`TestDoubleQuotedListenMap`); calls on typed parameters, typed, promoted and constructor-assigned properties (`TestTypedReceivers`); closure and arrow function parameters shadowing an outer typed parameter, `use (...)` and arrow functions seeing it (`TestClosureReceiverScope`); `new Foo` locals and `app(Foo::class)` as receivers, not a local set from a call, assigned twice or a `foreach` value (`TestWrittenReceiverTypes`). |
+| `laravel_test.go` | Laravel route groups (array and fluent, nested, namespace) and handler relations (`C@m`, `uses`, `[C::class, m]`, invokable, resource, `Route::view`); controller groups giving a string action its controller (`TestRouteControllerGroup`); `view()` / `View::make()` importing the template, not for a dynamic or package view name; a Mailable's `$this->view()` / `->markdown()` importing it (`TestMailableViewImportsTemplate`); `X::class`, property types, Eloquent relation strings and the `$listen` map as `uses_type` (`TestLaravelClassReferences`); escaped class strings (`'App\\User'`, `'App\\Controller@show'`) in Eloquent relations and route handlers (`TestEscapedClassStrings`); a double-quoted `$listen` map (`TestDoubleQuotedListenMap`); calls on typed parameters, typed, promoted and constructor-assigned properties (`TestTypedReceivers`); closure and arrow function parameters shadowing an outer typed parameter, `use (...)` and arrow functions seeing it (`TestClosureReceiverScope`); `new Foo` locals and `app(Foo::class)` as receivers, not a local set from a call, assigned twice or a `foreach` value (`TestWrittenReceiverTypes`). |
 | `zz_verify_test.go` | Verification tests: name resolution, global-namespace WordPress code, robustness, a routes file, multiple namespaces in one file, Blade layouts, no shared state between calls. |
 
 ## Testing

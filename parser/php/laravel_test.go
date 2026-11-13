@@ -329,3 +329,40 @@ class Sync
 		assert.Equal(t, want, got[call], call)
 	}
 }
+
+// Inside Route::controller(C::class)->group(...) (also chained with prefix,
+// nested, or the array form 'controller' => C::class) a string action names
+// a method of that controller.
+func TestRouteControllerGroup(t *testing.T) {
+	syms := analyze(t, "/root/routes/web.php", `<?php
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\UserController;
+use App\Http\Controllers\PostController;
+
+Route::controller(UserController::class)->group(function () {
+    Route::get('/users', 'index');
+    Route::post('/users/new', [PostController::class, 'store']);
+    Route::prefix('admin')->controller(PostController::class)->group(function () {
+        Route::get('/posts', 'list');
+    });
+    Route::get('/legacy', 'Other\LegacyController@show');
+});
+Route::group(['controller' => PostController::class, 'prefix' => 'p'], function () {
+    Route::get('/{id}', 'show');
+});
+Route::get('/plain', 'InvokableController');
+`)
+	want := map[string]map[string]string{
+		"/users":       {"call index": `App\Http\Controllers.UserController.index`},
+		"/users/new":   {"call store": `App\Http\Controllers.PostController.store`},
+		"/admin/posts": {"call list": `App\Http\Controllers.PostController.list`},
+		"/legacy":      {"call show": `Other.LegacyController.show`},
+		"/p/{id}":      {"call show": `App\Http\Controllers.PostController.show`},
+		"/plain":       {"uses_type InvokableController": `InvokableController`},
+	}
+	for name, rels := range want {
+		s, ok := syms["route "+name]
+		require.True(t, ok, "route %s; have %v", name, keys(syms))
+		assert.Equal(t, rels, targets(s), name)
+	}
+}

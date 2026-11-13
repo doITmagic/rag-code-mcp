@@ -73,7 +73,7 @@ type rawCall struct {
 type routeInfo struct {
 	prefix, ns string
 	ctrl       string // controller of a string handler as written ("Backend\C"), joined to the group namespaces
-	ctrlFQN    string // controller resolved from C::class
+	ctrlFQN    string // controller resolved from C::class; for a group, its Route::controller(C::class)
 	action     string // controller method, "" for a resource or an invokable controller
 	view       string // Route::view template name
 }

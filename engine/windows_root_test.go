@@ -97,3 +97,22 @@ func TestWSLBroadDir(t *testing.T) {
 		}
 	}
 }
+
+// F2 (WSL, Z13): drvfs opens /mnt/c/users/scdoi as /mnt/c/Users/scdoi; the
+// root takes the spelling its directories list, so both are one root and one
+// index. Tested on the helper: a case-sensitive temp dir lists the names.
+func TestDiskCase(t *testing.T) {
+	base := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(base, "Users", "scdoi", "doITmagic"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(base, "Users", "Both"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(base, "Users", "both"), 0o755))
+	for rest, want := range map[string]string{
+		"users/scdoi/doitmagic": "Users/scdoi/doITmagic",
+		"Users/scdoi/doITmagic": "Users/scdoi/doITmagic",
+		"users/BOTH":            "Users/BOTH", // two entries match: kept as given
+		"users/both":            "Users/both", // the exact name is listed
+		"users/none/x":          "Users/none/x",
+	} {
+		assert.Equal(t, filepath.Join(base, want), diskCase(base, rest), rest)
+	}
+}

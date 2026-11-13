@@ -101,7 +101,8 @@ remove the `ragcode-ollama` container.
 | `<workspace>/CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.github/copilot-instructions.md`, `.windsurfrules`, `.clinerules`, `.cursor/rules/ragcode.mdc` | one pointer line to `RAGCODE.md`, added only to files that already exist (`ragcode.mdc` is created when `.cursor/rules` exists) and that git does not track |
 
 `<collection>` is `ragcode-` plus the first 16 hex digits of the SHA-1 of the
-cleaned, symlink-resolved workspace path. Set `RAGCODE_HOME` to move `~/.ragcode`.
+cleaned, symlink-resolved workspace path (below a WSL drive mount
+`/mnt/<letter>/`, spelled as the directories list it). Set `RAGCODE_HOME` to move `~/.ragcode`.
 
 ## Tools
 

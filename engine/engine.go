@@ -340,10 +340,42 @@ func wslBroadDir(p string) string {
 	return ""
 }
 
+// diskCase returns base joined with rest, each component of rest spelled as
+// its directory lists it: drvfs (the WSL /mnt drives) opens /mnt/c/users as
+// /mnt/c/Users, and a second spelling would be a second root and index. A
+// component listed under its exact name, or matching no or several entries
+// case-insensitively, is kept as given.
+func diskCase(base, rest string) string {
+	out := base
+	for _, name := range strings.Split(rest, "/") {
+		es, _ := os.ReadDir(out)
+		match := name
+		for _, e := range es {
+			if e.Name() == name {
+				match = name
+				break
+			}
+			if strings.EqualFold(e.Name(), name) {
+				if match != name {
+					match = name // two entries match
+					break
+				}
+				match = e.Name()
+			}
+		}
+		out = filepath.Join(out, match)
+	}
+	return out
+}
+
 // validateRoot returns the cleaned, symlink-resolved root or a *RootError.
 func validateRoot(cfg config.Config, root string) (string, error) {
 	root = strings.TrimSpace(root)
 	real, err := filepath.EvalSymlinks(filepath.Clean(root))
+	// shortcut: only the WSL /mnt drives, add macOS case-insensitive volumes when a user reports a duplicate root there.
+	if err == nil && runtime.GOOS == "linux" && len(real) > 7 && strings.HasPrefix(real, "/mnt/") && real[6] == '/' {
+		real = diskCase(real[:6], real[7:])
+	}
 	info, serr := os.Stat(real)
 	home, _ := os.UserHomeDir()
 	home, _ = filepath.EvalSymlinks(home)

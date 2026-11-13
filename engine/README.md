@@ -82,7 +82,7 @@ graph TD
 | `prefix_test.go` | `Search` adds the model's query prefix. |
 | `roots_bom_test.go` | A `roots.json` with a UTF-8 BOM is read and kept; an invalid one is moved to `roots.json.bad` before the new list is written. |
 | `unsure_root_test.go` | A subdirectory of a repository, a directory holding several projects and a subdirectory of a known root are refused with candidates; a confirmed or known root is not asked again. |
-| `windows_root_test.go` | Windows system directories refused as roots: `windowsSystemDir`, `wslWindowsSystemDir` and `wslBroadDir` (`/mnt`, a drive mount, the Windows user home seen from WSL) as pure functions on every OS, and through `validateRoot` on Windows only. |
+| `windows_root_test.go` | Windows system directories refused as roots: `windowsSystemDir`, `wslWindowsSystemDir` and `wslBroadDir` (`/mnt`, a drive mount, the Windows user home seen from WSL) and `diskCase` (the on-disk spelling, on a temp dir) as pure functions on every OS, and through `validateRoot` on Windows only. |
 | `zz_verify_test.go` | Verification tests: concurrent `Workspace` calls, cancelled contexts, enqueue during a lock retry, recreate while locked, a directory moved out and the forced debounce flush, status read from disk before any run, home symlink guard, `Close` cancelling a blocked run, junk `roots.json`, a files run with only deletions, junk paths, `Ready` remediation text, a failed query embed does not enqueue, recreate absorbing queued files, catch-up with and without `auto_index`, double `Close`, `.git/refs` plus hidden and excluded directories, kernel file systems refused. |
 
 ---
@@ -111,7 +111,7 @@ already opened for a resolved root, or nil (also on a nil or closed
 
 ```go
 type Workspace struct {
-    Root       string // cleaned and symlink-resolved
+    Root       string // cleaned and symlink-resolved (on-disk spelling below /mnt/<letter>/)
     Collection string // "ragcode-" + 16 hex characters of sha1(Root)
     // job state guarded by the engine mutex, among it:
     watch    *watcher    // set while this server leads the root (holds watch.lock)
@@ -154,7 +154,12 @@ cleared when a new run starts.
 
 ## Workspaces and root validation
 
-`Workspace(root)` trims the path, cleans it and resolves symlinks, then
+`Workspace(root)` trims the path, cleans it and resolves symlinks; on Linux,
+below a WSL drive mount (`/mnt/<letter>/`, drvfs, case-insensitive) each
+component then takes the spelling its parent directory lists (`diskCase`), so
+`/mnt/c/users/me/proj` and `/mnt/c/Users/me/proj` are one root with one
+collection and one `roots.json` entry. A component listed under its exact
+name, or matching several entries, is kept as given. It then
 refuses it with a `*RootError` when it:
 
 | Reason | Check |

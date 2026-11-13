@@ -716,6 +716,9 @@ func (c *collector) call(n *gotreesitter.Node, sym *parser.Symbol, owner string)
 		if name == "group" {
 			c.fluentGroup(n)
 		}
+		// A Mailable's $this->view('x') / ->markdown('x'), also a
+		// MailMessage's or response()->view('x'): the template rendered.
+		viewCall = owner != "" && (name == "view" || name == "markdown")
 	case "object_creation_expression":
 		kind = parser.RelUsesType
 		cls := n.NamedChild(0)

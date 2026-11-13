@@ -254,3 +254,31 @@ class EventServiceProvider {
 	assert.Equal(t, "App.Events.OrderShipped", parser.Normalize(got["uses_type OrderShipped"]))
 	assert.Equal(t, "App.Listeners.SendShipmentNotification", parser.Normalize(got["uses_type SendShipmentNotification"]))
 }
+
+// A Mailable's $this->view('x') and ->markdown('x') name the template it
+// renders, the same way view('x') does.
+func TestMailableViewImportsTemplate(t *testing.T) {
+	syms := analyze(t, "/root/app/Mail/OrderShipped.php", `<?php
+namespace App\Mail;
+class OrderShipped extends Mailable
+{
+    public function build()
+    {
+        $this->view('emails.orders.shipped');
+        return $this->subject('Shipped')->markdown('emails.orders.md');
+    }
+    public function other($v) { return $this->view($v)->markdown('mail::message'); }
+}
+`)
+	imports := func(qn string) []string {
+		var out []string
+		for _, r := range syms[qn].Relations {
+			if r.Kind == parser.RelImports {
+				out = append(out, r.TargetQualifiedName)
+			}
+		}
+		return out
+	}
+	assert.Equal(t, []string{"emails.orders.shipped", "emails.orders.md"}, imports("method App\\Mail.OrderShipped.build"))
+	assert.Empty(t, imports("method App\\Mail.OrderShipped.other"), "a dynamic or package view name is not a template of the workspace")
+}

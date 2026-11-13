@@ -147,3 +147,62 @@ func h(c echo.Context, r *Repo) error {
 	}
 	assert.True(t, seen["JSON"] && seen["Find"])
 }
+
+// A method a type gets from an embedded external type (testify's suite.T()
+// through struct{ suite.Suite }) is no usage of a workspace method that only
+// shares the name: with an external base the call stays unresolved. An owner
+// whose bases are all in the workspace still falls back to the name.
+func TestGoEmbeddedExternalNoNameFallback(t *testing.T) {
+	parser.Register(realGo)
+	t.Cleanup(func() { parser.Register(lineAnalyzer{"go", ".go"}) })
+	e := newEnv(t)
+	e.write(t, "go.mod", "module example.com/app\n\ngo 1.25\n")
+	e.write(t, "app/time.go", `package app
+
+type CustomTime struct{}
+
+func (CustomTime) T() int { return 0 }
+
+func (CustomTime) Run() {}
+`)
+	s := e.write(t, "app/suite.go", `package app
+
+import "github.com/stretchr/testify/suite"
+
+type Base struct{}
+
+type MySuite struct {
+	suite.Suite
+}
+
+type Local struct {
+	Base
+}
+
+func (s *MySuite) Check() {
+	_ = s.T()
+}
+
+func (l *Local) Go() {
+	l.Run()
+}
+`)
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	syms := e.symbols(t, s)
+	seen := map[string]bool{}
+	for _, r := range syms["Check"].Relations {
+		if r.TargetName == "T" {
+			seen["T"] = true
+			assert.Empty(t, r.TargetID, "s.T() is testify's, promoted from suite.Suite")
+			assert.Empty(t, r.Resolution)
+		}
+	}
+	for _, r := range syms["Go"].Relations {
+		if r.TargetName == "Run" {
+			seen["Run"] = true
+			assert.Equal(t, parser.ResolutionUnique, r.Resolution, "workspace bases only: name fallback kept")
+		}
+	}
+	assert.True(t, seen["T"] && seen["Run"])
+}

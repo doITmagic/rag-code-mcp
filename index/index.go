@@ -1327,10 +1327,19 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 						}
 					}
 					// Otherwise fall back to the name. An unknown owner is
-					// external (vendor, stdlib). A route's handler names its
-					// controller: another class's method of that name is not it.
-					if dot := strings.LastIndex(tqn, "."); len(ids) == 0 && dot > 0 && rel.TargetName != "" && !rel.Value && files[i].syms[j].Kind != parser.KindRoute && len(qualified(lang, tqn[:dot])) > 0 {
-						ids, nameOnly, resolution = named(lang, rel.TargetName), true, parser.ResolutionUnique
+					// external (vendor, stdlib), and so is, most likely, the
+					// member of a Go owner that embeds an external type (a
+					// testify suite's s.T()): no workspace method of its name.
+					// A route's handler names its controller: another class's
+					// method of that name is not it.
+					if dot := strings.LastIndex(tqn, "."); len(ids) == 0 && dot > 0 && rel.TargetName != "" && !rel.Value && files[i].syms[j].Kind != parser.KindRoute {
+						owners := qualified(lang, tqn[:dot])
+						external := lang == "go" && slices.ContainsFunc(owners, func(o string) bool {
+							return slices.ContainsFunc(idx.bases[o], func(b string) bool { return len(qualified(lang, b)) == 0 })
+						})
+						if len(owners) > 0 && !external {
+							ids, nameOnly, resolution = named(lang, rel.TargetName), true, parser.ResolutionUnique
+						}
 					}
 				} else if name := rel.TargetName; name != "" {
 					ids, nameOnly = named(lang, name), true

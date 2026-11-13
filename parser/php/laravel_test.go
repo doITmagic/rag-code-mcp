@@ -282,3 +282,50 @@ class OrderShipped extends Mailable
 	assert.Equal(t, []string{"emails.orders.shipped", "emails.orders.md"}, imports("method App\\Mail.OrderShipped.build"))
 	assert.Empty(t, imports("method App\\Mail.OrderShipped.other"), "a dynamic or package view name is not a template of the workspace")
 }
+
+// A class written in the code is a receiver type: app(Foo::class)->m(), and
+// a local whose every assignment in the function is new Foo(...). A local
+// assigned anything else, or from a call, has none.
+func TestWrittenReceiverTypes(t *testing.T) {
+	syms := analyze(t, "/root/app/Jobs/Sync.php", `<?php
+namespace App\Jobs;
+use App\Services\Mailer;
+use App\Models\User;
+class Sync
+{
+    public function handle($p, Mailer $typed)
+    {
+        app(Mailer::class)->a();
+        $m = new Mailer($p);
+        $m->b();
+        $u = User::find(1);
+        $u->c();
+        $twice = new Mailer();
+        $twice = $this->other();
+        $twice->d();
+        $loop = new Mailer();
+        foreach ($p as $loop) { $loop->e(); }
+        $p = new Mailer();
+        $p->f();
+        $inner = function () { $x = new Mailer(); $x->g(); };
+        $x->h();
+        $s = new \App\Sms();
+        $s->i();
+    }
+}
+`)
+	got := targets(syms[`method App\Jobs.Sync.handle`])
+	for call, want := range map[string]string{
+		"call a": `App\Services.Mailer.a`,
+		"call b": `App\Services.Mailer.b`,
+		"call c": "",
+		"call d": "",
+		"call e": "",
+		"call f": "",
+		"call g": `App\Services.Mailer.g`,
+		"call h": "",
+		"call i": `App.Sms.i`,
+	} {
+		assert.Equal(t, want, got[call], call)
+	}
+}

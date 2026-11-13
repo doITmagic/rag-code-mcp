@@ -183,7 +183,10 @@ reassigned to another value (`s = f()`) has none. PHP reads declared
 types the same way: a parameter typed with one class (`Request $r`) and a
 property typed with one class, promoted from or assigned from such a
 constructor parameter (`$this->repo = $repo`), give `$r->m()` and
-`$this->repo->m()` the target `<class>.m`.
+`$this->repo->m()` the target `<class>.m`; so do a class written in the
+code, a local whose every assignment in the function is `new Foo(...)`
+(`$x = new Foo(); $x->m()`) and `app(Foo::class)->m()`. A local set from a
+call (`$x = Foo::find()`) or also assigned anything else has none.
 
 `Value` marks a `RelCall` that is only a candidate: the Go analyzer cannot
 tell a function or method named as a value (`mux.HandleFunc(p, s.handler)`)

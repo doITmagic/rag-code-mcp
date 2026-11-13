@@ -180,6 +180,11 @@ func (c *collector) closure(n *gotreesitter.Node, sym *parser.Symbol, owner stri
 	for _, p := range parser.NamedChildren(params) {
 		inner[c.text(c.field(p, "name"))] = c.declType(c.field(p, "type"), owner)
 	}
+	for k, v := range c.localTypes(params, c.field(n, "body"), owner) {
+		if _, seen := inner[k]; !seen { // a parameter, use() or outer variable is not only a local
+			inner[k] = v
+		}
+	}
 	c.vars = inner
 	c.walkBody(c.field(n, "body"), sym, owner)
 	c.vars = outer
@@ -393,7 +398,8 @@ func (c *collector) function(n *gotreesitter.Node) {
 		return
 	}
 	s := c.symbol(n, name, parser.KindFunction, "", true)
-	c.vars = c.paramTypes(n, "")
+	c.vars = c.localTypes(c.field(n, "parameters"), c.field(n, "body"), "")
+	maps.Copy(c.vars, c.paramTypes(n, ""))
 	c.walkBody(c.field(n, "body"), &s, "")
 	c.vars = nil
 	c.signatureTypes(n, &s)
@@ -427,6 +433,79 @@ func (c *collector) paramTypes(fn *gotreesitter.Node, owner string) map[string]s
 		}
 	}
 	return out
+}
+
+// localTypes maps each local of body whose every assignment is new C(...)
+// to C, as the Go analyzer reads s := &T{}: a local also assigned anything
+// else (a call, another class, a foreach value) has none. A parameter is
+// not a local (it keeps its declared type); closures and arrow functions
+// are their own scope.
+// shortcut: a local set through a reference argument (preg_match($p, $s, $m)) is not seen; flow analysis if that misleads.
+func (c *collector) localTypes(params, body *gotreesitter.Node, owner string) map[string]string {
+	out := map[string]string{}
+	set := func(v, t string) {
+		if old, ok := out[v]; ok && old != t {
+			t = ""
+		}
+		out[v] = t
+	}
+	assigned := func(n *gotreesitter.Node) {
+		parser.Walk(n, func(v *gotreesitter.Node) bool {
+			if v.Type(c.lang) == "variable_name" {
+				set(c.text(v), "")
+			}
+			return true
+		})
+	}
+	for _, p := range parser.NamedChildren(params) {
+		set(c.text(c.field(p, "name")), "")
+	}
+	parser.Walk(body, func(n *gotreesitter.Node) bool {
+		switch n.Type(c.lang) {
+		case "anonymous_function", "arrow_function", "function_definition", "class_declaration", "trait_declaration",
+			"enum_declaration", "interface_declaration", "anonymous_class":
+			return false
+		case "assignment_expression":
+			l, r := c.field(n, "left"), c.field(n, "right")
+			if c.typ(l) != "variable_name" {
+				assigned(l) // list($a, $b) = ..., $a[] = ...
+				break
+			}
+			var t string
+			if c.typ(r) == "object_creation_expression" {
+				if cls := r.NamedChild(0); c.typ(cls) == "name" || c.typ(cls) == "qualified_name" {
+					t = c.resolve(c.text(cls), c.classes, owner)
+				}
+			}
+			set(c.text(l), t)
+		case "augmented_assignment_expression", "reference_assignment_expression":
+			assigned(c.field(n, "left"))
+		case "foreach_statement": // every variable after the iterated expression, but the body
+			for i, ch := range parser.NamedChildren(n) {
+				if i > 0 && ch != c.field(n, "body") {
+					assigned(ch)
+				}
+			}
+		}
+		return true
+	})
+	maps.DeleteFunc(out, func(_, t string) bool { return t == "" })
+	return out
+}
+
+// appClass is Foo of app(Foo::class), the container resolving the class it
+// is given, "" for anything else.
+func (c *collector) appClass(n *gotreesitter.Node, owner string) string {
+	if c.typ(n) != "function_call_expression" {
+		return ""
+	}
+	if fn := c.text(c.field(n, "function")); fn != "app" && fn != `\app` {
+		return ""
+	}
+	if args := c.args(n); len(args) == 1 {
+		return c.classConst(args[0], owner)
+	}
+	return ""
 }
 
 // propTypes maps "$this->x" to the class of property x when declared: a
@@ -640,7 +719,8 @@ func (c *collector) method(n *gotreesitter.Node, owner string, props map[string]
 		return
 	}
 	s := c.symbol(n, name, parser.KindMethod, owner, c.visible(n))
-	c.vars = c.paramTypes(n, owner)
+	c.vars = c.localTypes(c.field(n, "parameters"), c.field(n, "body"), owner)
+	maps.Copy(c.vars, c.paramTypes(n, owner))
 	maps.Copy(c.vars, props)
 	c.walkBody(c.field(n, "body"), &s, owner)
 	c.vars = nil
@@ -710,7 +790,9 @@ func (c *collector) call(n *gotreesitter.Node, sym *parser.Symbol, owner string)
 		name, at = c.text(fn), fn
 		if obj := c.text(c.field(n, "object")); obj == "$this" && owner != "" {
 			target = parser.Qualify(c.ns, owner, name)
-		} else if fqn := c.vars[obj]; fqn != "" { // a declared class: typed parameter or property
+		} else if fqn := c.vars[obj]; fqn != "" { // a declared class: typed parameter or property, a new Foo local
+			target = qualified(fqn) + "." + name
+		} else if fqn := c.appClass(c.field(n, "object"), owner); fqn != "" {
 			target = qualified(fqn) + "." + name
 		}
 		if name == "group" {

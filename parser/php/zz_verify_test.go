@@ -109,8 +109,8 @@ func TestVerifyResolution(t *testing.T) {
 		"call s":          ns + ".Svc.s",
 		"call t":          ns + ".Svc.t",
 		"call run":        "",
-		"call save":       "",
-		"call flush":      "",
+		"call save":       `App\Models.User.save`, // $u = new U()
+		"call flush":      `App\Models.User.flush`,
 		"call inClosure":  `App\Repo.UserRepo.inClosure`, // last wins in the map; both checked below
 		"call get":        `Illuminate\Support\Facades.Route.get`,
 		"call post":       ns + ".Route.post",

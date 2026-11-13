@@ -516,6 +516,9 @@ func TestIndexWorkspace(t *testing.T) {
 	r, _ = v.call(t, "rag_index_workspace", map[string]any{"workspace_root": v.root})
 	data(t, r, &plan)
 	assert.Empty(t, plan.Full)
+	// The run that call queued saves the state when it ends: wait for it, or it
+	// would overwrite the older Format written below.
+	require.Eventually(t, func() bool { s := w.Status(); return s.Phase == "done" && !s.Running }, 10*time.Second, 20*time.Millisecond)
 	st, err := index.LoadState(v.root)
 	require.NoError(t, err)
 	st.Format = index.Format - 1

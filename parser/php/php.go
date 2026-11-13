@@ -168,11 +168,12 @@ func (c *collector) closure(n *gotreesitter.Node, sym *parser.Symbol, owner stri
 			inner[k] = v
 		}
 	}
+	uses := map[string]string{} // use() variables with their outer type, which an assignment in the body can change
 	for _, ch := range parser.NamedChildren(n) {
 		if ch.Type(c.lang) == "anonymous_function_use_clause" {
 			parser.Walk(ch, func(v *gotreesitter.Node) bool {
 				if v.Type(c.lang) == "variable_name" {
-					inner[c.text(v)] = outer[c.text(v)]
+					uses[c.text(v)] = outer[c.text(v)]
 				}
 				return true
 			})
@@ -183,8 +184,12 @@ func (c *collector) closure(n *gotreesitter.Node, sym *parser.Symbol, owner stri
 	for _, p := range parser.NamedChildren(params) {
 		inner[c.text(c.field(p, "name"))] = c.declType(c.field(p, "type"), owner)
 	}
-	for k, v := range c.localTypes(params, c.field(n, "body"), owner) {
-		if _, seen := inner[k]; !seen { // a parameter, use() or outer variable is not only a local
+	locals := c.localTypes(params, c.field(n, "body"), owner, uses)
+	for k := range uses {
+		inner[k] = locals[k]
+	}
+	for k, v := range locals {
+		if _, seen := inner[k]; !seen { // a parameter or outer variable is not only a local
 			inner[k] = v
 		}
 	}
@@ -401,7 +406,7 @@ func (c *collector) function(n *gotreesitter.Node) {
 		return
 	}
 	s := c.symbol(n, name, parser.KindFunction, "", true)
-	c.vars = c.localTypes(c.field(n, "parameters"), c.field(n, "body"), "")
+	c.vars = c.localTypes(c.field(n, "parameters"), c.field(n, "body"), "", nil)
 	maps.Copy(c.vars, c.paramTypes(n, ""))
 	c.walkBody(c.field(n, "body"), &s, "")
 	c.vars = nil
@@ -442,10 +447,15 @@ func (c *collector) paramTypes(fn *gotreesitter.Node, owner string) map[string]s
 // to C, as the Go analyzer reads s := &T{}: a local also assigned anything
 // else (a call, another class, a foreach value) has none. A parameter is
 // not a local (it keeps its declared type); closures and arrow functions
-// are their own scope.
+// are their own scope, but one capturing a local by reference (use (&$x))
+// may assign it, so that local has none. seed gives variables a starting
+// type (a closure's use() variables), which every assignment must keep.
 // shortcut: a local set through a reference argument (preg_match($p, $s, $m)) is not seen; flow analysis if that misleads.
-func (c *collector) localTypes(params, body *gotreesitter.Node, owner string) map[string]string {
-	out := map[string]string{}
+func (c *collector) localTypes(params, body *gotreesitter.Node, owner string, seed map[string]string) map[string]string {
+	out := maps.Clone(seed)
+	if out == nil {
+		out = map[string]string{}
+	}
 	set := func(v, t string) {
 		if old, ok := out[v]; ok && old != t {
 			t = ""
@@ -465,7 +475,18 @@ func (c *collector) localTypes(params, body *gotreesitter.Node, owner string) ma
 	}
 	parser.Walk(body, func(n *gotreesitter.Node) bool {
 		switch n.Type(c.lang) {
-		case "anonymous_function", "arrow_function", "function_definition", "class_declaration", "trait_declaration",
+		case "anonymous_function":
+			for _, ch := range parser.NamedChildren(n) {
+				if ch.Type(c.lang) == "anonymous_function_use_clause" {
+					for _, u := range parser.NamedChildren(ch) {
+						if u.Type(c.lang) == "by_ref" {
+							assigned(u)
+						}
+					}
+				}
+			}
+			return false
+		case "arrow_function", "function_definition", "class_declaration", "trait_declaration",
 			"enum_declaration", "interface_declaration", "anonymous_class":
 			return false
 		case "assignment_expression":
@@ -728,7 +749,7 @@ func (c *collector) method(n *gotreesitter.Node, owner string, props map[string]
 		return
 	}
 	s := c.symbol(n, name, parser.KindMethod, owner, c.visible(n))
-	c.vars = c.localTypes(c.field(n, "parameters"), c.field(n, "body"), owner)
+	c.vars = c.localTypes(c.field(n, "parameters"), c.field(n, "body"), owner, nil)
 	maps.Copy(c.vars, c.paramTypes(n, owner))
 	maps.Copy(c.vars, props)
 	c.walkBody(c.field(n, "body"), &s, owner)

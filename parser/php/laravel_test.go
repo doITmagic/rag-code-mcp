@@ -420,3 +420,26 @@ class UserController
 		"users.show route:users.show", "admin.posts.index route:admin.posts.index",
 	}, refs)
 }
+
+// A closure capturing a local by reference (use (&$x)) may replace it, so
+// the local's new Foo type no longer holds after the closure.
+func TestReferenceClosureInvalidatesLocalType(t *testing.T) {
+	syms := analyze(t, "/root/app/run.php", `<?php
+namespace App;
+function run() {
+    $x = new Foo();
+    (function () use (&$x) { $x = new Bar(); })();
+    $x->save();
+    $y = new Foo();
+    (function () use ($y) { $y = new Bar(); $y->keep(); })();
+    $y->stay();
+    $z = new Foo();
+    (function () use ($z) { $z = make(); $z->lost(); })();
+}
+`)
+	got := targets(syms["function App.run"])
+	assert.Equal(t, "", got["call save"], "use (&$x) can replace $x")
+	assert.Equal(t, `App.Foo.stay`, got["call stay"], "use ($y) copies $y; the closure cannot replace it")
+	assert.Equal(t, "", got["call keep"], "inside the closure $y is new Foo and new Bar")
+	assert.Equal(t, "", got["call lost"], "inside the closure $z is new Foo and a call result")
+}

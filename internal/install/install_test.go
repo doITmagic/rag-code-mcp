@@ -57,9 +57,12 @@ func env(t *testing.T) (home, dockerLog string, pulled *[]string) {
 	return home, dockerLog, pulled
 }
 
+// exe is the server binary suffix the installer expects next to itself.
+var exe = map[bool]string{true: ".exe"}[runtime.GOOS == "windows"]
+
 func src(t *testing.T) string {
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "rag-code-mcp"), []byte("#!/bin/sh\necho server\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "rag-code-mcp"+exe), []byte("#!/bin/sh\necho server\n"), 0o644))
 	return dir
 }
 

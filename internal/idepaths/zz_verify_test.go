@@ -125,7 +125,9 @@ func TestWriteKeepsSymlinkAndMode(t *testing.T) {
 	assert.True(t, info.Mode()&os.ModeSymlink != 0, "still a symlink")
 	st, err := os.Stat(real)
 	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), st.Mode().Perm())
+	if runtime.GOOS != "windows" { // Windows has no Unix permission bits
+		assert.Equal(t, os.FileMode(0o600), st.Mode().Perm())
+	}
 	data, _ := os.ReadFile(real)
 	assert.Contains(t, string(data), `"other"`)
 	assert.Contains(t, string(data), `"ragcode"`)

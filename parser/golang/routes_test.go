@@ -743,3 +743,60 @@ func (h *H) RegisterRoutes(router chi.Router) {
 		"chi Mount routes.RegisterRoutes./b ->",
 	}, routeList(t, "routes/settings.go", src))
 }
+
+// A Mount prefixes only the router it mounts: the last chi.NewRouter()
+// assigned to that name before it, as its closure sees it. A router of the
+// same name in another closure, one assigned to the name after the Mount, and
+// one mounted from inside another closure keep their paths as written.
+func TestChiMountPrefixesOnlyTheMountedRouter(t *testing.T) {
+	src := `package routes
+
+import (
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+)
+
+func h(w http.ResponseWriter, r *http.Request) {}
+
+func V1(r chi.Router) {
+	r.Route("/a", func(r chi.Router) {
+		sub := chi.NewRouter()
+		sub.Get("/x", h)
+		r.Mount("/m", sub)
+	})
+	go func() {
+		sub := chi.NewRouter()
+		sub.Get("/y", h)
+		http.ListenAndServe(":1", sub)
+	}()
+}
+
+func V2(r chi.Router) {
+	sub := chi.NewRouter()
+	sub.Get("/s", h)
+	r.Mount("/m", sub)
+	sub = chi.NewRouter()
+	sub.Get("/t", h)
+	http.ListenAndServe(":2", sub)
+}
+
+func V3(r chi.Router) {
+	sub := chi.NewRouter()
+	sub.Get("/z", h)
+	r.Group(func(r chi.Router) {
+		r.Mount("/in", sub)
+	})
+}
+`
+	assert.Equal(t, []string{
+		"chi Get routes.V1./a/m/x -> routes.h",
+		"chi Mount routes.V1./a/m ->",
+		"chi Get routes.V1./y -> routes.h",
+		"chi Get routes.V2./m/s -> routes.h",
+		"chi Mount routes.V2./m ->",
+		"chi Get routes.V2./t -> routes.h",
+		"chi Get routes.V3./z -> routes.h", // mounted from another closure: as written
+		"chi Mount routes.V3./in ->",
+	}, routeList(t, "routes/r.go", src))
+}

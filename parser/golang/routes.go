@@ -197,23 +197,13 @@ func (fc *file) declRoutes(decl *gotreesitter.Node, sym *parser.Symbol, params m
 				return false
 			case "short_var_declaration", "assignment_statement", "var_spec":
 				short := c.Type(fc.lang) != "assignment_statement"
-				l := parser.NamedChildren(parser.Field(c, fc.lang, "left"))
-				r := parser.NamedChildren(parser.Field(c, fc.lang, "right"))
-				if c.Type(fc.lang) == "var_spec" { // var g = e.Group("/x") declares like g := e.Group("/x")
-					l = nil
-					for i := 0; i < c.ChildCount(); i++ {
-						if c.FieldNameForChild(i, fc.lang) == "name" {
-							l = append(l, c.Child(i))
-						}
-					}
-					r = parser.NamedChildren(parser.Field(c, fc.lang, "value"))
-				}
+				l, r := fc.assigned(c)
 				var p grp
 				ok := false
 				if len(l) == 1 && len(r) == 1 {
 					p, ok = fc.router(r[0], groups)
 					// r := chi.NewRouter() mounted below at one path: its routes are served under it
-					if m := mounts[fc.text(l[0])]; ok && m != nil && fc.newRouter(r[0]) != nil && p.fw.name == "chi" {
+					if m := mounts[c.StartByte()]; ok && m != nil && fc.newRouter(r[0]) != nil && p.fw.name == "chi" {
 						if at, ok := fc.router(m.recv, groups); ok {
 							p.prefix = p.fw.join(at.prefix, m.path)
 						}
@@ -524,27 +514,63 @@ type mount struct {
 	path string
 }
 
-// mounts returns the chi sub-routers decl mounts by variable name; a name
-// mounted at two paths has none (the path stays as written).
-func (fc *file) mounts(decl *gotreesitter.Node) map[string]*mount {
-	out := map[string]*mount{}
-	parser.Walk(parser.Field(decl, fc.lang, "body"), func(c *gotreesitter.Node) bool {
-		if c.Type(fc.lang) != "call_expression" {
+// assigned gives the two sides of x := v, x = v or var x = v (which declares
+// like :=).
+func (fc *file) assigned(c *gotreesitter.Node) (l, r []*gotreesitter.Node) {
+	if c.Type(fc.lang) != "var_spec" {
+		return parser.NamedChildren(parser.Field(c, fc.lang, "left")), parser.NamedChildren(parser.Field(c, fc.lang, "right"))
+	}
+	for i := 0; i < c.ChildCount(); i++ {
+		if c.FieldNameForChild(i, fc.lang) == "name" {
+			l = append(l, c.Child(i))
+		}
+	}
+	return l, parser.NamedChildren(parser.Field(c, fc.lang, "value"))
+}
+
+// mounts maps a router assignment (x := chi.NewRouter(), by its start byte) to
+// the X.Mount(path, x) that serves it: the last router assigned to that name
+// before the Mount, in the same function body or closure. Another closure's x
+// and an x assigned after the Mount are other routers; a router mounted at
+// two paths maps to nil, so its paths stay as written.
+func (fc *file) mounts(decl *gotreesitter.Node) map[uint32]*mount {
+	out := map[uint32]*mount{}
+	var walk func(n *gotreesitter.Node)
+	walk = func(n *gotreesitter.Node) {
+		last := map[string]uint32{}
+		parser.Walk(n, func(c *gotreesitter.Node) bool {
+			switch c.Type(fc.lang) {
+			case "func_literal":
+				if c != n {
+					walk(c)
+					return false
+				}
+			case "short_var_declaration", "assignment_statement", "var_spec":
+				if l, r := fc.assigned(c); len(l) == 1 && len(r) == 1 {
+					if delete(last, fc.text(l[0])); fc.newRouter(r[0]) != nil {
+						last[fc.text(l[0])] = c.StartByte()
+					}
+				}
+			case "call_expression":
+				fn := parser.Field(c, fc.lang, "function")
+				args := parser.NamedChildren(parser.Field(c, fc.lang, "arguments"))
+				if fn.Type(fc.lang) != "selector_expression" || fc.text(parser.Field(fn, fc.lang, "field")) != "Mount" || len(args) != 2 {
+					return true
+				}
+				at, known := last[fc.text(args[1])]
+				if !known {
+					return true
+				}
+				p, ok := fc.static(args[0])
+				if m, dup := out[at]; !ok || dup && (m == nil || m.path != p) {
+					out[at] = nil
+				} else {
+					out[at] = &mount{parser.Field(fn, fc.lang, "operand"), p}
+				}
+			}
 			return true
-		}
-		fn := parser.Field(c, fc.lang, "function")
-		args := parser.NamedChildren(parser.Field(c, fc.lang, "arguments"))
-		if fn.Type(fc.lang) != "selector_expression" || fc.text(parser.Field(fn, fc.lang, "field")) != "Mount" || len(args) != 2 || args[1].Type(fc.lang) != "identifier" {
-			return true
-		}
-		p, ok := fc.static(args[0])
-		name := fc.text(args[1])
-		if m, dup := out[name]; !ok || dup && (m == nil || m.path != p) {
-			out[name] = nil
-		} else {
-			out[name] = &mount{parser.Field(fn, fc.lang, "operand"), p}
-		}
-		return true
-	})
+		})
+	}
+	walk(parser.Field(decl, fc.lang, "body"))
 	return out
 }

@@ -89,7 +89,8 @@ type Status struct {
 	Error     string    `json:"error,omitempty"`
 	Phase     string    `json:"phase"`               // scanning|parsing|embedding|done|failed
 	Recreated bool      `json:"recreated,omitempty"` // the collection was dropped by this run
-	Warning   string    `json:"warning,omitempty"`   // the run went on with less than asked: git refused the repository
+	Warning   string    `json:"warning,omitempty"`   // the run went on with less than asked: git refused the repository, a file was locked
+	Busy      []string  `json:"-"`                   // files another process held locked (counted in Failed); the engine retries them
 }
 
 func statusPath(root string) string { return filepath.Join(Dir(root), "index_status.json") }
@@ -389,6 +390,11 @@ func (r *run) finish(ctx context.Context, err error) (Status, error) {
 			r.status.Phase = "interrupted" // stopped by shutdown; Resume restarts it
 		}
 	}
+	if n := len(r.status.Busy); n > 0 {
+		// A files run leaves the previous points of a file it could not read.
+		w := fmt.Sprintf("%d file(s) locked by another process were not read (%s); their symbols may be out of date until they are indexed again", n, r.status.Busy[0])
+		r.status.Warning = strings.TrimPrefix(r.status.Warning+"; "+w, "; ")
+	}
 	r.tick(true)
 	// Cancelled before it changed the index (a catch-up cut short by the
 	// session's end), or finished with nothing to do (a run queued behind a
@@ -624,6 +630,9 @@ func (r *run) parse(ctx context.Context, files []string) []parsed {
 			r.status.Total--
 		} else if p.err != nil {
 			r.status.Failed++
+			if isBusy(p.err) {
+				r.status.Busy = append(r.status.Busy, p.path)
+			}
 			r.Log.Warn("index: parse failed", "file", p.path, "err", p.err)
 		} else {
 			byPath[p.path] = p

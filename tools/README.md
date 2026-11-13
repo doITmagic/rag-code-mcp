@@ -141,9 +141,12 @@ the Windows server) or `the 9p file system reports no changes` (a Windows
 drive under `/mnt` in WSL).
 
 `index.warning` is present when the last run went on with less than asked,
-from the saved index status: today only `git refused the repository (dubious
+from the saved index status: `git refused the repository (dubious
 ownership): .gitignore rules are not applied` (the server runs as another
-user than the repository owner), so git-ignored files are in the index.
+user than the repository owner), so git-ignored files are in the index; or
+`N file(s) locked by another process were not read (<path>); their symbols
+may be out of date until they are indexed again` (Windows: a file held by an
+antivirus scan or a sync client during the run, retried by the engine).
 
 ### The `grep` lines
 

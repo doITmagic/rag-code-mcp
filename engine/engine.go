@@ -36,6 +36,10 @@ const lockRetry = 30 * time.Second
 // less and less often.
 func lockRetryDelay(n int) time.Duration { return min(2*time.Second<<min(n, 5), lockRetry) }
 
+// busyRetries bounds the files runs for files another process held locked
+// (index.isBusy), at lockRetryDelay: 2+4+8+16+30 s, about a minute.
+const busyRetries = 5
+
 // retryDelay doubles lockRetry per consecutive failure, capped at 10 minutes
 // so a workspace that fails every time does not take the slot every 30 s.
 func retryDelay(fails int) time.Duration {
@@ -680,6 +684,17 @@ func (e *Engine) runJobs(w *Workspace) {
 		}
 		if !errors.Is(err, index.ErrLocked) {
 			w.lockFails = 0 // a run took place
+		}
+		if err == nil && len(st.Busy) > 0 && w.busyTries < busyRetries {
+			// A lock held by an antivirus scan or a sync client goes away by itself,
+			// and no event comes when it does. Queued later, not merged now: the
+			// other requests do not wait for it.
+			busy, delay := st.Busy, lockRetryDelay(w.busyTries)
+			w.busyTries++
+			e.log.Info("engine: files locked by another process, retrying", "root", w.Root, "files", len(busy), "in", delay)
+			time.AfterFunc(delay, func() { e.enqueue(w, kindFiles, busy, nil, false) })
+		} else if err == nil && len(st.Busy) == 0 {
+			w.busyTries = 0
 		}
 		switch {
 		case errors.Is(err, index.ErrHeadChanged):

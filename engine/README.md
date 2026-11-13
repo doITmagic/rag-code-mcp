@@ -83,6 +83,7 @@ graph TD
 | `roots_bom_test.go` | A `roots.json` with a UTF-8 BOM is read and kept; an invalid one is moved to `roots.json.bad` before the new list is written. |
 | `unsure_root_test.go` | A subdirectory of a repository, a directory holding several projects and a subdirectory of a known root are refused with candidates; a confirmed or known root is not asked again. |
 | `windows_root_test.go` | Windows system directories refused as roots: `windowsSystemDir`, `wslWindowsSystemDir` and `wslBroadDir` (`/mnt`, a drive mount, the Windows user home seen from WSL) and `diskCase` (the on-disk spelling, on a temp dir) as pure functions on every OS, and through `validateRoot` on Windows only. |
+| `busy_test.go` | A run reporting locked files (`index.Status.Busy`, fake run) queues a files run for just them after `lockRetryDelay(0)`, without holding back a request made meanwhile; a clean run resets the count; after `busyRetries` no retry is scheduled. |
 | `junction_windows_test.go` | (Windows only) a root that is an NTFS junction, or lies below one, is accepted by `validateRoot` and resolved to the real directory. |
 | `zz_verify_test.go` | Verification tests: concurrent `Workspace` calls, cancelled contexts, enqueue during a lock retry, recreate while locked, a directory moved out and the forced debounce flush, status read from disk before any run, home symlink guard, `Close` cancelling a blocked run, junk `roots.json`, a files run with only deletions, junk paths, `Ready` remediation text, a failed query embed does not enqueue, recreate absorbing queued files, catch-up with and without `auto_index`, double `Close`, `.git/refs` plus hidden and excluded directories, kernel file systems refused. |
 
@@ -285,6 +286,17 @@ process's lock nor an embedder or store outage drops its files.
 - **Recreate that already dropped**: if the failed run had `Recreated` set,
   the retry becomes a full run, so what was re-indexed is not thrown away.
 - **`index.ErrHeadChanged`**: not a failure; a full run is queued at once.
+- **Locked files**: a run that ends without error but with files another
+  process held locked (`index.Status.Busy`: a Windows sharing violation from
+  an antivirus scan, a sync client or a build tool) queues a files run for
+  them after `lockRetryDelay` (2, 4, 8, 16, 30 s), at most `busyRetries` (5)
+  runs in a row; a run with no locked file resets the count. No event comes
+  when such a lock goes away, so without the retry the file kept its old
+  symbols until its next edit. The retry is a separate timer that enqueues
+  later, so requests made meanwhile are not held back. Meanwhile the answers
+  carry `index.warning` (`... locked by another process were not read ...`).
+  After the last retry the file waits for its next edit, `rag_index_workspace`
+  or a restart's catch-up, under that warning.
 - **Too many files**: a run that ends with `index.ErrTooManyFiles` (more
   indexable files than `max_files`) is not retried: only a config change
   helps. One warning ("index run refused, not retrying") is logged and the

@@ -33,6 +33,7 @@ type Workspace struct {
 	retry     *time.Timer // pending lock retry
 	fails     int         // consecutive failed runs; sets the retry delay
 	lockFails int         // consecutive ErrLocked results; sets lockRetryDelay
+	busyTries int         // consecutive runs that met a file locked by another process; bounds their retries
 	status    index.Status
 	watch     *watcher
 	takeover  *time.Timer // a follower's poll of watch.lock; nil when leading or not watching

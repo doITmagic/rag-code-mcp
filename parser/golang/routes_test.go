@@ -485,9 +485,10 @@ func main() {
 
 // Gin joins a path written without a leading slash to the group's base path
 // ("/" for the engine), so GET("users") is /users and Group("api") +
-// GET("ping") is /api/ping. Echo does not add the slash and chi panics on
-// such a path: neither gives a route, and in a file importing gin and echo
-// no router's path without the slash is a route.
+// GET("ping") is /api/ping. Echo concatenates the group prefix and the path,
+// then adds a missing leading slash: GET("users") is /users, Group("/api") +
+// GET("ping") is /apiping. Chi panics on such a path, so in a file importing
+// chi no router's path without the slash is a route.
 func TestRoutePathsWithoutLeadingSlash(t *testing.T) {
 	src := `package api
 
@@ -527,5 +528,43 @@ func Load() {
 	_ = gin.New()
 }
 `
-	assert.Len(t, routeList(t, "api/r.go", mixed), 1)
+	assert.Len(t, routeList(t, "api/r.go", mixed), 2)
+
+	echoSrc := `package api
+
+import "github.com/labstack/echo/v4"
+
+func eh(c echo.Context) error { return nil }
+
+func Load() {
+	e := echo.New()
+	e.GET("users", eh)
+	g := e.Group("/api")
+	g.GET("ping", eh)
+	e.Group("v2").GET("/x", eh)
+}
+`
+	assert.Equal(t, []string{
+		"echo GET api.Load./users -> api.eh",
+		"echo GET api.Load./apiping -> api.eh",
+		"echo GET api.Load./v2/x -> api.eh",
+	}, routeList(t, "api/r.go", echoSrc))
+
+	withChi := `package api
+
+import (
+	"github.com/go-chi/chi/v5"
+	"github.com/labstack/echo/v4"
+)
+
+func eh(c echo.Context) error { return nil }
+
+func Load() {
+	e := echo.New()
+	e.GET("users", eh)
+	e.GET("/ok", eh)
+	_ = chi.NewRouter()
+}
+`
+	assert.Equal(t, []string{"echo GET api.Load./ok -> api.eh"}, routeList(t, "api/r.go", withChi))
 }

@@ -148,11 +148,11 @@ evidence: a method named `GET` in a file that imports no router is no route.
 | net/http | `net/http` | `Handle`, `HandleFunc` on `http`, `http.DefaultServeMux` or a `ServeMux` (first); the path may be a Go 1.22 pattern, split as `ServeMux` does: the method is the text before the first space or tab, case kept (`"GET /items/{id}"` and `"GET\t/items/{id}"` give name `/items/{id}` and method `GET`, `"get /x"` method `get`), and any text before the first `/` is a host kept in the name (`"example.com/"`, `"localhost/status"`) | none |
 
 - The path argument must be a string literal that is `""` or starts with
-  `/` (a net/http pattern: after its method and host; a Gin path may be any
-  string, since Gin joins it to the base path `/`: `GET("users")` is `/users`,
-  except in a file that also imports Echo or Chi, whose receivers are not told
-  apart from Gin's; Echo does not add the slash and Chi panics on such a
-  path, so there it gives no route), and the argument after it must not be a string literal (except for
+  `/` (a net/http pattern: after its method and host; a Gin or Echo path may
+  be any string, since Gin joins it to the base path `/` and Echo adds the
+  missing leading slash: `GET("users")` is `/users`, except in a file that
+  also imports Chi, whose receivers are not told apart from theirs; Chi and
+  net/http panic on such a path, so there it gives no route), and the argument after it must not be a string literal (except for
   `Static`, `File`, `StaticFile`, `StaticFS`, whose second argument is a
   directory or file), so
   `Header().Add("X-Key", "v")` and `time.Now().Add(d)` are no routes.
@@ -174,7 +174,9 @@ evidence: a method named `GET` in a file that imports no router is no route.
   joined path as its `joinPaths` does, from the base path `/` (`Group("/")` +
   `GET("/x")` is `/x`, `Group("/p/")` + `GET("/:id")` is `/p/:id`,
   `Group("api")` + `GET("ping")` is `/api/ping`, a trailing slash is kept); Echo
-  and Chi paths are concatenated as written. A group variable
+  concatenates prefix and path and then adds a missing leading slash, as its
+  router does (`GET("users")` is `/users`, `Group("/api")` + `GET("ping")` is
+  `/apiping`); Chi paths are concatenated as written. A group variable
   passed to a function of the same file gives that function's parameter its
   prefix when every call in the file passes the same one; otherwise, and for
   any router whose prefix the file does not show (a parameter, a field set
@@ -269,7 +271,7 @@ evidence: a method named `GET` in a file that imports no router is no route.
 | File | Covers |
 |------|--------|
 | `golang_test.go` | A fixture with grouped declarations, generics, embedded types, aliased/dot/blank imports: symbol kinds, owners, lines, signatures, docs, IDs, metadata; every relation and its target; module path without `go.mod`, nested `go.mod` stopping at the root; malformed input; analyzing the real `parser.go` of this repo; registration; concurrency; generic calls; `Exported` for test files and unexported owners; calls through local function values; a parameter shadowing an import; a func-type or closure parameter typing no use outside it; a local shadowing the receiver; a func-typed receiver called or named as a value shadowing a package function; the line of a chained call split over lines; functions and methods named as values (arguments, assignments, literals, returns), with fields, vars, consts, type switch and select locals skipped; an external test package as its own module; a renamed module seen without a restart; same-package types declared in another file, type parameters (receiver ones too) and the receiver skipped; blank vars keeping their relations; goimports-style assumed import names; a `go.mod` symlinked out of the root ignored, one symlinked inside it read. |
-| `routes_test.go` | net/http (Go 1.22 method and host patterns, a lowercase method, a tab after the method, a host without a dot, `http.HandleFunc`, `mux.Handle` with a wrapped handler, two method-value handlers of one name on one line); Chi routes (nested `Route` closures shadowing the outer router, `With`, `Group`, `Method`, `HandleFunc`, `Mount`); Gin routes (nested groups in `{}` blocks, `Handle`, middleware before the handler, static files); Echo routes: nested and inline groups, a group in a struct field, a group passed to a function (and the prefix left out when two calls disagree), each handler form (function, method value, package function, inline closure), `Match` / `Add` / `Static` / `File`; a group variable shadowed in a block keeping the outer prefix after it; the receiver evidence (a top-level var from a constructor, a router-typed struct field; no route on an `echo.Context`, a cache in a chi file or a parameter of another type); a router and groups declared with `var`, alone or in a `var (...)` block; no route in a file without a router import, in a test file, or for `Header().Add` / `time.Now().Add`. |
+| `routes_test.go` | net/http (Go 1.22 method and host patterns, a lowercase method, a tab after the method, a host without a dot, `http.HandleFunc`, `mux.Handle` with a wrapped handler, two method-value handlers of one name on one line); Chi routes (nested `Route` closures shadowing the outer router, `With`, `Group`, `Method`, `HandleFunc`, `Mount`); Gin routes (nested groups in `{}` blocks, `Handle`, middleware before the handler, static files); Echo routes: nested and inline groups, a group in a struct field, a group passed to a function (and the prefix left out when two calls disagree), each handler form (function, method value, package function, inline closure), `Match` / `Add` / `Static` / `File`; a group variable shadowed in a block keeping the outer prefix after it; Echo and Gin paths without a leading slash (none in a file that also imports Chi); the receiver evidence (a top-level var from a constructor, a router-typed struct field; no route on an `echo.Context`, a cache in a chi file or a parameter of another type); a router and groups declared with `var`, alone or in a `var (...)` block; no route in a file without a router import, in a test file, or for `Header().Add` / `time.Now().Add`. |
 | `zz_verify_test.go` | Verification tests: resolution probes, an unclean (non-normalized) root path, robustness on garbage and edge input, a second round of edge cases, very large and deeply nested files. |
 
 ## Testing

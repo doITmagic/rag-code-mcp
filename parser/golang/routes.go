@@ -15,24 +15,25 @@ import (
 // framework is the route vocabulary of one HTTP router, used only in a file
 // that imports it: a method named GET on another type is no route elsewhere.
 type framework struct {
-	name    string
-	module  string          // import path without a /vN suffix
-	methods map[string]int  // registration method -> index of its path argument
-	group   string          // method returning a sub-router prefixed by its path argument
-	last    bool            // the handler is the last argument (after middleware), not the one after the path
-	inline  map[string]bool // methods returning a router with the receiver's prefix (chi With, Group)
-	pattern bool            // the path may be a Go 1.22 pattern: "GET /items/{id}", "host.com/x"
-	types   map[string]bool // router types: a parameter, var or field of one is a router
-	vars    map[string]bool // package-level routers: http.DefaultServeMux
-	ctors   map[string]bool // package functions returning a router
+	name     string
+	module   string          // import path without a /vN suffix
+	methods  map[string]int  // registration method -> index of its path argument
+	group    string          // method returning a sub-router prefixed by its path argument
+	last     bool            // the handler is the last argument (after middleware), not the one after the path
+	inline   map[string]bool // methods returning a router with the receiver's prefix (chi With, Group)
+	pattern  bool            // the path may be a Go 1.22 pattern: "GET /items/{id}", "host.com/x"
+	relative bool            // a path without the leading "/" is served: gin joins it to "/", echo adds the "/"
+	types    map[string]bool // router types: a parameter, var or field of one is a router
+	vars     map[string]bool // package-level routers: http.DefaultServeMux
+	ctors    map[string]bool // package functions returning a router
 }
 
 var frameworks = []framework{
-	{name: "echo", module: "github.com/labstack/echo", group: "Group", methods: map[string]int{
+	{name: "echo", module: "github.com/labstack/echo", group: "Group", relative: true, methods: map[string]int{
 		"GET": 0, "POST": 0, "PUT": 0, "DELETE": 0, "PATCH": 0, "OPTIONS": 0, "HEAD": 0, "CONNECT": 0, "TRACE": 0,
 		"Any": 0, "Match": 1, "Add": 1, "Static": 0, "File": 0,
 	}, types: map[string]bool{"Echo": true, "Group": true}, ctors: map[string]bool{"New": true}},
-	{name: "gin", module: "github.com/gin-gonic/gin", group: "Group", last: true, methods: map[string]int{
+	{name: "gin", module: "github.com/gin-gonic/gin", group: "Group", last: true, relative: true, methods: map[string]int{
 		"GET": 0, "POST": 0, "PUT": 0, "DELETE": 0, "PATCH": 0, "OPTIONS": 0, "HEAD": 0,
 		"Any": 0, "Match": 1, "Handle": 1, "Static": 0, "StaticFile": 0, "StaticFS": 0,
 	}, types: map[string]bool{"Engine": true, "RouterGroup": true, "IRouter": true, "IRoutes": true}, ctors: map[string]bool{"New": true, "Default": true}},
@@ -47,8 +48,12 @@ var frameworks = []framework{
 // join is the path of rel registered on a group at prefix: gin cleans the
 // joined path as path.Join does from its base path "/" and keeps a trailing
 // slash (its joinPaths), so Group("/") + GET("/x") is /x and GET("x") is /x;
-// the others concatenate.
+// echo concatenates and adds a missing leading slash (its normalizePathSlash),
+// so Group("/api") + GET("ping") is /apiping; the others concatenate.
 func (fw *framework) join(prefix, rel string) string {
+	if fw.name == "echo" && prefix+rel != "" && !strings.HasPrefix(prefix+rel, "/") {
+		return "/" + prefix + rel
+	}
 	if fw.name != "gin" || rel == "" {
 		return prefix + rel
 	}
@@ -405,7 +410,7 @@ func (fc *file) prefix(recv *gotreesitter.Node, groups map[string]string) string
 
 // pathLiteral unquotes a string literal that is "" or starts with "/"; a
 // pattern may also be "[METHOD ][host]/path" (net/http since Go 1.22), and a
-// gin path any string (joined to the base path "/").
+// gin or echo path any string (gin joins it to "/", echo adds the "/").
 func (fc *file) pathLiteral(n *gotreesitter.Node, fw *framework) (string, bool) {
 	if !strings.HasSuffix(n.Type(fc.lang), "string_literal") {
 		return "", false
@@ -421,10 +426,10 @@ func (fc *file) pathLiteral(n *gotreesitter.Node, fw *framework) (string, bool) 
 			p = p[i:] // a host pattern: example.com/x, localhost/x
 		}
 	}
-	// shortcut: a receiver is not tied to its framework, so in a file importing
-	// gin and another router (echo.New().GET("x") is none) a gin path needs the
-	// "/"; tie receivers to frameworks if mixed files show up.
-	relative := fw.name == "gin" && !slices.ContainsFunc(fc.routers, func(o *framework) bool { return o != fw && !o.pattern })
+	// shortcut: a receiver is not tied to its framework, so a path without the
+	// "/" needs every router the file imports (net/http aside) to serve it
+	// (chi panics on it); tie receivers to frameworks if mixed files show up.
+	relative := fw.relative && !slices.ContainsFunc(fc.routers, func(o *framework) bool { return !o.relative && !o.pattern })
 	if s != "" && !relative && (p == "" || p[0] != '/') {
 		return "", false
 	}

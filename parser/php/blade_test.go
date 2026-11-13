@@ -113,7 +113,9 @@ func TestBladeTagComponentsAndComments(t *testing.T) {
 	require.Len(t, syms, 1, "no section from inside a comment")
 	var got []string
 	for _, r := range syms[0].Relations {
-		got = append(got, fmt.Sprintf("%s:%d", r.TargetQualifiedName, r.Line))
+		if r.Kind == parser.RelImports {
+			got = append(got, fmt.Sprintf("%s:%d", r.TargetQualifiedName, r.Line))
+		}
 	}
 	assert.Equal(t, []string{"components.alert:2", "components.forms.input-text:7", "partials.nav:11"}, got)
 	assert.Equal(t, src, syms[0].Content, "the content keeps the comments")
@@ -130,4 +132,22 @@ func TestBladeNestedBlocks(t *testing.T) {
 	}
 	assert.Equal(t, [2]int{5, 15}, lines["p.content"])
 	assert.Equal(t, [2]int{6, 11}, lines["p.alert"])
+}
+
+// A component tag is also a usage of the class component Laravel maps it to
+// by convention: <x-forms.input-text> is App\View\Components\Forms\InputText.
+func TestBladeClassComponentTag(t *testing.T) {
+	src := "<x-alert type=\"error\" />\n<x-forms.input-text name=\"a\" />\n<x-slot name=\"t\" />\n"
+	syms, err := parser.Analyze(parser.File{Path: "/root/resources/views/p.blade.php", Root: "/root", Source: []byte(src)})
+	require.NoError(t, err)
+	var got []string
+	for _, r := range syms[0].Relations {
+		got = append(got, fmt.Sprintf("%s %s %s:%d", r.Kind, r.TargetName, r.TargetQualifiedName, r.Line))
+	}
+	assert.Equal(t, []string{
+		"imports components.alert components.alert:1",
+		`uses_type Alert App\View\Components\Alert:1`,
+		"imports components.forms.input-text components.forms.input-text:2",
+		`uses_type InputText App\View\Components\Forms\InputText:2`,
+	}, got)
 }

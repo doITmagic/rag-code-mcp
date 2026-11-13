@@ -25,9 +25,10 @@ var bladeTag = regexp.MustCompile(`<x-([\w.-]+)(?:[\s/>]|$)`)
 // <livewire:dir.name>; group 1 is the name.
 var bladeLivewire = regexp.MustCompile(`<livewire:([\w.-]+)(?:[\s/>]|$)`)
 
-// livewireClass is the class Livewire 3 maps a component name to:
-// "forum.post-list" is App\Livewire\Forum\PostList.
-func livewireClass(name string) string {
+// componentClass is the class a component name maps to by convention under
+// namespace ns: Livewire 3's "forum.post-list" is App\Livewire\Forum\PostList,
+// a Blade class component's "forms.input" App\View\Components\Forms\Input.
+func componentClass(ns, name string) string {
 	segs := strings.Split(name, ".")
 	for i, seg := range segs {
 		var b strings.Builder
@@ -38,12 +39,13 @@ func livewireClass(name string) string {
 		}
 		segs[i] = b.String()
 	}
-	return `App\Livewire\` + strings.Join(segs, `\`)
+	return ns + strings.Join(segs, `\`)
 }
 
 // blade scans a .blade.php view line by line: one template symbol for the
 // file, one per @section/@component/@livewire, and an imports relation per
-// @extends/@include/@includeIf/@each/@component and <x-name> tag; a
+// @extends/@include/@includeIf/@each/@component; an <x-name> tag imports
+// the view components.name and uses the class App\View\Components\Name, a
 // @livewire('x') or <livewire:x> imports the view livewire.x and uses the
 // class App\Livewire\X. Module is
 // the view's dotted directory below the nearest "views" folder, so
@@ -71,11 +73,12 @@ func blade(f parser.File) []parser.Symbol {
 			Kind: parser.RelImports, TargetName: view, TargetQualifiedName: view, Line: ln,
 		})
 	}
-	// A Livewire component is its view livewire.<name> and, by Livewire 3's
-	// convention, the class App\Livewire\<Name>.
-	livewire := func(name string, ln int) {
-		imports("livewire."+name, ln)
-		class := livewireClass(name)
+	// A component is its view and, by convention, a class: Livewire 3's
+	// livewire.<name> and App\Livewire\<Name>, a Blade component's
+	// components.<name> and App\View\Components\<Name>.
+	component := func(view, ns, name string, ln int) {
+		imports(view+"."+name, ln)
+		class := componentClass(ns, name)
 		syms[0].Relations = append(syms[0].Relations, parser.Relation{
 			Kind: parser.RelUsesType, TargetName: class[strings.LastIndex(class, `\`)+1:], TargetQualifiedName: class, Line: ln,
 		})
@@ -97,7 +100,7 @@ func blade(f parser.File) []parser.Symbol {
 					imports(m[2], ln)
 				}
 				if m[1] == "livewire" {
-					livewire(m[2], ln)
+					component("livewire", `App\Livewire\`, m[2], ln)
 				}
 				syms = append(syms, parser.Symbol{
 					Name: m[2], Kind: parser.KindTemplate, Module: syms[0].Module, Owner: stem,
@@ -115,11 +118,11 @@ func blade(f parser.File) []parser.Symbol {
 			}
 		}
 		for _, m := range bladeLivewire.FindAllStringSubmatch(line, -1) {
-			livewire(m[1], ln)
+			component("livewire", `App\Livewire\`, m[1], ln)
 		}
 		for _, m := range bladeTag.FindAllStringSubmatch(line, -1) {
 			if m[1] != "slot" && m[1] != "dynamic-component" {
-				imports("components."+m[1], ln)
+				component("components", `App\View\Components\`, m[1], ln)
 			}
 		}
 	}

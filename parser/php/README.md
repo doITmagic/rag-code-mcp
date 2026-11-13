@@ -212,7 +212,7 @@ by line with regular expressions.
 | One `template` symbol for the file | Name = file name without `.blade.php`; module = the dotted directory below the last `views` folder in the path (`resources/views/users/show.blade.php` -> module `users`, qualified name `users.show`). Content is the whole file. It ends on the last line; a final newline does not add an empty line. |
 | `@livewire('likes')`, `<livewire:likes>`, `<livewire:forum.post-list>` | An `imports` relation to the view `livewire.likes` and a `uses_type` relation to the class Livewire 3 maps the name to, `App\Livewire\Likes` (`App\Livewire\Forum\PostList`), so `rag_find_usages` of the component class or of its view lists the tag. A component kept elsewhere (`App\Http\Livewire` of Livewire 2, a custom namespace, a package) gets no class link. |
 | One `template` symbol per `@section('x')`, `@component('x')`, `@livewire('x')` | Owner = the view name. `@section` without a second argument and `@component` stay open until a closing directive (`@endsection`, `@endcomponent`, `@stop`, `@show`, `@append`, `@overwrite`); open blocks form a stack, so a closing directive ends the innermost one and a `@component` nested in a `@section` does not take the section's end. The inline `@section('x', 'v')` form and `@livewire` are one line. |
-| `imports` relation on the file symbol | For `@extends`, `@include`, `@includeIf`, `@each`, `@component`; the target qualified name is the view name as written (`layouts.app`), which matches the qualified name of `resources/views/layouts/app.blade.php`. A component tag `<x-alert>` or `<x-forms.input>` imports `components.alert` / `components.forms.input` (the anonymous component view, which is also the view of a class component); `<x-slot>`, `<x-dynamic-component>` and package components (`<x-mail::button>`) give none. |
+| `imports` relation on the file symbol | For `@extends`, `@include`, `@includeIf`, `@each`, `@component`; the target qualified name is the view name as written (`layouts.app`), which matches the qualified name of `resources/views/layouts/app.blade.php`. A component tag `<x-alert>` or `<x-forms.input>` imports `components.alert` / `components.forms.input` (the anonymous component view, which is also the view of a class component) and has a `uses_type` relation to the class Laravel maps the tag to by convention, `App\View\Components\Alert` (`App\View\Components\Forms\Input`; kebab-case segments become StudlyCase), so `rag_find_usages` of the class component lists the tag; `<x-slot>`, `<x-dynamic-component>` and package components (`<x-mail::button>`) give none. |
 
 Directives inside `{{-- --}}` comments, also over several lines, are
 ignored; the symbols' content keeps them.
@@ -231,9 +231,10 @@ A view outside any `views` folder has module `""`.
   usages, because a relation needs an owning symbol (see below). A class
   named in a string anywhere else (`app('App\Svc')`, a `$routeMiddleware`
   string) is not a usage either.
-- A class component `<x-alert>` is linked to its view, not to its class
-  (`App\View\Components\Alert`), and a component whose class renders
-  another view is linked to `components.<name>` anyway.
+- A class component is linked by convention only: a component registered
+  under another class or namespace (`Blade::component(...)`, a package) is
+  not linked to its class, and a component whose class renders another view
+  is linked to `components.<name>` anyway.
 - `define('X', ...)` becomes a constant only at file level (also in a
   namespace or a top-level closure); inside a named function or method it
   produces no symbol.
@@ -284,7 +285,7 @@ A view outside any `views` folder has module `""`.
 | File | Covers |
 |------|--------|
 | `php_test.go` | Registration of both extensions; a controller fixture with group/function/const `use`, attributes, traits, enums, promoted properties, closures, anonymous classes, routes and hooks (kinds, owners, lines, docs, signatures, metadata, relation targets); `define()` inside a namespace is global; hook and route names only from a plain string literal in the name position; a plugin with braced namespaces and parse-error recovery; malformed input; global-namespace function calls; concurrency; parameter and return type uses; a class named with a reserved word (`class Object extends Base`) keeping its name and base (`TestReservedClassName`); the line of a `->` chain call split over lines (`TestChainedCallLine`). |
-| `blade_test.go` | A Blade view with sections, components and includes; `<x-...>` tag components and directives inside `{{-- --}}` comments (`TestBladeTagComponentsAndComments`); a view outside a `views` folder; the file symbol's end line with a trailing newline; a `@component` nested in a `@section`. |
+| `blade_test.go` | A Blade view with sections, components and includes; `<x-...>` tag components and directives inside `{{-- --}}` comments (`TestBladeTagComponentsAndComments`); a component tag as a usage of its conventional class (`TestBladeClassComponentTag`); a view outside a `views` folder; the file symbol's end line with a trailing newline; a `@component` nested in a `@section`. |
 | `laravel_test.go` | Laravel route groups (array and fluent, nested, namespace) and handler relations (`C@m`, `uses`, `[C::class, m]`, invokable, resource, `Route::view`); `view()` / `View::make()` importing the template, not for a dynamic or package view name; a Mailable's `$this->view()` / `->markdown()` importing it (`TestMailableViewImportsTemplate`); `X::class`, property types, Eloquent relation strings and the `$listen` map as `uses_type` (`TestLaravelClassReferences`); escaped class strings (`'App\\User'`, `'App\\Controller@show'`) in Eloquent relations and route handlers (`TestEscapedClassStrings`); a double-quoted `$listen` map (`TestDoubleQuotedListenMap`); calls on typed parameters, typed, promoted and constructor-assigned properties (`TestTypedReceivers`); closure and arrow function parameters shadowing an outer typed parameter, `use (...)` and arrow functions seeing it (`TestClosureReceiverScope`). |
 | `zz_verify_test.go` | Verification tests: name resolution, global-namespace WordPress code, robustness, a routes file, multiple namespaces in one file, Blade layouts, no shared state between calls. |
 

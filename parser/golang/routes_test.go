@@ -458,3 +458,74 @@ func EchoVar() {
 		"echo GET rv.EchoVar./g2/after -> rv.hello",
 	}, routeList(t, "rv/rv.go", src))
 }
+
+// http.DefaultServeMux is the router http.HandleFunc registers on: a call on
+// it, or on a local holding it, is a route.
+func TestNetHTTPDefaultServeMux(t *testing.T) {
+	src := `package main
+
+import "net/http"
+
+func health(w http.ResponseWriter, r *http.Request) {}
+
+func main() {
+	http.DefaultServeMux.HandleFunc("/health", health)
+	mux := http.DefaultServeMux
+	mux.Handle("GET /ready", http.HandlerFunc(health))
+	var m = http.DefaultServeMux
+	m.HandleFunc("/live", health)
+}
+`
+	assert.Equal(t, []string{
+		"net/http HandleFunc main.main./health -> main.health",
+		"net/http GET main.main./ready ->",
+		"net/http HandleFunc main.main./live -> main.health",
+	}, routeList(t, "main/main.go", src))
+}
+
+// Gin joins a path written without a leading slash to the group's base path
+// ("/" for the engine), so GET("users") is /users and Group("api") +
+// GET("ping") is /api/ping. Echo does not add the slash and chi panics on
+// such a path: neither gives a route, and in a file importing gin and echo
+// no router's path without the slash is a route.
+func TestRoutePathsWithoutLeadingSlash(t *testing.T) {
+	src := `package api
+
+import "github.com/gin-gonic/gin"
+
+func h(c *gin.Context) {}
+
+func Load() {
+	r := gin.New()
+	r.GET("users", h)
+	api := r.Group("api")
+	api.GET("ping", h)
+	api.Group("v1/").POST("items/", h)
+	r.Static("assets", "./assets")
+}
+`
+	assert.Equal(t, []string{
+		"gin GET api.Load./users -> api.h",
+		"gin GET api.Load./api/ping -> api.h",
+		"gin POST api.Load./api/v1/items/ -> api.h",
+		"gin Static api.Load./assets ->",
+	}, routeList(t, "api/r.go", src))
+
+	mixed := `package api
+
+import (
+	"github.com/gin-gonic/gin"
+	"github.com/labstack/echo/v4"
+)
+
+func eh(c echo.Context) error { return nil }
+
+func Load() {
+	e := echo.New()
+	e.GET("users", eh)
+	e.GET("/ok", eh)
+	_ = gin.New()
+}
+`
+	assert.Len(t, routeList(t, "api/r.go", mixed), 1)
+}

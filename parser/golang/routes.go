@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -22,6 +23,7 @@ type framework struct {
 	inline  map[string]bool // methods returning a router with the receiver's prefix (chi With, Group)
 	pattern bool            // the path may be a Go 1.22 pattern: "GET /items/{id}", "host.com/x"
 	types   map[string]bool // router types: a parameter, var or field of one is a router
+	vars    map[string]bool // package-level routers: http.DefaultServeMux
 	ctors   map[string]bool // package functions returning a router
 }
 
@@ -39,17 +41,18 @@ var frameworks = []framework{
 		"Handle": 0, "HandleFunc": 0, "Method": 1, "MethodFunc": 1, "Mount": 0,
 	}, types: map[string]bool{"Router": true, "Mux": true}, ctors: map[string]bool{"NewRouter": true, "NewMux": true}},
 	{name: "net/http", module: "net/http", pattern: true, methods: map[string]int{"Handle": 0, "HandleFunc": 0},
-		types: map[string]bool{"ServeMux": true}, ctors: map[string]bool{"NewServeMux": true}},
+		types: map[string]bool{"ServeMux": true}, ctors: map[string]bool{"NewServeMux": true}, vars: map[string]bool{"DefaultServeMux": true}},
 }
 
 // join is the path of rel registered on a group at prefix: gin cleans the
-// joined path as path.Join does and keeps a trailing slash (its joinPaths),
-// so Group("/") + GET("/x") is /x; the others concatenate.
+// joined path as path.Join does from its base path "/" and keeps a trailing
+// slash (its joinPaths), so Group("/") + GET("/x") is /x and GET("x") is /x;
+// the others concatenate.
 func (fw *framework) join(prefix, rel string) string {
-	if fw.name != "gin" || rel == "" || prefix == "" {
+	if fw.name != "gin" || rel == "" {
 		return prefix + rel
 	}
-	p := path.Join(prefix, rel)
+	p := path.Join("/", prefix, rel)
 	if strings.HasSuffix(rel, "/") && !strings.HasSuffix(p, "/") {
 		p += "/"
 	}
@@ -268,7 +271,7 @@ func (fc *file) route(call, fn *gotreesitter.Node, args []*gotreesitter.Node, gr
 		if !ok || idx >= len(args) {
 			continue
 		}
-		path, ok := fc.pathLiteral(args[idx], fw.pattern)
+		path, ok := fc.pathLiteral(args[idx], fw)
 		if !ok {
 			continue
 		}
@@ -341,7 +344,7 @@ func (fc *file) groupPrefix(e *gotreesitter.Node, groups map[string]string) (str
 		if len(args) == 0 {
 			continue
 		}
-		if path, ok := fc.pathLiteral(args[0], false); ok {
+		if path, ok := fc.pathLiteral(args[0], fw); ok {
 			if p, ok := fc.router(parser.Field(fn, fc.lang, "operand"), groups); ok {
 				return fw.join(p, path), true
 			}
@@ -378,7 +381,11 @@ func (fc *file) router(e *gotreesitter.Node, groups map[string]string) (string, 
 		if p, ok := groups[fc.text(e)]; ok {
 			return p, true
 		}
-		return "", fc.routerFields[fc.text(parser.Field(e, fc.lang, "field"))]
+		field := fc.text(parser.Field(e, fc.lang, "field"))
+		if fw := fc.fwPkgs[fc.text(parser.Field(e, fc.lang, "operand"))]; fw != nil && fw.vars[field] {
+			return "", true
+		}
+		return "", fc.routerFields[field]
 	case "identifier":
 		name := fc.text(e)
 		if p, ok := groups[name]; ok {
@@ -397,8 +404,9 @@ func (fc *file) prefix(recv *gotreesitter.Node, groups map[string]string) string
 }
 
 // pathLiteral unquotes a string literal that is "" or starts with "/"; a
-// pattern may also be "[METHOD ][host]/path" (net/http since Go 1.22).
-func (fc *file) pathLiteral(n *gotreesitter.Node, pattern bool) (string, bool) {
+// pattern may also be "[METHOD ][host]/path" (net/http since Go 1.22), and a
+// gin path any string (joined to the base path "/").
+func (fc *file) pathLiteral(n *gotreesitter.Node, fw *framework) (string, bool) {
 	if !strings.HasSuffix(n.Type(fc.lang), "string_literal") {
 		return "", false
 	}
@@ -407,13 +415,17 @@ func (fc *file) pathLiteral(n *gotreesitter.Node, pattern bool) (string, bool) {
 		return "", false
 	}
 	p := s
-	if pattern {
+	if fw.pattern {
 		_, p = splitMethod(s)
 		if i := strings.IndexByte(p, '/'); i > 0 {
 			p = p[i:] // a host pattern: example.com/x, localhost/x
 		}
 	}
-	if s != "" && (p == "" || p[0] != '/') {
+	// shortcut: a receiver is not tied to its framework, so in a file importing
+	// gin and another router (echo.New().GET("x") is none) a gin path needs the
+	// "/"; tie receivers to frameworks if mixed files show up.
+	relative := fw.name == "gin" && !slices.ContainsFunc(fc.routers, func(o *framework) bool { return o != fw && !o.pattern })
+	if s != "" && !relative && (p == "" || p[0] != '/') {
 		return "", false
 	}
 	return s, true

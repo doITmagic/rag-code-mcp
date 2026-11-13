@@ -145,10 +145,14 @@ evidence: a method named `GET` in a file that imports no router is no route.
 | Echo | `github.com/labstack/echo` (any `/vN`) | `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `OPTIONS`, `HEAD`, `CONNECT`, `TRACE`, `Any`, `Static`, `File` (first); `Match`, `Add` (second) | `Group(prefix, ...)` |
 | Gin | `github.com/gin-gonic/gin` | `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `OPTIONS`, `HEAD`, `Any`, `Static`, `StaticFile`, `StaticFS` (first); `Match`, `Handle` (second) | `Group(prefix, ...)` |
 | Chi | `github.com/go-chi/chi` (any `/vN`) | `Get`, `Post`, `Put`, `Delete`, `Patch`, `Options`, `Head`, `Connect`, `Trace`, `Handle`, `HandleFunc`, `Mount` (first); `Method`, `MethodFunc` (second) | `Route(prefix, func(r chi.Router) {...})`: the closure's router parameter gets the prefix inside the closure only; `Group(func(r chi.Router) {...})` and `With(mw...)` keep the receiver's prefix |
-| net/http | `net/http` | `Handle`, `HandleFunc` on `http` or a `ServeMux` (first); the path may be a Go 1.22 pattern, split as `ServeMux` does: the method is the text before the first space or tab, case kept (`"GET /items/{id}"` and `"GET\t/items/{id}"` give name `/items/{id}` and method `GET`, `"get /x"` method `get`), and any text before the first `/` is a host kept in the name (`"example.com/"`, `"localhost/status"`) | none |
+| net/http | `net/http` | `Handle`, `HandleFunc` on `http`, `http.DefaultServeMux` or a `ServeMux` (first); the path may be a Go 1.22 pattern, split as `ServeMux` does: the method is the text before the first space or tab, case kept (`"GET /items/{id}"` and `"GET\t/items/{id}"` give name `/items/{id}` and method `GET`, `"get /x"` method `get`), and any text before the first `/` is a host kept in the name (`"example.com/"`, `"localhost/status"`) | none |
 
 - The path argument must be a string literal that is `""` or starts with
-  `/` (a net/http pattern: after its method and host), and the argument after it must not be a string literal (except for
+  `/` (a net/http pattern: after its method and host; a Gin path may be any
+  string, since Gin joins it to the base path `/`: `GET("users")` is `/users`,
+  except in a file that also imports Echo or Chi, whose receivers are not told
+  apart from Gin's; Echo does not add the slash and Chi panics on such a
+  path, so there it gives no route), and the argument after it must not be a string literal (except for
   `Static`, `File`, `StaticFile`, `StaticFS`, whose second argument is a
   directory or file), so
   `Header().Add("X-Key", "v")` and `time.Now().Add(d)` are no routes.
@@ -158,16 +162,18 @@ evidence: a method named `GET` in a file that imports no router is no route.
   a chi `Route` / `Group` closure parameter, a `With(...)` call on a router, a
   parameter, top-level var or struct field of a router type (`*echo.Echo`,
   `*echo.Group`, `*gin.Engine`, `*gin.RouterGroup`, `gin.IRouter`,
-  `gin.IRoutes`, `chi.Router`, `*chi.Mux`, `*http.ServeMux`), or the `http`
-  package itself. So `c.File("/var/www/index.html")` on an `echo.Context` and
+  `gin.IRoutes`, `chi.Router`, `*chi.Mux`, `*http.ServeMux`), the `http`
+  package itself or `http.DefaultServeMux` (also held in a local:
+  `mux := http.DefaultServeMux`). So `c.File("/var/www/index.html")` on an `echo.Context` and
   `cache.Get("/docs/1", out)` are no routes; a router reached any other way
   (returned by a project function, a field of a type declared elsewhere)
   gives no route either.
 - **Name** is the full path: the group prefixes the file shows joined in front
   (`g := e.Group("/admin")`, `v1 := g.Group("/v1")`, `s.api = e.Group("/api")`,
   `e.Group("/u").Static("/", dir)`); an empty result is `/`. Gin cleans the
-  joined path as its `joinPaths` does (`Group("/")` + `GET("/x")` is `/x`,
-  `Group("/p/")` + `GET("/:id")` is `/p/:id`, a trailing slash is kept); Echo
+  joined path as its `joinPaths` does, from the base path `/` (`Group("/")` +
+  `GET("/x")` is `/x`, `Group("/p/")` + `GET("/:id")` is `/p/:id`,
+  `Group("api")` + `GET("ping")` is `/api/ping`, a trailing slash is kept); Echo
   and Chi paths are concatenated as written. A group variable
   passed to a function of the same file gives that function's parameter its
   prefix when every call in the file passes the same one; otherwise, and for
@@ -235,9 +241,11 @@ evidence: a method named `GET` in a file that imports no router is no route.
   directory path.
 - Methods whose receiver type cannot be read produce no symbol.
 - Routes: only the frameworks in [Routes](#routes) are read. Routes
-  registered through a project's own helper or a table of structs, a group
-  passed to a method (`s.register(g)`) and a path built at run time
-  (`"/v" + n`) produce no route or keep the path as written.
+  registered through a project's own helper or a table of structs, a router
+  returned by a project's own constructor (`r := newRouter()`), a router
+  held in a field of a type declared in another file, a group passed to a
+  method (`s.register(g)`) and a path built at run time (`"/v" + n`) produce
+  no route or keep the path as written.
 - Interface methods are not symbols of their own: they are only listed in the
   interface's `Metadata["methods"]`. `rag_find_usages` on a method declared
   only in an interface (no implementation) answers "no indexed symbol named";

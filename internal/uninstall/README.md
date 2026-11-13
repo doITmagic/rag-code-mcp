@@ -25,7 +25,7 @@ graph LR
     UN -->|HomeDir| CFG[internal/config]
     UN -->|Targets, Remove| IDE[internal/idepaths]
     UN -->|PointerFiles, IDEPointer| ENG[engine]
-    UN -->|pgrep/kill or tasklist/taskkill| OS[OS tools]
+    UN -->|pgrep/kill or Win32 process API| OS[OS tools]
     UN -->|docker rm, docker volume rm| DOCKER[docker CLI]
 ```
 
@@ -40,7 +40,8 @@ graph LR
 
 | File | Contents |
 |:---|:---|
-| `uninstall.go` | `Options`, `Binary`, `Run`, `StopProcess`, and the helpers `removePointer`, `stripPath` and the coloured `step`/`ok`/`warn` printers. |
+| `uninstall.go` | `Options`, `Binary`, `Run`, `StopProcess`, and the helpers `sameExe`, `removePointer`, `stripPath` and the coloured `step`/`ok`/`warn` printers. |
+| `stop_windows.go`, `stop_other.go` | `stopWindows`: the Windows half of `StopProcess` (snapshot, image path match, terminate); a no-op stub elsewhere. |
 
 Tests:
 
@@ -49,6 +50,8 @@ Tests:
 | `uninstall_test.go` | Full run with a fake `docker`: workspace `.ragcode` and `~/.ragcode` removed, other workspace files kept, the pointer line stripped from `CLAUDE.md` and `.cursor/rules/ragcode.mdc` deleted, only the installer's PATH pair removed from `.bashrc`, other Cursor servers kept, exact Docker commands; the prompt for each workspace's `.ragcode`; every file `WriteIDERules` touched gets the pointer stripped; the index under `RAGCODE_HOME/index` goes with the home and no Qdrant is called. |
 | `fifo_test.go` | Build tag `unix`. A FIFO at `AGENTS.md` in a known root is skipped instead of blocking `Run`; `CLAUDE.md` still loses its pointer. |
 | `stop_unix_test.go` | Build tag `!windows`. `StopProcess` stops the server binary but not processes that only mention its path (a shell, `tail -f`, a launcher wrapper). |
+| `stop_test.go` | `sameExe`: the same path in another case or with `..` matches, a same-named file in another folder does not. Runs on every OS. |
+| `stop_windows_test.go` | Build tag `windows`. Two copies of the test binary under one unique image name in two folders: `StopProcess` stops the one at `binary` and the other keeps running (`TestStopProcessOnlyStopsThisPath`). |
 | `zz_verify_test.go` | Verification tests: garbage `roots.json` and a cancelled context neither panic nor hang, and the home is still removed; closed stdin when an answer is needed fails `Run`; a `RAGCODE_HOME` override is removed and its PATH line stripped while `~/.ragcode` stays; `RAGCODE_HOME` set to the user home or one of its parents is never deleted. |
 
 ## Key types and functions
@@ -84,7 +87,7 @@ effort. Does nothing when `binary` does not exist.
 | OS | How |
 |:---|:---|
 | Linux, macOS | `pgrep -f '^<binary>( \|$)'` (anchored, so argv[0] must be the binary itself), `kill -TERM`, poll every 100 ms for up to 5 s, then `kill -KILL` for the survivors. |
-| Windows | `tasklist` filtered by image name, then `taskkill /F` for each PID. |
+| Windows | A process snapshot (`golang.org/x/sys/windows`); for each process with the same image name, `QueryFullProcessImageName` must be the same file as `binary` (case-insensitive path or `os.SameFile`), then `TerminateProcess` and up to 5 s of waiting. A `rag-code-mcp.exe` started from another folder (an IDE's server, another install) is left alone. |
 
 ## The steps
 

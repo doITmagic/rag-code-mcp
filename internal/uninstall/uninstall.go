@@ -135,16 +135,14 @@ func StopProcess(ctx context.Context, binary string) {
 	if _, err := os.Stat(binary); err != nil {
 		return
 	}
-	self := strconv.Itoa(os.Getpid())
 	if runtime.GOOS == "windows" {
-		out, _ := exec.CommandContext(ctx, "tasklist", "/FI", "IMAGENAME eq "+filepath.Base(binary), "/NH", "/FO", "CSV").Output()
-		for _, line := range strings.Split(string(out), "\n") {
-			if f := strings.Split(line, "\",\""); len(f) >= 2 && strings.Trim(f[1], "\"") != self {
-				_ = exec.CommandContext(ctx, "taskkill", "/F", "/PID", strings.Trim(f[1], "\"")).Run()
-			}
+		if abs, err := filepath.Abs(binary); err == nil {
+			binary = abs
 		}
+		stopWindows(binary, os.Getpid())
 		return
 	}
+	self := strconv.Itoa(os.Getpid())
 	alive := func() []string {
 		// Anchored: argv[0] must be the binary, so a shell, tail -f or a
 		// launcher wrapper that only mentions the path is left alone.
@@ -173,6 +171,20 @@ func StopProcess(ctx context.Context, binary string) {
 	if pids = alive(); len(pids) > 0 {
 		_ = exec.CommandContext(ctx, "kill", append([]string{"-KILL"}, pids...)...).Run()
 	}
+}
+
+// sameExe reports whether the image path of a running process is binary.
+// Windows only: the comparison ignores case, as NTFS does.
+func sameExe(path, binary string) bool {
+	if path == "" {
+		return false
+	}
+	if strings.EqualFold(filepath.Clean(path), filepath.Clean(binary)) {
+		return true
+	}
+	a, err := os.Stat(path)
+	b, berr := os.Stat(binary)
+	return err == nil && berr == nil && os.SameFile(a, b) // 8.3 short names
 }
 
 // removePointer drops the engine.IDEPointer line WriteIDERules added to path,

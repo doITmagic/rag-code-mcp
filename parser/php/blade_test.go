@@ -137,7 +137,7 @@ func TestBladeNestedBlocks(t *testing.T) {
 // A component tag is also a usage of the class component Laravel maps it to
 // by convention: <x-forms.input-text> is App\View\Components\Forms\InputText.
 func TestBladeClassComponentTag(t *testing.T) {
-	src := "<x-alert type=\"error\" />\n<x-forms.input-text name=\"a\" />\n<x-slot name=\"t\" />\n"
+	src := "<x-alert type=\"error\" />\n<x-forms.input-text name=\"a\" />\n<x-slot name=\"t\" />\n<x-my_component />\n<livewire:post_list />\n"
 	syms, err := parser.Analyze(parser.File{Path: "/root/resources/views/p.blade.php", Root: "/root", Source: []byte(src)})
 	require.NoError(t, err)
 	var got []string
@@ -149,6 +149,10 @@ func TestBladeClassComponentTag(t *testing.T) {
 		`uses_type Alert App\View\Components\Alert:1`,
 		"imports components.forms.input-text components.forms.input-text:2",
 		`uses_type InputText App\View\Components\Forms\InputText:2`,
+		"imports components.my_component components.my_component:4",
+		`uses_type MyComponent App\View\Components\MyComponent:4`, // Str::studly splits at "_" too
+		"imports livewire.post_list livewire.post_list:5",
+		`uses_type PostList App\Livewire\PostList:5`,
 	}, got)
 }
 

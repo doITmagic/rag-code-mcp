@@ -32,11 +32,13 @@ var bladeRoute = regexp.MustCompile(`(?:^|[^\w>:$])(?:to_)?route\(\s*['"]([^'"$]
 // componentClass is the class a component name maps to by convention under
 // namespace ns: Livewire 3's "forum.post-list" is App\Livewire\Forum\PostList,
 // a Blade class component's "forms.input" App\View\Components\Forms\Input.
+// Each segment is StudlyCase as Laravel's Str::studly makes it, splitting at
+// "-" and "_": "my_component" is MyComponent.
 func componentClass(ns, name string) string {
 	segs := strings.Split(name, ".")
 	for i, seg := range segs {
 		var b strings.Builder
-		for _, w := range strings.Split(seg, "-") {
+		for _, w := range strings.FieldsFunc(seg, func(r rune) bool { return r == '-' || r == '_' }) {
 			if w != "" {
 				b.WriteString(strings.ToUpper(w[:1]) + w[1:])
 			}

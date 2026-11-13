@@ -131,7 +131,7 @@ func (c *collector) routeInfo(n *gotreesitter.Node, name string, pos int, owner 
 		if len(args) > 0 && c.typ(args[0]) == "array_creation_expression" {
 			keyed, _ := c.arrayElems(args[0])
 			ri.prefix, ri.ns = c.literal(keyed["prefix"]), c.literal(keyed["namespace"])
-			ri.ctrlFQN = c.classConst(keyed["controller"], owner)
+			ri.ctrlFQN = c.controllerClass(keyed["controller"], owner)
 			ri.name = c.literal(keyed["as"])
 		}
 	case pos+1 >= len(args):
@@ -143,7 +143,8 @@ func (c *collector) routeInfo(n *gotreesitter.Node, name string, pos int, owner 
 	return ri
 }
 
-// handler reads a route action: 'C@m', C::class, [C::class, 'm'] or an
+// handler reads a route action: 'C@m', C::class, [C::class, 'm'] (also
+// ['App\C', 'm']) or an
 // array with 'uses' => one of those. A closure or anything else sets nothing.
 func (c *collector) handler(h *gotreesitter.Node, owner string, ri *routeInfo) {
 	switch c.typ(h) {
@@ -160,7 +161,7 @@ func (c *collector) handler(h *gotreesitter.Node, owner string, ri *routeInfo) {
 		if u := keyed["uses"]; u != nil {
 			c.handler(u, owner, ri)
 		} else if len(list) == 2 {
-			if fqn := c.classConst(list[0], owner); fqn != "" {
+			if fqn := c.controllerClass(list[0], owner); fqn != "" {
 				ri.ctrlFQN, ri.action = fqn, c.literal(list[1])
 			}
 		}
@@ -178,6 +179,18 @@ func (c *collector) classConst(n *gotreesitter.Node, owner string) string {
 		return ""
 	}
 	return c.resolve(c.text(cls), c.classes, owner)
+}
+
+// controllerClass is the class a controller value names: C::class resolved,
+// or a class string ('App\Http\C'), always fully qualified at runtime.
+func (c *collector) controllerClass(n *gotreesitter.Node, owner string) string {
+	if fqn := c.classConst(n, owner); fqn != "" {
+		return fqn
+	}
+	if lit := c.literal(n); className(lit) {
+		return strings.TrimPrefix(lit, `\`)
+	}
+	return ""
 }
 
 // arrayElems splits an array literal into its string-keyed values and its
@@ -221,7 +234,7 @@ func (c *collector) fluentGroup(n *gotreesitter.Node) {
 			names = arg + names
 		case "controller":
 			if args := c.args(o); len(args) > 0 {
-				ctrl = c.classConst(args[0], "")
+				ctrl = c.controllerClass(args[0], "")
 			}
 		}
 		if t == "scoped_call_expression" {

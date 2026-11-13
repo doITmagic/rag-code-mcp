@@ -379,7 +379,7 @@ gone. Where locking is a no-op (no flock), every server leads, as before.
 | `Chmod` only, or a path outside the root | ignored |
 | `.git` created at the root | `.git` and its refs are watched, full run ("git repository created"): files the new repository ignores are purged |
 | a directory created under `.git/refs` | watched with its subtree, full run ("git HEAD changed") |
-| `.git/HEAD` or anything under `.git/refs/` | full run ("git HEAD changed"); `*.lock` files are ignored, so a ref git moves by writing `<ref>.lock` and renaming it gives one run |
+| `.git/HEAD` or anything under `.git/refs/` | full run ("git HEAD changed"); `*.lock` files and removals are ignored, so a ref git moves by writing `<ref>.lock` and renaming it gives one run (Windows reports that rename as Remove plus Create and the ref's directory as written; a deleted branch queues nothing) |
 | anything else under `.git` | ignored |
 | a path inside a hidden or excluded directory | ignored |
 | a path inside a linked worktree (`index.LinkedWorktreeOf`) | its watches are dropped, full run ("linked worktree added"): `git worktree add` writes the `.git` after the directory was created and watched, and the walk purges what was indexed from it |

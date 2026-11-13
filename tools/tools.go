@@ -40,13 +40,14 @@ type Response struct {
 
 // IndexInfo summarizes the workspace index state inside a response.
 type IndexInfo struct {
-	State  string `json:"state"` // not_indexed|queued|indexing|done|failed
-	Done   int    `json:"done"`
-	Total  int    `json:"total"`
-	Branch string `json:"branch,omitempty"`
-	Age    string `json:"age,omitempty"` // time since the last finished run
-	Error  string `json:"error,omitempty"`
-	Watch  string `json:"watch,omitempty"` // set when edits are not indexed automatically
+	State   string `json:"state"` // not_indexed|queued|indexing|done|failed
+	Done    int    `json:"done"`
+	Total   int    `json:"total"`
+	Branch  string `json:"branch,omitempty"`
+	Age     string `json:"age,omitempty"` // time since the last finished run
+	Error   string `json:"error,omitempty"`
+	Watch   string `json:"watch,omitempty"`   // set when edits are not indexed automatically
+	Warning string `json:"warning,omitempty"` // the last run went on with less than asked (index.Status.Warning)
 }
 
 type tools struct {
@@ -121,7 +122,7 @@ func fail(msg string) (*mcp.CallToolResult, any, error) {
 
 func indexInfo(w *engine.Workspace) *IndexInfo {
 	s := w.Status()
-	info := &IndexInfo{Done: s.Done, Total: s.Total, Branch: s.Branch, Error: s.LastError}
+	info := &IndexInfo{Done: s.Done, Total: s.Total, Branch: s.Branch, Error: s.LastError, Warning: s.Warning}
 	if info.Error == "" && !s.Running && !s.Queued {
 		info.Error = s.Error // after a restart: the error index_status.json kept
 	}

@@ -78,11 +78,12 @@ type Update struct {
 
 // KnownRoot is one workspace from roots.json with its persisted index state.
 type KnownRoot struct {
-	Root  string `json:"root"`
-	State string `json:"state"` // not_indexed|queued|indexing|done|failed|interrupted|<phase>
-	Files int    `json:"last_run_files"`
-	Total int    `json:"total,omitempty"` // files of the run in progress
-	Ended string `json:"ended_at,omitempty"`
+	Root    string `json:"root"`
+	State   string `json:"state"` // not_indexed|queued|indexing|done|failed|interrupted|<phase>
+	Files   int    `json:"last_run_files"`
+	Total   int    `json:"total,omitempty"` // files of the run in progress
+	Ended   string `json:"ended_at,omitempty"`
+	Warning string `json:"warning,omitempty"` // index.Status.Warning of the last run
 }
 
 func (t *tools) serverInfo(ctx context.Context, _ *mcp.CallToolRequest, _ InfoInput) (*mcp.CallToolResult, any, error) {
@@ -183,7 +184,7 @@ func knownRoots(e *engine.Engine) []KnownRoot {
 			continue
 		}
 		if s, ok := index.ReadStatus(r); ok {
-			k.State, k.Files = s.Phase, s.Done
+			k.State, k.Files, k.Warning = s.Phase, s.Done, s.Warning
 			switch {
 			case !s.EndedAt.IsZero():
 				k.Ended = s.EndedAt.Format(time.RFC3339)

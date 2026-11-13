@@ -75,7 +75,7 @@ graph LR
 
 | File | Covers |
 |------|--------|
-| `index_test.go` | The main suite, with a line-based fake analyzer and a hook embedder: full, incremental, delete, recreate, model and `Format` change, embed failure, parse failures and panics, cancel, `ErrHeadChanged`, relation resolution, `Skip`, `Walk`, `.gitignore`, linked worktrees, symlinks in `Files`, byte-budgeted upsert batches, empty collection with stale state, a crash between a recreate's state save and its drop, moved targets, vanished referrers, a file that changed between the two passes, deleted paths counted only when they were indexed, relation target kinds (`TestResolutionTargetKinds`) and inherited members through the owner's bases (`TestResolutionThroughBases`), in full and files runs, Go bases limited to embeddings (`TestResolutionThroughBasesGoEmbeddingOnly`), a run cancelled before it changed anything keeping the previous `done` status (`TestRunCancelledKeepsDoneStatus`), and a run with nothing to do keeping the last run's counters on disk (`TestRunWithoutChangesKeepsLastCounters`), and a model the embedder cannot serve leaving the old index and state untouched (`TestRunModelChangeUnavailableKeepsIndex`), the WARN for an unreadable directory (`TestWalkWarnsUnreadableDir`), RagCode's own home pruned (`TestWalkSkipsOwnHome`), a failed run that changed nothing keeping the last real counters under its error (`TestRunFailedUnchangedKeepsCounters`), a files run skipping a file inside a linked worktree (`TestRunFilesSkipsLinkedWorktree`), a run with nothing to do recording the current branch (`TestRunWithoutChangesRecordsBranch`), a run with nothing to do after one stopped by `ErrHeadChanged` keeping that run's counters (`TestRunAfterHeadChangedKeepsCounters`), and a file deleted between the scan and the parse purged, not counted as failed (`TestRunFileVanishedDuringRun`), and a full walk over `MaxFiles` refused before parsing, leaving no empty collection and keeping an existing index (`TestRunMaxFiles`). Its `TestMain` points `RAGCODE_HOME` at a temp dir. |
+| `index_test.go` | The main suite, with a line-based fake analyzer and a hook embedder: full, incremental, delete, recreate, model and `Format` change, embed failure, parse failures and panics, cancel, `ErrHeadChanged`, relation resolution, `Skip`, `Walk`, `.gitignore`, linked worktrees, symlinks in `Files`, byte-budgeted upsert batches, empty collection with stale state, a crash between a recreate's state save and its drop, moved targets, vanished referrers, a file that changed between the two passes, deleted paths counted only when they were indexed, relation target kinds (`TestResolutionTargetKinds`) and inherited members through the owner's bases (`TestResolutionThroughBases`), in full and files runs, Go bases limited to embeddings (`TestResolutionThroughBasesGoEmbeddingOnly`), a run cancelled before it changed anything keeping the previous `done` status (`TestRunCancelledKeepsDoneStatus`), and a run with nothing to do keeping the last run's counters on disk (`TestRunWithoutChangesKeepsLastCounters`), and a model the embedder cannot serve leaving the old index and state untouched (`TestRunModelChangeUnavailableKeepsIndex`), the WARN for an unreadable directory (`TestWalkWarnsUnreadableDir`), RagCode's own home pruned (`TestWalkSkipsOwnHome`), a failed run that changed nothing keeping the last real counters under its error (`TestRunFailedUnchangedKeepsCounters`), a files run skipping a file inside a linked worktree (`TestRunFilesSkipsLinkedWorktree`), a run with nothing to do recording the current branch (`TestRunWithoutChangesRecordsBranch`), a run with nothing to do after one stopped by `ErrHeadChanged` keeping that run's counters (`TestRunAfterHeadChangedKeepsCounters`), and a file deleted between the scan and the parse purged, not counted as failed (`TestRunFileVanishedDuringRun`), and a full walk over `MaxFiles` refused before parsing, leaving no empty collection and keeping an existing index (`TestRunMaxFiles`), and a repository git refuses (a fake `git` answering `dubious ownership`, exit 128) reported once per run in the log and `Status.Warning`, cleared by the next run once git accepts it (`TestRunReportsGitRefusedRepository`). Its `TestMain` points `RAGCODE_HOME` at a temp dir. |
 | `js_object_members_test.go` | With the real JavaScript analyzer: `Obj.f()` through a default or named import of an object literal with a shorthand or `key: ident` member (`export default { getToken }`, `export const api = { read }`) resolves exactly to the function the member names. |
 | `racy_test.go` | Racy clean: a file indexed within 2 s of its mtime and replaced by other bytes of the same size under the same mtime is re-indexed, in full and files runs; one whose bytes turned binary leaves the index; an old-mtime file replaced the same way is not opened and not seen (as in git); a racy file left untouched is read again until its mtime is past the window, then its hash is dropped and saved and it is no longer opened; a `state.json` without hashes loads and runs unchanged. `clock` is fixed by the tests. |
 | `budget_test.go` | The parse byte budget is respected, and batches still resolve forward references. |
@@ -137,6 +137,7 @@ to `index_status.json`:
 | `Phase` | `scanning`, `parsing`, `embedding`, `done`, `failed`, or `interrupted` (cancelled). |
 | `Error` | The error of a failed run. |
 | `Recreated` | This run dropped the collection. |
+| `Warning` | The run went on with less than asked: `git refused the repository (dubious ownership): .gitignore rules are not applied`. Logged once per run as a WARN with the root. |
 
 ### Functions
 
@@ -621,6 +622,18 @@ the repository around it ignores that directory (`/php-app/` in the parent's
 `.gitignore`, `php-app/legacy/.git`), every file in it is ignored. Files
 outside any git work tree (or with no `git` installed) are never ignored.
 Files runs apply the same check to the listed files.
+
+A repository git refuses (exit 128, `detected dubious ownership`: the server
+runs as another user than the owner, as with a WSL server run as root, a
+sudo-cloned repository or a docker volume) fails every `check-ignore`, so no
+`.gitignore` rule applies and ignored folders get indexed. The run detects it
+on its `git rev-parse` of HEAD (run with `LC_ALL=C`, matched on git's
+message), logs `index: git refused the repository (dubious ownership):
+.gitignore rules are not applied` with the root once per run and saves it in
+`Status.Warning`, which the tools show as `index.warning`. `safe.directory` is
+never overridden: repository config can run programs, so the user decides
+(`git config --global --add safe.directory <root>`, or run the server as the
+owner). Only the root's repository is checked, not nested ones.
 
 ---
 

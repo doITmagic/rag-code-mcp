@@ -4,6 +4,7 @@
 package index
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/sha256"
@@ -88,6 +89,7 @@ type Status struct {
 	Error     string    `json:"error,omitempty"`
 	Phase     string    `json:"phase"`               // scanning|parsing|embedding|done|failed
 	Recreated bool      `json:"recreated,omitempty"` // the collection was dropped by this run
+	Warning   string    `json:"warning,omitempty"`   // the run went on with less than asked: git refused the repository
 }
 
 func statusPath(root string) string { return filepath.Join(Dir(root), "index_status.json") }
@@ -163,7 +165,10 @@ func Run(ctx context.Context, o Options) (Status, error) {
 		return r.fail(fmt.Errorf("%w (index format %d, this server writes %d): restart this server to run the installed version", ErrNewerFormat, r.state.Format, Format))
 	}
 	var head string
-	r.status.Branch, head = gitHead(ctx, root)
+	r.status.Branch, head, r.status.Warning = gitHead(ctx, root)
+	if r.status.Warning != "" {
+		o.Log.Warn("index: "+r.status.Warning, "root", root)
+	}
 	r.writeStatus()
 
 	// Probed before the state or collection change: a model the embedder
@@ -360,7 +365,7 @@ func Run(ctx context.Context, o Options) (Status, error) {
 			return r.finish(ctx, err)
 		}
 	}
-	if _, now := gitHead(ctx, root); now != head {
+	if _, now, _ := gitHead(ctx, root); now != head {
 		return r.finish(ctx, ErrHeadChanged)
 	}
 	return r.finish(ctx, nil)
@@ -399,9 +404,9 @@ func (r *run) finish(ctx context.Context, err error) (Status, error) {
 	if kept := r.prev; unchanged && (r.status.Phase == "interrupted" || idle || failed) {
 		switch {
 		case idle: // the index matches this run's HEAD: complete, on its branch
-			kept.Phase, kept.Error, kept.Branch = "done", "", r.status.Branch
+			kept.Phase, kept.Error, kept.Branch, kept.Warning = "done", "", r.status.Branch, r.status.Warning
 		case failed:
-			kept.Phase, kept.Error, kept.Branch = "failed", r.status.Error, r.status.Branch
+			kept.Phase, kept.Error, kept.Branch, kept.Warning = "failed", r.status.Error, r.status.Branch, r.status.Warning
 		}
 		data, _ := json.Marshal(kept)
 		if err := WriteAtomic(statusPath(r.root), data); err != nil {
@@ -440,19 +445,29 @@ func (r *run) writeStatus() {
 }
 
 // gitHead returns the branch name and commit of HEAD, "" when root is not a
-// repository or git does not answer in 5 s.
-func gitHead(ctx context.Context, root string) (branch, head string) {
+// repository or git does not answer in 5 s, and why git refused the
+// repository ("" when it did not). A refused repository (owned by another
+// user: safe.directory) also fails every check-ignore of GitIgnored, so no
+// .gitignore rule applies; git's check is never overridden, since repository
+// config can run programs.
+// shortcut: only the root's repository is checked, check nested repositories when one owned by another user shows up.
+func gitHead(ctx context.Context, root string) (branch, head, refused string) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "HEAD", "--abbrev-ref", "HEAD").Output()
+	cmd := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "HEAD", "--abbrev-ref", "HEAD")
+	cmd.Env = append(os.Environ(), "LC_ALL=C") // the refusal is recognised by git's English message
+	out, err := cmd.Output()
 	if err != nil {
-		return "", ""
+		if ee := (*exec.ExitError)(nil); errors.As(err, &ee) && bytes.Contains(ee.Stderr, []byte("dubious ownership")) {
+			return "", "", "git refused the repository (dubious ownership): .gitignore rules are not applied"
+		}
+		return "", "", ""
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	if len(lines) != 2 {
-		return "", ""
+		return "", "", ""
 	}
-	return lines[1], lines[0]
+	return lines[1], lines[0], ""
 }
 
 // scan returns the files to (re)index and the files to purge, both sorted.

@@ -1534,3 +1534,19 @@ func TestUsagesTruncatedAtStoreCap(t *testing.T) {
 	assert.NotContains(t, r.Message, "raise limit")
 	assert.Contains(t, r.Message, "only the first 999 referencing symbols")
 }
+
+// F1 (WSL, Z13): a run's warning (git refused the repository, so .gitignore
+// rules were not applied) reaches the index block of every answer and the
+// root's entry in rag_server_info.
+func TestIndexWarningReachesAnswers(t *testing.T) {
+	v := newEnv(t, false, func(c *config.Config) { c.AutoIndex = false })
+	require.NoError(t, os.MkdirAll(index.Dir(v.root), 0o755))
+	const warn = "git refused the repository (dubious ownership): .gitignore rules are not applied"
+	status, _ := json.Marshal(index.Status{Root: v.root, StartedAt: time.Now(), EndedAt: time.Now(), Phase: "done", Warning: warn})
+	require.NoError(t, os.WriteFile(filepath.Join(index.Dir(v.root), "index_status.json"), status, 0o644))
+	r, _ := v.call(t, "rag_read_file_context", map[string]any{"workspace_root": v.root, "file_path": "pkg/a.fk", "start_line": 1})
+	assert.Equal(t, warn, r.Index.Warning)
+	got := knownRoots(nil)
+	require.NotEmpty(t, got)
+	assert.Equal(t, warn, got[0].Warning)
+}

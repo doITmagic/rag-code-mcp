@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -1526,4 +1527,36 @@ func TestWalkDoesNotOpenUnchangedFiles(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, s.Deleted)
 	assert.Empty(t, e.all(t, p))
+}
+
+// F1 (WSL, Z13): git refuses a repository owned by another user (exit 128,
+// "dubious ownership"), so no .gitignore rule applies. The run says so in
+// its status and logs it; git's check is never bypassed. A fake git answers
+// every call the way git does then.
+func TestRunReportsGitRefusedRepository(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script as git")
+	}
+	bin, path := t.TempDir(), os.Getenv("PATH")
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\necho \"fatal: detected dubious ownership in repository at '$2'\" >&2\nexit 128\n"), 0o755))
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+path)
+	e := newEnv(t)
+	e.write(t, "a.go", "package a\nfunc A() {}\n")
+	var logBuf bytes.Buffer
+	st, err := e.run(t, func(o *Options) { o.Log = slog.New(slog.NewTextHandler(&logBuf, nil)) })
+	require.NoError(t, err)
+	assert.Contains(t, st.Warning, "dubious ownership")
+	assert.Contains(t, st.Warning, ".gitignore rules are not applied")
+	saved, ok := ReadStatus(e.root)
+	require.True(t, ok)
+	assert.Equal(t, st.Warning, saved.Warning)
+	assert.Equal(t, 1, strings.Count(logBuf.String(), "level=WARN"), logBuf.String())
+	assert.Contains(t, logBuf.String(), "root="+e.root)
+
+	t.Setenv("PATH", path) // the owner fixed: a run with nothing to do clears it
+	st, err = e.run(t, nil)
+	require.NoError(t, err)
+	assert.Empty(t, st.Warning)
+	saved, _ = ReadStatus(e.root)
+	assert.Empty(t, saved.Warning)
 }

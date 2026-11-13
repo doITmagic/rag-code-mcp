@@ -183,7 +183,7 @@ type State struct {
     Files  map[string]Entry `json:"files"`            // absolute path -> entry
 }
 
-const Format = 15
+const Format = 16
 ```
 
 `Format` is the version of what parsers and the indexer store. It is bumped
@@ -237,7 +237,8 @@ expressions are usages; Laravel routes carry group prefixes and their name and l
 model strings and `$listen` are class usages, a call on a typed parameter or
 property targets its class; a broken file keeps the declarations parsed
 before the break; a route path is one segment of the normalized qualified
-name (`qn_suffixes`).
+name (`qn_suffixes`). Version 16: a Go route path may name a string const declared
+at the top of the same file, or `path.Join` of such consts and literals.
 
 ---
 

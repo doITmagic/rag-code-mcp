@@ -59,6 +59,8 @@ type file struct {
 	// top-level vars and struct field names of a router type or set from a
 	// router constructor: the receivers a route may have besides locals.
 	routerVars, routerFields map[string]bool
+	consts                   map[string]string // top-level string consts: a route path may name one
+	declLocals               map[string]bool   // locals of the declaration whose routes are read
 }
 
 // Analyze parses one Go file. Malformed input yields whatever declarations
@@ -79,6 +81,7 @@ func (Analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 		fields:  map[string]bool{},
 		test:    strings.HasSuffix(f.Path, "_test.go"),
 		fwPkgs:  map[string]*framework{}, routerVars: map[string]bool{}, routerFields: map[string]bool{},
+		consts:    map[string]string{},
 		valueRels: map[uint32]parser.Relation{},
 	}
 	root := tree.RootNode()
@@ -121,9 +124,13 @@ func (Analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 			for _, spec := range fc.specs(n, "var_spec", "const_spec") {
 				v := parser.NamedChildren(parser.Field(spec, lang, "value"))
 				router := fc.routerType(parser.Field(spec, lang, "type")) != nil || len(v) == 1 && fc.newRouter(v[0]) != nil
-				for _, name := range fc.names(spec) {
+				names := fc.names(spec)
+				for _, name := range names {
 					fc.values[name] = true
 					fc.routerVars[name] = fc.routerVars[name] || router
+				}
+				if s, ok := fc.stringLit(v); ok && n.Type(lang) == "const_declaration" && len(names) == 1 {
+					fc.consts[names[0]] = s
 				}
 			}
 		case "method_declaration":

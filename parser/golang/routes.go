@@ -162,6 +162,7 @@ func (fc *file) routes(decls []*gotreesitter.Node, at []int, syms []parser.Symbo
 // each group variable (by its text, so s.api works too).
 func (fc *file) declRoutes(decl *gotreesitter.Node, sym *parser.Symbol, params map[int]string, seen map[string]map[int]string, out []parser.Symbol) []parser.Symbol {
 	groups := map[string]grp{}
+	fc.declLocals, _ = fc.locals(decl)
 	i := 0
 	for _, pd := range parser.NamedChildren(parser.Field(decl, fc.lang, "parameters")) {
 		fw := fc.routerType(parser.Field(pd, fc.lang, "type"))
@@ -439,11 +440,8 @@ func (fc *file) prefix(recv *gotreesitter.Node, groups map[string]grp) string {
 // gin or echo path any string (gin joins it to "/", echo adds the "/"). tied
 // says the receiver's framework is known to be fw.
 func (fc *file) pathLiteral(n *gotreesitter.Node, fw *framework, tied bool) (string, bool) {
-	if !strings.HasSuffix(n.Type(fc.lang), "string_literal") {
-		return "", false
-	}
-	s, err := strconv.Unquote(fc.text(n))
-	if err != nil {
+	s, ok := fc.static(n)
+	if !ok {
 		return "", false
 	}
 	p := s
@@ -470,4 +468,42 @@ func splitMethod(s string) (method, rest string) {
 		return s[:i], strings.TrimLeft(s[i+1:], " \t")
 	}
 	return "", s
+}
+
+// stringLit unquotes v when it is one string literal.
+func (fc *file) stringLit(v []*gotreesitter.Node) (string, bool) {
+	if len(v) != 1 || !strings.HasSuffix(v[0].Type(fc.lang), "string_literal") {
+		return "", false
+	}
+	s, err := strconv.Unquote(fc.text(v[0]))
+	return s, err == nil
+}
+
+// static is the value of a path the file spells out: a string literal, a
+// string const declared at the top of this file, or path.Join of those
+// (listmonk's path.Join(uriAdmin, "/lists")); a local of the name shadows it.
+func (fc *file) static(n *gotreesitter.Node) (string, bool) {
+	switch n.Type(fc.lang) {
+	case "identifier":
+		s, ok := fc.consts[fc.text(n)]
+		return s, ok && !fc.declLocals[fc.text(n)]
+	case "call_expression":
+		fn := parser.Field(n, fc.lang, "function")
+		if fn.Type(fc.lang) != "selector_expression" || fc.text(parser.Field(fn, fc.lang, "field")) != "Join" {
+			return "", false
+		}
+		if pkg := fc.text(parser.Field(fn, fc.lang, "operand")); fc.imports[pkg] != "path" || fc.declLocals[pkg] {
+			return "", false
+		}
+		var parts []string
+		for _, a := range parser.NamedChildren(parser.Field(n, fc.lang, "arguments")) {
+			s, ok := fc.static(a)
+			if !ok {
+				return "", false
+			}
+			parts = append(parts, s)
+		}
+		return path.Join(parts...), true
+	}
+	return fc.stringLit([]*gotreesitter.Node{n})
 }

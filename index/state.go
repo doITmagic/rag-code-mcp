@@ -73,7 +73,8 @@ type Entry struct {
 // Blade template, X::class, property types, relation model strings and
 // $listen are class usages, a call on a typed parameter or property targets
 // its class; a broken file keeps the declarations parsed before the break.
-const Format = 15
+// 16: a Go route path may name a same-file string const or path.Join of such.
+const Format = 16
 
 // State is the per-root snapshot stored at Dir(root)/state.json. Only
 // the run goroutine touches it; nothing here locks.

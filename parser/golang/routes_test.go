@@ -623,3 +623,48 @@ func Mount(rg *gin.RouterGroup) {
 		"gin GET api.Mount./x -> api.h",
 	}, routeList(t, "api/r.go", both))
 }
+
+func TestRoutePathFromConst(t *testing.T) {
+	src := `package cmd
+
+import (
+	"path"
+
+	"github.com/labstack/echo/v4"
+)
+
+const (
+	limit    = 2000
+	uriAdmin = "/admin"
+)
+
+var uriVar = "/var"
+
+func h(c echo.Context) error { return nil }
+
+func Register(e *echo.Echo) {
+	g := e.Group("")
+	g.GET(uriAdmin, h)
+	g.GET(path.Join(uriAdmin, "/lists"), h)
+	g.POST(path.Join(uriAdmin, "/lists/:id/"), h) // path.Join drops the trailing slash, as at run time
+	a := e.Group(uriAdmin)
+	a.GET("/x", h)
+	g.GET(uriVar, h)   // a var may change: no route
+	g.GET(path.Join(uriAdmin, name()), h) // run time: no route
+}
+
+func Shadow(e *echo.Echo, path string) {
+	uriAdmin := "/other"
+	e.GET(uriAdmin, h)             // the local, not the const: no route
+	e.GET(path+"/x", h)            // no route
+}
+
+func name() string { return "" }
+`
+	assert.Equal(t, []string{
+		"echo GET cmd.Register./admin -> cmd.h",
+		"echo GET cmd.Register./admin/lists -> cmd.h",
+		"echo POST cmd.Register./admin/lists/:id -> cmd.h",
+		"echo GET cmd.Register./admin/x -> cmd.h",
+	}, routeList(t, "cmd/handlers.go", src))
+}

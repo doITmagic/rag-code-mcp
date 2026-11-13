@@ -317,3 +317,13 @@ func TestWaitHTTPHidesPassword(t *testing.T) {
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "superSecretPass99")
 }
+
+// The Windows PATH hint appends to the user Path only and works pasted in cmd
+// or PowerShell: no setx (truncates at 1024 chars, copies the machine PATH)
+// and no %PATH% (stored literally by PowerShell).
+func TestWindowsPathHint(t *testing.T) {
+	h := windowsPathHint(`C:\Users\O'Brien\.ragcode\bin`)
+	assert.Equal(t, `powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path','User') + ';C:\Users\O''Brien\.ragcode\bin', 'User')"`, h)
+	assert.NotContains(t, h, "setx")
+	assert.NotContains(t, h, "%PATH%")
+}

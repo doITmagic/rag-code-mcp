@@ -180,7 +180,7 @@ func Run(ctx context.Context, o Options) error {
 
 	binDir := filepath.Dir(binary)
 	if runtime.GOOS == "windows" {
-		warn(o.Out, "Add "+binDir+" to your PATH: setx PATH \"%PATH%;"+binDir+"\"")
+		warn(o.Out, "Add "+binDir+" to your PATH (cmd or PowerShell, then open a new terminal): "+windowsPathHint(binDir))
 	} else if rc, added, err := addPath(binDir); err != nil {
 		warn(o.Out, "PATH: "+err.Error())
 	} else if added {
@@ -194,6 +194,14 @@ func Run(ctx context.Context, o Options) error {
 		binary, cfgPath, shown, cfg.OllamaEmbed, filepath.Join(home, "index"), snippet)
 	ok(o.Out, "RagCode MCP installed")
 	return nil
+}
+
+// windowsPathHint is a command that appends binDir to the user Path only.
+// setx PATH "%PATH%;..." would copy the machine PATH into it and truncate it
+// at 1024 characters in cmd, and store a literal %PATH% in PowerShell.
+func windowsPathHint(binDir string) string {
+	return `powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path','User') + ';` +
+		strings.ReplaceAll(binDir, "'", "''") + `', 'User')"`
 }
 
 // copyFile writes next to dst and renames over it, so a binary an IDE still

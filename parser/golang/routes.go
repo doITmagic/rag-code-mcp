@@ -33,7 +33,7 @@ var frameworks = []framework{
 		"GET": 0, "POST": 0, "PUT": 0, "DELETE": 0, "PATCH": 0, "OPTIONS": 0, "HEAD": 0, "CONNECT": 0, "TRACE": 0,
 		"Any": 0, "Match": 1, "Add": 1, "Static": 0, "File": 0,
 	}, types: map[string]bool{"Echo": true, "Group": true}, ctors: map[string]bool{"New": true}},
-	{name: "gin", module: "github.com/gin-gonic/gin", group: "Group", last: true, relative: true, methods: map[string]int{
+	{name: "gin", module: "github.com/gin-gonic/gin", group: "Group", last: true, relative: true, inline: map[string]bool{"Use": true}, methods: map[string]int{
 		"GET": 0, "POST": 0, "PUT": 0, "DELETE": 0, "PATCH": 0, "OPTIONS": 0, "HEAD": 0,
 		"Any": 0, "Match": 1, "Handle": 1, "Static": 0, "StaticFile": 0, "StaticFS": 0,
 	}, types: map[string]bool{"Engine": true, "RouterGroup": true, "IRouter": true, "IRoutes": true}, ctors: map[string]bool{"New": true, "Default": true}},

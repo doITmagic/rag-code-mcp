@@ -238,7 +238,8 @@ model strings and `$listen` are class usages, a call on a typed parameter or
 property targets its class; a broken file keeps the declarations parsed
 before the break; a route path is one segment of the normalized qualified
 name (`qn_suffixes`). Version 16: a Go route path may name a string const declared
-at the top of the same file, or `path.Join` of such consts and literals.
+at the top of the same file, or `path.Join` of such consts and literals; a
+Gin `Use(mw)` result is a router with its receiver's prefix.
 
 ---
 

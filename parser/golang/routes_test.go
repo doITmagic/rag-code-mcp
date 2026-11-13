@@ -668,3 +668,26 @@ func name() string { return "" }
 		"echo GET cmd.Register./admin/x -> cmd.h",
 	}, routeList(t, "cmd/handlers.go", src))
 }
+
+func TestGinUseChain(t *testing.T) {
+	src := `package router
+
+import "github.com/gin-gonic/gin"
+
+func auth(c *gin.Context) {}
+func create(c *gin.Context) {}
+
+func Create(g *gin.Engine) {
+	g.Use(func(ctx *gin.Context) { ctx.Next() })
+	g.Group("/user").Use(auth).POST("", create)
+	g.Group("/").Use(auth).POST("/message", create)
+	api := g.Group("/api").Use(auth)
+	api.GET("/x", create)
+}
+`
+	assert.Equal(t, []string{
+		"gin POST router.Create./user -> router.create",
+		"gin POST router.Create./message -> router.create",
+		"gin GET router.Create./api/x -> router.create",
+	}, routeList(t, "router/router.go", src))
+}

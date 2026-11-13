@@ -227,3 +227,25 @@ class C {
 	require.NoError(t, err)
 	assert.Equal(t, e.symbols(t, routes)["/later"].ID, ref(ctrl, "later").TargetID, "a caller of a name the run adds")
 }
+
+// A route handler 'Backend\StatisticsController@uploadImage' names that
+// controller's method only: when it lacks one, the route never falls back by
+// name to another controller's uploadImage; one its base declares is taken.
+func TestResolveRouteHandlerNeverByName(t *testing.T) {
+	parser.Register(realPHP)
+	t.Cleanup(func() { parser.Register(lineAnalyzer{lang: "php", ext: ".php"}) })
+
+	e := newEnv(t)
+	e.write(t, "app/Http/Controllers/Backend/StatisticsController.php", "<?php\nnamespace App\\Http\\Controllers\\Backend;\nuse App\\Http\\Controllers\\Controller;\nclass StatisticsController extends Controller { public function index() {} }\n")
+	other := e.write(t, "app/Http/Controllers/Backend/BackendController.php", "<?php\nnamespace App\\Http\\Controllers\\Backend;\nclass BackendController { public function uploadImage() {} }\n")
+	base := e.write(t, "app/Http/Controllers/Controller.php", "<?php\nnamespace App\\Http\\Controllers;\nclass Controller { public function inherited() {} }\n")
+	routes := e.write(t, "routes/web.php", `<?php
+Route::post('/upload', ['uses' => 'Backend\StatisticsController@uploadImage']);
+Route::get('/inherited', 'Backend\StatisticsController@inherited');
+`)
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, e.symbols(t, other)["uploadImage"].ID)
+	assert.Empty(t, e.symbols(t, routes)["/upload"].Relations[0].TargetID, "BackendController::uploadImage is another controller's")
+	assert.Equal(t, e.symbols(t, base)["inherited"].ID, e.symbols(t, routes)["/inherited"].Relations[0].TargetID, "the controller's base")
+}

@@ -1327,8 +1327,9 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 						}
 					}
 					// Otherwise fall back to the name. An unknown owner is
-					// external (vendor, stdlib).
-					if dot := strings.LastIndex(tqn, "."); len(ids) == 0 && dot > 0 && rel.TargetName != "" && !rel.Value && len(qualified(lang, tqn[:dot])) > 0 {
+					// external (vendor, stdlib). A route's handler names its
+					// controller: another class's method of that name is not it.
+					if dot := strings.LastIndex(tqn, "."); len(ids) == 0 && dot > 0 && rel.TargetName != "" && !rel.Value && files[i].syms[j].Kind != parser.KindRoute && len(qualified(lang, tqn[:dot])) > 0 {
 						ids, nameOnly, resolution = named(lang, rel.TargetName), true, parser.ResolutionUnique
 					}
 				} else if name := rel.TargetName; name != "" {

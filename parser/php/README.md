@@ -196,7 +196,7 @@ The argument after the URI gives the route one relation to its handler:
 
 | Handler | Relation | Target qualified name |
 |---------|----------|-----------------------|
-| `'C@m'`, `['as' => ..., 'uses' => 'C@m']` | `call` `m` | `<group namespaces>\C` + `.m`, without the application's controller namespace (`App\Http\Controllers`, set in another file), so the indexer links it as a qualified suffix (`by_name` in the tools, but only that controller). A leading `\` makes `C` fully qualified. |
+| `'C@m'`, `['as' => ..., 'uses' => 'C@m']` | `call` `m` | `<group namespaces>\C` + `.m`, without the application's controller namespace (`App\Http\Controllers`, set in another file), so the indexer links it as a qualified suffix (`by_name` in the tools, but only that controller, or the method its base class in the workspace declares; when neither has it the handler stays unresolved, never another controller's method of that name). A leading `\` makes `C` fully qualified. |
 | `[C::class, 'm']`, also under `'uses'` | `call` `m` | `C` resolved through the import table, `.m` (exact) |
 | `C::class` or `'C'` (invokable controller, `resource`, `apiResource`) | `uses_type` `C` | the class, as above |
 | `'m'` (no `@`, no `\`) inside `Route::controller(C::class)->group(fn)` (also chained with `prefix` / `namespace`, nested, or `Route::group(['controller' => C::class], fn)`; the innermost group's controller) | `call` `m` | `C` resolved through the import table, `.m` (exact); `resource` / `apiResource` keep their class |

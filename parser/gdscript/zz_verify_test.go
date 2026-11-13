@@ -300,8 +300,10 @@ func TestVerifySceneCRLFUpper(t *testing.T) {
 func TestVerifyLarge(t *testing.T) {
 	var b strings.Builder
 	b.WriteString("class_name Big\n")
-	for i := 0; i < 3000; i++ {
-		fmt.Fprintf(&b, "## doc %d\nfunc f%d(a, b):\n\tif a:\n\t\tf%d(b, a)\n\treturn $N.m(\"%d\")\n", i, i, (i+1)%3000, i)
+	// 600 functions: under -race on a slow CI runner 3000 hit the 3 s parse
+	// timeout, though a plain build parses them in 0.15 s.
+	for i := 0; i < 600; i++ {
+		fmt.Fprintf(&b, "## doc %d\nfunc f%d(a, b):\n\tif a:\n\t\tf%d(b, a)\n\treturn $N.m(\"%d\")\n", i, i, (i+1)%600, i)
 	}
 	nested := "func n():\n" + strings.Repeat("\tif true:\n", 300)
 	for i := 0; i < 300; i++ {
@@ -318,11 +320,11 @@ func TestVerifyLarge(t *testing.T) {
 			syms := analyze(t, "/ws/big.gd", "/ws", src)
 			assert.Less(t, time.Since(start), 5*time.Second, name)
 			if name == "big" {
-				require.Len(t, syms, 3001)
-				f := syms[1500]
+				require.Len(t, syms, 601)
+				f := syms[300]
 				assert.Equal(t, "Big", f.Owner)
-				assert.Equal(t, "doc 1499", f.Doc)
-				assert.Equal(t, "res://big.Big.f1500", targets(f, parser.RelCall)["f1500"])
+				assert.Equal(t, "doc 299", f.Doc)
+				assert.Equal(t, "res://big.Big.f300", targets(f, parser.RelCall)["f300"])
 			}
 		})
 	}

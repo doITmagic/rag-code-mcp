@@ -155,26 +155,43 @@ func TestUsagesOfGoFieldThroughInterface(t *testing.T) {
 	assert.Zero(t, out.Ambiguous, r.Message)
 }
 
-// rag_list_package_exports leaves a Go interface's methods to the interface,
-// whose content lists them: as rows of their own they filled the 300 cap of a
-// large package (wakapi services) and pushed classes and functions out.
-func TestExportsLeaveOutGoInterfaceMethods(t *testing.T) {
+// rag_list_package_exports lists a Go interface's methods on the interface
+// row, with their signatures: as rows of their own they filled the 300 cap of
+// a large package (wakapi services) and pushed classes and functions out.
+// Without an interface row to hold them (kinds: ["method"]) they are rows.
+func TestExportsListGoInterfaceMethodsOnTheInterface(t *testing.T) {
 	v := newEnv(t, false, nil)
 	v.addFiles(t, map[string]string{
 		"go.mod":   goMod,
-		"api/a.go": "package api\n\ntype Repo interface {\n\tFind(id int) string\n\tSave()\n}\n\ntype Sql struct{}\n\nfunc (Sql) Find(id int) string { return \"\" }\n",
+		"api/a.go": "package api\n\ntype Repo interface {\n\tSave()\n\tFind(id int) string\n}\n\ntype Sql struct{}\n\nfunc (Sql) Find(id int) string { return \"\" }\n",
 	})
-	var out struct {
-		Exports map[string][]Export `json:"exports"`
+	exports := func(kinds ...string) (map[string][]Export, string) {
+		var out struct {
+			Exports map[string][]Export `json:"exports"`
+		}
+		r, _ := v.call(t, "rag_list_package_exports", map[string]any{"workspace_root": v.root, "package": "example.com/app/api", "kinds": kinds})
+		require.Equal(t, "ok", r.Status, r.Message)
+		data(t, r, &out)
+		return out.Exports, r.Message
 	}
-	r, _ := v.call(t, "rag_list_package_exports", map[string]any{"workspace_root": v.root, "package": "example.com/app/api"})
-	require.Equal(t, "ok", r.Status, r.Message)
-	data(t, r, &out)
-	var methods []string
-	for _, e := range out.Exports["method"] {
-		methods = append(methods, e.QualifiedName)
+	names := func(list []Export) (out []string) {
+		for _, e := range list {
+			out = append(out, e.QualifiedName)
+		}
+		return out
 	}
-	assert.Equal(t, []string{"example.com/app/api.Sql.Find"}, methods)
-	assert.Len(t, out.Exports["interface"], 1)
-	assert.Contains(t, r.Message, "3 exported symbols")
+	all, msg := exports()
+	assert.Equal(t, []string{"example.com/app/api.Sql.Find"}, names(all["method"]))
+	require.Len(t, all["interface"], 1)
+	assert.Equal(t, []string{"Save()", "Find(id int) string"}, all["interface"][0].Methods, "in source order")
+	assert.Contains(t, msg, "3 exported symbols")
+
+	only, msg := exports("interface")
+	require.Len(t, only["interface"], 1, msg)
+	assert.Equal(t, []string{"Save()", "Find(id int) string"}, only["interface"][0].Methods)
+	assert.Empty(t, only["method"], "kinds asked for interfaces only")
+	assert.Contains(t, msg, "1 exported symbols")
+
+	methods, _ := exports("method")
+	assert.Equal(t, []string{"example.com/app/api.Repo.Find", "example.com/app/api.Repo.Save", "example.com/app/api.Sql.Find"}, names(methods["method"]))
 }

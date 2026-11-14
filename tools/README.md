@@ -59,7 +59,7 @@ Tests:
 |---|---|
 | [`grep_walk_test.go`](grep_walk_test.go) | the grep file cap counts only files git keeps; an unreadable directory does not end the walk; a word without diacritics finds the text written with them, and the reverse; a file with a NUL byte past its first 8 KiB is searched; a qualified name with a wrong owner lists the symbols of its last name (`match: "name"`). |
 | [`grep_marks_test.go`](grep_marks_test.go) | a symbol made only of combining marks finds no line. |
-| [`go_interface_test.go`](go_interface_test.go) | with the real Go analyzer, `sqlRepo.Find` lists `UseParam`'s `r.Find()` (`r Repo`) via `Repo` in `rag_find_usages` and the incoming hierarchy, also after a files run of the implementation alone; `Repo.Find` lists it without via; a type missing one of the interface's methods gets nothing; two implementations of `Store` both list `Run` via `Store`, with no unresolved relations, and `Run`'s outgoing hierarchy shows `Store.Save`; a method promoted from an embedded struct completes the method set (`BaseTask.Name` and `SessionTask.Execute` via `Task`); an embedded method overridden by the embedder gets no via; a call matched by name alone stays `by_name` without via; gotify's `a.DB.CreateApplication()` through a field typed `ApplicationDatabase` is a via usage of `GormDatabase.CreateApplication` (another package), with no unresolved relations although a handler and a test fake share the name.; `rag_list_package_exports` lists a Go interface but not its methods as rows (`TestExportsLeaveOutGoInterfaceMethods`). |
+| [`go_interface_test.go`](go_interface_test.go) | with the real Go analyzer, `sqlRepo.Find` lists `UseParam`'s `r.Find()` (`r Repo`) via `Repo` in `rag_find_usages` and the incoming hierarchy, also after a files run of the implementation alone; `Repo.Find` lists it without via; a type missing one of the interface's methods gets nothing; two implementations of `Store` both list `Run` via `Store`, with no unresolved relations, and `Run`'s outgoing hierarchy shows `Store.Save`; a method promoted from an embedded struct completes the method set (`BaseTask.Name` and `SessionTask.Execute` via `Task`); an embedded method overridden by the embedder gets no via; a call matched by name alone stays `by_name` without via; gotify's `a.DB.CreateApplication()` through a field typed `ApplicationDatabase` is a via usage of `GormDatabase.CreateApplication` (another package), with no unresolved relations although a handler and a test fake share the name.; `rag_list_package_exports` lists a Go interface's methods as signatures in the `methods` of the interface row, not as rows, also with `kinds: ["interface"]`, and as `method` rows with `kinds: ["method"]` (`TestExportsListGoInterfaceMethodsOnTheInterface`). |
 | [`go_routes_test.go`](go_routes_test.go) | with the real Go analyzer, an Echo route is found by `rag_search` with `kinds: ["route"]` and is a usage of its handler; the function registering the route `/` (`routes.Load./`) is the one symbol named `routes.Load` in `rag_find_usages`, `rag_call_hierarchy` and `rag_search` (one `exact` hit), a function `users` is not confused with the route `/users`, and `/users` is still found by its path; `GET /users` and `DELETE /users` of one function are two exports and two search hits, an `ambiguous` lookup without the `file_path` advice, and only the GET route calls `ListUsers`. |
 | [`go_value_use_test.go`](go_value_use_test.go) | with the real Go analyzer, `rag_find_usages firmaJSON` counts `mux.HandleFunc(p, s.firmaJSON)` in `main.go` for a method declared in another file of the package; `s.T()` of `struct{ suite.Suite }` is no usage of a workspace `CustomTime.T`, after a full run and after a files run of the caller alone. |
 | [`js_browser_test.go`](js_browser_test.go) | with the real JavaScript and HTML analyzers, `rag_find_usages resolveError` of a function declared inside an IIFE lists the call from another script's ready callback and the `onclick` handler of a template; a helper inside the `describe` of a Jest file without imports is no symbol; `onclick="save()"` is no usage of a class method `Cart.save` nor of an ES module function; after `window.resolveError = handleResolve`, `onclick="resolveError(1)"` is a usage of the global `resolveError`, which is one of `handleResolve`; `<StatusCard />` is a usage of `src/StatusCard.default` of a `<script setup>` without top-level statements; `onclick` calls of a global two scripts declare are in `ambiguous_by_name` of each, not of a module function of that name. |
@@ -517,8 +517,11 @@ The exported symbols of a package or module, grouped by kind.
 
 - First it scrolls symbols whose `module` equals `package` (one page of
   `MaxScroll`).
-- The methods of a Go interface are not rows of their own: the interface
-  row lists them (as rows they filled the 300 cap of a large package).
+- The methods of a Go interface are not rows of their own (as rows they
+  filled the 300 cap of a large package): the interface row lists their
+  signatures in `methods`, in source order, also when `kinds` asks for
+  `interface` without `method`. When `kinds` leaves the interfaces out
+  (`["method"]`), they are `method` rows.
 - When nothing matches and the name has no `/`, `\` or `.`, `shortModule`
   looks for modules ending in `/name`, `.name` or `\name`: symbols named
   `name`, plus the indexed directories and files called `name` (from the
@@ -535,7 +538,8 @@ The exported symbols of a package or module, grouped by kind.
   `rag_find_usages`, and count once.
 
 Output `data`: `{package, modules, exports: {<kind>: [{name, qualified_name,
-signature, file_path, start_line}]}, truncated}`. `truncated` is true when a
+signature, file_path, start_line, methods}]}, truncated}` (`methods` only on a
+Go interface that has methods). `truncated` is true when a
 scroll hit `MaxScroll` or there were more than 300 exports. No match gives `ok`
 with `no indexed module or directory matches "X"; pass the full module path or
 a directory of the workspace`. When no module matches, a directory inside the

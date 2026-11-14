@@ -182,8 +182,7 @@ func (fc *file) declRoutes(decl *gotreesitter.Node, sym *parser.Symbol, params m
 	var walk func(n *gotreesitter.Node, groups map[string]grp, declared map[string]bool)
 	walk = func(n *gotreesitter.Node, groups map[string]grp, declared map[string]bool) {
 		parser.Walk(n, func(c *gotreesitter.Node) bool {
-			switch c.Type(fc.lang) {
-			case "block", "if_statement", "for_statement", "expression_switch_statement", "type_switch_statement", "select_statement":
+			if blockScope[c.Type(fc.lang)] {
 				if c == n {
 					return true
 				}
@@ -195,6 +194,8 @@ func (fc *file) declRoutes(decl *gotreesitter.Node, sym *parser.Symbol, params m
 					}
 				}
 				return false
+			}
+			switch c.Type(fc.lang) {
 			case "short_var_declaration", "assignment_statement", "var_spec":
 				short := c.Type(fc.lang) != "assignment_statement"
 				l, r := fc.assigned(c)
@@ -508,6 +509,11 @@ func (fc *file) static(n *gotreesitter.Node) (string, bool) {
 	return fc.stringLit([]*gotreesitter.Node{n})
 }
 
+// blockScope are the statements that open a scope: a name declared in one
+// ends with it.
+var blockScope = map[string]bool{"block": true, "if_statement": true, "for_statement": true,
+	"expression_switch_statement": true, "type_switch_statement": true, "select_statement": true}
+
 // mount is where a router variable is mounted: recv.Mount(path, name).
 type mount struct {
 	recv *gotreesitter.Node
@@ -530,23 +536,44 @@ func (fc *file) assigned(c *gotreesitter.Node) (l, r []*gotreesitter.Node) {
 
 // mounts maps a router assignment (x := chi.NewRouter(), by its start byte) to
 // the X.Mount(path, x) that serves it: the last router assigned to that name
-// before the Mount, in the same function body or closure. Another closure's x
-// and an x assigned after the Mount are other routers; a router mounted at
+// before the Mount, in the same function body or closure. Another closure's x,
+// an x declared in an inner block that has ended and an x assigned after the
+// Mount are other routers; a router mounted at
 // two paths maps to nil, so its paths stay as written.
 func (fc *file) mounts(decl *gotreesitter.Node) map[uint32]*mount {
 	out := map[uint32]*mount{}
-	var walk func(n *gotreesitter.Node)
-	walk = func(n *gotreesitter.Node) {
-		last := map[string]uint32{}
+	// declared holds the names the scope n opens declares: they end with it.
+	var walk func(n *gotreesitter.Node, last map[string]uint32, declared map[string]bool)
+	walk = func(n *gotreesitter.Node, last map[string]uint32, declared map[string]bool) {
 		parser.Walk(n, func(c *gotreesitter.Node) bool {
+			if blockScope[c.Type(fc.lang)] && c != n {
+				inner, innerDeclared := maps.Clone(last), map[string]bool{}
+				walk(c, inner, innerDeclared)
+				for k := range innerDeclared { // the block's own name ends with it
+					if v, ok := last[k]; ok {
+						inner[k] = v
+					} else {
+						delete(inner, k)
+					}
+				}
+				clear(last) // an assignment to an outer variable outlives the block
+				maps.Copy(last, inner)
+				return false
+			}
 			switch c.Type(fc.lang) {
 			case "func_literal":
 				if c != n {
-					walk(c)
+					walk(c, map[string]uint32{}, map[string]bool{})
 					return false
 				}
 			case "short_var_declaration", "assignment_statement", "var_spec":
-				if l, r := fc.assigned(c); len(l) == 1 && len(r) == 1 {
+				l, r := fc.assigned(c)
+				for _, v := range l {
+					if c.Type(fc.lang) != "assignment_statement" {
+						declared[fc.text(v)] = true
+					}
+				}
+				if len(l) == 1 && len(r) == 1 {
 					if delete(last, fc.text(l[0])); fc.newRouter(r[0]) != nil {
 						last[fc.text(l[0])] = c.StartByte()
 					}
@@ -571,6 +598,6 @@ func (fc *file) mounts(decl *gotreesitter.Node) map[uint32]*mount {
 			return true
 		})
 	}
-	walk(parser.Field(decl, fc.lang, "body"))
+	walk(parser.Field(decl, fc.lang, "body"), map[string]uint32{}, map[string]bool{})
 	return out
 }

@@ -800,3 +800,45 @@ func V3(r chi.Router) {
 		"chi Mount routes.V3./in ->",
 	}, routeList(t, "routes/r.go", src))
 }
+
+// A sub := chi.NewRouter() declared in an inner block is another variable: it
+// ends with its block, so the Mount after the block serves the outer sub.
+func TestChiMountKeepsTheOuterRouterAfterABlock(t *testing.T) {
+	src := `package routes
+
+import (
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+)
+
+func h(w http.ResponseWriter, r *http.Request) {}
+
+func V1(r chi.Router, debug bool) {
+	sub := chi.NewRouter()
+	sub.Get("/outer", h)
+	if debug {
+		sub := chi.NewRouter()
+		sub.Get("/inner", h)
+		http.ListenAndServe(":1", sub)
+	}
+	r.Mount("/mounted", sub)
+}
+
+func V2(r chi.Router, debug bool) {
+	var sub chi.Router
+	if debug {
+		sub = chi.NewRouter()
+		sub.Get("/set", h)
+	}
+	r.Mount("/m", sub)
+}
+`
+	assert.Equal(t, []string{
+		"chi Get routes.V1./mounted/outer -> routes.h",
+		"chi Get routes.V1./inner -> routes.h",
+		"chi Mount routes.V1./mounted ->",
+		"chi Get routes.V2./m/set -> routes.h", // assigned with = in the block: the outer variable
+		"chi Mount routes.V2./m ->",
+	}, routeList(t, "routes/r.go", src))
+}

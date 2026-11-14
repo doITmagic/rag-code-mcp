@@ -1236,9 +1236,10 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 	named := func(lang, name string) []string {
 		ids := byName[[2]string{lang, name}]
 		// Two candidates of the run are ambiguous without the store, unless fit
-		// may drop them (variables, for a call): then a stored function decides.
+		// may drop them (variables, for a call; a Go interface's methods): then a
+		// stored function decides.
 		callable := slices.DeleteFunc(slices.Clone(ids), func(id string) bool {
-			return kindOf[id] == parser.KindVariable || kindOf[id] == parser.KindConstant
+			return kindOf[id] == parser.KindVariable || kindOf[id] == parser.KindConstant || idx.iface[id]
 		})
 		if len(collapse(callable)) < 2 {
 			ids = append(ids, fromStore("n:"+lang+"\x00"+name, store.Filter{Name: name, Language: lang}, 20, func(s parser.Symbol) bool {

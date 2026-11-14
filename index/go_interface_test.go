@@ -137,3 +137,28 @@ func (s *Svc) Run() {
 		"Close": {"", ""},
 	}, goRelsOf(t, e, svc, "Run"))
 }
+
+// Two interface methods of the run sharing the name do not make a name-only
+// call ambiguous, since it never binds to them: a files run of their file
+// still asks the store, where the one implementation lies in an unchanged file.
+func TestGoNameOnlyAsksStorePastInterfaceMethods(t *testing.T) {
+	parser.Register(realGo)
+	t.Cleanup(func() { parser.Register(lineAnalyzer{"go", ".go"}) })
+	e := newEnv(t)
+	e.write(t, "go.mod", "module example.com/app\n\ngo 1.25\n")
+	e.write(t, "api/impl.go", goRepoImpl)
+	src := "package api\n\ntype A interface{ Find(id int) string }\n\ntype B interface{ Find(id int) string }\n\nfunc UseLocal() {\n\tx := newRepo()\n\tx.Find(1)\n}\n"
+	use := e.write(t, "api/use.go", src)
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	want := map[string][2]string{
+		"newRepo": {string(parser.ResolutionExact), "example.com/app/api.newRepo"},
+		"Find":    {string(parser.ResolutionUnique), "example.com/app/api.sqlRepo.Find"},
+	}
+	assert.Equal(t, want, goRelsOf(t, e, use, "UseLocal"), "full run")
+
+	e.write(t, "api/use.go", src+"\n")
+	_, err = e.run(t, nil)
+	require.NoError(t, err)
+	assert.Equal(t, want, goRelsOf(t, e, use, "UseLocal"), "files run, the implementation from the store")
+}

@@ -1038,6 +1038,7 @@ type nameIndex struct {
 	kind      map[string]parser.Kind // symbol id -> kind, for fit
 	place     map[string]place       // symbol id -> where it is, for twins
 	global    map[string]bool        // symbol id -> a browser global an inline html handler reaches (metadata global)
+	iface     map[string]bool        // symbol id -> a Go interface's method (metadata interface), never matched by name alone
 	routes    map[string][]string    // Laravel route name (metadata name) -> route ids of the run, for route('x')
 	route     map[string]string      // route id -> its Laravel route name, store hits included
 	bases     map[string][]string    // class id -> what it extends, implements or uses (traits): qualified name, else bare name
@@ -1073,7 +1074,7 @@ func (idx nameIndex) addBases(s parser.Symbol) {
 
 func newNameIndex(files []parsed) nameIndex {
 	idx := nameIndex{byQN: map[string][]string{}, bySuffix: map[string][]string{}, byName: map[[2]string][]string{}, byModule: map[string][]string{},
-		byModName: map[[2]string][]string{}, lang: map[string]string{}, kind: map[string]parser.Kind{}, place: map[string]place{}, global: map[string]bool{}, routes: map[string][]string{}, route: map[string]string{}, bases: map[string][]string{}, changed: make(map[string]bool, len(files))}
+		byModName: map[[2]string][]string{}, lang: map[string]string{}, kind: map[string]parser.Kind{}, place: map[string]place{}, global: map[string]bool{}, iface: map[string]bool{}, routes: map[string][]string{}, route: map[string]string{}, bases: map[string][]string{}, changed: make(map[string]bool, len(files))}
 	for i := range files {
 		idx.changed[files[i].path] = true
 		for _, s := range files[i].syms {
@@ -1082,6 +1083,7 @@ func newNameIndex(files []parsed) nameIndex {
 			idx.kind[s.ID] = s.Kind
 			idx.place[s.ID] = placeOf(s)
 			idx.global[s.ID] = s.Metadata["global"] == "true"
+			idx.iface[s.ID] = s.Metadata["interface"] == "true"
 			if n := s.Metadata["name"]; s.Kind == parser.KindRoute && n != "" {
 				idx.routes[n] = append(idx.routes[n], s.ID)
 			}
@@ -1113,6 +1115,7 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 	// file changes. One store error stops the lookups for the run.
 	failed := false
 	cache := map[string][]string{}
+	fullPage := map[string]bool{} // lookup key -> the scroll returned as many hits as asked: more may exist
 	fromStore := func(key string, f store.Filter, limit int, match func(parser.Symbol) bool) []string {
 		if r.fresh || failed {
 			return nil
@@ -1128,6 +1131,7 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 			failed = true
 			return nil
 		}
+		fullPage[key] = len(hits) >= limit
 		var ids []string
 		for _, h := range hits {
 			// Points of files in this run are stale until their upsert.
@@ -1137,6 +1141,7 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 				kindOf[h.Symbol.ID] = h.Symbol.Kind
 				idx.place[h.Symbol.ID] = placeOf(h.Symbol)
 				idx.global[h.Symbol.ID] = h.Symbol.Metadata["global"] == "true"
+				idx.iface[h.Symbol.ID] = h.Symbol.Metadata["interface"] == "true"
 				idx.route[h.Symbol.ID] = h.Symbol.Metadata["name"]
 				if _, ok := idx.bases[h.Symbol.ID]; !ok { // an unchanged owner's bases, as a full run has them
 					idx.addBases(h.Symbol)
@@ -1233,14 +1238,24 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 	named := func(lang, name string) []string {
 		ids := byName[[2]string{lang, name}]
 		// Two candidates of the run are ambiguous without the store, unless fit
-		// may drop them (variables, for a call): then a stored function decides.
-		callable := slices.DeleteFunc(slices.Clone(ids), func(id string) bool {
-			return kindOf[id] == parser.KindVariable || kindOf[id] == parser.KindConstant
-		})
-		if len(collapse(callable)) < 2 {
-			ids = append(ids, fromStore("n:"+lang+"\x00"+name, store.Filter{Name: name, Language: lang}, 20, func(s parser.Symbol) bool {
-				return s.Name == name && s.Language == lang
-			})...)
+		// may drop them (variables, for a call; a Go interface's methods): then a
+		// stored function decides.
+		callable := func(ids []string) []string {
+			return collapse(slices.DeleteFunc(slices.Clone(ids), func(id string) bool {
+				return kindOf[id] == parser.KindVariable || kindOf[id] == parser.KindConstant || idx.iface[id]
+			}))
+		}
+		if len(callable(ids)) < 2 {
+			key, f := "n:"+lang+"\x00"+name, store.Filter{Name: name, Language: lang}
+			match := func(s parser.Symbol) bool { return s.Name == name && s.Language == lang }
+			got := fromStore(key, f, 20, match)
+			// A full page may hide the one candidate fit keeps behind those it
+			// drops and the stale points of this run's files: read them all.
+			// shortcut: more than MaxScroll symbols of one name still hide it; a store filter on callables if a repo needs it
+			if fullPage[key] && len(callable(append(slices.Clone(ids), got...))) < 2 {
+				got = fromStore(key+"\x00all", f, store.MaxScroll, match)
+			}
+			ids = append(ids, got...)
 		}
 		return ids
 	}
@@ -1249,7 +1264,9 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 	// by name alone, or naming a variable that has a function or method of
 	// its qualified name in its file (a PHP property and its method), binds
 	// only to something callable
-	// (an exact match alone may name a variable holding a function).
+	// (an exact match alone may name a variable holding a function), and
+	// never to a Go interface's method: a call on an operand of unknown type
+	// is on a concrete value as often as not.
 	fit := func(rk parser.RelationKind, nameOnly bool, ids []string) []string {
 		if rk == parser.RelImports {
 			return ids
@@ -1264,6 +1281,9 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 		}
 		out := ids[:0:0]
 		for _, id := range ids {
+			if nameOnly && idx.iface[id] {
+				continue
+			}
 			switch kindOf[id] {
 			case parser.KindTemplate, parser.KindScene, parser.KindChunk, parser.KindRoute, parser.KindHook:
 				continue

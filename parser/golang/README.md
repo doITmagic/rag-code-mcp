@@ -67,7 +67,8 @@ graph TD
 | `func F()` | `function` | | Signature is the source up to the body. |
 | `func (r *T) M()` | `method` | `T` | Owner is the receiver base type with pointer and type parameters stripped. |
 | `type T struct{...}` | `class` | | |
-| `type I interface{...}` | `interface` | | `Metadata["methods"]` lists the interface's method names, comma separated. |
+| `type I interface{...}` | `interface` | | `Metadata["methods"]` lists the interface's own method names, comma separated (not those of an inline `interface{...}` in a parameter). |
+| A method of `type I interface{ M(x int) error }` | `method` | `I` | `<module>.I.M`; content and signature are the method's line (`M(x int) error`), doc the comment right above it. `Metadata["interface"]="true"`, so the index never binds a call matched by name alone to it ([index](../../index/README.md#6-resolve)). No relations: the interface symbol keeps the type uses of its methods. An inline interface (a struct field `c interface{ Close() error }`, a parameter) gives no method symbol. |
 | `type A = B`, `type N []string` | `type` | | Any other type spec, aliases included. |
 | `var x, y = ...` | `variable` | | One symbol per name; `_` is skipped unless the spec has relations (`var _ = Describe(...)` in Ginkgo tests, `var _ I = (*T)(nil)`): their calls and type uses would be lost otherwise. |
 | `const ...` | `constant` | | One symbol per name; `_` is skipped unless the spec has relations, as for `var`. |
@@ -123,6 +124,7 @@ another); `Start` calls `Stop` ->
 | `recv.M()` inside a method | `call` | Receiver variable: `<module>.<Owner>.M`. |
 | `T.M(...)`, `(*T).M(...)`, `T{}.M()` | `call` | Type declared in the file: `<module>.T.M`. |
 | `s.M()` on a local or parameter declared with one type (`s *T`, `var s T`, `s := &T{...}`, `s := T{...}`, `c echo.Context`, `r Repo` of an interface) | `call` | `<module of T>.T.M`: this module for an unqualified type, the import path for `pkg.T`. A local set from a function call (`x := f()`), reassigned to anything but a literal of the same type (`s = &Other{}`, `s = f()`), or of a slice, map or func type has no declared type. A parameter of a func type (`fn func(s *T)`) is no local; a name only closures declare (not the function itself) has no declared type when it is also used where no closure declares it (there it is a package-level name), so `s.Get()` after `f := func(s *Server) {...}` keeps an empty target. An external type matches no workspace symbol, so the index leaves `c.JSON()` unresolved instead of linking it by name to a workspace `JSON` ([index](../../index/README.md#6-resolve)). |
+| `recv.f.M()` inside a method, `s.f.M()` on a local or parameter declared with one struct type (`svc := &Service{}`), where `f` is a named field of a non-generic struct declared in this file | `call` | The field's declared type, as in the row above: `s.repo.Find()` with `repo Repo` is `<module>.Repo.Find` (then `via` to the implementations, [tools](../../tools/README.md#rag_find_usages)), `db *sql.DB` gives `database/sql.DB.Exec`, which matches no workspace symbol, so the index leaves it unresolved. Also for the value use `run(s.repo.Find)`. An embedded field, a slice, map or func field, a field of a generic struct (`Box[T]{ v T }`) or of a struct declared in another file, and a receiver shadowed by a local keep `""`. |
 | `x.M()` on anything else | `call` | Target name only, qualified name `""`. |
 | `F[int](x)` / `pkg.F[T](x)` | `call` (or `uses_type` when `F` is a local type) | Generic calls parse as conversions; classified by whether `F` is a type declared here. |
 | `T` in any type position (field, parameter, result, `var`, composite literal, `new(T)`, type switch) | `uses_type` | `<module>.T`: not predeclared (`int`, `error`, `any`, `comparable`, ...) and not a type parameter, so declared in the same package, in this file or another. The declared name of a type and a method's receiver type are not uses. |
@@ -143,11 +145,16 @@ evidence: a method named `GET` in a file that imports no router is no route.
 | Framework | Import | Registration calls (path argument) | Group |
 |-----------|--------|-------------------------------------|-------|
 | Echo | `github.com/labstack/echo` (any `/vN`) | `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `OPTIONS`, `HEAD`, `CONNECT`, `TRACE`, `Any`, `Static`, `File` (first); `Match`, `Add` (second) | `Group(prefix, ...)` |
-| Gin | `github.com/gin-gonic/gin` | `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `OPTIONS`, `HEAD`, `Any`, `Static`, `StaticFile`, `StaticFS` (first); `Match`, `Handle` (second) | `Group(prefix, ...)` |
-| Chi | `github.com/go-chi/chi` (any `/vN`) | `Get`, `Post`, `Put`, `Delete`, `Patch`, `Options`, `Head`, `Connect`, `Trace`, `Handle`, `HandleFunc`, `Mount` (first); `Method`, `MethodFunc` (second) | `Route(prefix, func(r chi.Router) {...})`: the closure's router parameter gets the prefix inside the closure only; `Group(func(r chi.Router) {...})` and `With(mw...)` keep the receiver's prefix |
+| Gin | `github.com/gin-gonic/gin` | `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `OPTIONS`, `HEAD`, `Any`, `Static`, `StaticFile`, `StaticFS` (first); `Match`, `Handle` (second) | `Group(prefix, ...)`; `Use(mw...)` on a router or group keeps its prefix (`g.Group("/user").Use(auth).POST("", h)` is `/user`) |
+| Chi | `github.com/go-chi/chi` (any `/vN`) | `Get`, `Post`, `Put`, `Delete`, `Patch`, `Options`, `Head`, `Connect`, `Trace`, `Handle`, `HandleFunc`, `Mount` (first); `Method`, `MethodFunc` (second) | `Route(prefix, func(r chi.Router) {...})`: the closure's router parameter gets the prefix inside the closure only; `Group(func(r chi.Router) {...})` and `With(mw...)` keep the receiver's prefix; `Mount(prefix, sub)` of a `chi.NewRouter()` built in the same function gives `sub` the prefix |
 | net/http | `net/http` | `Handle`, `HandleFunc` on `http`, `http.DefaultServeMux` or a `ServeMux` (first); the path may be a Go 1.22 pattern, split as `ServeMux` does: the method is the text before the first space or tab, case kept (`"GET /items/{id}"` and `"GET\t/items/{id}"` give name `/items/{id}` and method `GET`, `"get /x"` method `get`), and any text before the first `/` is a host kept in the name (`"example.com/"`, `"localhost/status"`) | none |
 
-- The path argument must be a string literal that is `""` or starts with
+- The path argument must be a string literal, a string const declared at
+  the top of the same file (`const uriAdmin = "/admin"`), or `path.Join` of
+  such consts and literals, which gives what `path.Join` returns at run time
+  (`path.Join(uriAdmin, "/lists/:id/")` is `/admin/lists/:id`). A local or
+  parameter of the const's or the `path` import's name shadows it. The same
+  holds for group prefixes and `Mount` paths. The value must be `""` or start with
   `/` (a net/http pattern: after its method and host; a Gin or Echo path may
   be any string, since Gin joins it to the base path `/` and Echo adds the
   missing leading slash: `GET("users")` is `/users`; Chi and net/http panic
@@ -167,8 +174,7 @@ evidence: a method named `GET` in a file that imports no router is no route.
   package itself or `http.DefaultServeMux` (also held in a local:
   `mux := http.DefaultServeMux`). So `c.File("/var/www/index.html")` on an `echo.Context` and
   `cache.Get("/docs/1", out)` are no routes; a router reached any other way
-  (returned by a project function, a field of a type declared elsewhere, or
-  a Gin `Use(...)` result such as `g.Group("/").Use(auth).POST("/message", h)`)
+  (returned by a project function or a field of a type declared elsewhere)
   gives no route either. A receiver keeps the framework it came from (its
   constructor, its parameter type, the router it is a group of; `http` and
   `http.DefaultServeMux` are net/http), and only that framework's methods,
@@ -183,7 +189,18 @@ evidence: a method named `GET` in a file that imports no router is no route.
   `Group("api")` + `GET("ping")` is `/api/ping`, a trailing slash is kept); Echo
   concatenates prefix and path and then adds a missing leading slash, as its
   router does (`GET("users")` is `/users`, `Group("/api")` + `GET("ping")` is
-  `/apiping`); Chi paths are concatenated as written. A group variable
+  `/apiping`); Chi paths are concatenated after the prefix less its trailing
+  `/`, the path chi serves (`Route("/articles")` + `Get("/")` is `/articles/`,
+  `Mount("/")` + `Get("/x")` is `/x`). A sub-router a function builds with
+  `chi.NewRouter()` (or `chi.NewMux()`) and mounts at one path in the same
+  function body or closure (`r := chi.NewRouter(); r.Get("/", h); router.Mount("/settings", r)`)
+  gets that path as its prefix, joined to the prefix of the router it is
+  mounted on (nested mounts add up). The `Mount` binds to the last router
+  assigned to that name before it: a router of the same name in another
+  closure or declared in an inner block (`if`, `for`, `switch`, `{}`), one
+  assigned to the name after the `Mount`, one mounted from inside another
+  closure and one mounted at two paths keep their paths as written.
+  A group variable
   passed to a function of the same file gives that function's parameter its
   prefix when every call in the file passes the same one; otherwise, and for
   any router whose prefix the file does not show (a parameter, a field set
@@ -218,15 +235,17 @@ evidence: a method named `GET` in a file that imports no router is no route.
 
 ## Known limitations visible in the code
 
-- No type inference: calls on fields, return values and locals whose type
-  the file does not declare (`s.Inner.Do()`, `a := f(); a.Do()`) keep an
-  empty target qualified name. A call on an interface-typed operand targets
-  the interface's method name, which is no symbol (see the interface
-  limitation below).
+- No type inference: calls on return values and locals whose type the file
+  does not declare (`a := f(); a.Do()`), and on fields of a struct declared
+  in another file of the package (`s.Inner.Do()`, common in listmonk), keep
+  an empty target qualified name. A call on an interface-typed operand
+  targets the interface's method; which implementations it reaches is
+  worked out at query time by method names only
+  ([tools](../../tools/README.md#rag_find_usages)).
 - Function and method values: only the positions in the table count. Not
   covered: a method value on an operand of unknown type (a local from a
   function call, `s := newServer(); mux.HandleFunc(p, s.h)`, a package-level
-  var, a field `a.b.h`); a method expression `T.m` / `(*T).m` whose type is
+  var, a field `a.b.h` of a struct declared in another file); a method expression `T.m` / `(*T).m` whose type is
   declared in another file; a value sent on a channel, put in parentheses or
   reached through an interface; a function value stored in a variable and
   called later is a usage where it is named, not where it is called. A file
@@ -252,15 +271,27 @@ evidence: a method named `GET` in a file that imports no router is no route.
 - Routes: only the frameworks in [Routes](#routes) are read. Routes
   registered through a project's own helper or a table of structs, a router
   returned by a project's own constructor (`r := newRouter()`), a router
-  held in a field of a type declared in another file, a group passed to a
-  method (`s.register(g)`) and a path built at run time (`"/v" + n`) produce
-  no route or keep the path as written.
-- Interface methods are not symbols of their own: they are only listed in the
-  interface's `Metadata["methods"]`. `rag_find_usages` on a method declared
-  only in an interface (no implementation) answers "no indexed symbol named";
-  a call through the interface (`repo.M()` with `repo Repo`) targets
-  `<module>.Repo.M`, which the index, finding no such method, resolves by
-  name when one implementation has that name.
+  held in a field of a type declared in another file and a group passed to a
+  method (`s.register(g)`) produce no route or keep the path as written.
+- Routes: a router passed to a function or method in another file keeps the
+  path written in that function. In wakapi, `main.go` mounts
+  `router.Mount("/api", apiRouter)` and calls
+  `healthApiHandler.RegisterRoutes(apiRouter)` on a local built by a
+  constructor of another package; the route in `RegisterRoutes` is `/health`,
+  not `/api/health`, and `rag_search` for `/api/health` finds `/health` only
+  as a neighbour. The `Mount` symbol `/api` itself is indexed. Joining the two
+  would need the receiver's type from another file, and the many
+  `RegisterRoutes` methods get routers with different prefixes.
+- Routes: a path built at run time gives no route: `"/v" + n`, a path read
+  from config (listmonk `srv.Static(uploadFsURI, ...)` and
+  `path.Join(publicURL, "/:filepath")`), routes added in a loop
+  over `r.Routes()` (wakapi `routes/api/heartbeat.go`), or `path.Join` with
+  any part that is not a literal or a same-file string const. A path naming a
+  const declared in another file or a `var` gives no route either.
+- A bare method name shared by an interface and its implementation (`Find`)
+  names two symbols, so `rag_find_usages Find` asks to pick one; a call on an
+  operand of unknown type (`x := f(); x.Find()`) still binds by name to the
+  implementation only.
 - An import without an alias is known by the goimports guess of its name
   (`assumedName`), not by the imported package's `package` clause; a
   package whose real name differs from that guess gets calls with an empty
@@ -271,14 +302,14 @@ evidence: a method named `GET` in a file that imports no router is no route.
 | File | Contents |
 |------|----------|
 | `golang.go` | `Analyzer` (`Language`, `Extensions`, `Analyze`), the per-file context, symbol builders (`appendFunc`, `appendTypes`, `appendValues`), relation collection (`relations`, `callTarget`, `genericCall`, `resolveType`), doc comment extraction and the cached `go.mod` module-path lookup. |
-| `routes.go` | The router table by import path (`frameworks`), `routes` / `declRoutes` (group prefixes per declaration, carried into same-file functions), `scope` (chi closures), `grp` (a router's prefix and framework), `route` (one registration call), `handlerRelation`. |
+| `routes.go` | The router table by import path (`frameworks`), `routes` / `declRoutes` (group prefixes per declaration, carried into same-file functions), `scope` (chi closures), `grp` (a router's prefix and framework), `route` (one registration call), `handlerRelation`, `static` (a literal, same-file const or `path.Join` path), `mounts` (chi sub-routers mounted in a declaration). |
 
 ### Tests
 
 | File | Covers |
 |------|--------|
-| `golang_test.go` | A fixture with grouped declarations, generics, embedded types, aliased/dot/blank imports: symbol kinds, owners, lines, signatures, docs, IDs, metadata; every relation and its target; module path without `go.mod`, nested `go.mod` stopping at the root; malformed input; analyzing the real `parser.go` of this repo; registration; concurrency; generic calls; `Exported` for test files and unexported owners; calls through local function values; a parameter shadowing an import; a func-type or closure parameter typing no use outside it, while a name the function and its closures declare with one type (`t *testing.T` and `t.Run(..., func(t *testing.T))`, `w` of two handler closures) keeps it; a local shadowing the receiver; a func-typed receiver called or named as a value shadowing a package function; the line of a chained call split over lines; functions and methods named as values (arguments, assignments, literals, returns), with fields, vars, consts, type switch and select locals skipped; an external test package as its own module; a renamed module seen without a restart; same-package types declared in another file, type parameters (receiver ones too) and the receiver skipped; blank vars keeping their relations; goimports-style assumed import names; a `go.mod` symlinked out of the root ignored, one symlinked inside it read. |
-| `routes_test.go` | net/http (Go 1.22 method and host patterns, a lowercase method, a tab after the method, a host without a dot, `http.HandleFunc`, `mux.Handle` with a wrapped handler, two method-value handlers of one name on one line); Chi routes (nested `Route` closures shadowing the outer router, `With`, `Group`, `Method`, `HandleFunc`, `Mount`); Gin routes (nested groups in `{}` blocks, `Handle`, middleware before the handler, static files); Echo routes: nested and inline groups, a group in a struct field, a group passed to a function (and the prefix left out when two calls disagree), each handler form (function, method value, package function, inline closure), `Match` / `Add` / `Static` / `File`; a group variable shadowed in a block keeping the outer prefix after it; Echo and Gin paths without a leading slash (none in a file that also imports Chi for a struct-field router; Gin and Echo groups in one function each with their own join); the receiver evidence (a top-level var from a constructor, a router-typed struct field; no route on an `echo.Context`, a cache in a chi file or a parameter of another type); a router and groups declared with `var`, alone or in a `var (...)` block; no route in a file without a router import, in a test file, or for `Header().Add` / `time.Now().Add`. |
+| `golang_test.go` | A fixture with grouped declarations, generics, embedded types, aliased/dot/blank imports: symbol kinds, owners, lines, signatures, docs, IDs, metadata; every relation and its target; interface methods as method symbols (owner, signature, doc, line, `interface` metadata, no relations) with the interface symbol unchanged; calls through a field of a struct declared in the file typed by the field (interface, concrete, imported, external, on the receiver, on a local, as a value), while generic structs, embedded, slice and map fields, structs of another file and a shadowed receiver stay bare; module path without `go.mod`, nested `go.mod` stopping at the root; malformed input; analyzing the real `parser.go` of this repo; registration; concurrency; generic calls; `Exported` for test files and unexported owners; calls through local function values; a parameter shadowing an import; a func-type or closure parameter typing no use outside it, while a name the function and its closures declare with one type (`t *testing.T` and `t.Run(..., func(t *testing.T))`, `w` of two handler closures) keeps it; a local shadowing the receiver; a func-typed receiver called or named as a value shadowing a package function; the line of a chained call split over lines; functions and methods named as values (arguments, assignments, literals, returns), with fields, vars, consts, type switch and select locals skipped; an external test package as its own module; a renamed module seen without a restart; same-package types declared in another file, type parameters (receiver ones too) and the receiver skipped; blank vars keeping their relations; goimports-style assumed import names; a `go.mod` symlinked out of the root ignored, one symlinked inside it read.; an inline interface in a struct field or parameter adding no method symbol (`TestInlineInterfaceAddsNoMethodSymbol`); a local shadowing the receiver leaving `recv.f.M()` with an empty target (`TestShadowedReceiverFieldCallKeepsEmptyTarget`). |
+| `routes_test.go` | net/http (Go 1.22 method and host patterns, a lowercase method, a tab after the method, a host without a dot, `http.HandleFunc`, `mux.Handle` with a wrapped handler, two method-value handlers of one name on one line); Chi routes (nested `Route` closures shadowing the outer router, `With`, `Group`, `Method`, `HandleFunc`, `Mount`; a sub-router mounted in the same function, nested mounts, `Mount("/", r)` giving no `//`, a sub-router mounted at two paths keeping its paths, a `Mount` after a block that declares a router of the same name serving the outer one, and one assigned with `=` in the block being the outer one); Gin routes (nested groups in `{}` blocks, `Handle`, middleware before the handler, static files, `Use(mw)` chained or assigned keeping the group's prefix, no route from a `Use` middleware closure); Echo routes: nested and inline groups, a group in a struct field, a group passed to a function (and the prefix left out when two calls disagree), each handler form (function, method value, package function, inline closure), `Match` / `Add` / `Static` / `File`; a group variable shadowed in a block keeping the outer prefix after it; Echo and Gin paths without a leading slash (none in a file that also imports Chi for a struct-field router; Gin and Echo groups in one function each with their own join); the receiver evidence (a top-level var from a constructor, a router-typed struct field; no route on an `echo.Context`, a cache in a chi file or a parameter of another type); a router and groups declared with `var`, alone or in a `var (...)` block; no route in a file without a router import, in a test file, or for `Header().Add` / `time.Now().Add`; paths from a same-file string const and `path.Join` of consts and literals (Echo registrations and group prefixes; no route for a `var`, a run-time `path.Join` part, a local shadowing the const, or `+` on a parameter shadowing the `path` import).; a chi `Mount` prefixing only the router it mounts, not one of the same name in another closure, one assigned after it or one mounted from another closure (`TestChiMountPrefixesOnlyTheMountedRouter`). |
 | `zz_verify_test.go` | Verification tests: resolution probes, an unclean (non-normalized) root path, robustness on garbage and edge input, a second round of edge cases, very large and deeply nested files. |
 
 ## Testing

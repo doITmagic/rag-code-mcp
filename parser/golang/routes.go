@@ -33,7 +33,7 @@ var frameworks = []framework{
 		"GET": 0, "POST": 0, "PUT": 0, "DELETE": 0, "PATCH": 0, "OPTIONS": 0, "HEAD": 0, "CONNECT": 0, "TRACE": 0,
 		"Any": 0, "Match": 1, "Add": 1, "Static": 0, "File": 0,
 	}, types: map[string]bool{"Echo": true, "Group": true}, ctors: map[string]bool{"New": true}},
-	{name: "gin", module: "github.com/gin-gonic/gin", group: "Group", last: true, relative: true, methods: map[string]int{
+	{name: "gin", module: "github.com/gin-gonic/gin", group: "Group", last: true, relative: true, inline: map[string]bool{"Use": true}, methods: map[string]int{
 		"GET": 0, "POST": 0, "PUT": 0, "DELETE": 0, "PATCH": 0, "OPTIONS": 0, "HEAD": 0,
 		"Any": 0, "Match": 1, "Handle": 1, "Static": 0, "StaticFile": 0, "StaticFS": 0,
 	}, types: map[string]bool{"Engine": true, "RouterGroup": true, "IRouter": true, "IRoutes": true}, ctors: map[string]bool{"New": true, "Default": true}},
@@ -53,6 +53,9 @@ var frameworks = []framework{
 func (fw *framework) join(prefix, rel string) string {
 	if fw.name == "echo" && prefix+rel != "" && !strings.HasPrefix(prefix+rel, "/") {
 		return "/" + prefix + rel
+	}
+	if fw.name == "chi" { // Mount and Route serve the sub-router under the prefix less its trailing "/"
+		return strings.TrimSuffix(prefix, "/") + rel
 	}
 	if fw.name != "gin" || rel == "" {
 		return prefix + rel
@@ -162,6 +165,8 @@ func (fc *file) routes(decls []*gotreesitter.Node, at []int, syms []parser.Symbo
 // each group variable (by its text, so s.api works too).
 func (fc *file) declRoutes(decl *gotreesitter.Node, sym *parser.Symbol, params map[int]string, seen map[string]map[int]string, out []parser.Symbol) []parser.Symbol {
 	groups := map[string]grp{}
+	fc.declLocals, _ = fc.locals(decl)
+	mounts := fc.mounts(decl)
 	i := 0
 	for _, pd := range parser.NamedChildren(parser.Field(decl, fc.lang, "parameters")) {
 		fw := fc.routerType(parser.Field(pd, fc.lang, "type"))
@@ -177,8 +182,7 @@ func (fc *file) declRoutes(decl *gotreesitter.Node, sym *parser.Symbol, params m
 	var walk func(n *gotreesitter.Node, groups map[string]grp, declared map[string]bool)
 	walk = func(n *gotreesitter.Node, groups map[string]grp, declared map[string]bool) {
 		parser.Walk(n, func(c *gotreesitter.Node) bool {
-			switch c.Type(fc.lang) {
-			case "block", "if_statement", "for_statement", "expression_switch_statement", "type_switch_statement", "select_statement":
+			if blockScope[c.Type(fc.lang)] {
 				if c == n {
 					return true
 				}
@@ -190,23 +194,21 @@ func (fc *file) declRoutes(decl *gotreesitter.Node, sym *parser.Symbol, params m
 					}
 				}
 				return false
+			}
+			switch c.Type(fc.lang) {
 			case "short_var_declaration", "assignment_statement", "var_spec":
 				short := c.Type(fc.lang) != "assignment_statement"
-				l := parser.NamedChildren(parser.Field(c, fc.lang, "left"))
-				r := parser.NamedChildren(parser.Field(c, fc.lang, "right"))
-				if c.Type(fc.lang) == "var_spec" { // var g = e.Group("/x") declares like g := e.Group("/x")
-					l = nil
-					for i := 0; i < c.ChildCount(); i++ {
-						if c.FieldNameForChild(i, fc.lang) == "name" {
-							l = append(l, c.Child(i))
-						}
-					}
-					r = parser.NamedChildren(parser.Field(c, fc.lang, "value"))
-				}
+				l, r := fc.assigned(c)
 				var p grp
 				ok := false
 				if len(l) == 1 && len(r) == 1 {
 					p, ok = fc.router(r[0], groups)
+					// r := chi.NewRouter() mounted below at one path: its routes are served under it
+					if m := mounts[c.StartByte()]; ok && m != nil && fc.newRouter(r[0]) != nil && p.fw.name == "chi" {
+						if at, ok := fc.router(m.recv, groups); ok {
+							p.prefix = p.fw.join(at.prefix, m.path)
+						}
+					}
 				}
 				for _, v := range l {
 					switch name := fc.text(v); {
@@ -439,11 +441,8 @@ func (fc *file) prefix(recv *gotreesitter.Node, groups map[string]grp) string {
 // gin or echo path any string (gin joins it to "/", echo adds the "/"). tied
 // says the receiver's framework is known to be fw.
 func (fc *file) pathLiteral(n *gotreesitter.Node, fw *framework, tied bool) (string, bool) {
-	if !strings.HasSuffix(n.Type(fc.lang), "string_literal") {
-		return "", false
-	}
-	s, err := strconv.Unquote(fc.text(n))
-	if err != nil {
+	s, ok := fc.static(n)
+	if !ok {
 		return "", false
 	}
 	p := s
@@ -470,4 +469,135 @@ func splitMethod(s string) (method, rest string) {
 		return s[:i], strings.TrimLeft(s[i+1:], " \t")
 	}
 	return "", s
+}
+
+// stringLit unquotes v when it is one string literal.
+func (fc *file) stringLit(v []*gotreesitter.Node) (string, bool) {
+	if len(v) != 1 || !strings.HasSuffix(v[0].Type(fc.lang), "string_literal") {
+		return "", false
+	}
+	s, err := strconv.Unquote(fc.text(v[0]))
+	return s, err == nil
+}
+
+// static is the value of a path the file spells out: a string literal, a
+// string const declared at the top of this file, or path.Join of those
+// (listmonk's path.Join(uriAdmin, "/lists")); a local of the name shadows it.
+func (fc *file) static(n *gotreesitter.Node) (string, bool) {
+	switch n.Type(fc.lang) {
+	case "identifier":
+		s, ok := fc.consts[fc.text(n)]
+		return s, ok && !fc.declLocals[fc.text(n)]
+	case "call_expression":
+		fn := parser.Field(n, fc.lang, "function")
+		if fn.Type(fc.lang) != "selector_expression" || fc.text(parser.Field(fn, fc.lang, "field")) != "Join" {
+			return "", false
+		}
+		if pkg := fc.text(parser.Field(fn, fc.lang, "operand")); fc.imports[pkg] != "path" || fc.declLocals[pkg] {
+			return "", false
+		}
+		var parts []string
+		for _, a := range parser.NamedChildren(parser.Field(n, fc.lang, "arguments")) {
+			s, ok := fc.static(a)
+			if !ok {
+				return "", false
+			}
+			parts = append(parts, s)
+		}
+		return path.Join(parts...), true
+	}
+	return fc.stringLit([]*gotreesitter.Node{n})
+}
+
+// blockScope are the statements that open a scope: a name declared in one
+// ends with it.
+var blockScope = map[string]bool{"block": true, "if_statement": true, "for_statement": true,
+	"expression_switch_statement": true, "type_switch_statement": true, "select_statement": true}
+
+// mount is where a router variable is mounted: recv.Mount(path, name).
+type mount struct {
+	recv *gotreesitter.Node
+	path string
+}
+
+// assigned gives the two sides of x := v, x = v or var x = v (which declares
+// like :=).
+func (fc *file) assigned(c *gotreesitter.Node) (l, r []*gotreesitter.Node) {
+	if c.Type(fc.lang) != "var_spec" {
+		return parser.NamedChildren(parser.Field(c, fc.lang, "left")), parser.NamedChildren(parser.Field(c, fc.lang, "right"))
+	}
+	for i := 0; i < c.ChildCount(); i++ {
+		if c.FieldNameForChild(i, fc.lang) == "name" {
+			l = append(l, c.Child(i))
+		}
+	}
+	return l, parser.NamedChildren(parser.Field(c, fc.lang, "value"))
+}
+
+// mounts maps a router assignment (x := chi.NewRouter(), by its start byte) to
+// the X.Mount(path, x) that serves it: the last router assigned to that name
+// before the Mount, in the same function body or closure. Another closure's x,
+// an x declared in an inner block that has ended and an x assigned after the
+// Mount are other routers; a router mounted at
+// two paths maps to nil, so its paths stay as written.
+func (fc *file) mounts(decl *gotreesitter.Node) map[uint32]*mount {
+	out := map[uint32]*mount{}
+	// declared holds the names the scope n opens declares: they end with it.
+	var walk func(n *gotreesitter.Node, last map[string]uint32, declared map[string]bool)
+	walk = func(n *gotreesitter.Node, last map[string]uint32, declared map[string]bool) {
+		parser.Walk(n, func(c *gotreesitter.Node) bool {
+			if blockScope[c.Type(fc.lang)] && c != n {
+				inner, innerDeclared := maps.Clone(last), map[string]bool{}
+				walk(c, inner, innerDeclared)
+				for k := range innerDeclared { // the block's own name ends with it
+					if v, ok := last[k]; ok {
+						inner[k] = v
+					} else {
+						delete(inner, k)
+					}
+				}
+				clear(last) // an assignment to an outer variable outlives the block
+				maps.Copy(last, inner)
+				return false
+			}
+			switch c.Type(fc.lang) {
+			case "func_literal":
+				if c != n {
+					walk(c, map[string]uint32{}, map[string]bool{})
+					return false
+				}
+			case "short_var_declaration", "assignment_statement", "var_spec":
+				l, r := fc.assigned(c)
+				for _, v := range l {
+					if c.Type(fc.lang) != "assignment_statement" {
+						declared[fc.text(v)] = true
+					}
+				}
+				if len(l) == 1 && len(r) == 1 {
+					if delete(last, fc.text(l[0])); fc.newRouter(r[0]) != nil {
+						last[fc.text(l[0])] = c.StartByte()
+					}
+				}
+			case "call_expression":
+				fn := parser.Field(c, fc.lang, "function")
+				args := parser.NamedChildren(parser.Field(c, fc.lang, "arguments"))
+				if fn.Type(fc.lang) != "selector_expression" || fc.text(parser.Field(fn, fc.lang, "field")) != "Mount" || len(args) != 2 {
+					return true
+				}
+				at, known := last[fc.text(args[1])]
+				if !known {
+					return true
+				}
+				p, ok := fc.static(args[0])
+				if m, dup := out[at]; !ok || dup && (m == nil || m.path != p) {
+					out[at] = nil
+				} else {
+					out[at] = &mount{parser.Field(fn, fc.lang, "operand"), p}
+				}
+			}
+			return true
+		})
+	}
+	walk(parser.Field(decl, fc.lang, "body"), map[string]uint32{}, map[string]bool{})
+	return out
 }

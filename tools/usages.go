@@ -449,44 +449,65 @@ func isID(s string) bool {
 func ownerQN(s *parser.Symbol) string { return strings.TrimSuffix(s.QualifiedName, "."+s.Name) }
 
 // viaInterfaces lists the methods named like sym of the workspace interfaces
-// its PHP class implements: directly, through a parent class or through an
-// interface extending them; also those of the subclasses and the classes using
-// it as a trait that do not declare their own method of that name. A call through an interface-typed variable
-// targets the interface's method only, so its callers are sym's too.
-// shortcut: PHP only, other languages' implements relations are not walked; extend when one asks for it.
-func viaInterfaces(ctx context.Context, w *engine.Workspace, sym *parser.Symbol) (out []parser.Symbol) {
-	if sym.Language != "php" || sym.Kind != parser.KindMethod || sym.Owner == "" {
+// its class implements, as phpVia and goVia find them. A call through an
+// interface-typed variable targets the interface's method only, so its
+// callers are sym's too. An interface's own method gets none.
+// shortcut: PHP and Go only; extend when another language asks for it.
+func viaInterfaces(ctx context.Context, w *engine.Workspace, sym *parser.Symbol) []parser.Symbol {
+	if sym.Kind != parser.KindMethod || sym.Owner == "" || sym.Metadata["interface"] == "true" {
 		return nil
 	}
-	seen := map[string]bool{}
-	owner := ownerQN(sym)
-	queue := []store.Filter{{Language: "php", Kinds: []parser.Kind{parser.KindClass}, QualifiedName: owner}}
-	// and the classes that have sym unchanged: subclasses and classes using it
-	// as a trait (a class's only uses_type relations are its "use T;" lines,
-	// types in bodies belong to its members), unless they declare their own
+	switch sym.Language {
+	case "php":
+		return phpVia(ctx, w, sym)
+	case "go":
+		return goVia(ctx, w, sym)
+	}
+	return nil
+}
+
+// inheritors lists the classes that have sym unchanged: subclasses, Go types
+// embedding its owner and PHP classes using it as a trait (a PHP class's only
+// uses_type relations are its "use T;" lines, types in bodies belong to its
+// members; a Go struct's are its field types), unless they declare their own.
+func inheritors(ctx context.Context, w *engine.Workspace, sym *parser.Symbol) (out []parser.Symbol) {
+	lang := sym.Language
 	declares := func(cls string) bool {
-		m, err := w.Scroll(ctx, store.Filter{Language: "php", Kinds: []parser.Kind{parser.KindMethod}, QualifiedName: cls + "." + sym.Name}, 1)
+		m, err := w.Scroll(ctx, store.Filter{Language: lang, Kinds: []parser.Kind{parser.KindMethod}, QualifiedName: cls + "." + sym.Name}, 1)
 		return err != nil || len(live(w, m)) > 0
 	}
+	owner := ownerQN(sym)
 	down, inherits := []string{owner}, map[string]bool{owner: true}
 	for len(down) > 0 && len(inherits) < candidateLimit {
 		q := down[0]
 		down = down[1:]
-		users, err := w.Scroll(ctx, store.Filter{Language: "php", Kinds: []parser.Kind{parser.KindClass}, TargetQualifiedNames: []string{q}}, candidateLimit)
+		users, err := w.Scroll(ctx, store.Filter{Language: lang, Kinds: []parser.Kind{parser.KindClass}, TargetQualifiedNames: []string{q}}, candidateLimit)
 		if err != nil {
 			break
 		}
 		for _, h := range live(w, users) {
 			c := h.Symbol
 			if inherits[c.QualifiedName] || !slices.ContainsFunc(c.Relations, func(r parser.Relation) bool {
-				return (r.Kind == parser.RelUsesType || r.Kind == parser.RelExtends) && r.TargetQualifiedName == q
+				return (r.Kind == parser.RelExtends || lang == "php" && r.Kind == parser.RelUsesType) && r.TargetQualifiedName == q
 			}) || declares(c.QualifiedName) {
 				continue
 			}
 			inherits[c.QualifiedName] = true
 			down = append(down, c.QualifiedName)
-			queue = append(queue, store.Filter{IDs: []string{c.ID}})
+			out = append(out, c)
 		}
+	}
+	return out
+}
+
+// phpVia walks the interfaces sym's PHP class implements: directly, through
+// a parent class or through an interface extending them, and those of its
+// inheritors.
+func phpVia(ctx context.Context, w *engine.Workspace, sym *parser.Symbol) (out []parser.Symbol) {
+	seen := map[string]bool{}
+	queue := []store.Filter{{Language: "php", Kinds: []parser.Kind{parser.KindClass}, QualifiedName: ownerQN(sym)}}
+	for _, c := range inheritors(ctx, w, sym) {
+		queue = append(queue, store.Filter{IDs: []string{c.ID}})
 	}
 	for len(queue) > 0 && len(seen) < candidateLimit {
 		hits, err := w.Scroll(ctx, queue[0], candidateLimit)
@@ -516,6 +537,101 @@ func viaInterfaces(ctx context.Context, w *engine.Workspace, sym *parser.Symbol)
 					queue = append(queue, store.Filter{Language: "php", QualifiedName: r.TargetQualifiedName})
 				}
 			}
+		}
+	}
+	return out
+}
+
+// goVia lists the methods named like sym of the workspace interfaces that
+// sym's owner, or one of its inheritors, satisfies: it has, declared or
+// promoted from an embedded type, every method the interface and the
+// workspace interfaces it embeds declare.
+// shortcut: method names, not signatures; a call through an interface that
+// embeds the declaring one (s Store; s.Find() of Finder) counts for every type
+// satisfying Finder, upgrade by keeping the operand's interface on the
+// relation; unknown methods of an external
+// embedded interface are not required; the first MaxScroll methods of sym's
+// name only.
+func goVia(ctx context.Context, w *engine.Workspace, sym *parser.Symbol) (out []parser.Symbol) {
+	hits, err := w.Scroll(ctx, store.Filter{Language: "go", Kinds: []parser.Kind{parser.KindMethod}, Name: sym.Name}, store.MaxScroll)
+	if err != nil {
+		return nil
+	}
+	var cands []parser.Symbol
+	for _, h := range live(w, hits) {
+		if h.Symbol.Metadata["interface"] == "true" && len(cands) < candidateLimit {
+			cands = append(cands, h.Symbol)
+		}
+	}
+	if len(cands) == 0 { // most methods: one scroll
+		return nil
+	}
+	carriers := []string{ownerQN(sym)}
+	for _, c := range inheritors(ctx, w, sym) {
+		carriers = append(carriers, c.QualifiedName)
+	}
+	found := map[string][]parser.Symbol{} // scroll cache, by filter key
+	scroll := func(key string, f store.Filter) []parser.Symbol {
+		if v, ok := found[key]; ok {
+			return v
+		}
+		var v []parser.Symbol
+		if hits, err := w.Scroll(ctx, f, candidateLimit); err == nil {
+			for _, h := range live(w, hits) {
+				v = append(v, h.Symbol)
+			}
+		}
+		found[key] = v
+		return v
+	}
+	known := map[string]bool{}
+	// has: type t declares method n or embeds a type that has it.
+	var has func(t, n string) bool
+	has = func(t, n string) bool {
+		k := t + "." + n
+		if v, ok := known[k]; ok {
+			return v
+		}
+		known[k] = false // an embedding cycle adds nothing
+		v := len(scroll("m:"+k, store.Filter{Language: "go", Kinds: []parser.Kind{parser.KindMethod}, QualifiedName: k})) > 0
+		for _, s := range scroll("t:"+t, store.Filter{Language: "go", QualifiedName: t}) {
+			for _, r := range s.Relations {
+				if !v && r.Kind == parser.RelExtends && r.TargetQualifiedName != "" {
+					v = has(r.TargetQualifiedName, n)
+				}
+			}
+		}
+		known[k] = v
+		return v
+	}
+	for _, m := range cands {
+		var need []string // the interface's methods and those of the workspace interfaces it embeds
+		seen := map[string]bool{}
+		queue := scroll("i:"+ownerQN(&m), store.Filter{Language: "go", Kinds: []parser.Kind{parser.KindInterface}, QualifiedName: ownerQN(&m)})
+		for len(queue) > 0 && len(seen) < candidateLimit {
+			i := queue[0]
+			queue = queue[1:]
+			if seen[i.ID] || i.Kind != parser.KindInterface {
+				continue
+			}
+			seen[i.ID] = true
+			if ns := i.Metadata["methods"]; ns != "" {
+				need = append(need, strings.Split(ns, ",")...)
+			}
+			for _, r := range i.Relations {
+				switch {
+				case r.Kind != parser.RelExtends:
+				case r.TargetID != "":
+					queue = append(queue, scroll("id:"+r.TargetID, store.Filter{IDs: []string{r.TargetID}})...)
+				case r.TargetQualifiedName != "":
+					queue = append(queue, scroll("i:"+r.TargetQualifiedName, store.Filter{Language: "go", Kinds: []parser.Kind{parser.KindInterface}, QualifiedName: r.TargetQualifiedName})...)
+				}
+			}
+		}
+		if slices.ContainsFunc(carriers, func(t string) bool {
+			return !slices.ContainsFunc(need, func(n string) bool { return !has(t, n) })
+		}) {
+			out = append(out, m)
 		}
 	}
 	return out

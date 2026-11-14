@@ -36,6 +36,9 @@ type Export struct {
 	Signature     string `json:"signature,omitempty"`
 	FilePath      string `json:"file_path"`
 	StartLine     int    `json:"start_line"`
+	// Methods are the signatures of a Go interface's methods, in source order:
+	// as rows of their own they filled the cap of a large package.
+	Methods []string `json:"methods,omitempty"`
 }
 
 func (t *tools) listExports(ctx context.Context, req *mcp.CallToolRequest, in ExportsInput) (*mcp.CallToolResult, any, error) {
@@ -51,17 +54,35 @@ func (t *tools) listExports(ctx context.Context, req *mcp.CallToolRequest, in Ex
 	if res != nil {
 		return res, nil, nil
 	}
-	hits, capped, file, err := moduleSymbols(ctx, w, pkg, ks)
+	scroll := ks
+	if slices.Contains(ks, parser.KindInterface) && !slices.Contains(ks, parser.KindMethod) {
+		scroll = append(slices.Clone(ks), parser.KindMethod) // an interface row lists its methods
+	}
+	hits, capped, file, err := moduleSymbols(ctx, w, pkg, scroll)
 	if err != nil {
 		return storeErr(ctx, w, err)
 	}
 	hits = mergeTwins(live(w, hits), func(h *store.Hit) *parser.Symbol { return &h.Symbol })
 	byKind := map[string][]Export{}
 	modules := map[string]bool{}
+	ifaceMethods := map[string][]parser.Symbol{} // by the qualified name of each Go interface listed
+	for _, h := range hits {
+		if h.Symbol.Kind == parser.KindInterface && h.Symbol.Exported {
+			ifaceMethods[h.Symbol.QualifiedName] = nil
+		}
+	}
 	n := 0
 	for _, h := range hits {
 		s := h.Symbol
 		if !s.Exported {
+			continue
+		}
+		iface := strings.TrimSuffix(s.QualifiedName, "."+s.Name)
+		if _, listed := ifaceMethods[iface]; listed && s.Metadata["interface"] == "true" {
+			ifaceMethods[iface] = append(ifaceMethods[iface], s)
+			continue
+		}
+		if len(ks) > 0 && !slices.Contains(ks, s.Kind) { // a method read only for its interface
 			continue
 		}
 		if n++; n > exportsCap {
@@ -73,6 +94,14 @@ func (t *tools) listExports(ctx context.Context, req *mcp.CallToolRequest, in Ex
 	}
 	for _, list := range byKind {
 		sort.Slice(list, func(i, j int) bool { return list[i].QualifiedName < list[j].QualifiedName })
+	}
+	for i := range byKind[string(parser.KindInterface)] {
+		e := &byKind[string(parser.KindInterface)][i]
+		ms := ifaceMethods[e.QualifiedName]
+		sort.Slice(ms, func(i, j int) bool { return ms[i].StartLine < ms[j].StartLine })
+		for _, m := range ms {
+			e.Methods = append(e.Methods, m.Signature)
+		}
 	}
 	mods := make([]string, 0, len(modules))
 	for m := range modules {

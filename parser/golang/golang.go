@@ -55,10 +55,17 @@ type file struct {
 	// read from, so a route's handler finds its own (a.Handle vs b.Handle).
 	valueRels map[uint32]parser.Relation
 
+	// fieldTypes is the qualified type of each named field of the non-generic
+	// structs this file declares, by struct then field name; "" for slices,
+	// maps, funcs and other unnamed types.
+	fieldTypes map[string]map[string]string
+
 	fwPkgs map[string]*framework // local import name -> the router of that import
 	// top-level vars and struct field names of a router type or set from a
 	// router constructor: the receivers a route may have besides locals.
 	routerVars, routerFields map[string]bool
+	consts                   map[string]string // top-level string consts: a route path may name one
+	declLocals               map[string]bool   // locals of the declaration whose routes are read
 }
 
 // Analyze parses one Go file. Malformed input yields whatever declarations
@@ -79,7 +86,9 @@ func (Analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 		fields:  map[string]bool{},
 		test:    strings.HasSuffix(f.Path, "_test.go"),
 		fwPkgs:  map[string]*framework{}, routerVars: map[string]bool{}, routerFields: map[string]bool{},
-		valueRels: map[uint32]parser.Relation{},
+		consts:     map[string]string{},
+		valueRels:  map[uint32]parser.Relation{},
+		fieldTypes: map[string]map[string]string{},
 	}
 	root := tree.RootNode()
 	// Pass 1: import table, locally declared type names, and the names a
@@ -105,6 +114,7 @@ func (Analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 			for _, spec := range fc.specs(n, "type_spec", "type_alias") {
 				if name := fc.text(parser.Field(spec, lang, "name")); name != "" {
 					fc.types[name] = true
+					fc.addFieldTypes(name, spec)
 				}
 			}
 			parser.Walk(n, func(c *gotreesitter.Node) bool {
@@ -121,9 +131,13 @@ func (Analyzer) Analyze(f parser.File) ([]parser.Symbol, error) {
 			for _, spec := range fc.specs(n, "var_spec", "const_spec") {
 				v := parser.NamedChildren(parser.Field(spec, lang, "value"))
 				router := fc.routerType(parser.Field(spec, lang, "type")) != nil || len(v) == 1 && fc.newRouter(v[0]) != nil
-				for _, name := range fc.names(spec) {
+				names := fc.names(spec)
+				for _, name := range names {
 					fc.values[name] = true
 					fc.routerVars[name] = fc.routerVars[name] || router
+				}
+				if s, ok := fc.stringLit(v); ok && n.Type(lang) == "const_declaration" && len(names) == 1 {
+					fc.consts[names[0]] = s
 				}
 			}
 		case "method_declaration":
@@ -304,12 +318,16 @@ func (fc *file) appendTypes(syms []parser.Symbol, decl *gotreesitter.Node) []par
 			kind = parser.KindInterface
 		}
 		s := fc.base(node, name, kind, "")
-		var methods []string
-		s.Relations, methods = fc.relations(spec, "", "")
-		if len(methods) > 0 {
-			s.Metadata = map[string]string{"methods": strings.Join(methods, ",")}
+		rels, elems := fc.relations(spec, "", "")
+		s.Relations = rels
+		var methods []parser.Symbol // no relations: the interface symbol holds its type uses once
+		for _, e := range elems {
+			m := fc.base(e, fc.text(parser.Field(e, fc.lang, "name")), parser.KindMethod, name)
+			m.Metadata = map[string]string{"interface": "true"}
+			methods = append(methods, m)
+			s.Metadata = map[string]string{"methods": strings.TrimPrefix(s.Metadata["methods"]+","+m.Name, ",")}
 		}
-		syms = append(syms, s)
+		syms = append(append(syms, s), methods...)
 	}
 	return syms
 }
@@ -347,9 +365,29 @@ func (fc *file) names(n *gotreesitter.Node) []string {
 	return out
 }
 
+// addFieldTypes records the field types of struct type spec name. A generic
+// struct is skipped: its field typed T would read as <module>.T.
+func (fc *file) addFieldTypes(name string, spec *gotreesitter.Node) {
+	typ := parser.Field(spec, fc.lang, "type")
+	if typ == nil || typ.Type(fc.lang) != "struct_type" || parser.Field(spec, fc.lang, "type_parameters") != nil {
+		return
+	}
+	fc.fieldTypes[name] = map[string]string{}
+	parser.Walk(typ, func(c *gotreesitter.Node) bool {
+		if c.Type(fc.lang) != "field_declaration" {
+			return true
+		}
+		_, tqn := fc.resolveType(parser.Field(c, fc.lang, "type"))
+		for _, f := range fc.names(c) {
+			fc.fieldTypes[name][f] = tqn
+		}
+		return false // an inline struct's fields are not name's
+	})
+}
+
 // relations collects calls, type uses and embeddings under n. recv is the
 // enclosing method's receiver variable (calls on it resolve to owner), and
-// the returned names are interface method names when n is an interface.
+// the returned nodes are its method_elem nodes when n is an interface.
 // locals returns the parameter and variable names declared inside n, and the
 // qualified type of those declared with one type only (s *T, var s T,
 // s := &T{...}, never reassigned to something else), "" for the others.
@@ -462,7 +500,7 @@ func (fc *file) literalType(e *gotreesitter.Node) *gotreesitter.Node {
 	return parser.Field(e, fc.lang, "type")
 }
 
-func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []parser.Relation, methods []string) {
+func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []parser.Relation, methods []*gotreesitter.Node) {
 	add := func(kind parser.RelationKind, name, tqn string, at *gotreesitter.Node) {
 		if name == "" {
 			return
@@ -489,12 +527,26 @@ func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []pars
 		return true
 	})
 	locals, localTypes := fc.locals(n)
+	own := parser.Field(n, fc.lang, "type") // of a type spec: an inline interface inside it lists another type's methods
 	// target is callTarget, then the single declared type of a local or
-	// parameter operand (s *T, var s T, s := &T{...}): s.M is <module of T>.T.M.
+	// parameter operand (s *T, var s T, s := &T{...}): s.M is <module of T>.T.M,
+	// then the field type of a struct this file declares, on the receiver or
+	// on such a local: s.f.M is <type of f>.M.
 	target := func(op *gotreesitter.Node, name string) string {
 		tqn := fc.callTarget(op, name, recv, owner, locals)
 		if t := localTypes[fc.text(op)]; tqn == "" && t != "" && op.Type(fc.lang) == "identifier" {
 			tqn = t + "." + name
+		}
+		if x := parser.Field(op, fc.lang, "operand"); tqn == "" && op.Type(fc.lang) == "selector_expression" && x != nil && x.Type(fc.lang) == "identifier" {
+			st, t := "", localTypes[fc.text(x)]
+			if s := t[strings.LastIndex(t, ".")+1:]; fc.text(x) == recv && !locals[recv] {
+				st = owner
+			} else if fc.text(x) != recv && t != "" && parser.Qualify(fc.module, "", s) == t { // not the shadow's struct for the receiver's field
+				st = s
+			}
+			if ft := fc.fieldTypes[st][fc.text(parser.Field(op, fc.lang, "field"))]; ft != "" {
+				tqn = ft + "." + name
+			}
 		}
 		return tqn
 	}
@@ -606,7 +658,9 @@ func (fc *file) relations(n *gotreesitter.Node, recv, owner string) (rels []pars
 					name, tqn := fc.resolveType(e.NamedChild(0))
 					add(parser.RelExtends, name, tqn, e)
 				case "method_elem":
-					methods = append(methods, fc.text(parser.Field(e, fc.lang, "name")))
+					if own != nil && c.StartByte() == own.StartByte() {
+						methods = append(methods, e)
+					}
 					parser.Walk(e, visit)
 				}
 			}

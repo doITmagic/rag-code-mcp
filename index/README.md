@@ -82,6 +82,7 @@ graph LR
 | `js_object_members_test.go` | With the real JavaScript analyzer: `Obj.f()` through a default or named import of an object literal with a shorthand or `key: ident` member (`export default { getToken }`, `export const api = { read }`) resolves exactly to the function the member names. |
 | `racy_test.go` | Racy clean: a file indexed within 2 s of its mtime and replaced by other bytes of the same size under the same mtime is re-indexed, in full and files runs; one whose bytes turned binary leaves the index; an old-mtime file replaced the same way is not opened and not seen (as in git); a racy file left untouched is read again until its mtime is past the window, then its hash is dropped and saved and it is no longer opened; a `state.json` without hashes loads and runs unchanged. `clock` is fixed by the tests. |
 | `budget_test.go` | The parse byte budget is respected, and batches still resolve forward references. |
+| `go_interface_test.go` | With the real Go analyzer: `r.Find()` on a parameter typed with a workspace interface resolves exactly to the interface's method, `rw.Read()` through an embedded workspace interface to the embedded one's; a call matched by name alone never takes an interface method (`x := newRepo(); x.Find()` stays unique to the implementation, `x.OnlyIface()` unresolved), in a full run and in a files run with the interface only in the store, and in a files run of a file with two interface methods of that name the implementation still comes from the store, also behind 400 interface methods of that name (more than the lookup's first page), in a files run of the caller and of the interfaces' file; a call through a field of an external type (`s.db.Exec()`, `db *sql.DB`) stays unresolved instead of binding by name to a workspace `Exec`, and through a field typed with a workspace interface embedding `io.Closer` it is exact for `Save` and unresolved for `Close`. |
 | `go_value_use_test.go` | With the real Go analyzer, two files of one package: a method passed as `s.firmaJSON` (on a local `s := &server{}` and on the receiver) and a function passed as `handler` link exactly to their declarations in the other file, in a full run and from the store; a field read (also one named like a method of another type), a constant, a variable and `http.MethodGet` in the same positions leave no relation at all; a call on a parameter of an external type stays unresolved; a method promoted from an embedded external type (`s.T()` of `struct{ suite.Suite }`) does not fall back to a workspace method of its name, while an owner with workspace bases only still does. |
 | `resolve_test.go` | A non-fresh run resolves more than 500 targets through the store; an html call to `window.f` resolves by name to the JavaScript global function `f` (never a variable, a method or module function of that name, a Go symbol, nor from a JS caller), in a full run and from the store; nor a symbol of a Go package or JS module called `window` (real Go, JavaScript and HTML analyzers); a JS `import { n }` of a default-exported declaration resolves by module and name, in a full run and from the store; with the real PHP analyzer, `$cart->items()` binds to the method `items`, not the wider property `$items`; `route('x')` binds to the route named `x` (exact, ambiguous for two, from the store, and after a files run gives an existing route that name, `TestResolveRouteNameToRoute`); a route handler naming a controller without that method is not linked by name to another controller's, while one the controller's base declares is (`TestResolveRouteHandlerNeverByName`). |
 | `owners_test.go` | Files runs that must match a full run: both twins shifted by one line keep the caller on the first twin; with the real Python analyzer, `Repo.save()` loses its by-name link when class `Repo` is deleted and gains it when `Repo` is added, and `Child.save()` follows `Child` to its new base; with the real JavaScript analyzer, `Repo.save()` on a default-exported function `Repo` loses its by-name link when `repo.js` is deleted and gets it back when the file returns. |
@@ -183,7 +184,7 @@ type State struct {
     Files  map[string]Entry `json:"files"`            // absolute path -> entry
 }
 
-const Format = 15
+const Format = 16
 ```
 
 `Format` is the version of what parsers and the indexer store. It is bumped
@@ -237,7 +238,11 @@ expressions are usages; Laravel routes carry group prefixes and their name and l
 model strings and `$listen` are class usages, a call on a typed parameter or
 property targets its class; a broken file keeps the declarations parsed
 before the break; a route path is one segment of the normalized qualified
-name (`qn_suffixes`).
+name (`qn_suffixes`). Version 16: a Go route path may name a string const declared
+at the top of the same file, or `path.Join` of such consts and literals; a
+Gin `Use(mw)` result is a router with its receiver's prefix; a chi sub-router
+mounted in the same function gets the `Mount` path as its prefix, and a chi
+prefix's trailing `/` is dropped before the path is joined; Go interface methods are method symbols (metadata `interface`) that a name-only match never takes, so a call through a parameter or local typed with a workspace interface links exactly to the interface's method; a Go call through a named field of a non-generic struct declared in the same file targets the field's declared type, so `s.repo.Find()` links to `Repo.Find` and `s.db.Exec()` on an external type is no longer bound by name.
 
 ---
 
@@ -518,7 +523,20 @@ each relation:
   route or hook; a `call` matched by name alone binds only to something
   callable, never a variable or constant (an exact match may: a variable can
   hold a function, unless a function or method is among the candidates, so
-  `$cart->items()` takes the method `items`, not the property `$items`). So a Godot scene node sharing its class's qualified name
+  `$cart->items()` takes the method `items`, not the property `$items`), and
+  never a Go interface's method (metadata `interface`, kept from the store
+  payload in a files run): a bare-name or owner-fallback match on an operand
+  of unknown type (`x := f(); x.Find()`) stays with the concrete method, and a
+  name only an interface declares stays unresolved (interface methods of
+  the run sharing the name do not stop the store lookup, so a files run of
+  their file still finds the one implementation in an unchanged file; the
+  store is asked for 20 symbols of the name, and for all of them, up to
+  `MaxScroll`, when that page is full and holds fewer than two a call may
+  bind to, since interface methods, variables and the stale points of the
+  run's own files could hide the implementation), while
+  `r.Find()` with
+  `r Repo` matches `<module>.Repo.Find` exactly, and a method of an embedded
+  workspace interface through the owner's bases. So a Godot scene node sharing its class's qualified name
   does not make an `extends` ambiguous, and `->default(0)` does not bind to a
   Blade view named `default`.
 - One ID sets `TargetID`; several set `ResolutionAmbiguous`.

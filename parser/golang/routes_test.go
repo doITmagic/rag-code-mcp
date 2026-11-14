@@ -623,3 +623,222 @@ func Mount(rg *gin.RouterGroup) {
 		"gin GET api.Mount./x -> api.h",
 	}, routeList(t, "api/r.go", both))
 }
+
+func TestRoutePathFromConst(t *testing.T) {
+	src := `package cmd
+
+import (
+	"path"
+
+	"github.com/labstack/echo/v4"
+)
+
+const (
+	limit    = 2000
+	uriAdmin = "/admin"
+)
+
+var uriVar = "/var"
+
+func h(c echo.Context) error { return nil }
+
+func Register(e *echo.Echo) {
+	g := e.Group("")
+	g.GET(uriAdmin, h)
+	g.GET(path.Join(uriAdmin, "/lists"), h)
+	g.POST(path.Join(uriAdmin, "/lists/:id/"), h) // path.Join drops the trailing slash, as at run time
+	a := e.Group(uriAdmin)
+	a.GET("/x", h)
+	g.GET(uriVar, h)   // a var may change: no route
+	g.GET(path.Join(uriAdmin, name()), h) // run time: no route
+}
+
+func Shadow(e *echo.Echo, path string) {
+	uriAdmin := "/other"
+	e.GET(uriAdmin, h)             // the local, not the const: no route
+	e.GET(path+"/x", h)            // no route
+}
+
+func name() string { return "" }
+`
+	assert.Equal(t, []string{
+		"echo GET cmd.Register./admin -> cmd.h",
+		"echo GET cmd.Register./admin/lists -> cmd.h",
+		"echo POST cmd.Register./admin/lists/:id -> cmd.h",
+		"echo GET cmd.Register./admin/x -> cmd.h",
+	}, routeList(t, "cmd/handlers.go", src))
+}
+
+func TestGinUseChain(t *testing.T) {
+	src := `package router
+
+import "github.com/gin-gonic/gin"
+
+func auth(c *gin.Context) {}
+func create(c *gin.Context) {}
+
+func Create(g *gin.Engine) {
+	g.Use(func(ctx *gin.Context) { ctx.Next() })
+	g.Group("/user").Use(auth).POST("", create)
+	g.Group("/").Use(auth).POST("/message", create)
+	api := g.Group("/api").Use(auth)
+	api.GET("/x", create)
+}
+`
+	assert.Equal(t, []string{
+		"gin POST router.Create./user -> router.create",
+		"gin POST router.Create./message -> router.create",
+		"gin GET router.Create./api/x -> router.create",
+	}, routeList(t, "router/router.go", src))
+}
+
+func TestChiMountedSubRouter(t *testing.T) {
+	src := `package routes
+
+import (
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+)
+
+type H struct{}
+
+func (h *H) Get(w http.ResponseWriter, r *http.Request) {}
+
+func (h *H) RegisterRoutes(router chi.Router) {
+	r := chi.NewRouter()
+	r.Get("/", h.Get)
+	r.Get("/webauthn/options", h.Get)
+	router.Mount("/settings", r)
+
+	pub := chi.NewRouter()
+	pub.Get("/success", h.Get)
+	priv := chi.NewRouter()
+	priv.Post("/checkout", h.Get)
+	pub.Mount("/", priv)
+	router.Mount("/subscription", pub)
+
+	av := chi.NewRouter()
+	av.Get("/avatar/{hash}.svg", h.Get)
+	router.Mount("/", av)
+
+	two := chi.NewRouter()
+	two.Get("/t", h.Get) // mounted at two paths: as written
+	router.Mount("/a", two)
+	router.Mount("/b", two)
+}
+`
+	assert.Equal(t, []string{
+		"chi Get routes.RegisterRoutes./settings/ -> routes.H.Get",
+		"chi Get routes.RegisterRoutes./settings/webauthn/options -> routes.H.Get",
+		"chi Mount routes.RegisterRoutes./settings ->",
+		"chi Get routes.RegisterRoutes./subscription/success -> routes.H.Get",
+		"chi Post routes.RegisterRoutes./subscription/checkout -> routes.H.Get",
+		"chi Mount routes.RegisterRoutes./subscription/ ->",
+		"chi Mount routes.RegisterRoutes./subscription ->",
+		"chi Get routes.RegisterRoutes./avatar/{hash}.svg -> routes.H.Get",
+		"chi Mount routes.RegisterRoutes./ ->",
+		"chi Get routes.RegisterRoutes./t -> routes.H.Get",
+		"chi Mount routes.RegisterRoutes./a ->",
+		"chi Mount routes.RegisterRoutes./b ->",
+	}, routeList(t, "routes/settings.go", src))
+}
+
+// A Mount prefixes only the router it mounts: the last chi.NewRouter()
+// assigned to that name before it, as its closure sees it. A router of the
+// same name in another closure, one assigned to the name after the Mount, and
+// one mounted from inside another closure keep their paths as written.
+func TestChiMountPrefixesOnlyTheMountedRouter(t *testing.T) {
+	src := `package routes
+
+import (
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+)
+
+func h(w http.ResponseWriter, r *http.Request) {}
+
+func V1(r chi.Router) {
+	r.Route("/a", func(r chi.Router) {
+		sub := chi.NewRouter()
+		sub.Get("/x", h)
+		r.Mount("/m", sub)
+	})
+	go func() {
+		sub := chi.NewRouter()
+		sub.Get("/y", h)
+		http.ListenAndServe(":1", sub)
+	}()
+}
+
+func V2(r chi.Router) {
+	sub := chi.NewRouter()
+	sub.Get("/s", h)
+	r.Mount("/m", sub)
+	sub = chi.NewRouter()
+	sub.Get("/t", h)
+	http.ListenAndServe(":2", sub)
+}
+
+func V3(r chi.Router) {
+	sub := chi.NewRouter()
+	sub.Get("/z", h)
+	r.Group(func(r chi.Router) {
+		r.Mount("/in", sub)
+	})
+}
+`
+	assert.Equal(t, []string{
+		"chi Get routes.V1./a/m/x -> routes.h",
+		"chi Mount routes.V1./a/m ->",
+		"chi Get routes.V1./y -> routes.h",
+		"chi Get routes.V2./m/s -> routes.h",
+		"chi Mount routes.V2./m ->",
+		"chi Get routes.V2./t -> routes.h",
+		"chi Get routes.V3./z -> routes.h", // mounted from another closure: as written
+		"chi Mount routes.V3./in ->",
+	}, routeList(t, "routes/r.go", src))
+}
+
+// A sub := chi.NewRouter() declared in an inner block is another variable: it
+// ends with its block, so the Mount after the block serves the outer sub.
+func TestChiMountKeepsTheOuterRouterAfterABlock(t *testing.T) {
+	src := `package routes
+
+import (
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+)
+
+func h(w http.ResponseWriter, r *http.Request) {}
+
+func V1(r chi.Router, debug bool) {
+	sub := chi.NewRouter()
+	sub.Get("/outer", h)
+	if debug {
+		sub := chi.NewRouter()
+		sub.Get("/inner", h)
+		http.ListenAndServe(":1", sub)
+	}
+	r.Mount("/mounted", sub)
+}
+
+func V2(r chi.Router, debug bool) {
+	var sub chi.Router
+	if debug {
+		sub = chi.NewRouter()
+		sub.Get("/set", h)
+	}
+	r.Mount("/m", sub)
+}
+`
+	assert.Equal(t, []string{
+		"chi Get routes.V1./mounted/outer -> routes.h",
+		"chi Get routes.V1./inner -> routes.h",
+		"chi Mount routes.V1./mounted ->",
+		"chi Get routes.V2./m/set -> routes.h", // assigned with = in the block: the outer variable
+		"chi Mount routes.V2./m ->",
+	}, routeList(t, "routes/r.go", src))
+}

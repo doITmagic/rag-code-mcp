@@ -48,7 +48,7 @@ graph LR
 | [`tools.go`](tools.go) | package doc, `Response`, `IndexInfo`, `Register` and the tool table; shared helpers: `reply` (an `ok` answer during a run is `indexing`), `answer`, `fail`, `indexInfo`, `resolveRoot`, `open`, `notIndexed`, `storeErr`, `insideRoot`, `live`, `within` (the case-folding root comparison of `insideRoot`), `readLines`, `capLines`, `isTestFile` |
 | [`search.go`](search.go) | `rag_search`: `SearchInput`, `SearchHit`, exact plus semantic search, the bounded not-indexed fallback, `nameScore`, `rank`, `isIdentifier`, `kinds` (validates the kinds filter) |
 | [`grep.go`](grep.go) | the text search run beside the index lookup: `GrepHit`, `startGrep`, `grepRun.add`/`stop`, `grep` (see "The `grep` lines") |
-| [`usages.go`](usages.go) | `rag_find_usages` and `rag_call_hierarchy`: `twinKey`/`twinOf`/`mergeTwins` (one entry per qualified name, file and callable or not, never for doc chunks or routes, used by every tool), `resolveSymbol` (one symbol, twins merged, an equal qualified name before suffix matches, or an `ambiguous` answer), `referrers`, `vueDefault`/`vueTags` (a Vue component's `default` symbol and its tags with no import), `keepWithin` (one limit for distinct direct and via callers), `exactRel` (by_name or not), `ambiguousByName`, the hierarchy `walker` (`walk` level by level, `next`), `writeTree` |
+| [`usages.go`](usages.go) | `rag_find_usages` and `rag_call_hierarchy`: `twinKey`/`twinOf`/`mergeTwins` (one entry per qualified name, file and callable or not, never for doc chunks or routes, used by every tool), `resolveSymbol` (one symbol, twins merged, an equal qualified name before suffix matches, or an `ambiguous` answer), `referrers`, `vueDefault`/`vueTags` (a Vue component's `default` symbol and its tags with no import), `keepWithin` (one limit for distinct direct and via callers), `viaInterfaces` (`phpVia`, `goVia`, and `inheritors`, the down walk both share), `exactRel` (by_name or not), `ambiguousByName`, the hierarchy `walker` (`walk` level by level, `next`), `writeTree` |
 | [`exports.go`](exports.go) | `rag_list_package_exports`: `ExportsInput`, `Export`, `moduleSymbols`, `shortModule` for short package names, `dirModules` for a directory or a source file of the workspace |
 | [`readfile.go`](readfile.go) | `rag_read_file_context`: `ReadInput`, `Outline`, line ranges (`lineRange` streams a file over 8 MiB and returns its first 8 KiB for the binary check), outline, one symbol; line and signature clipping |
 | [`index.go`](index.go) | `rag_index_workspace` and `rag_server_info`: `IndexInput`, `Service`, `Update`, `KnownRoot`, the Ollama probe, the release check (through `update.Latest`), `knownRoots` |
@@ -59,6 +59,7 @@ Tests:
 |---|---|
 | [`grep_walk_test.go`](grep_walk_test.go) | the grep file cap counts only files git keeps; an unreadable directory does not end the walk; a word without diacritics finds the text written with them, and the reverse; a file with a NUL byte past its first 8 KiB is searched; a qualified name with a wrong owner lists the symbols of its last name (`match: "name"`). |
 | [`grep_marks_test.go`](grep_marks_test.go) | a symbol made only of combining marks finds no line. |
+| [`go_interface_test.go`](go_interface_test.go) | with the real Go analyzer, `sqlRepo.Find` lists `UseParam`'s `r.Find()` (`r Repo`) via `Repo` in `rag_find_usages` and the incoming hierarchy, also after a files run of the implementation alone; `Repo.Find` lists it without via; a type missing one of the interface's methods gets nothing; two implementations of `Store` both list `Run` via `Store`, with no unresolved relations, and `Run`'s outgoing hierarchy shows `Store.Save`; a method promoted from an embedded struct completes the method set (`BaseTask.Name` and `SessionTask.Execute` via `Task`); an embedded method overridden by the embedder gets no via; a call matched by name alone stays `by_name` without via; gotify's `a.DB.CreateApplication()` through a field typed `ApplicationDatabase` is a via usage of `GormDatabase.CreateApplication` (another package), with no unresolved relations although a handler and a test fake share the name.; `rag_list_package_exports` lists a Go interface's methods as signatures in the `methods` of the interface row, not as rows, also with `kinds: ["interface"]`, and as `method` rows with `kinds: ["method"]` (`TestExportsListGoInterfaceMethodsOnTheInterface`). |
 | [`go_routes_test.go`](go_routes_test.go) | with the real Go analyzer, an Echo route is found by `rag_search` with `kinds: ["route"]` and is a usage of its handler; the function registering the route `/` (`routes.Load./`) is the one symbol named `routes.Load` in `rag_find_usages`, `rag_call_hierarchy` and `rag_search` (one `exact` hit), a function `users` is not confused with the route `/users`, and `/users` is still found by its path; `GET /users` and `DELETE /users` of one function are two exports and two search hits, an `ambiguous` lookup without the `file_path` advice, and only the GET route calls `ListUsers`. |
 | [`go_value_use_test.go`](go_value_use_test.go) | with the real Go analyzer, `rag_find_usages firmaJSON` counts `mux.HandleFunc(p, s.firmaJSON)` in `main.go` for a method declared in another file of the package; `s.T()` of `struct{ suite.Suite }` is no usage of a workspace `CustomTime.T`, after a full run and after a files run of the caller alone. |
 | [`js_browser_test.go`](js_browser_test.go) | with the real JavaScript and HTML analyzers, `rag_find_usages resolveError` of a function declared inside an IIFE lists the call from another script's ready callback and the `onclick` handler of a template; a helper inside the `describe` of a Jest file without imports is no symbol; `onclick="save()"` is no usage of a class method `Cart.save` nor of an ES module function; after `window.resolveError = handleResolve`, `onclick="resolveError(1)"` is a usage of the global `resolveError`, which is one of `handleResolve`; `<StatusCard />` is a usage of `src/StatusCard.default` of a `<script setup>` without top-level statements; `onclick` calls of a global two scripts declare are in `ambiguous_by_name` of each, not of a module function of that name. |
@@ -277,7 +278,7 @@ How it works:
    and `match: "exact"`. Twins (same qualified name and file, as in
    `rag_find_usages`) are one hit, here and in the semantic step. With no
    exact hit the message says `no symbol named "<query>"` (struct fields,
-   locals and Go interface methods are not symbols), so semantic neighbours
+   and locals are not symbols), so semantic neighbours
    are not taken for that name; with `language`, `path_prefix` or `kinds` set
    it says instead that no symbol of that name matches them (the name may
    exist outside the filters). While a run is indexing or queued it says
@@ -427,7 +428,22 @@ on a variable typed with the interface (`UserRepositoryInterface $repo;
 $repo->find()`) targets only the interface's method. Those usages carry
 `via` (the interface's qualified name) and the message counts them; the object
 may be another implementation. The interface's own method answers as before,
-and an interface outside the workspace adds nothing. Other languages are not
+and an interface outside the workspace adds nothing.
+
+A Go method gets the same `via` usages from method sets, worked out at query
+time: for each workspace interface declaring a method of its name (metadata
+`interface`; none, the common case, costs one scroll), the interface's method
+names plus those of the workspace interfaces it embeds must all be methods of
+the method's type, declared or promoted from a type it embeds, or of a type
+embedding it that does not declare its own method of that name
+(`SessionTask{BaseTask}` makes `BaseTask.Name` reach `Task.Name`'s callers).
+Matching is by names, not signatures, so a small interface with a common name
+(`Close`) may give a false `via`; a call on an operand typed with an
+interface that embeds another (`s Store`, `s.Find()` with `Find` declared in
+the embedded `Finder`) is a `via` usage of every type that satisfies `Finder`,
+also one that is no `Store`; the methods of an embedded external
+interface (`io.Closer`) are not required; at most `MaxScroll` methods of the
+name are read. Other languages are not
 walked; `limit` counts the direct and the via referencing symbols together
 (direct ones first, a symbol calling both ways counted once), and a cut through the via ones is reported like any
 other (`truncated`, raise `limit`).
@@ -501,6 +517,11 @@ The exported symbols of a package or module, grouped by kind.
 
 - First it scrolls symbols whose `module` equals `package` (one page of
   `MaxScroll`).
+- The methods of a Go interface are not rows of their own (as rows they
+  filled the 300 cap of a large package): the interface row lists their
+  signatures in `methods`, in source order, also when `kinds` asks for
+  `interface` without `method`. When `kinds` leaves the interfaces out
+  (`["method"]`), they are `method` rows.
 - When nothing matches and the name has no `/`, `\` or `.`, `shortModule`
   looks for modules ending in `/name`, `.name` or `\name`: symbols named
   `name`, plus the indexed directories and files called `name` (from the
@@ -517,7 +538,8 @@ The exported symbols of a package or module, grouped by kind.
   `rag_find_usages`, and count once.
 
 Output `data`: `{package, modules, exports: {<kind>: [{name, qualified_name,
-signature, file_path, start_line}]}, truncated}`. `truncated` is true when a
+signature, file_path, start_line, methods}]}, truncated}` (`methods` only on a
+Go interface that has methods). `truncated` is true when a
 scroll hit `MaxScroll` or there were more than 300 exports. No match gives `ok`
 with `no indexed module or directory matches "X"; pass the full module path or
 a directory of the workspace`. When no module matches, a directory inside the

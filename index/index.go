@@ -1115,6 +1115,7 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 	// file changes. One store error stops the lookups for the run.
 	failed := false
 	cache := map[string][]string{}
+	fullPage := map[string]bool{} // lookup key -> the scroll returned as many hits as asked: more may exist
 	fromStore := func(key string, f store.Filter, limit int, match func(parser.Symbol) bool) []string {
 		if r.fresh || failed {
 			return nil
@@ -1130,6 +1131,7 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 			failed = true
 			return nil
 		}
+		fullPage[key] = len(hits) >= limit
 		var ids []string
 		for _, h := range hits {
 			// Points of files in this run are stale until their upsert.
@@ -1238,13 +1240,22 @@ func (r *run) resolve(ctx context.Context, idx nameIndex, files []parsed) {
 		// Two candidates of the run are ambiguous without the store, unless fit
 		// may drop them (variables, for a call; a Go interface's methods): then a
 		// stored function decides.
-		callable := slices.DeleteFunc(slices.Clone(ids), func(id string) bool {
-			return kindOf[id] == parser.KindVariable || kindOf[id] == parser.KindConstant || idx.iface[id]
-		})
-		if len(collapse(callable)) < 2 {
-			ids = append(ids, fromStore("n:"+lang+"\x00"+name, store.Filter{Name: name, Language: lang}, 20, func(s parser.Symbol) bool {
-				return s.Name == name && s.Language == lang
-			})...)
+		callable := func(ids []string) []string {
+			return collapse(slices.DeleteFunc(slices.Clone(ids), func(id string) bool {
+				return kindOf[id] == parser.KindVariable || kindOf[id] == parser.KindConstant || idx.iface[id]
+			}))
+		}
+		if len(callable(ids)) < 2 {
+			key, f := "n:"+lang+"\x00"+name, store.Filter{Name: name, Language: lang}
+			match := func(s parser.Symbol) bool { return s.Name == name && s.Language == lang }
+			got := fromStore(key, f, 20, match)
+			// A full page may hide the one candidate fit keeps behind those it
+			// drops and the stale points of this run's files: read them all.
+			// shortcut: more than MaxScroll symbols of one name still hide it; a store filter on callables if a repo needs it
+			if fullPage[key] && len(callable(append(slices.Clone(ids), got...))) < 2 {
+				got = fromStore(key+"\x00all", f, store.MaxScroll, match)
+			}
+			ids = append(ids, got...)
 		}
 		return ids
 	}

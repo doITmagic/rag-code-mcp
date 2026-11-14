@@ -1,6 +1,9 @@
 package index
 
 import (
+	"fmt"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/doITmagic/rag-code-mcp/v2/parser"
@@ -161,4 +164,39 @@ func TestGoNameOnlyAsksStorePastInterfaceMethods(t *testing.T) {
 	_, err = e.run(t, nil)
 	require.NoError(t, err)
 	assert.Equal(t, want, goRelsOf(t, e, use, "UseLocal"), "files run, the implementation from the store")
+}
+
+// Many interface methods of one name in the store do not hide the one
+// implementation from a name-only call: the lookup's first page of 20 holds
+// only candidates it drops (or stale points of the run's own files), so it
+// reads the rest. A files run of the caller and one of the interfaces' file
+// both keep the link a full run makes.
+func TestGoNameOnlyReadsPastAPageOfInterfaceMethods(t *testing.T) {
+	parser.Register(realGo)
+	t.Cleanup(func() { parser.Register(lineAnalyzer{"go", ".go"}) })
+	e := newEnv(t)
+	e.write(t, "go.mod", "module example.com/app\n\ngo 1.25\n")
+	var b strings.Builder
+	b.WriteString("package api\n")
+	for i := range 400 {
+		fmt.Fprintf(&b, "\ntype I%d interface{ Find(id int) string }\n", i)
+	}
+	e.write(t, "api/ifaces.go", b.String())
+	e.write(t, "api/impl.go", goRepoImpl)
+	src := "package api\n\nfunc UseLocal() {\n\tx := newRepo()\n\tx.Find(1)\n}\n"
+	use := e.write(t, "api/use.go", src)
+	_, err := e.run(t, nil)
+	require.NoError(t, err)
+	want := [2]string{string(parser.ResolutionUnique), "example.com/app/api.sqlRepo.Find"}
+	assert.Equal(t, want, goRelsOf(t, e, use, "UseLocal")["Find"], "full run")
+
+	e.write(t, "api/use.go", src+"\n")
+	_, err = e.run(t, nil)
+	require.NoError(t, err)
+	assert.Equal(t, want, goRelsOf(t, e, use, "UseLocal")["Find"], "files run of the caller")
+
+	e.write(t, "api/ifaces.go", b.String()+"\nfunc UseToo() {\n\tx := newRepo()\n\tx.Find(2)\n}\n")
+	_, err = e.run(t, nil)
+	require.NoError(t, err)
+	assert.Equal(t, want, goRelsOf(t, e, filepath.Join(filepath.Dir(use), "ifaces.go"), "UseToo")["Find"], "files run of the interfaces' file")
 }

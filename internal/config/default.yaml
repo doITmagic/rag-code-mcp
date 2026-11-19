@@ -1,16 +1,51 @@
 # RagCode MCP configuration. Written on first run; every key is optional
 # and falls back to the value shown here.
 
-ollama_base_url: http://localhost:11434
-ollama_embed: embeddinggemma-2:270m   # needs Ollama 0.40 or later
-# CPU threads Ollama may use for embeddings. Default: a third of the logical
-# CPUs, at least 2, so a machine without a GPU stays usable while indexing.
-# 0 lets Ollama use every performance core (fastest, loudest).
-# embed_threads: 4
+# The embedding model runs on this machine, in a llama.cpp server that RagCode
+# starts on first use and stops after 30 idle minutes (embed_idle_stop). Runtime
+# and model are downloaded once into ~/.ragcode (llama/ and models/), checked
+# against pinned checksums. A download that gets almost no data for 2 minutes is stopped and
+# tried again on the next call; a slow one that keeps going is not.
 
-# Free memory (MB) a local Ollama needs to load the embedding model. With
-# less, indexing and searches stop with status low_memory instead of loading
-# a model that cannot start. 0 turns the check off.
+# Which llama.cpp build to run: cpu, vulkan (any GPU with a Vulkan driver) or
+# auto: vulkan when an NVIDIA driver and a Vulkan loader are present, cpu
+# otherwise. macOS always uses its one build (Metal).
+embed_runtime: auto
+# Your own files instead of the downloaded ones (absolute paths). Change the
+# model with RagCode stopped: a file replaced while it runs is refused until
+# RagCode restarts, and then every workspace is re-embedded.
+# embed_model: /path/to/model.gguf
+# llama_server: /path/to/llama-server
+# CPU threads the model may use. Default: a third of the logical CPUs, at
+# least 2, so a machine without a GPU stays usable while indexing.
+# 0 lets llama.cpp use every performance core (fastest, loudest).
+# embed_threads: 4
+# How much of a function, class or section the model reads, in tokens (about
+# 3 to 4 bytes of code each). Longer symbols are found by their first part
+# only. 8192 is all the built-in model takes; a lower value indexes faster on
+# a machine without a GPU, and with less memory (a symbol at the limit takes
+# about 1.5 GB there). With your own embed_model, set it to that model's
+# context length. Changing it makes the next index run re-embed every
+# workspace.
+embed_max_tokens: 8192
+
+# How long the loaded model stays in memory after the last search or index run;
+# the next one after that loads it again, which takes a few seconds on the CPU
+# and longer on some GPUs. A longer time keeps more memory in use while the
+# editor is open (about 0.4 to 0.9 GB per RagCode process). At least 1m.
+# 0 never stops it while RagCode runs: a RagCode killed on Windows or macOS
+# then leaves its model server running until the next RagCode start removes it.
+embed_idle_stop: 30m
+# true loads the model in the background when RagCode starts, so the first
+# search finds it loaded. It downloads nothing (the first search does), needs
+# twice min_free_memory_mb free, and gives up without a message to the AI when
+# it cannot. The loaded model stops after embed_idle_stop like any other.
+embed_warm_start: false
+
+# Free memory (MB) needed to load the embedding model. With less, indexing and
+# rag_search stop with status low_memory instead of loading a model that cannot
+# start (usages, call hierarchy and package exports keep answering from the
+# index). 0 turns the check off.
 min_free_memory_mb: 750
 
 log_level: info      # debug | info | warn | error

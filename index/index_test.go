@@ -617,21 +617,57 @@ func TestWalk(t *testing.T) {
 }
 
 func TestEmbedText(t *testing.T) {
+	const limit = 2000
 	s := &parser.Symbol{Kind: parser.KindFunction, QualifiedName: "m.F", Signature: "func F()", Doc: "doc", Content: "body"}
-	assert.Equal(t, "function m.F\nfunc F()\ndoc\nbody", embedText(s))
+	assert.Equal(t, "function m.F\nfunc F()\ndoc\nbody", embedText(s, limit))
 
 	s.Content = strings.Repeat("é", 2000)
-	got := embedText(s)
-	assert.LessOrEqual(t, len(got), maxEmbedText)
+	got := embedText(s, limit)
+	assert.LessOrEqual(t, len(got), limit)
 	assert.True(t, utf8.ValidString(got))
 
-	// Long Content is cut exactly as the full text used to be: the 26-byte
+	// Long Content is cut exactly as the full text would be: the 26-byte
 	// header leaves 1974 bytes, 987 two-byte runes.
 	assert.Equal(t, "function m.F\nfunc F()\ndoc\n"+strings.Repeat("é", 987), got)
 	s.Content = strings.Repeat("x", 1<<20)
-	assert.Equal(t, "function m.F\nfunc F()\ndoc\n"+strings.Repeat("x", 1974), embedText(s))
+	assert.Equal(t, "function m.F\nfunc F()\ndoc\n"+strings.Repeat("x", 1974), embedText(s, limit))
 	s.Content = strings.Repeat("é", 986) + "x" + strings.Repeat("é", 1000) // byte 1974 of Content is a continuation byte
-	assert.Equal(t, "function m.F\nfunc F()\ndoc\n"+strings.Repeat("é", 986)+"x", embedText(s))
+	assert.Equal(t, "function m.F\nfunc F()\ndoc\n"+strings.Repeat("é", 986)+"x", embedText(s, limit))
+	// A header alone over the limit is cut too.
+	assert.Equal(t, "function m.F", embedText(s, 12))
+}
+
+// A symbol over the old 32 KiB cap stays whole at the default limit: only
+// the model, through the embedder, cuts by tokens. Over the memory bound the
+// text is cut on a rune boundary.
+func TestEmbedTextDefaultBound(t *testing.T) {
+	limit := embed.DefaultTokens * embedMaxBytesPerToken
+	const head = "function m.F\nfunc F()\ndoc\n"
+	s := &parser.Symbol{Kind: parser.KindFunction, QualifiedName: "m.F", Signature: "func F()", Doc: "doc"}
+
+	s.Content = strings.Repeat("x", 40000-1) + "\n\treturn nil"
+	got := embedText(s, limit)
+	assert.Equal(t, head+s.Content, got)
+	assert.True(t, strings.HasSuffix(got, "\n\treturn nil"))
+
+	s.Content = strings.Repeat("x", limit)
+	assert.Equal(t, head+strings.Repeat("x", limit-len(head)), embedText(s, limit))
+
+	// Byte limit-len(head) of Content is the middle of an é.
+	s.Content = strings.Repeat("x", limit-len(head)-1) + strings.Repeat("é", 10)
+	got = embedText(s, limit)
+	assert.Equal(t, head+strings.Repeat("x", limit-len(head)-1), got)
+	assert.True(t, utf8.ValidString(got))
+}
+
+// The memory bound stays above the longest run one token can span (about 31
+// bytes of spaces and tabs): a whitespace-heavy symbol of the model's whole
+// context reaches the embedder uncut, so only the model decides where it ends.
+func TestEmbedTextWhitespaceSymbolIsNotCutEarly(t *testing.T) {
+	const head = "function m.F\nfunc F()\ndoc\n"
+	s := &parser.Symbol{Kind: parser.KindFunction, QualifiedName: "m.F", Signature: "func F()", Doc: "doc"}
+	s.Content = strings.Repeat(" \t", (embed.DefaultTokens*31-len(head))/2)
+	assert.Equal(t, head+s.Content, embedText(s, embed.DefaultTokens*embedMaxBytesPerToken))
 }
 
 // A path named in Options.Deleted is purged from the store even when
@@ -1034,15 +1070,15 @@ func TestRunModelChangeUnavailableKeepsIndex(t *testing.T) {
 	assert.Len(t, hits, 1, "points of the old model kept")
 }
 
-// A run that fails before it changes the index (Ollama down at catch-up)
-// records its error over the last real counters, and the next run with
+// A run that fails before it changes the index (a model the embedder cannot
+// serve, at catch-up) records its error over the last real counters, and the next run with
 // nothing to do keeps them instead of showing 0/0.
 func TestRunFailedUnchangedKeepsCounters(t *testing.T) {
 	e := newEnv(t)
 	e.write(t, "a.go", "func A\n")
 	_, err := e.run(t, nil)
 	require.NoError(t, err)
-	_, err = e.run(t, func(o *Options) { o.Embedder = deadEmbedder{namedEmbedder{o.Embedder, o.Embedder.Model()}} })
+	_, err = e.run(t, func(o *Options) { o.Embedder = deadEmbedder{namedEmbedder{o.Embedder, "nosuchmodel"}} })
 	require.Error(t, err)
 	disk, ok := ReadStatus(e.root)
 	require.True(t, ok)
@@ -1076,6 +1112,61 @@ func TestRunFormatChangeRecreates(t *testing.T) {
 	last, err := e.run(t, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 0, last.Total, "same format: nothing to do")
+}
+
+// A symbol is embedded whole up to the memory bound of the run (64 bytes a
+// token; the model decides below it), and a run with another limit
+// re-embeds every file: one collection holds vectors of one limit.
+func TestRunEmbedTokens(t *testing.T) {
+	e := newEnv(t)
+	em := &recEmbedder{}
+	e.opts.Embedder = em
+	long := "func A " + strings.Repeat("x", 40000) + "\n"
+	e.write(t, "a.go", long)
+	e.write(t, "b.go", "func B\n")
+	longest := func() int {
+		n := 0
+		for _, s := range em.texts {
+			n = max(n, len(s))
+		}
+		em.texts = nil
+		return n
+	}
+
+	first, err := e.run(t, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, first.Total)
+	whole := longest()
+	assert.Greater(t, whole, len(long), "at the default limit the symbol goes whole, past the old 32 KiB cap")
+	assert.Less(t, whole, embed.DefaultTokens*embedMaxBytesPerToken)
+	st, err := LoadState(e.root)
+	require.NoError(t, err)
+	assert.Equal(t, embed.DefaultTokens, st.EmbedTokens)
+
+	same, err := e.run(t, func(o *Options) { o.EmbedTokens = embed.DefaultTokens })
+	require.NoError(t, err)
+	assert.Equal(t, 0, same.Total, "the default spelled out: nothing to do")
+
+	// Asked for by a files run: still everything, or the collection would mix limits.
+	lower, err := e.run(t, func(o *Options) { o.EmbedTokens = 500; o.Files = []string{filepath.Join(e.root, "b.go")} })
+	require.NoError(t, err)
+	assert.True(t, lower.Recreated)
+	assert.Equal(t, 2, lower.Total, "re-embedded with the new limit")
+	assert.Equal(t, 500*embedMaxBytesPerToken, longest(), "the bound of the lower limit")
+	st, err = LoadState(e.root)
+	require.NoError(t, err)
+	assert.Equal(t, 500, st.EmbedTokens)
+
+	last, err := e.run(t, func(o *Options) { o.EmbedTokens = 500 })
+	require.NoError(t, err)
+	assert.Equal(t, 0, last.Total, "same limit: nothing to do")
+
+	// A state written before the limit was recorded.
+	st.EmbedTokens = 0
+	require.NoError(t, st.Save())
+	old, err := e.run(t, func(o *Options) { o.EmbedTokens = 500 })
+	require.NoError(t, err)
+	assert.Equal(t, 2, old.Total)
 }
 
 // The index files live under the global home, so a project gets nothing in

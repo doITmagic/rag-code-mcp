@@ -37,7 +37,7 @@ graph TD
 
 | File | Contents |
 |:---|:---|
-| `main.go` | Flags, `main`, `run` (remembers the installed binary for the restart note), `updateNow` (`-update`), `autoUpdate`, `sameFile`, `setMemoryLimit`, `httpHandler`, `serveHTTP`, `versionLine` and the build-time `Version` variable. |
+| `main.go` | Flags, `main`, `run` (remembers the installed binary for the restart note), `updateNow` (`-update`), `autoUpdate`, `removeOllama`, `sameFile`, `setMemoryLimit`, `httpHandler`, `serveHTTP`, `versionLine` and the build-time `Version` variable. |
 
 Tests:
 
@@ -45,7 +45,7 @@ Tests:
 |:---|:---|
 | `main_test.go` | `versionLine` output; `GET /health` returns the version and the PID as JSON; `onEOF` runs its hook when stdin ends. |
 | `memlimit_test.go` | `setMemoryLimit` sets 1 GiB when `GOMEMLIMIT` is unset and leaves the runtime limit alone when it is set. |
-| `zz_verify_test.go` | Verification tests: `serveHTTP` fails fast on an unusable address, serves `/health` and the MCP endpoint (not 404), and stops cleanly on context cancel; `run` returns a config error (bad `ollama_base_url`) without touching the network; a mistyped `-log-level` flag is an error naming `log_level`, not a silent fall back to `info`. |
+| `zz_verify_test.go` | Verification tests: `serveHTTP` fails fast on an unusable address, serves `/health` and the MCP endpoint (not 404), and stops cleanly on context cancel; `run` returns a config error without touching the network; a mistyped `-log-level` flag is an error naming `log_level`, not a silent fall back to `info`. |
 
 ## Flags
 
@@ -78,8 +78,10 @@ sequenceDiagram
     M->>A: New(Options{Config, Version, Log})
     opt this is ~/.ragcode/bin/rag-code-mcp
         M->>M: update.Remember(installed binary)
+        M->>M: go removeOllama (once per home)
         M->>M: go autoUpdate when auto_update (update.Latest, then update.Run)
     end
+    M->>A: go Warm(ctx) when embed_warm_start
     alt stdio
         M->>E: go Resume(ctx)
         M->>A: Server.Run(ctx, stdin/stdout; EOF on stdin closes the engine)
@@ -125,6 +127,12 @@ workspaces recorded in `~/.ragcode/roots.json` and, for those that were
 indexed before and when `auto_index` is on, queues an incremental index. See
 the [engine README](../../engine/README.md).
 
+### Warm start
+
+With `embed_warm_start` on, `run` starts `App.Warm` in a goroutine, before
+the transport, so the model is loaded when the first search arrives. It never
+delays a call: a search that comes while it loads waits for that load.
+
 ### Automatic update
 
 With `auto_update` on (the default), `autoUpdate` runs in a goroutine after
@@ -139,6 +147,32 @@ binary until their client restarts them; each remembered the installed binary
 at start, so once it is replaced their tool answers end with "RagCode was
 updated on disk: restart this MCP server ...". Details in
 [internal/update](../../internal/update/README.md).
+
+### The container of the Ollama versions
+
+Earlier v2 versions embedded through Ollama in a Docker container,
+`ragcode-ollama`, created with `--restart always`. An automatic update
+replaces only the binary and never runs the installer, so the new server
+removes that container itself: when the running binary is the installed one,
+`removeOllama` runs in a goroutine at start and calls
+`uninstall.FindOllama` (`docker ps -a` for exactly that name, then
+`docker container inspect`: it is RagCode's only with the image
+`ollama/ollama` and a mount at `/root/.ollama`), with one minute at most. A
+container that is not RagCode's is left and logged once as a warning. For
+RagCode's it writes the empty file `~/.ragcode/cache/ollama-volume-pending`
+when the container mounts the volume `ragcode-ollama` (a host directory is
+never touched), then runs `docker rm -f` and `docker volume rm`. The empty
+marker `~/.ragcode/cache/ollama-removed` is written only when nothing is left
+to retry: the container is absent, is not RagCode's, or was removed with its
+volume, and the server never asks again. Without `docker` on `PATH`, with a
+daemon that is down, or after a removal that failed (logged as a warning),
+there is no marker and the next start tries again; when only the volume is
+left, the pending file is the proof that it was RagCode's and the retry
+removes just the volume. A volume of that name with no container and no
+pending file is left alone. A
+build run from another path never touches Docker. A server of the old version
+still running elsewhere loses its embedder when the container goes; its
+client has to restart it.
 
 ### HTTP mode
 
@@ -191,7 +225,11 @@ go test ./cmd/rag-code-mcp/
 ```
 
 No build tags. The tests use an in-memory store and a fake embedder, set
-`RAGCODE_HOME` to a temp directory and never dial Ollama.
+`RAGCODE_HOME` to a temp directory and never start the embedding server.
+`TestVerifyRemoveOllamaOnce` puts a fake `docker` script alone on `PATH` (the
+real one is never run): a daemon that does not answer leaves no marker, the
+container and volume are removed once, a home without the container is asked
+once, and without `docker` nothing is concluded.
 
 ## See also
 

@@ -315,6 +315,59 @@ func (g gateEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, e
 	return g.Fake.Embed(ctx, texts)
 }
 
+// slowStartEmbedder is an embedder still fetching its runtime or loading its
+// model: nothing answers until open is closed.
+type slowStartEmbedder struct {
+	*embed.Fake
+	open chan struct{}
+}
+
+func (s slowStartEmbedder) Dimension(ctx context.Context) (int, error) {
+	select {
+	case <-s.open:
+		return s.Fake.Dimension(ctx)
+	case <-ctx.Done():
+		return 0, fmt.Errorf("%w: %w", embed.ErrUnavailable, ctx.Err())
+	}
+}
+
+// rag_index_workspace queues the run without waiting for the embedder, which
+// on first use downloads its runtime: a client that timed out meanwhile would
+// leave nothing queued.
+func TestIndexWorkspaceDoesNotWaitForTheEmbedder(t *testing.T) {
+	s := slowStartEmbedder{Fake: &embed.Fake{}, open: make(chan struct{})}
+	v := newEnvWith(t, s, false, func(c *config.Config) { c.AutoIndex = false })
+	type answer struct {
+		r   Response
+		err error
+	}
+	got := make(chan answer, 1)
+	go func() {
+		var a answer
+		res, err := v.cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "rag_index_workspace", Arguments: map[string]any{"workspace_root": v.root}})
+		if a.err = err; err == nil {
+			a.err = json.Unmarshal([]byte(res.Content[0].(*mcp.TextContent).Text), &a.r)
+		}
+		got <- a
+	}()
+	w, err := v.e.Workspace(v.root)
+	require.NoError(t, err)
+	select {
+	case a := <-got:
+		require.NoError(t, a.err)
+		assert.Equal(t, "indexing", a.r.Status, a.r.Message)
+	case <-time.After(5 * time.Second):
+		close(s.open)
+		t.Fatal("the call waits for the embedder")
+	}
+	st := w.Status()
+	assert.True(t, st.Running || st.Queued, "the run is queued while the embedder starts")
+	close(s.open)
+	require.Eventually(t, func() bool { s := w.Status(); return s.Phase == "done" && !s.Running && !s.Queued }, 10*time.Second, 20*time.Millisecond)
+	r, _ := v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "Foo"})
+	assert.Equal(t, "ok", r.Status)
+}
+
 // While a recreate is still filling the collection, a search that finds
 // nothing there falls back to the on-the-fly parse and says the index is in
 // progress instead of answering "ok" with no results.
@@ -525,7 +578,14 @@ func TestIndexWorkspace(t *testing.T) {
 	require.NoError(t, st.Save())
 	r, _ = v.call(t, "rag_index_workspace", map[string]any{"workspace_root": v.root})
 	data(t, r, &plan)
+	assert.Contains(t, plan.Full, "index format")
 	assert.Contains(t, plan.Full, "every file is re-indexed")
+	// The same for an index embedded up to another token limit.
+	st.Format, st.EmbedTokens = index.Format, 500
+	require.NoError(t, st.Save())
+	r, _ = v.call(t, "rag_index_workspace", map[string]any{"workspace_root": v.root})
+	data(t, r, &plan)
+	assert.Contains(t, plan.Full, "embed_max_tokens 500 -> 8192: every file is re-indexed")
 
 	_, res := v.call(t, "rag_index_workspace", map[string]any{"workspace_root": v.root, "mode": "full"})
 	assert.True(t, res.IsError)
@@ -538,20 +598,15 @@ func TestServerInfo(t *testing.T) {
 		_, _ = w.Write([]byte(`{"tag_name":"v2.0.0"}`))
 	}))
 	defer gh.Close()
-	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/tags", r.URL.Path)
-		_, _ = w.Write([]byte(`{"models":[{"name":"embeddinggemma-2:270m"}]}`))
-	}))
-	defer ollama.Close()
-	v := newEnv(t, true, func(c *config.Config) { c.OllamaBaseURL = ollama.URL })
+	v := newEnv(t, true, nil)
 	v.t.releases = gh.URL
 	var out struct {
-		Version   string      `json:"version"`
-		PID       int         `json:"pid"`
-		Ollama    Service     `json:"ollama"`
-		Update    Update      `json:"update"`
-		Languages []string    `json:"languages"`
-		Roots     []KnownRoot `json:"roots"`
+		Version   string       `json:"version"`
+		PID       int          `json:"pid"`
+		Embedder  embed.Status `json:"embedder"`
+		Update    Update       `json:"update"`
+		Languages []string     `json:"languages"`
+		Roots     []KnownRoot  `json:"roots"`
 	}
 	// The first answer does not wait for GitHub: the check lands in the cache.
 	r, _ := v.call(t, "rag_server_info", map[string]any{})
@@ -563,8 +618,7 @@ func TestServerInfo(t *testing.T) {
 	data(t, r, &out)
 	assert.Equal(t, "v1.0.0", out.Version)
 	assert.Equal(t, os.Getpid(), out.PID)
-	assert.True(t, out.Ollama.Reachable)
-	assert.Empty(t, out.Ollama.Error)
+	assert.Equal(t, embed.Status{Model: "fake", State: "running"}, out.Embedder, "an embedder with no state of its own is running")
 	assert.Equal(t, Update{Current: "v1.0.0", Latest: "v2.0.0", Available: true}, out.Update)
 	assert.Contains(t, out.Languages, "fake")
 	require.Len(t, out.Roots, 1)
@@ -589,7 +643,7 @@ func TestServerInfoCachesFailedUpdateCheck(t *testing.T) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer gh.Close()
-	v := newEnv(t, false, func(c *config.Config) { c.OllamaBaseURL = "http://127.0.0.1:1"; c.AutoIndex = false })
+	v := newEnv(t, false, func(c *config.Config) { c.AutoIndex = false })
 	v.t.releases = gh.URL
 	var out struct {
 		Update Update `json:"update"`
@@ -604,6 +658,32 @@ func TestServerInfoCachesFailedUpdateCheck(t *testing.T) {
 	assert.Equal(t, 1, hits)
 }
 
+// statusEmbedder reports a state of its own, as embed.Llama does.
+type statusEmbedder struct {
+	*embed.Fake
+	st embed.Status
+}
+
+func (s statusEmbedder) Status() embed.Status { return s.st }
+
+// rag_server_info shows the embedder's own state and the reason of its last failure.
+func TestServerInfoEmbedderState(t *testing.T) {
+	want := embed.Status{Model: "m", Runtime: "llama.cpp b1 (cpu)", State: "not_installed", Error: "download failed", IdleStop: "30m0s"}
+	v := newEnvWith(t, statusEmbedder{&embed.Fake{}, want}, false, func(c *config.Config) { c.AutoIndex = false })
+	r, _ := v.call(t, "rag_server_info", map[string]any{})
+	require.Equal(t, "ok", r.Status, r.Message)
+	var out struct {
+		Embedder embed.Status `json:"embedder"`
+	}
+	data(t, r, &out)
+	assert.Equal(t, want, out.Embedder)
+	var raw struct {
+		Embedder map[string]any `json:"embedder"`
+	}
+	data(t, r, &raw)
+	assert.Equal(t, "30m0s", raw.Embedder["idle_stop"], "the idle stop is in the reply under that name")
+}
+
 func TestDependencyDown(t *testing.T) {
 	v := newEnv(t, true, nil)
 	e := engine.New(v.t.cfg, store.NewMemory(), downEmbedder{&embed.Fake{}}, nil)
@@ -611,7 +691,33 @@ func TestDependencyDown(t *testing.T) {
 	v.t.e = e
 	r, _ := v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "Foo"})
 	assert.Equal(t, "dependency_down", r.Status)
-	assert.Contains(t, r.Message, "Ollama")
+	assert.Contains(t, r.Message, "embedder fake unavailable")
+	assert.Contains(t, r.Message, "see rag_server_info")
+	assert.NotContains(t, r.Message, "Ollama")
+}
+
+// flakyEmbedder fails every Embed once down is set, after the index is built.
+type flakyEmbedder struct {
+	*embed.Fake
+	down *atomic.Bool
+}
+
+func (f flakyEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	if f.down.Load() {
+		return nil, embed.ErrUnavailable
+	}
+	return f.Fake.Embed(ctx, texts)
+}
+
+// An embedder that dies after the workspace was ready is reported as down,
+// pointing at the embedder state of rag_server_info.
+func TestSearchEmbedderDiesLater(t *testing.T) {
+	var down atomic.Bool
+	v := newEnvWith(t, flakyEmbedder{&embed.Fake{}, &down}, true, nil)
+	down.Store(true)
+	r, _ := v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "something that does bar things"})
+	assert.Equal(t, "dependency_down", r.Status, r.Message)
+	assert.Contains(t, r.Message, "see the embedder state in rag_server_info")
 }
 
 // An object of functions with no direct usage is not dead code when its
@@ -701,7 +807,7 @@ func (lowMemEmbedder) Dimension(context.Context) (int, error) {
 	return 0, fmt.Errorf("%w: 500 MB free, at least 1536 MB needed", embed.ErrLowMemory)
 }
 
-// Too little free memory is its own status with what to free, not "start Ollama".
+// Too little free memory is its own status with what to free, not "start the embedder".
 func TestLowMemory(t *testing.T) {
 	v := newEnv(t, true, nil)
 	e := engine.New(v.t.cfg, store.NewMemory(), lowMemEmbedder{&embed.Fake{}}, nil)
@@ -710,7 +816,7 @@ func TestLowMemory(t *testing.T) {
 	r, _ := v.call(t, "rag_search", map[string]any{"workspace_root": v.root, "query": "Foo"})
 	assert.Equal(t, "low_memory", r.Status)
 	assert.Contains(t, r.Message, "at least 1536 MB needed")
-	assert.NotContains(t, r.Message, "start Ollama")
+	assert.NotContains(t, r.Message, "see the embedder state")
 }
 
 func TestToolSchemas(t *testing.T) {
@@ -792,14 +898,15 @@ func TestEditAndDeleteKeepResultsRight(t *testing.T) {
 }
 
 func TestServerInfoHasNoQdrant(t *testing.T) {
-	v := newEnv(t, false, func(c *config.Config) { c.OllamaBaseURL = "http://127.0.0.1:1"; c.AutoIndex = false })
+	v := newEnv(t, false, func(c *config.Config) { c.AutoIndex = false })
 	v.t.releases = "http://127.0.0.1:1/none"
 	r, _ := v.call(t, "rag_server_info", map[string]any{})
 	require.Equal(t, "ok", r.Status, r.Message)
 	var out map[string]json.RawMessage
 	data(t, r, &out)
 	assert.NotContains(t, out, "qdrant")
-	assert.Contains(t, out, "ollama")
+	assert.Contains(t, out, "embedder")
+	assert.NotContains(t, out, "ollama")
 }
 
 // Build-tagged variants (lock_unix.go, lock_windows.go) share one qualified
@@ -1416,7 +1523,7 @@ func TestSearchEmptyFilteredSaysWhy(t *testing.T) {
 
 // After the installed binary is replaced, every answer asks for a restart.
 func TestAnswerAsksRestartAfterUpdate(t *testing.T) {
-	v := newEnv(t, false, func(c *config.Config) { c.OllamaBaseURL = "http://127.0.0.1:1"; c.AutoIndex = false })
+	v := newEnv(t, false, func(c *config.Config) { c.AutoIndex = false })
 	bin := filepath.Join(t.TempDir(), "rag-code-mcp")
 	require.NoError(t, os.WriteFile(bin, []byte("old"), 0o755))
 	update.Remember(bin)

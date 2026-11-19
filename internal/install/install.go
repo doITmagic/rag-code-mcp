@@ -1,5 +1,5 @@
 // Package install sets RagCode up on this machine: the server binary under
-// ~/.ragcode/bin, config.yaml, the Ollama container, the embedding model,
+// ~/.ragcode/bin, config.yaml, the embedding runtime (llama.cpp) and model,
 // IDE configs and PATH.
 package install
 
@@ -11,41 +11,36 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
-	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 
 	"github.com/doITmagic/rag-code-mcp/v2/internal/config"
 	"github.com/doITmagic/rag-code-mcp/v2/internal/idepaths"
+	"github.com/doITmagic/rag-code-mcp/v2/internal/llama"
 	"github.com/doITmagic/rag-code-mcp/v2/internal/uninstall"
 	"github.com/doITmagic/rag-code-mcp/v2/internal/update"
 )
 
 // Options controls Run.
 type Options struct {
-	Ollama    string // docker | local | skip
-	GPU       bool   // try --gpus all for the Ollama container first
-	Yes       bool   // replace an existing installation without asking
-	ModelsDir string // host directory mounted at /root/.ollama; "" uses a volume
-	SkipIDE   bool
-	In        io.Reader
-	Out       io.Writer
+	Yes bool // replace an existing installation without asking
+	// SkipDownload leaves the embedding runtime and model for the server,
+	// which fetches them on first use.
+	SkipDownload bool
+	SkipIDE      bool
+	In           io.Reader
+	Out          io.Writer
 
 	srcDir string // where rag-code-mcp is copied from; tests set it
+	// ensure fetches the runtime and the model; tests replace the download.
+	ensure func(context.Context, llama.Options) error
 }
 
-const (
-	ollamaImage = "ollama/ollama"
-	readyWait   = 60 * time.Second
-)
-
-// Run performs the installation. Ollama, model and IDE failures are reported
-// and skipped; a missing binary fails Run at once.
+// Run performs the installation. Download and IDE failures are reported and
+// skipped (the server fetches the runtime on first use); a missing binary
+// fails Run at once.
 func Run(ctx context.Context, o Options) error {
 	if o.Out == nil {
 		o.Out = os.Stdout
@@ -60,10 +55,11 @@ func Run(ctx context.Context, o Options) error {
 		}
 		o.srcDir = filepath.Dir(exe)
 	}
-	switch o.Ollama {
-	case "docker", "local", "skip":
-	default:
-		return fmt.Errorf("install: -ollama must be docker, local or skip, got %q", o.Ollama)
+	if o.ensure == nil {
+		o.ensure = func(ctx context.Context, rt llama.Options) error {
+			_, _, err := rt.Ensure(ctx)
+			return err
+		}
 	}
 
 	home := config.HomeDir()
@@ -97,71 +93,26 @@ func Run(ctx context.Context, o Options) error {
 	} else {
 		ok(o.Out, "Wrote "+cfgPath)
 	}
-	// v1 goes only once v2 is in place, and before the ragcode-ollama
-	// container (same name in v1) is started again.
 	if userHome, err := os.UserHomeDir(); err == nil {
-		removeV1(ctx, userHome, o.Out)
+		removeV1(ctx, userHome, o.Out) // only once v2 is in place
 	}
+	removeOllama(ctx, home, o.Out)
 
-	shown := cfg.OllamaBaseURL // printed without a password in the URL
-	if u, err := url.Parse(shown); err == nil {
-		shown = u.Redacted()
+	rt := llama.FromConfig(cfg, func(s string) { fmt.Fprintln(o.Out, "  "+s) })
+	for _, p := range llama.ServerPaths(home) { // not a llama_server of the user's own
+		uninstall.StopProcess(ctx, p) // a server whose RagCode process was killed
 	}
-	if o.Ollama == "docker" {
-		if _, err := exec.LookPath("docker"); err != nil {
-			warn(o.Out, "docker not found in PATH; container not started")
-			o.Ollama = "local" // a native Ollama may still answer
-		}
-	}
-	ollamaFailed := false
-	if o.Ollama == "docker" {
-		step(o.Out, "Starting Ollama container")
-		// docker run reuses a cached image however old, and the model may need a newer Ollama.
-		if err := exec.CommandContext(ctx, "docker", "pull", "-q", ollamaImage).Run(); err != nil {
-			warn(o.Out, "docker pull "+ollamaImage+" failed, using the local image: "+err.Error())
-		}
-		mount := "ragcode-ollama:/root/.ollama"
-		if o.ModelsDir != "" {
-			// docker -v reads a bare relative name as a named volume, not the host dir.
-			dir, err := filepath.Abs(o.ModelsDir)
-			if err == nil {
-				err = os.MkdirAll(dir, 0o755)
-			}
-			if err != nil {
-				return fmt.Errorf("install: models dir: %w", err)
-			}
-			mount = dir + ":/root/.ollama"
-		}
-		args := []string{"-p", "127.0.0.1:11434:11434", "-v", mount}
-		var err error
-		if o.GPU {
-			err = runContainer(ctx, o.Out, "ragcode-ollama", ollamaImage, append([]string{"--gpus", "all"}, args...)...)
-			if err != nil {
-				warn(o.Out, "GPU start failed, retrying on CPU: "+err.Error())
-			}
-		}
-		if !o.GPU || err != nil {
-			err = runContainer(ctx, o.Out, "ragcode-ollama", ollamaImage, args...)
-		}
-		if err != nil {
-			warn(o.Out, err.Error()) // fall through: a native Ollama may hold the port
-			ollamaFailed = true
-		}
-	}
-	if o.Ollama != "skip" {
-		step(o.Out, "Waiting for Ollama at "+shown)
-		if err := waitHTTP(ctx, cfg.OllamaBaseURL+"/api/tags", readyWait); err != nil {
-			warn(o.Out, "Ollama: "+err.Error()+"; run manually: ollama pull "+cfg.OllamaEmbed)
+	switch {
+	case o.SkipDownload:
+		warn(o.Out, "Embedding runtime not downloaded (-skip-download): the server fetches it on first use")
+	case rt.Installed():
+		ok(o.Out, "Embedding runtime "+rt.RuntimeName()+" and model "+rt.ModelLabel()+" already present")
+	default:
+		step(o.Out, "Installing the embedding runtime "+rt.RuntimeName()+" and model "+rt.ModelLabel())
+		if err := o.ensure(ctx, rt); err != nil {
+			warn(o.Out, err.Error()+"; the server tries again on first use")
 		} else {
-			if ollamaFailed {
-				ok(o.Out, "Using the Ollama already running at "+shown)
-			}
-			step(o.Out, "Pulling model "+cfg.OllamaEmbed)
-			if err := pullModel(ctx, o.Out, cfg.OllamaBaseURL, cfg.OllamaEmbed); err != nil {
-				warn(o.Out, err.Error()+"; run manually: ollama pull "+cfg.OllamaEmbed)
-			} else {
-				ok(o.Out, "Model "+cfg.OllamaEmbed+" ready")
-			}
+			ok(o.Out, "Embedding runtime and model ready")
 		}
 	}
 
@@ -190,8 +141,8 @@ func Run(ctx context.Context, o Options) error {
 	snippet, _ := json.MarshalIndent(map[string]any{"mcpServers": map[string]any{
 		"ragcode": map[string]any{"command": binary, "args": []string{"--config", cfgPath}},
 	}}, "", "  ")
-	fmt.Fprintf(o.Out, "\nBinary:  %s\nConfig:  %s\nOllama:  %s (model %s)\nIndex:   %s\n\nmcp.json entry for any other client:\n%s\n",
-		binary, cfgPath, shown, cfg.OllamaEmbed, filepath.Join(home, "index"), snippet)
+	fmt.Fprintf(o.Out, "\nBinary:   %s\nConfig:   %s\nEmbedder: %s (model %s)\nIndex:    %s\n\nmcp.json entry for any other client:\n%s\n",
+		binary, cfgPath, rt.RuntimeName(), rt.ModelLabel(), filepath.Join(home, "index"), snippet)
 	ok(o.Out, "RagCode MCP installed")
 	return nil
 }
@@ -239,97 +190,67 @@ func copyFile(src, dst string) error {
 	return update.Replace(tmp.Name(), dst) // on Windows a binary a client still runs is moved aside first
 }
 
-// runContainer replaces any container with that name and starts a new one.
-// Docker's own output (image pull progress) goes to out.
-func runContainer(ctx context.Context, out io.Writer, name, image string, args ...string) error {
-	_ = exec.CommandContext(ctx, "docker", "rm", "-f", name).Run()
-	full := append([]string{"run", "-d", "--name", name, "--restart", "always"}, args...)
-	cmd := exec.CommandContext(ctx, "docker", append(full, image)...)
-	cmd.Stdout, cmd.Stderr = out, out
-	if err := cmd.Run(); err != nil {
-		_ = exec.CommandContext(ctx, "docker", "rm", "-f", name).Run()
-		return fmt.Errorf("docker run %s: %w", name, err)
-	}
-	return nil
-}
+// removeOllama removes the ragcode-ollama container and volume an earlier
+// v2 installer created: the server runs the embedding model itself now, and
+// the container would keep its memory forever (--restart always).
+// The server does the same on its first start (an auto-update replaces only
+// the binary), in the same order and through the same uninstall functions:
+// identity check (uninstall.FindOllama), then, for a container that is
+// RagCode's and mounts the named volume, the file cache/ollama-volume-pending
+// (the proof that the volume is RagCode's) BEFORE the container is removed, so
+// an installer that dies in between leaves the proof for the server's next
+// start; the file goes once the volume is really gone. A pending file with no
+// container is the same interrupted run: its volume is removed now. A
+// container that is not RagCode's is left, and so is a volume without proof.
+// Nothing here fails the install. When the volume stays, the file stays and
+// the marker cache/ollama-removed of an earlier start is taken back: the next
+// start of the server removes the volume.
+func removeOllama(ctx context.Context, home string, out io.Writer) {
+	cache := filepath.Join(home, "cache")
+	pending := filepath.Join(cache, "ollama-volume-pending")
+	_, statErr := os.Stat(pending)
+	volume := statErr == nil
+	hint := "remove them with: docker rm -f ragcode-ollama; docker volume rm ragcode-ollama"
+	unused := "the ragcode-ollama container or volume is no longer used and could not be removed ("
 
-// waitHTTP polls url every 500 ms until it answers 200 or max elapses.
-func waitHTTP(ctx context.Context, url string, max time.Duration) error {
-	client := &http.Client{Timeout: 3 * time.Second}
-	deadline := time.Now().Add(max)
-	for {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			return err
-		}
-		resp, err := client.Do(req)
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return nil
+	c, name, err := uninstall.FindOllama(ctx)
+	switch {
+	case errors.Is(err, uninstall.ErrNoDocker):
+		return
+	case err != nil:
+		warn(out, "the ragcode-ollama container could not be checked ("+err.Error()+"); "+hint)
+		return
+	case c == uninstall.Foreign:
+		warn(out, "container ragcode-ollama is not an Ollama of RagCode, left alone")
+	case c == uninstall.Ours:
+		if name != "" {
+			if err := os.MkdirAll(cache, 0o755); err != nil {
+				warn(out, unused+err.Error()+"); "+hint)
+				return
 			}
+			if err := os.WriteFile(pending, nil, 0o644); err != nil {
+				warn(out, unused+err.Error()+"); "+hint)
+				return
+			}
+			volume = true
 		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("%s not ready after %s", req.URL.Redacted(), max) // no password in the message
+		if err := uninstall.DropOllamaContainer(ctx); err != nil {
+			if volume {
+				_ = os.Remove(filepath.Join(cache, "ollama-removed")) // the proof is there: the server looks again
+			}
+			warn(out, unused+err.Error()+"); "+hint)
+			return
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(500 * time.Millisecond):
-		}
+		ok(out, "Removed the ragcode-ollama container: RagCode no longer uses Ollama")
 	}
-}
-
-// pullModel streams POST /api/pull and prints progress on one line.
-func pullModel(ctx context.Context, out io.Writer, baseURL, model string) error {
-	body, _ := json.Marshal(map[string]any{"name": model, "stream": true})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/pull", bytes.NewReader(body))
-	if err != nil {
-		return err
+	if volume {
+		if err := uninstall.RemoveOllamaVolume(ctx); err != nil {
+			_ = os.Remove(filepath.Join(cache, "ollama-removed"))
+			warn(out, unused+err.Error()+"); "+hint+"; RagCode also tries again at its next start")
+			return
+		}
+		_ = os.Remove(pending)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("pull %s: %w", model, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusPreconditionFailed { // old Ollama refusing a newer model
-			return fmt.Errorf("pull %s: status 412: this model needs a newer Ollama, 0.40 or later: upgrade Ollama", model)
-		}
-		return fmt.Errorf("pull %s: status %d", model, resp.StatusCode)
-	}
-	sc := bufio.NewScanner(resp.Body)
-	sc.Buffer(nil, 1<<20)
-	last := ""
-	for sc.Scan() {
-		var ev struct {
-			Status, Error    string
-			Completed, Total int64
-		}
-		if json.Unmarshal(sc.Bytes(), &ev) != nil {
-			continue
-		}
-		if ev.Error != "" {
-			return fmt.Errorf("pull %s: %s", model, ev.Error)
-		}
-		if ev.Status == "success" {
-			fmt.Fprintln(out)
-			return nil
-		}
-		line := ev.Status
-		if ev.Total > 0 {
-			line = fmt.Sprintf("%s %d%%", ev.Status, ev.Completed*100/ev.Total)
-		}
-		if line != last {
-			fmt.Fprintf(out, "\r  %-60s", line)
-			last = line
-		}
-	}
-	if err := sc.Err(); err != nil {
-		return fmt.Errorf("pull %s: %w", model, err)
-	}
-	return fmt.Errorf("pull %s: stream ended without success", model)
 }
 
 // addPath appends the PATH export to the shell rc when binDir is not in it.

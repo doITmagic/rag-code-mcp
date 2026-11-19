@@ -49,12 +49,20 @@ var (
 )
 
 const (
-	embedBatch   = 16
-	upsertBatch  = 64
-	upsertBytes  = 8 << 20 // Content bytes per upsert, so one batch never holds a huge transaction
-	maxEmbedText = 2000
-	maxLookups   = 500 // store lookups per run while finding stale referrers
-	lookupBatch  = 500 // values per lookup: ids, qualified names or names
+	embedBatch  = 16
+	upsertBatch = 64
+	upsertBytes = 8 << 20 // Content bytes per upsert, so one batch never holds a huge transaction
+	// embedMaxBytesPerToken turns the embedder's token limit into a memory
+	// bound on an embed text. It is not an estimate of density (code runs at
+	// 3 to 4 bytes a token, whitespace runs at most about 31): it is above
+	// the longest run one token can span, so a text over it cannot fit the
+	// model anyway. A symbol under it goes whole and the model decides: the
+	// embedder cuts a text the server refuses, by the token count the server
+	// reports. Walk skips files over 256 KiB, so the bound only bites for an
+	// embed_max_tokens below 4096.
+	embedMaxBytesPerToken = 64
+	maxLookups            = 500 // store lookups per run while finding stale referrers
+	lookupBatch           = 500 // values per lookup: ids, qualified names or names
 )
 
 // clock is time.Now; tests fix it.
@@ -66,13 +74,17 @@ type Options struct {
 	Collection string
 	Store      store.Store
 	Embedder   embed.Embedder
-	Exclude    []string     // directory names pruned at any depth
-	Files      []string     // nil = full walk; otherwise only these files are checked
-	Deleted    []string     // files to purge from the index
-	MaxFiles   int          // a full walk with more indexable files fails with ErrTooManyFiles; 0 = no limit
-	Recreate   bool         // drop the collection under the lock first: everything is re-embedded
-	Log        *slog.Logger // nil discards
-	Progress   func(Status) // called at most every 500 ms, from the run goroutine
+	Exclude    []string // directory names pruned at any depth
+	Files      []string // nil = full walk; otherwise only these files are checked
+	Deleted    []string // files to purge from the index
+	MaxFiles   int      // a full walk with more indexable files fails with ErrTooManyFiles; 0 = no limit
+	// EmbedTokens is the embedder's input limit in tokens; 0 means
+	// embed.DefaultTokens. A symbol's text is embedded up to it, and a change
+	// re-embeds everything.
+	EmbedTokens int
+	Recreate    bool         // drop the collection under the lock first: everything is re-embedded
+	Log         *slog.Logger // nil discards
+	Progress    func(Status) // called at most every 500 ms, from the run goroutine
 }
 
 // Status is the progress of a run, also persisted to
@@ -122,6 +134,7 @@ type run struct {
 	named        map[string][]string // ids of the name pass, which callers are resolved against
 	prev         Status              // the status of the last run, before this one wrote its own
 	touched      bool                // the run deleted or upserted points
+	embedBytes   int                 // the byte cap of an embed text
 	vanished     []string            // files parse found deleted since the scan
 	lastProgress time.Time
 	lastSave     time.Time
@@ -172,12 +185,8 @@ func Run(ctx context.Context, o Options) (Status, error) {
 	}
 	r.writeStatus()
 
-	// Probed before the state or collection change: a model the embedder
-	// cannot serve (a typo, not pulled) must not drop the index of the old one.
-	dim, err := o.Embedder.Dimension(ctx)
-	if err != nil {
-		return r.finish(ctx, err)
-	}
+	// The comparisons that decide a re-create need no embedder: they run
+	// before anything asks it for a vector size.
 	model := o.Embedder.Model()
 	if r.state.Model != "" && r.state.Model != model {
 		// Same dimension or not, vectors of two models must not share a collection.
@@ -188,13 +197,49 @@ func Run(ctx context.Context, o Options) (Status, error) {
 		o.Log.Info("index: index format changed, re-indexing everything", "root", root, "from", r.state.Format, "to", Format)
 		o.Recreate = true
 	}
-	r.state.Model, r.state.Format = model, Format
+	tokens := EmbedTokens(o.EmbedTokens)
+	r.embedBytes = tokens * embedMaxBytesPerToken
+	if len(r.state.Files) > 0 && r.state.EmbedTokens != tokens {
+		// Same model, but a vector of the first part of a symbol is not the
+		// vector of more of it: one collection holds one kind.
+		o.Log.Info("index: embed text limit changed, re-embedding everything", "root", root, "from", r.state.EmbedTokens, "to", tokens)
+		o.Recreate = true
+	}
+
+	// The vector size is asked of the embedder, which in a fresh process starts
+	// the model, only when it protects something. Probed before the state or
+	// collection change, so a model the embedder cannot serve (a typo, not
+	// pulled) does not drop the index of the old one. An index that matches
+	// the embedder (same model, format and limit, files recorded, collection
+	// there) keeps its stored size: a restart on an unchanged workspace does not
+	// load the model, and a run with a file to embed starts it at the first Embed.
+	// That run does not go through the embedder's own model-file check either;
+	// the server runs it when it starts.
+	dim, known := 0, false
+	if !o.Recreate && r.state.Model != "" && len(r.state.Files) > 0 {
+		if exists, err := o.Store.CollectionExists(ctx, o.Collection); err == nil && exists {
+			if n, err := o.Store.VectorSize(ctx, o.Collection); err == nil && n > 0 {
+				dim, known = n, true
+			}
+		}
+	}
+	probe := func() error {
+		var err error
+		dim, err = o.Embedder.Dimension(ctx)
+		return err
+	}
+	if !known {
+		if err := probe(); err != nil {
+			return r.finish(ctx, err)
+		}
+	}
+	r.state.Model, r.state.Format, r.state.EmbedTokens = model, Format, tokens
 	if o.Recreate {
 		r.touched = true
 		// Saved before the drop: after a crash in between, a stale state.json
 		// would match every file and incremental runs would never re-embed them.
 		r.state = newState(root)
-		r.state.Model, r.state.Format = model, Format
+		r.state.Model, r.state.Format, r.state.EmbedTokens = model, Format, tokens
 		if err := r.state.Save(); err != nil {
 			return r.finish(ctx, err)
 		}
@@ -228,6 +273,16 @@ func Run(ctx context.Context, o Options) (Status, error) {
 		case err != nil:
 		case len(hits) == 0:
 			r.fresh = true
+			if known {
+				// Emptied behind the state's back: it is filled again, with the
+				// size the embedder gives, not the one the empty collection kept.
+				if err := probe(); err != nil {
+					return r.finish(ctx, err)
+				}
+				if _, err := o.Store.EnsureCollection(ctx, o.Collection, dim); err != nil {
+					return r.finish(ctx, err)
+				}
+			}
 		case len(r.state.Files) == 0:
 			// Points no state lists (a crash between a recreate's state save and
 			// its drop, an unreadable state.json): gone files would stay forever.
@@ -245,7 +300,7 @@ func Run(ctx context.Context, o Options) (Status, error) {
 		// The store is empty: everything is new, and a files-only run would
 		// leave a partial index that nothing ever completes.
 		r.state = newState(root)
-		r.state.Model, r.state.Format = model, Format
+		r.state.Model, r.state.Format, r.state.EmbedTokens = model, Format, tokens
 		r.Files = nil
 	}
 
@@ -400,7 +455,7 @@ func (r *run) finish(ctx context.Context, err error) (Status, error) {
 	// session's end), or finished with nothing to do (a run queued behind a
 	// full one): the index is still the one the last run finished, so are
 	// its counters on disk. The caller still gets this run's own status.
-	// A failed run that changed nothing (Ollama down) also keeps them, under
+	// A failed run that changed nothing (embedder unavailable) also keeps them, under
 	// its own error. A run stopped by a HEAD move changed the index like a
 	// finished one, so its counters are the last real ones.
 	last := r.prev.Phase == "done" || r.prev.Phase == "failed"
@@ -1471,7 +1526,7 @@ func (r *run) embedUpsert(ctx context.Context, files []parsed) error {
 		batch := syms[i:min(i+embedBatch, len(syms))]
 		texts := make([]string, len(batch))
 		for j, s := range batch {
-			texts[j] = embedText(s)
+			texts[j] = embedText(s, r.embedBytes)
 		}
 		vecs, err := r.embed(ctx, texts)
 		if err != nil {
@@ -1539,20 +1594,32 @@ func (r *run) embed(ctx context.Context, texts []string) ([][]float32, error) {
 	return vecs, nil
 }
 
-func embedText(s *parser.Symbol) string {
+// EmbedTokens is the token limit a run with Options.EmbedTokens n embeds
+// up to.
+func EmbedTokens(n int) int {
+	if n <= 0 {
+		return embed.DefaultTokens
+	}
+	return n
+}
+
+// embedText is what a symbol is embedded as, cut to limit bytes. The limit is
+// the memory bound (embedMaxBytesPerToken a token), not the model's limit:
+// the embedder cuts by tokens a text the model refuses.
+func embedText(s *parser.Symbol, limit int) string {
 	t := string(s.Kind) + " " + s.QualifiedName + "\n" + s.Signature + "\n" + s.Doc + "\n"
 	// Slice Content before concatenating, or a megabyte symbol is copied
 	// whole per embed. One byte past the cap keeps the rune walk below
 	// identical to cutting the full text.
-	if n := max(maxEmbedText-len(t)+1, 0); n < len(s.Content) {
+	if n := max(limit-len(t)+1, 0); n < len(s.Content) {
 		t += s.Content[:n]
 	} else {
 		t += s.Content
 	}
-	if len(t) <= maxEmbedText {
+	if len(t) <= limit {
 		return t
 	}
-	cut := maxEmbedText
+	cut := limit
 	for cut > 0 && !utf8.RuneStart(t[cut]) {
 		cut--
 	}

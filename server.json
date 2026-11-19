@@ -1,7 +1,7 @@
 {
   "name": "ragcode",
   "version": "2.0.0",
-  "description": "Local semantic code intelligence over MCP: semantic and exact search, usages, call hierarchy, package exports and file context. Indexes Go, PHP (and Blade), Python, JavaScript/TypeScript (and Vue), GDScript, HTML with Go templates, and Markdown/JSON/YAML/TOML docs into an embedded SQLite index per workspace; embeddings through a local Ollama model.",
+  "description": "Local semantic code intelligence over MCP: semantic and exact search, usages, call hierarchy, package exports and file context. Indexes Go, PHP (and Blade), Python, JavaScript/TypeScript (and Vue), GDScript, HTML with Go templates, and Markdown/JSON/YAML/TOML docs into an embedded SQLite index per workspace; embeddings from a small model that RagCode runs itself (llama.cpp), with no Docker or Ollama.",
   "homepage": "https://github.com/doITmagic/rag-code-mcp",
   "license": "MIT",
   "runtime": "binary",
@@ -20,13 +20,6 @@
     "resources": false,
     "prompts": false,
     "sampling": false
-  },
-  "dependencies": {
-    "ollama": {
-      "required": true,
-      "url": "https://ollama.com",
-      "description": "Ollama 0.40 or later with the embeddinggemma-2:270m embedding model"
-    }
   },
   "tools": [
     {
@@ -55,7 +48,7 @@
     },
     {
       "name": "rag_server_info",
-      "description": "Server version, uptime, Ollama reachability, update availability, registered languages and known workspaces."
+      "description": "Server version, uptime, embedder state, update availability, registered languages and known workspaces."
     }
   ],
   "configuration": {
@@ -81,13 +74,15 @@
       }
     },
     "env": {
-      "OLLAMA_BASE_URL": {
-        "description": "Ollama server URL",
-        "default": "http://localhost:11434"
+      "RAGCODE_EMBED_RUNTIME": {
+        "description": "Which llama.cpp build runs the embedding model: auto, cpu or vulkan",
+        "default": "auto"
       },
-      "OLLAMA_EMBED": {
-        "description": "Ollama embedding model",
-        "default": "embeddinggemma-2:270m"
+      "RAGCODE_EMBED_MODEL": {
+        "description": "Absolute path of a .gguf embedding model to use instead of the downloaded one"
+      },
+      "RAGCODE_LLAMA_SERVER": {
+        "description": "Absolute path of a llama-server binary to use instead of the downloaded one"
       },
       "MCP_LOG_LEVEL": {
         "description": "Logging level (debug, info, warn, error)",

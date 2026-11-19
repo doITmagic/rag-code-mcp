@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -46,4 +47,26 @@ func TestFakeFail(t *testing.T) {
 	cancel()
 	_, err = f.Embed(cancelled, []string{"a"})
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+// While Fetch is open, a call marked WithoutFetchWait fails at once with
+// ErrFetching and an unmarked one waits for it to close.
+func TestFakeFetch(t *testing.T) {
+	f := &Fake{Fetch: make(chan struct{})}
+	_, err := f.Dimension(WithoutFetchWait(context.Background()))
+	require.ErrorIs(t, err, ErrFetching)
+	require.ErrorIs(t, err, ErrUnavailable)
+	_, err = f.Embed(WithoutFetchWait(context.Background()), []string{"a"})
+	require.ErrorIs(t, err, ErrFetching)
+
+	waited, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, err = f.Dimension(waited)
+	require.ErrorIs(t, err, context.DeadlineExceeded, "an unmarked call waits")
+
+	close(f.Fetch)
+	_, err = f.Dimension(WithoutFetchWait(context.Background()))
+	require.NoError(t, err)
+	_, err = f.Embed(context.Background(), []string{"a"})
+	require.NoError(t, err)
 }

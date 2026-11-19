@@ -21,9 +21,10 @@ The split is simple:
 | [`app`](./app/README.md) | Wires config, embedder, store, engine, parsers and MCP tools into one `*mcp.Server`. | [`cmd/rag-code-mcp`](../cmd/rag-code-mcp/README.md), tests |
 | [`config`](./config/README.md) | Loads `~/.ragcode/config.yaml` (written from `default.yaml` on first run), applies environment overrides, validates; builds the logger and the rotating log file. | almost everything |
 | [`idepaths`](./idepaths/README.md) | The table of 14 IDE MCP config files and the code that adds or removes the `ragcode` entry in them. | `install`, `uninstall` |
-| [`install`](./install/README.md) | The installer: binary copy, config, Ollama container, model pull, IDE configs, PATH, removal of a RagCode v1 install. | [`cmd/rag-code-install`](../cmd/rag-code-install/README.md) |
+| [`install`](./install/README.md) | The installer: binary copy, config, download of the embedding runtime and model, IDE configs, PATH, removal of a RagCode v1 install and of an old `ragcode-ollama` container. | [`cmd/rag-code-install`](../cmd/rag-code-install/README.md) |
+| [`llama`](./llama/README.md) | The embedding runtime on disk: pinned llama.cpp `llama-server` and GGUF model, downloaded once and checked by SHA-256. | [`app`](./app/README.md), `install`, `uninstall`, [`embed`](../embed/README.md) |
 | [`update`](./update/README.md) | The release check (cached a day), version order, and the update that installs a newer release over `~/.ragcode/bin/rag-code-mcp` after checking its SHA-256. | [`cmd/rag-code-mcp`](../cmd/rag-code-mcp/README.md), [`tools`](../tools/README.md) |
-| [`uninstall`](./uninstall/README.md) | The uninstaller: stop running servers, remove IDE entries, per-workspace data, `~/.ragcode`, the PATH line and optionally the Docker containers. | `cmd/rag-code-install -uninstall`, `cmd/rag-code-mcp -uninstall`, `install` (for `Binary` and `StopProcess`) |
+| [`uninstall`](./uninstall/README.md) | The uninstaller: stop running servers, remove IDE entries, per-workspace data, `~/.ragcode`, the PATH line and optionally the Docker containers of earlier versions. | `cmd/rag-code-install -uninstall`, `cmd/rag-code-mcp -uninstall`, `install` (for `Binary` and `StopProcess`) |
 
 ## Dependency graph
 
@@ -81,8 +82,8 @@ go test ./internal/...
 
 Each package has `zz_verify_test.go` files with independent verification
 tests next to the regular `*_test.go` files. The installer and uninstaller
-tests use a temporary `HOME`, a fake `docker` shell script on `PATH` and an
-`httptest` Ollama; they skip on Windows. A fake `codex` script is used only by
+tests use a temporary `HOME`, a fake `docker` shell script on `PATH` and a
+stubbed download; they skip on Windows. A fake `codex` script is used only by
 the idepaths tests.
 
 ## See also

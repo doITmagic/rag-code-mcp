@@ -2,17 +2,14 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/doITmagic/rag-code-mcp/v2/embed"
 	"github.com/doITmagic/rag-code-mcp/v2/engine"
 	"github.com/doITmagic/rag-code-mcp/v2/index"
-	"github.com/doITmagic/rag-code-mcp/v2/internal/config"
 	"github.com/doITmagic/rag-code-mcp/v2/internal/update"
 	"github.com/doITmagic/rag-code-mcp/v2/parser"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -36,15 +33,25 @@ func (t *tools) indexWorkspace(ctx context.Context, req *mcp.CallToolRequest, in
 		return fail("mode must be incremental or recreate")
 	}
 	if in.Confirm && strings.TrimSpace(in.WorkspaceRoot) != "" {
-		_ = t.e.ConfirmRoot(in.WorkspaceRoot) // a refused root is reported by open below
+		_ = t.e.ConfirmRoot(in.WorkspaceRoot) // a refused root is reported by resolveRoot below
 	}
-	w, res := t.open(ctx, req, in.WorkspaceRoot)
-	if res != nil {
-		return res, nil, nil
+	// Not open: it waits for the embedder, which on first use downloads the
+	// runtime and loads the model. The run is queued at once and reports an
+	// embedder that cannot start as its own failure.
+	w, err := t.resolveRoot(ctx, req, in.WorkspaceRoot)
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err != nil {
+		return fail(err.Error())
 	}
 	data := map[string]any{"root": w.Root, "collection": w.Collection, "mode": in.Mode}
-	if st, err := index.LoadState(w.Root); in.Mode == "incremental" && err == nil && len(st.Files) > 0 && st.Format != index.Format {
-		data["full_reindex"] = fmt.Sprintf("index format %d -> %d: every file is re-indexed", st.Format, index.Format)
+	if st, err := index.LoadState(w.Root); in.Mode == "incremental" && err == nil && len(st.Files) > 0 {
+		if tokens := index.EmbedTokens(t.cfg.EmbedMaxTokens); st.Format != index.Format {
+			data["full_reindex"] = fmt.Sprintf("index format %d -> %d: every file is re-indexed", st.Format, index.Format)
+		} else if st.EmbedTokens != tokens {
+			data["full_reindex"] = fmt.Sprintf("embed_max_tokens %d -> %d: every file is re-indexed", st.EmbedTokens, tokens)
+		}
 	}
 	var notes []string
 	if t.cfg.AutoCreateIDERules {
@@ -53,21 +60,13 @@ func (t *tools) indexWorkspace(ctx context.Context, req *mcp.CallToolRequest, in
 		}
 	}
 	w.Index(in.Mode == "recreate")
-	return reply("indexing", strings.Join(append([]string{"queued an index run (" + in.Mode + "); poll rag_server_info or any tool for progress"}, notes...), "; "), data, w)
+	return reply("indexing", strings.Join(append([]string{"queued an index run (" + in.Mode + "); poll rag_server_info for progress"}, notes...), "; "), data, w)
 }
 
 // ---- rag_server_info ----
 
 // InfoInput is the (empty) input of rag_server_info.
 type InfoInput struct{}
-
-// Service is the reachability of one dependency.
-type Service struct {
-	URL       string `json:"url"`
-	Model     string `json:"model,omitempty"`
-	Reachable bool   `json:"reachable"`
-	Error     string `json:"error,omitempty"`
-}
 
 // Update is the result of the release check.
 type Update struct {
@@ -86,65 +85,28 @@ type KnownRoot struct {
 	Warning string `json:"warning,omitempty"` // index.Status.Warning of the last run
 }
 
-func (t *tools) serverInfo(ctx context.Context, _ *mcp.CallToolRequest, _ InfoInput) (*mcp.CallToolResult, any, error) {
-	// Ollama is waited for as long as the caller waits; the release check
-	// never delays the answer (see update).
-	ollama, update := t.probeOllama(ctx), t.update()
+func (t *tools) serverInfo(_ context.Context, _ *mcp.CallToolRequest, _ InfoInput) (*mcp.CallToolResult, any, error) {
+	// Nothing here waits: the embedder reports its state without starting,
+	// and the release check never delays the answer (see update).
 	data := map[string]any{
 		"version":   t.version,
 		"pid":       os.Getpid(),
 		"uptime":    time.Since(t.started).Round(time.Second).String(),
-		"ollama":    ollama,
-		"update":    update,
+		"embedder":  embedderStatus(t.e.Embedder()),
+		"update":    t.update(),
 		"languages": parser.Languages(),
 		"roots":     knownRoots(t.e),
 	}
 	return reply("ok", "", data, nil)
 }
 
-func (t *tools) probeOllama(ctx context.Context) Service {
-	s := Service{URL: config.Redacted(t.cfg.OllamaBaseURL), Model: t.cfg.OllamaEmbed}
-	var body struct {
-		Models []struct {
-			Name string `json:"name"`
-		} `json:"models"`
+// embedderStatus is the embedder's own report, or just its model name for
+// one that has no state to report.
+func embedderStatus(em embed.Embedder) embed.Status {
+	if s, ok := em.(interface{ Status() embed.Status }); ok {
+		return s.Status()
 	}
-	if err := t.getJSON(ctx, strings.TrimRight(t.cfg.OllamaBaseURL, "/")+"/api/tags", &body); err != nil {
-		s.Error = err.Error() + ": start Ollama"
-		if errors.Is(err, context.DeadlineExceeded) { // it runs but is slow: not a reason to start it
-			s.Error = err.Error() + ": Ollama did not answer in time; the machine may be overloaded or low on memory"
-		}
-		return s
-	}
-	s.Reachable = true
-	for _, m := range body.Models {
-		if m.Name == s.Model || strings.TrimSuffix(m.Name, ":latest") == s.Model {
-			return s
-		}
-	}
-	s.Error = fmt.Sprintf("model %s not pulled: run ollama pull %s", s.Model, s.Model)
-	return s
-}
-
-// getJSON GETs url within the client timeout and decodes the body into out
-// (nil: only the status is checked).
-func (t *tools) getJSON(ctx context.Context, url string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
-	resp, err := t.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s returned %s", req.URL.Redacted(), resp.Status) // a user:password@ URL keeps its password out
-	}
-	if out == nil {
-		return nil
-	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	return embed.Status{Model: em.Model(), State: "running"}
 }
 
 // update returns the latest release tag (cached for 24 h by update.Latest)

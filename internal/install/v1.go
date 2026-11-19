@@ -34,7 +34,8 @@ func removeV1(ctx context.Context, home string, out io.Writer) {
 		return
 	}
 	step(out, "Removing RagCode v1 (its indexes are not compatible with v2; projects are indexed again)")
-	_ = exec.CommandContext(ctx, "docker", "rm", "-f", "ragcode-qdrant", "ragcode-ollama").Run()
+	// The v1 Ollama container is removed by Run through uninstall.RemoveOllama.
+	_ = exec.CommandContext(ctx, "docker", "rm", "-f", "ragcode-qdrant").Run()
 
 	removeV1IDE(home, v1ConfigDir(runtime.GOOS, home), out)
 

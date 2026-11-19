@@ -119,6 +119,80 @@ func autoUpdate(ctx context.Context, source string, log *slog.Logger) {
 	}
 }
 
+// removeOllama removes, once per home, the ragcode-ollama container of the
+// v2 versions that embedded through Ollama, and the volume it mounted. An
+// auto-update replaces only the binary, so without this the container
+// (--restart always) would keep its memory until someone ran the installer.
+// Only a container that is RagCode's is removed (uninstall.FindOllama); one
+// that is not is left with a warning. The file cache/ollama-volume-pending is
+// written before the container is removed: it is the proof that a volume of
+// that name was RagCode's, so a start that finds the container gone and the
+// volume still there removes the volume, and a volume without that proof is
+// never touched. The marker cache/ollama-removed is written only when nothing
+// is left to retry: Docker answered, and the container is absent, foreign, or
+// removed together with its volume. A daemon that is down, a refused removal
+// or a stopped server leave no marker, so the next start asks again.
+func removeOllama(ctx context.Context, home string, log *slog.Logger) {
+	cache := filepath.Join(home, "cache")
+	marker := filepath.Join(cache, "ollama-removed")
+	pending := filepath.Join(cache, "ollama-volume-pending")
+	if _, err := os.Stat(marker); err == nil {
+		return
+	}
+	_, statErr := os.Stat(pending)
+	volume := statErr == nil
+	parent := ctx
+	ctx, cancel := context.WithTimeout(ctx, time.Minute) // a daemon that hangs must not hold a goroutine forever
+	defer cancel()
+	fail := func(msg string, err error) {
+		if parent.Err() == nil { // the server stopping is not a problem
+			log.Warn(msg, "err", err)
+		}
+	}
+
+	c, name, err := uninstall.FindOllama(ctx)
+	switch {
+	case errors.Is(err, uninstall.ErrNoDocker):
+		log.Debug("ollama: container not checked", "err", err)
+		return
+	case err != nil:
+		fail("ollama: the ragcode-ollama container could not be checked", err)
+		return
+	case c == uninstall.Foreign:
+		if !volume {
+			log.Warn("ollama: a container named ragcode-ollama is not an Ollama of RagCode; left alone")
+		}
+	case c == uninstall.Ours:
+		if name != "" {
+			if err := os.MkdirAll(cache, 0o755); err != nil {
+				fail("ollama: the ragcode-ollama container is no longer used and was not removed", err)
+				return
+			}
+			if err := os.WriteFile(pending, nil, 0o644); err != nil {
+				fail("ollama: the ragcode-ollama container is no longer used and was not removed", err)
+				return
+			}
+			volume = true
+		}
+		if err := uninstall.DropOllamaContainer(ctx); err != nil {
+			fail("ollama: the ragcode-ollama container is no longer used and could not be removed", err)
+			return
+		}
+		log.Info("ollama: removed the ragcode-ollama container; RagCode runs the embedding model itself")
+	}
+	if volume {
+		if err := uninstall.RemoveOllamaVolume(ctx); err != nil {
+			fail("ollama: the ragcode-ollama volume could not be removed; it is tried again at the next start", err)
+			return
+		}
+		_ = os.Remove(pending)
+		log.Info("ollama: removed the ragcode-ollama volume")
+	}
+	if err := os.MkdirAll(cache, 0o755); err == nil {
+		_ = os.WriteFile(marker, nil, 0o644)
+	}
+}
+
 func sameFile(a, b string) bool {
 	fa, errA := os.Stat(a)
 	fb, errB := os.Stat(b)
@@ -168,6 +242,9 @@ func run(ctx context.Context, cfgPath, httpAddr, logLevel string) error {
 	if exe, err := os.Executable(); err == nil {
 		if bin := uninstall.Binary(config.HomeDir()); sameFile(exe, bin) {
 			update.Remember(bin) // tool answers ask for a restart once it is replaced
+			// Only the installed binary: a build run from elsewhere (a test, a
+			// second home) must not remove a container another install uses.
+			go removeOllama(ctx, config.HomeDir(), log)
 		}
 	}
 	if cfg.AutoUpdate {
@@ -177,6 +254,9 @@ func run(ctx context.Context, cfgPath, httpAddr, logLevel string) error {
 	// The SDK waits for in-flight calls before it returns; closing the engine
 	// first ends a call stuck in a watcher walk (fsnotify refuses new watches).
 	defer context.AfterFunc(ctx, a.Engine.Close)()
+	// Loads the model in the background when embed_warm_start is set; it ends
+	// with ctx, and a.Close stops a load still going.
+	go a.Warm(ctx)
 	if httpAddr == "" {
 		go a.Engine.Resume(ctx)
 		closeEngine := sync.OnceFunc(func() { go a.Engine.Close() })

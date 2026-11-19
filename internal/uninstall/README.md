@@ -5,7 +5,8 @@
 Package `uninstall` removes RagCode from the machine: it stops running
 servers, removes the `ragcode` entry from every IDE config, cleans the files
 RagCode wrote inside each known workspace, deletes `~/.ragcode` (with every
-index) and the PATH line, and optionally the Docker containers.
+index) and the PATH line, and optionally the Docker containers of earlier
+versions.
 
 Both binaries expose it:
 [`rag-code-install -uninstall`](../../cmd/rag-code-install/README.md) (with
@@ -13,7 +14,7 @@ Both binaries expose it:
 [`rag-code-mcp -uninstall`](../../cmd/rag-code-mcp/README.md) (interactive,
 no Docker removal). The [installer](../install/README.md) also uses two of its
 exported helpers: `Binary` for the install path and `StopProcess` before it
-replaces the binary.
+replaces the binary and to stop left-over `llama-server` processes.
 
 ## Where it sits
 
@@ -21,7 +22,8 @@ replaces the binary.
 graph LR
     I[cmd/rag-code-install -uninstall] -->|Run| UN[uninstall]
     S[cmd/rag-code-mcp -uninstall] -->|Run| UN
-    IN[internal/install] -->|Binary, StopProcess| UN
+    IN[internal/install] -->|Binary, StopProcess, RemoveOllama| UN
+    S -->|RemoveOllama, once at start| UN
     UN -->|HomeDir| CFG[internal/config]
     UN -->|Targets, Remove| IDE[internal/idepaths]
     UN -->|PointerFiles, IDEPointer| ENG[engine]
@@ -40,7 +42,7 @@ graph LR
 
 | File | Contents |
 |:---|:---|
-| `uninstall.go` | `Options`, `Binary`, `Run`, `StopProcess`, and the helpers `sameExe`, `removePointer`, `stripPath` and the coloured `step`/`ok`/`warn` printers. |
+| `uninstall.go` | `Options`, `Binary`, `Run`, `StopProcess`, `RemoveOllama`, `FindOllama`, `DropOllamaContainer`, `RemoveOllamaVolume` (with `Outcome` and `ErrNoDocker`), and the helpers `sameExe`, `removePointer`, `stripPath` and the coloured `step`/`ok`/`warn` printers. |
 | `stop_windows.go`, `stop_other.go` | `stopWindows`: the Windows half of `StopProcess` (snapshot, image path match, terminate); a no-op stub elsewhere. |
 
 Tests:
@@ -52,6 +54,7 @@ Tests:
 | `stop_unix_test.go` | Build tag `!windows`. `StopProcess` stops the server binary but not processes that only mention its path (a shell, `tail -f`, a launcher wrapper). |
 | `stop_test.go` | `sameExe`: the same path in another case or with `..` matches, a same-named file in another folder does not. Runs on every OS. |
 | `stop_windows_test.go` | Build tag `windows`. Two copies of the test binary under one unique image name in two folders: `StopProcess` stops the one at `binary` and the other keeps running (`TestStopProcessOnlyStopsThisPath`). |
+| `ollama_test.go` | `RemoveOllama` and its steps against a fake `docker` that keeps the container and volume as files: the container and its volume go; a host directory or another volume is never removed; image names (tag, digest, registry prefix accepted, `evil/ollama` and `ollama/ollama-fork` refused); the image without the `/root/.ollama` mount is foreign; no container, a container that vanishes between `ps` and `inspect`, a Docker that does not answer; a failed `rm -f` or `volume rm` with and without the object being gone; `-docker` leaves a foreign container, removes an orphan volume by name and warns when it cannot. |
 | `zz_verify_test.go` | Verification tests: garbage `roots.json` and a cancelled context neither panic nor hang, and the home is still removed; closed stdin when an answer is needed fails `Run`; a `RAGCODE_HOME` override is removed and its PATH line stripped while `~/.ragcode` stays; `RAGCODE_HOME` set to the user home or one of its parents is never deleted. |
 
 ## Key types and functions
@@ -61,7 +64,7 @@ Tests:
 ```go
 type Options struct {
     Yes    bool      // remove every <root>/.ragcode without asking
-    Docker bool      // also remove ragcode-ollama (and a leftover v1 ragcode-qdrant)
+    Docker bool      // also remove the ragcode-ollama (earlier v2) and ragcode-qdrant (v1) containers
     In     io.Reader // default os.Stdin
     Out    io.Writer // default os.Stdout
 }
@@ -79,10 +82,33 @@ stdin closed while a question is pending).
 `<home>/bin/rag-code-mcp`, plus `.exe` on Windows. The single definition of
 where the server is installed.
 
+### `RemoveOllama(ctx) (Outcome, error)`
+
+Removes the `ragcode-ollama` container and volume of the v2 versions that
+embedded through Ollama. `FindOllama` decides first (`docker ps -a --filter
+name=^ragcode-ollama$`, then `docker container inspect`): the container is
+RagCode's only when its image is `ollama/ollama` (any tag, digest or registry
+prefix) and it mounts `/root/.ollama`, which RagCode v1 and v2 both set. The
+`Outcome` is `Absent`, `Ours`, `Foreign` (another container with that name,
+never touched) or `Removed`. The volume is removed only when it is the named
+volume `ragcode-ollama` mounted by that container (`DropOllamaContainer`, then
+`RemoveOllamaVolume`); a host directory (`-models-dir`, v1) is never touched
+and a volume with no container is left. A refused `docker rm -f` or `docker
+volume rm` counts as done when the container or volume is gone by then;
+otherwise the error carries Docker's answer, with `Removed` when only the
+volume is left. The error is `ErrNoDocker` when Docker could not be asked (not
+on `PATH`, or the daemon did not answer). The installer calls it on every run;
+the server calls the three steps itself once per home, on its first start, to
+keep the proof of the volume in a file between them
+([rag-code-mcp](../../cmd/rag-code-mcp/README.md)).
+
 ### `StopProcess(ctx, binary string)`
 
 Stops every running instance of `binary` except the current process, best
-effort. Does nothing when `binary` does not exist.
+effort. Does nothing when `binary` does not exist. `Run` calls it for the
+server and for the `llama-server` of each runtime variant
+(`llama.ServerPaths`), because a server whose RagCode process was killed can
+outlive it; the files go with `~/.ragcode` (`llama/`, `models/`, `run/`).
 
 | OS | How |
 |:---|:---|
@@ -93,7 +119,7 @@ effort. Does nothing when `binary` does not exist.
 
 ```mermaid
 flowchart TD
-    A[StopProcess ~/.ragcode/bin/rag-code-mcp] --> B[idepaths: Remove ragcode from every IDE]
+    A[StopProcess ~/.ragcode/bin/rag-code-mcp<br/>and the llama-server of each runtime variant] --> B[idepaths: Remove ragcode from every IDE]
     B --> C[for each root in ~/.ragcode/roots.json]
     C --> C1[strip pointer line from instruction files]
     C1 --> C2{root/.ragcode exists?}
@@ -101,7 +127,7 @@ flowchart TD
     C --> D[delete ~/.ragcode, with safety check]
     D --> E[strip PATH pair from .bashrc and .zshrc]
     E --> F{-docker?}
-    F -- yes --> G[docker rm -f and volume rm:<br/>ragcode-qdrant, ragcode-ollama]
+    F -- yes --> G[docker rm -f and volume rm of ragcode-qdrant;<br/>RemoveOllama, then volume rm ragcode-ollama]
 ```
 
 ### IDE entries
@@ -148,10 +174,14 @@ to undo.
 
 ### Docker (`-docker`)
 
-For `ragcode-qdrant` (left by v1) and `ragcode-ollama`:
-`docker rm -f <name>` then `docker volume rm <name>`. Removing the
-`ragcode-ollama` volume deletes the downloaded models. A host directory given
-to the installer with `-models-dir` is not touched.
+RagCode no longer uses Docker; the flag removes what earlier versions left.
+For `ragcode-qdrant` (v1) and `ragcode-ollama` (earlier v2):
+`docker rm -f <name>` then `docker volume rm <name>`. For `ragcode-ollama` the
+container goes through `RemoveOllama` (a container that is not RagCode's is
+left, with a warning), and the volume is then removed by name even without a
+container, because this flag is the explicit request; a refusal from Docker
+is shown. Removing that volume deletes the models Ollama had downloaded. A
+host directory given to the old installer with `-models-dir` is not touched.
 
 ## Known limitations
 

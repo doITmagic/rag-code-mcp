@@ -48,20 +48,25 @@ Tests:
 
 | File | Covers |
 |:---|:---|
-| `config_test.go` | `default.yaml` equals `Default()`; loading a file; a missing file is written from the default; invalid YAML; environment overrides; every `Validate` rule; `HomeDir`/`DefaultPath` with and without `RAGCODE_HOME`; logger levels; log rotation on open, every 1000 writes, failed rotation keeps writing, following a rotation done by another process; old Qdrant keys from v1 are ignored; `embed_threads` default and `0`; `Redacted` hides only a URL's password. |
+| `config_test.go` | `default.yaml` equals `Default()`; loading a file; a missing file is written from the default; invalid YAML; environment overrides; every `Validate` rule; `HomeDir`/`DefaultPath` with and without `RAGCODE_HOME`; logger levels; log rotation on open, every 1000 writes, failed rotation keeps writing, following a rotation done by another process; old Qdrant keys from v1 are ignored; `embed_threads` default and `0`; the `embed_max_tokens` bounds (256..32768, at most 8192 without `embed_model`); `Redacted` hides only a URL's password. |
 | `zz_verify_test.go` | Verification tests: odd inputs (empty file, wrong types, ...) error or load but never panic; path is a directory; missing file with an unwritable parent; environment values on a fresh file are validated; empty environment values do not override; YAML tags are snake_case; exact defaults; logger levels; `OpenLogFile` errors; concurrent writes across rotations; the logger through the log file. |
 
 ## Configuration keys
 
 All keys are optional; a missing key keeps the default. Unknown keys are
-ignored (so a v1 `config.yaml` with Qdrant settings still loads).
+ignored (so a v1 `config.yaml` with Qdrant settings, or a v2.0 one with
+`ollama_base_url` and `ollama_embed`, still loads; those keys no longer do anything).
 
 | YAML key | Go field | Default | Meaning / used by |
 |:---|:---|:---|:---|
-| `ollama_base_url` | `OllamaBaseURL` | `http://localhost:11434` | Ollama URL; must be `http` or `https` with a host. [`embed`](../../embed/README.md), installer, `rag_server_info`. |
-| `ollama_embed` | `OllamaEmbed` | `embeddinggemma-2:270m` | Embedding model; required. Needs Ollama 0.40 or later. |
-| `embed_threads` | `EmbedThreads` | `max(2, NumCPU/3)` | CPU threads Ollama may use for embeddings (`num_thread`). `0` lets Ollama choose (every performance core). Must not be negative. |
-| `min_free_memory_mb` | `MinFreeMemoryMB` | `750` | Free memory a local Ollama needs to load the model (measured: the model holds 0.3 GB of RAM on a GPU and up to 0.9 GB on CPU; a load with under 600 MB free failed). With less, indexing and searches answer `low_memory` and no embed request is sent, unless Ollama already has the model loaded. `0` turns the check off. Must not be negative. |
+| `embed_runtime` | `EmbedRuntime` | `auto` | Which llama.cpp build runs the model: `auto`, `cpu` or `vulkan`. `auto` picks Vulkan when an NVIDIA driver and a Vulkan loader are found, else CPU; macOS has one build (Metal). Anything else is invalid. See [`llama`](../llama/README.md). |
+| `embed_model` | `EmbedModel` | empty | Absolute path of a `.gguf` embedding model to use instead of the downloaded one. The index names the model after the file name without `.gguf`, then `@` and a 12-character fingerprint of the file (its size and its first and last MiB), e.g. `my-embed@3fa9c01b77d2`, so another file, even under the same name, re-embeds every workspace after a restart. A file replaced while RagCode runs is refused (indexing and search fail with an error naming both labels) until RagCode is restarted or the old file is put back. |
+| `llama_server` | `LlamaServer` | empty | Absolute path of a `llama-server` binary to use instead of the downloaded one. |
+| `embed_threads` | `EmbedThreads` | `max(2, NumCPU/3)` | CPU threads llama.cpp may use for embeddings (`-t`, `-tb`). `0` lets llama.cpp choose (every performance core). Must not be negative. |
+| `embed_max_tokens` | `EmbedMaxTokens` | `8192` | How much of a function, class or section the model reads, in tokens (about 3 bytes of code each, so 8192 tokens are roughly 24 KB). A longer symbol is embedded by its first part only; its stored content is whole. `8192` is the context window of the built-in model. A lower value makes long symbols faster to index and bounds the memory of the embedding server (on one laptop's CPU a 24 KB symbol took 61 s and 1.5 GB; a 12 KB one 23 s and 0.9 GB). Between `256` and `32768`, and at most `8192` without `embed_model`. With your own `embed_model`, set it to that model's context length: a model trained for less is cut to its own limit anyway, but every long symbol then costs one refused request first. Changing it makes the next index run of each workspace re-embed every file. |
+| `embed_idle_stop` | `EmbedIdleStop` | `30m` | How long the loaded embedding model stays in memory after the last search or index run; the next one loads it again. At least `1m`. `0` never stops it while RagCode runs (a RagCode killed on Windows or macOS then leaves its model server until the next RagCode start removes it). A bare `0` is read as a duration. |
+| `embed_warm_start` | `EmbedWarmStart` | `false` | `true` loads the model in the background at start. It downloads nothing, needs twice `min_free_memory_mb` free, and gives up silently. |
+| `min_free_memory_mb` | `MinFreeMemoryMB` | `750` | Free memory needed to start the embedding server (measured: the model holds 0.3 GB of RAM on a GPU and up to 0.9 GB on CPU for inputs up to 12 KB, 1.5 GB on CPU for a symbol at the 8192-token limit; a load with under 600 MB free failed). The check covers loading only: on a CPU machine short of memory, lower `embed_max_tokens`, since a long symbol raises the peak. With less, a call that has to start the server answers `low_memory`; a server already running is not checked. `0` turns the check off. Must not be negative. |
 | `log_level` | `LogLevel` | `info` | `debug`, `info`, `warn` or `error`. |
 | `log_max_size_mb` | `LogMaxSizeMB` | `10` | Size at which `ragcode.log` is rotated. Must be positive. |
 | `exclude_patterns` | `ExcludePatterns` | `node_modules`, `vendor`, `target`, `build`, `dist`, `__pycache__` | Directory names skipped while indexing and watching. Hidden directories are always skipped. Setting the key replaces the whole list. |
@@ -74,8 +79,9 @@ ignored (so a v1 `config.yaml` with Qdrant settings still loads).
 | `auto_update` | `AutoUpdate` | `true` | At server start, install a newer release over `~/.ragcode/bin/rag-code-mcp` (GitHub asked at most once a day). See [update](../update/README.md). |
 | `update_source` | `UpdateSource` | empty | Where releases come from: empty is GitHub; a directory with the release archive and `checksums.txt`, or a URL answering like the GitHub latest-release API, for testing. |
 
-`embed_threads` is commented out in `default.yaml` on purpose: the written
-file does not pin a CPU count, so the default keeps following the machine.
+`embed_threads`, `embed_model` and `llama_server` are commented out in
+`default.yaml` on purpose: the written file does not pin a CPU count or a
+path, so the defaults keep following the machine.
 
 ### Environment overrides
 
@@ -84,8 +90,9 @@ override.
 
 | Variable | Overrides |
 |:---|:---|
-| `OLLAMA_BASE_URL` | `ollama_base_url` |
-| `OLLAMA_EMBED` | `ollama_embed` |
+| `RAGCODE_EMBED_RUNTIME` | `embed_runtime` |
+| `RAGCODE_EMBED_MODEL` | `embed_model` |
+| `RAGCODE_LLAMA_SERVER` | `llama_server` |
 | `MCP_LOG_LEVEL` | `log_level` |
 | `RAGCODE_UPDATE_SOURCE` | `update_source` |
 | `RAGCODE_ALLOWED_PATHS` | `allowed_workspace_paths`, as an OS path list (`:` on Linux/macOS, `;` on Windows); blank entries are dropped |
@@ -99,7 +106,10 @@ Priority, highest first: environment, `config.yaml`, `Default()`. The server's
 ### `HomeDir() string` and `DefaultPath() string`
 
 `HomeDir` returns `$RAGCODE_HOME` when set, otherwise `<user home>/.ragcode`
-(falling back to `./.ragcode` if the user home cannot be determined).
+(falling back to `.ragcode` in the working directory if the user home cannot
+be determined). The result is always absolute: a relative `RAGCODE_HOME` is
+resolved against the working directory, because `llama-server` runs from its
+own directory and would not find a relative path.
 `DefaultPath` is `HomeDir()/config.yaml`. Every other package builds its paths
 (`bin/`, `index/`, `logs/`, `roots.json`) from `HomeDir`.
 
@@ -125,8 +135,11 @@ Errors are prefixed `config:`: `create dir`, `write default`, `read <path>`,
 
 ### `Validate() error`
 
-Returns the first invalid field: `ollama_base_url` not an http(s) URL with a
-host, empty `ollama_embed`, unknown `log_level`, negative `embed_threads`,
+Returns the first invalid field: `embed_model` not an absolute path ending in
+`.gguf`, `embed_runtime` other than `auto`, `cpu` or `vulkan`, `llama_server`
+not an absolute path, unknown `log_level`, negative `embed_threads`,
+`embed_max_tokens` outside 256..32768 or over 8192 with the built-in model,
+`embed_idle_stop` negative or under one minute (other than 0),
 negative `max_files`, negative `min_free_memory_mb`,
 non-positive `log_max_size_mb`, negative `watch_debounce`, or a relative
 `allowed_workspace_paths` entry.
@@ -173,5 +186,5 @@ the real `~/.ragcode`.
 - [internal](../README.md)
 - [cmd/rag-code-mcp](../../cmd/rag-code-mcp/README.md): loads the config and opens the log
 - [engine](../../engine/README.md): `auto_index`, `watch_*`, `allowed_workspace_paths`, `exclude_patterns`
-- [embed](../../embed/README.md): `ollama_*`, `embed_threads`
+- [embed](../../embed/README.md): `embed_runtime`, `embed_model`, `llama_server`, `embed_threads`, `embed_max_tokens`, `min_free_memory_mb`
 - [install](../install/README.md): writes the config on install

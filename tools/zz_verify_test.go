@@ -123,8 +123,7 @@ func TestVerifyCancelledContext(t *testing.T) {
 	assert.Less(t, time.Since(start), 2*time.Second)
 }
 
-// A stalled Ollama is waited for as long as the caller waits (here until it
-// answers); a stalled release URL never delays the answer.
+// A stalled release URL never delays the answer.
 func TestVerifyServerInfoStalledEndpoints(t *testing.T) {
 	if testing.Short() {
 		t.Skip("takes ~9 s")
@@ -136,7 +135,7 @@ func TestVerifyServerInfoStalledEndpoints(t *testing.T) {
 		}
 	}))
 	defer stall.Close()
-	v := newEnv(t, false, func(c *config.Config) { c.OllamaBaseURL = stall.URL })
+	v := newEnv(t, false, func(c *config.Config) { c.AutoIndex = false })
 	v.t.releases = stall.URL
 	v.t.http = http.DefaultClient // production client (Register)
 	start := time.Now()
@@ -144,13 +143,11 @@ func TestVerifyServerInfoStalledEndpoints(t *testing.T) {
 	elapsed := time.Since(start)
 	require.Equal(t, "ok", r.Status)
 	var out struct {
-		Ollama Service `json:"ollama"`
-		Update Update  `json:"update"`
+		Update Update `json:"update"`
 	}
 	data(t, r, &out)
-	assert.False(t, out.Ollama.Reachable)
 	assert.Equal(t, "unknown", out.Update.Latest)
-	t.Logf("rag_server_info with two stalled endpoints took %s", elapsed.Round(100*time.Millisecond))
+	t.Logf("rag_server_info with a stalled release endpoint took %s", elapsed.Round(100*time.Millisecond))
 }
 
 // Degenerate files and a symlink that leaves the root.
@@ -297,7 +294,7 @@ func TestVerifyUpdateCacheExpiry(t *testing.T) {
 		_, _ = w.Write([]byte(`{"tag_name":"v2.0.0"}`))
 	}))
 	defer gh.Close()
-	v := newEnv(t, false, func(c *config.Config) { c.OllamaBaseURL = "http://127.0.0.1:1" })
+	v := newEnv(t, false, nil)
 	v.t.releases = gh.URL
 	path := filepath.Join(config.HomeDir(), "cache", "update.json")
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))

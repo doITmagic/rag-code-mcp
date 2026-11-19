@@ -113,7 +113,7 @@ type Target struct {
    One exception: an `env` written by v1 (it holds `QDRANT_URL`, which v2
    never reads) loses the keys v1 wrote (`OLLAMA_BASE_URL`, `OLLAMA_MODEL`,
    `OLLAMA_EMBED`, `QDRANT_URL`), and is dropped when nothing else is left;
-   otherwise v1's `OLLAMA_EMBED` would override the model of `config.yaml`.
+   these are v1 leftovers that v2 no longer reads at all.
 4. Write only if the content changed.
 
 ### `(Target) Remove() error`

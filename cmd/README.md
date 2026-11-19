@@ -13,7 +13,7 @@ test without starting a process.
 | Directory | Binary | What it does |
 |:---|:---|:---|
 | [`rag-code-mcp`](./rag-code-mcp/README.md) | `rag-code-mcp` | The MCP server. Speaks MCP over stdio (default) or Streamable HTTP (`-http`). Also carries `-version` and `-uninstall`. |
-| [`rag-code-install`](./rag-code-install/README.md) | `rag-code-install` | The installer. Copies `rag-code-mcp` into `~/.ragcode/bin`, writes the config, starts Ollama, pulls the model and registers the server in IDEs. `-uninstall` removes everything. |
+| [`rag-code-install`](./rag-code-install/README.md) | `rag-code-install` | The installer. Copies `rag-code-mcp` into `~/.ragcode/bin`, writes the config, downloads the embedding runtime and model and registers the server in IDEs. `-uninstall` removes everything. |
 
 ## How they relate
 

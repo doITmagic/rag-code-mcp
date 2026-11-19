@@ -1,14 +1,17 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
@@ -51,4 +54,36 @@ func TestStdinEOFRunsHook(t *testing.T) {
 	assert.Equal(t, "x", string(b))
 	_, _ = r.Read(make([]byte, 1))
 	assert.Equal(t, 1, n)
+}
+
+// run starts the warm-up when embed_warm_start is set, and only then. The
+// runtime and model are files that are not there, so nothing is loaded or
+// downloaded: the warm-up ends at once and says so in the debug log.
+func TestRunWarmStart(t *testing.T) {
+	for _, warm := range []bool{true, false} {
+		t.Run(map[bool]string{true: "on", false: "off"}[warm], func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("RAGCODE_HOME", home)
+			cfgPath := filepath.Join(home, "config.yaml")
+			require.NoError(t, os.WriteFile(cfgPath, []byte("log_level: debug\nauto_update: false\nwatch_enabled: false\nembed_warm_start: "+map[bool]string{true: "true", false: "false"}[warm]+
+				"\nembed_model: "+filepath.Join(home, "none", "m.gguf")+"\nllama_server: "+filepath.Join(home, "none", "llama-server")+"\n"), 0o644))
+			ctx, cancel := context.WithCancel(context.Background())
+			errc := make(chan error, 1)
+			go func() { errc <- run(ctx, cfgPath, "127.0.0.1:0", "") }()
+			logPath := filepath.Join(home, "logs", "ragcode.log")
+			logged := func() bool {
+				data, _ := os.ReadFile(logPath)
+				return strings.Contains(string(data), "warm-up finished")
+			}
+			if warm {
+				require.Eventually(t, logged, 5*time.Second, 20*time.Millisecond)
+			} else {
+				time.Sleep(300 * time.Millisecond)
+				assert.False(t, logged())
+			}
+			cancel()
+			require.NoError(t, <-errc)
+			assert.NoDirExists(t, filepath.Join(home, "llama"), "nothing downloaded")
+		})
+	}
 }

@@ -93,7 +93,7 @@ func TestVerifyEnqueueDuringLockRetryWaits(t *testing.T) {
 	wa.Index(false)
 	require.Eventually(t, func() bool { p := wa.Status().Phase; return p == "parsing" || p == "embedding" }, 2*time.Second, 5*time.Millisecond)
 
-	rec := &runRecorder{}
+	rec := &runRecorder{errs: []error{index.ErrLocked}}
 	b := New(cfg, store.NewMemory(), &embed.Fake{}, nil)
 	defer b.Close()
 	wb, err := b.Workspace(root)
@@ -118,13 +118,25 @@ func TestVerifyEnqueueDuringLockRetryWaits(t *testing.T) {
 	hasTimer := wb.retry != nil
 	wb.e.mu.Unlock()
 	assert.True(t, hasTimer, "retry timer armed")
-	// A request during the retry window is merged, not started.
-	wb.Index(false)
+	// A request that is not explicit (the watcher) during the retry window is
+	// merged, not started.
+	wb.IndexFiles([]string{filepath.Join(root, "a.go")}, nil)
 	time.Sleep(150 * time.Millisecond)
 	assert.Empty(t, rec.snapshot(), "no run before the retry timer fires")
 	s := wb.Status()
 	assert.True(t, s.Queued)
 	assert.True(t, s.Running) // the other engine's run holds the lock
+
+	// An explicit call starts a run at once, meets the lock again (the recorder
+	// answers ErrLocked) and re-arms the lock retry.
+	wb.Index(false)
+	require.Eventually(t, func() bool { return len(rec.snapshot()) == 1 }, time.Second, 5*time.Millisecond, "the explicit call starts a run at once")
+	require.Eventually(t, func() bool {
+		wb.e.mu.Lock()
+		defer wb.e.mu.Unlock()
+		return wb.retry != nil && !wb.running
+	}, time.Second, 5*time.Millisecond, "the lock retry is armed again")
+	assert.True(t, wb.Status().Queued)
 	close(be.release)
 	require.Eventually(t, func() bool { return wa.Status().Phase == "done" }, 2*time.Second, 5*time.Millisecond)
 }
@@ -348,8 +360,9 @@ func TestVerifyReadyRemediation(t *testing.T) {
 	require.NoError(t, err)
 	ok, msg := w.Ready(context.Background())
 	assert.False(t, ok)
-	assert.Contains(t, msg, "Ollama")
-	assert.Contains(t, msg, cfg.OllamaBaseURL)
+	assert.Contains(t, msg, "embedder fake unavailable")
+	assert.Contains(t, msg, "see rag_server_info")
+	assert.NotContains(t, msg, "Ollama")
 
 	e2 := New(cfg, downStore{store.NewMemory()}, &embed.Fake{}, nil)
 	defer e2.Close()

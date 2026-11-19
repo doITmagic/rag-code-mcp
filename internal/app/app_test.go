@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -54,16 +55,35 @@ func TestSmoke(t *testing.T) {
 	assert.ElementsMatch(t, want, names)
 }
 
-func TestNewDefaultsDoNotDial(t *testing.T) {
-	t.Setenv("RAGCODE_HOME", t.TempDir())
+// The default embedder is only built: no server is started and nothing is
+// downloaded until the first call.
+func TestNewDefaultsStartNothing(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("RAGCODE_HOME", home)
 	cfg := config.Default()
-	cfg.OllamaBaseURL = "http://127.0.0.1:1"
+	// Files that are not there: a call fails at once, with no download.
+	cfg.EmbedModel = filepath.Join(home, "none", "m.gguf")
+	cfg.LlamaServer = filepath.Join(home, "none", "llama-server")
 	a, err := New(Options{Config: cfg})
 	require.NoError(t, err)
 	require.NotNil(t, a.Server)
+	em, ok := a.Engine.Embedder().(*embed.Llama)
+	if assert.True(t, ok, "the default embedder is llama.cpp") {
+		assert.Equal(t, "m", em.Model())
+		assert.Contains(t, []string{"not_installed"}, em.Status().State)
+		assert.Equal(t, embed.DefaultTokens, em.MaxTokens, "embed_max_tokens reaches the embedder")
+		assert.Equal(t, 30*time.Minute, em.IdleStop, "embed_idle_stop reaches the embedder")
+	}
+	// The default of the config is the context window the embedder knows the built-in model by.
+	assert.Equal(t, embed.DefaultTokens, config.BuiltinModelTokens)
+	assert.NoDirExists(t, filepath.Join(home, "llama"), "nothing downloaded")
+	assert.NoDirExists(t, filepath.Join(home, "models"), "nothing downloaded")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	a.Close(ctx)
+	_, err = em.Embed(context.Background(), []string{"x"})
+	require.ErrorIs(t, err, embed.ErrUnavailable)
+	assert.Contains(t, err.Error(), "closed", "Close closes the embedder")
 }
 
 // A stop by signal cancels Run's context; the SDK logs that as an ERROR,
@@ -173,3 +193,75 @@ type syncBuf struct {
 
 func (s *syncBuf) Write(p []byte) (int, error) { s.mu.Lock(); defer s.mu.Unlock(); return s.b.Write(p) }
 func (s *syncBuf) String() string              { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
+
+// embed_idle_stop 0 is "never": the embedder's own 0 means its default.
+func TestNewIdleStopNever(t *testing.T) {
+	t.Setenv("RAGCODE_HOME", t.TempDir())
+	cfg := config.Default()
+	cfg.EmbedIdleStop = 0
+	a, err := New(Options{Config: cfg})
+	require.NoError(t, err)
+	t.Cleanup(func() { a.Close(context.Background()) })
+	em := a.Engine.Embedder().(*embed.Llama)
+	assert.Equal(t, embed.IdleNever, em.IdleStop)
+	assert.Equal(t, "never", em.Status().IdleStop)
+}
+
+// warmEmbedder is an embedder that can be warmed; it counts the warm-ups.
+type warmEmbedder struct {
+	embed.Fake
+	warmed atomic.Int32
+	err    error
+}
+
+func (w *warmEmbedder) Warm(context.Context) error {
+	w.warmed.Add(1)
+	return w.err
+}
+
+func newWarmApp(t *testing.T, warm bool, em embed.Embedder) (*App, *bytes.Buffer) {
+	t.Helper()
+	t.Setenv("RAGCODE_HOME", t.TempDir())
+	cfg := config.Default()
+	cfg.EmbedWarmStart = warm
+	var buf bytes.Buffer
+	a, err := New(Options{Config: cfg, Store: store.NewMemory(), Embedder: em, Log: slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))})
+	require.NoError(t, err)
+	t.Cleanup(func() { a.Close(context.Background()) })
+	return a, &buf
+}
+
+func TestWarm(t *testing.T) {
+	t.Run("on", func(t *testing.T) {
+		w := &warmEmbedder{}
+		a, _ := newWarmApp(t, true, w)
+		a.Warm(context.Background())
+		assert.Equal(t, int32(1), w.warmed.Load())
+	})
+	t.Run("off", func(t *testing.T) {
+		w := &warmEmbedder{}
+		a, _ := newWarmApp(t, false, w)
+		a.Warm(context.Background())
+		assert.Zero(t, w.warmed.Load())
+	})
+	t.Run("an embedder that cannot be warmed", func(t *testing.T) {
+		a, _ := newWarmApp(t, true, &embed.Fake{})
+		a.Warm(context.Background())
+	})
+	t.Run("a skip is an info line, not a warning", func(t *testing.T) {
+		w := &warmEmbedder{err: embed.ErrLowMemory}
+		a, buf := newWarmApp(t, true, w)
+		a.Warm(context.Background())
+		assert.Contains(t, buf.String(), "level=INFO msg=\"embedder: warm-up skipped\"")
+		assert.NotContains(t, buf.String(), "level=WARN")
+		assert.NotContains(t, buf.String(), "level=ERROR")
+	})
+	t.Run("the shutdown is not logged", func(t *testing.T) {
+		w := &warmEmbedder{err: context.Canceled}
+		a, buf := newWarmApp(t, true, w)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		a.Warm(ctx)
+		assert.NotContains(t, buf.String(), "warm-up")
+	})
+}

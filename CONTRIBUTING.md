@@ -7,9 +7,11 @@ First off, thank you for considering contributing to RagCode MCP! It's people li
 ### Prerequisites
 
 - **Go 1.26+** (`go.mod`).
-- **Ollama 0.40+** with `embeddinggemma-2:270m`, only for the live tests and
-  for running the server; the unit tests use a fake embedder. No database
-  server is needed: the index is an embedded SQLite file.
+- Nothing else: no Docker, no Ollama. To run the server, the embedding runtime
+  (llama.cpp `llama-server`) and the model are downloaded into `~/.ragcode` on
+  first use (about 310 MB for the model); the unit tests use a fake embedder or
+  a stand-in server. No database server is needed: the index is an embedded
+  SQLite file.
 
 ### Setting up the environment
 
@@ -19,15 +21,13 @@ First off, thank you for considering contributing to RagCode MCP! It's people li
    cd rag-code-mcp
    ```
 
-2. **Pull the embedding model**
-   ```bash
-   ollama pull embeddinggemma-2:270m
-   ```
-
-3. **Run the server locally**
+2. **Run the server locally**
    ```bash
    go run ./cmd/rag-code-mcp
    ```
+   The first search or index run downloads the runtime and model and starts
+   `llama-server` as a child process. Set `RAGCODE_HOME` to a temporary
+   directory to keep it away from your real `~/.ragcode`.
 
 Every package directory has a README: start from [README.md](README.md),
 "Code map".
@@ -66,7 +66,7 @@ Bugs are tracked as GitHub issues. When filing an issue, please include:
 
 - Your OS and version
 - RagCode version
-- Ollama model being used
+- Embedding runtime and model (`rag_server_info` shows them as `embedder`)
 - Steps to reproduce the issue
 
 ## 💡 Feature Requests

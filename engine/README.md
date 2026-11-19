@@ -46,7 +46,7 @@ graph TD
 
 | Direction | Package | What for |
 |-----------|---------|----------|
-| Created by | [internal/app](../internal/app/README.md) | `engine.New(cfg, store, embedder, log)` with the SQLite store and the Ollama embedder. |
+| Created by | [internal/app](../internal/app/README.md) | `engine.New(cfg, store, embedder, log)` with the SQLite store and the llama.cpp embedder. |
 | Called by | [cmd/rag-code-mcp](../cmd/rag-code-mcp/README.md) | `go a.Engine.Resume(ctx)` at start-up. |
 | Called by | [tools](../tools/README.md) | Every MCP tool opens a workspace with `Workspace(root)`; `rag_index_workspace` calls `WriteIDERules` and `Index`. |
 | Called by | [internal/uninstall](../internal/uninstall/README.md) | `PointerFiles` and `IDEPointer` to strip the pointer line. |
@@ -64,7 +64,7 @@ graph TD
 | File | Contents |
 |------|----------|
 | `engine.go` | Package doc, `Engine`, `New`, errors (`ErrNotIndexed`, `ErrLocked`, `ErrClosed`), `RootError`, `UnsureRootError`, `ConfirmRoot`, `Loaded`, `Workspace`, `validateRoot`, `roots.json` (`registerRoot`, `ReadRoots`), `Resume`, `Close`, and the job queue (`enqueue`, `merge`, `kick`, `runJobs`, `runOne`, `retryDelay`). |
-| `workspace.go` | `Workspace` and its job fields, `Status`, `Index`, `IndexFiles`, `Search`, `Scroll`, `mapErr`/`dimChanged` (the `ErrNotIndexed` mapping), `resyncIfReopened`, `Ready`. |
+| `workspace.go` | `Workspace` and its job fields, `Status`, `Index`, `IndexFiles`, `Search`, `Scroll`, `mapErr`/`dimChanged`/`notIndexed` (the `ErrNotIndexed` mapping), `resyncIfReopened`, `Ready`, `FetchingMsg`. |
 | `watch.go` | The per-root `watcher`: `startWatcher` (leader lock `watch.lock`), `follow`/`takeOver` (a follower's takeover poll, `takeoverPoll`), `addTree`, `watchGit`, event `handle`, `dropDir`, debounce (`add`, `flush`), `full`, `Stop`. |
 | `nonotify_linux.go`, `nonotify_other.go` | `noNotify`: names a root whose file system reports no changes to inotify (9p, the WSL2 `/mnt` drives); always empty off Linux. |
 | `iderules.go` | `WriteIDERules`, `IDEPointer`, `PointerFiles`, the list of agent instruction files, `tracked`, `within`, `appendPointer`. |
@@ -73,7 +73,7 @@ graph TD
 
 | File | Covers |
 |------|--------|
-| `engine_test.go` | Root validation, auto-index on first contact, request coalescing, `ErrHeadChanged` re-queue, retry of failed runs, a failed recreate that resumes without dropping again, no watcher without `auto_index`, recreate, embedding model change, concurrent root registration from several engines, a search refused on an index of another model with the same vector size, a lock held by another engine, `Resume`, no goroutines left after `Close`, `WriteIDERules` (tracked files, symlinks, symlinked parent directories, continuing after a refused file), backoff, a run waiting for the slot counts as queued, the end of a run logged with its counts and duration, another process's run shown as running and a dead run's phase shown as `interrupted` (`TestStatusOfAnotherProcessRun`), the first retry after another process's lock within seconds (`TestLockedRetrySoon`), parents of home and broad system directories refused as roots (`TestValidateRootRefusesBroadDirs`), the watcher's full run logged once while queued, a request queued while the runner exits is still picked up, a run failing because the root was deleted is not retried and the root is caught up when it is back, a query after the store reopened a replaced collection file queues an incremental run (`TestQueryAfterReopenQueuesResync`), a root over `max_files` refused once, without a retry (`TestMaxFilesRefusedWithoutRetry`). `TestMain` points `RAGCODE_HOME` at a temp dir. It also sets `TMPDIR`, `TMP` and `TEMP` to the symlink-resolved temp dir (macOS `/var` -> `/private/var`, Windows 8.3 short names), so `t.TempDir()` paths compare equal to the resolved paths the product returns. |
+| `engine_test.go` | Root validation, auto-index on first contact, request coalescing, `ErrHeadChanged` re-queue, retry of failed runs, an explicit index cutting the failure backoff while a non-explicit request waits it out, a failed recreate that resumes without dropping again, no watcher without `auto_index`, recreate, embedding model change, concurrent root registration from several engines, a search refused on an index of another model with the same vector size, a lock held by another engine, `Resume`, no goroutines left after `Close`, `WriteIDERules` (tracked files, symlinks, symlinked parent directories, continuing after a refused file), backoff, a run waiting for the slot counts as queued, the end of a run logged with its counts and duration, another process's run shown as running and a dead run's phase shown as `interrupted` (`TestStatusOfAnotherProcessRun`), the first retry after another process's lock within seconds (`TestLockedRetrySoon`), parents of home and broad system directories refused as roots (`TestValidateRootRefusesBroadDirs`), the watcher's full run logged once while queued, a request queued while the runner exits is still picked up, a run failing because the root was deleted is not retried and the root is caught up when it is back, a query after the store reopened a replaced collection file queues an incremental run (`TestQueryAfterReopenQueuesResync`), a root over `max_files` refused once, without a retry (`TestMaxFilesRefusedWithoutRetry`). `TestMain` points `RAGCODE_HOME` at a temp dir. It also sets `TMPDIR`, `TMP` and `TEMP` to the symlink-resolved temp dir (macOS `/var` -> `/private/var`, Windows 8.3 short names), so `t.TempDir()` paths compare equal to the resolved paths the product returns. |
 | `newer_format_test.go` | A leader that meets an index of a newer Format leaves `index_status.json` as it is and gives up `watch.lock`; the follower of the newer version then indexes the next edit. |
 | `watch_test.go` | The watcher end to end, a `.gitignore` edit queues a full run, a directory that becomes a linked worktree after it was watched is dropped with a full run (`TestWatcherLinkedWorktreeAdded`), a `.git` created after start queues a full run and is watched with its refs (`TestWatcherGitInitAfterStart`), a ref moved through its `.lock` file queues one full run (`TestWatcherRefUpdateQueuesOneFullRun`), RagCode's own home inside a root neither watched nor accepted as a root (`TestWatcherIgnoresOwnHome`), root removed, root that comes back, unreadable subdirectory, watcher restart retried, `Close` beginning during `Resume`'s watcher setup (no catch-up, no warning), only one of two servers on a root watches and indexes a save (`TestWatcherOneLeaderPerRoot`), the follower takes over with a catch-up run when the leader exits (`TestWatcherFollowerTakesOver`), `Resume` in a follower queues no catch-up (`TestResumeFollowerSkipsCatchUp`). |
 | `nonotify_linux_test.go` | A root on 9p is named by `noNotify`, warned once per process and reported in `Status.Unwatched`; its watcher walks no directory; other file systems are not. Build: Linux. |
@@ -85,7 +85,8 @@ graph TD
 | `windows_root_test.go` | Windows system directories refused as roots: `windowsSystemDir`, `wslWindowsSystemDir` and `wslBroadDir` (`/mnt`, a drive mount, the Windows user home seen from WSL) and `diskCase` (the on-disk spelling, on a temp dir) as pure functions on every OS, and through `validateRoot` on Windows only. |
 | `busy_test.go` | A run reporting locked files (`index.Status.Busy`, fake run) queues a files run for just them after `lockRetryDelay(0)`, without holding back a request made meanwhile; a clean run resets the count; after `busyRetries` no retry is scheduled. |
 | `junction_windows_test.go` | (Windows only) a root that is an NTFS junction, or lies below one, is accepted by `validateRoot` and resolved to the real directory. |
-| `zz_verify_test.go` | Verification tests: concurrent `Workspace` calls, cancelled contexts, enqueue during a lock retry, recreate while locked, a directory moved out and the forced debounce flush, status read from disk before any run, home symlink guard, `Close` cancelling a blocked run, junk `roots.json`, a files run with only deletions, junk paths, `Ready` remediation text, a failed query embed does not enqueue, recreate absorbing queued files, catch-up with and without `auto_index`, double `Close`, `.git/refs` plus hidden and excluded directories, kernel file systems refused. |
+| `fetching_test.go` | `Scroll` never reaches `Dimension`; a missing collection is `ErrNotIndexed` for `Scroll` without the embedder; during a download `Search` and `Ready` answer at once with `ErrFetching` and the index run still waits. |
+| `zz_verify_test.go` | Verification tests: concurrent `Workspace` calls, cancelled contexts, an explicit call cutting a lock retry and a non-explicit one waiting, recreate while locked, a directory moved out and the forced debounce flush, status read from disk before any run, home symlink guard, `Close` cancelling a blocked run, junk `roots.json`, a files run with only deletions, junk paths, `Ready` remediation text, a failed query embed does not enqueue, recreate absorbing queued files, catch-up with and without `auto_index`, double `Close`, `.git/refs` plus hidden and excluded directories, kernel file systems refused. |
 
 ---
 
@@ -240,7 +241,8 @@ run absorbs file requests (their lists are dropped, the walk covers them);
 pending file requests accumulate their changed and deleted sets.
 
 **Runner.** `kick` starts one runner goroutine per workspace when there is a
-request and no runner or retry timer. The runner takes the pending request,
+request and no runner or retry timer; an explicit request (`Index`, so
+`rag_index_workspace`) first stops an armed retry timer, so it starts at once. The runner takes the pending request,
 waits for the global slot, runs `index.Run` with the engine's context, then
 loops: a request made during the run starts right after it. Runs of
 different workspaces serialize on the slot. `Progress` updates the
@@ -252,7 +254,8 @@ a 1,800-file root: 384 MB resident while idle before, 70 MB after).
 ```mermaid
 flowchart TD
     A[Index / IndexFiles / watcher] --> B[enqueue: fails = 0, merge]
-    B --> C{runner, retry timer<br/>or nothing queued?}
+    B --> B1[explicit: stop the retry timer]
+    B1 --> C{runner, retry timer<br/>or nothing queued?}
     C -->|none of these| D[start runner]
     C -->|otherwise| Z[wait: the runner picks it up]
     D --> E[take pending request]
@@ -282,7 +285,11 @@ process's lock nor an embedder or store outage drops its files.
   ran).
 - **Any other error**: `retryDelay(fails)` = 30 s doubled per consecutive
   failure, capped at 10 minutes (30 s, 1 m, 2 m, 4 m, 8 m, 10 m). A success
-  or a new request resets the count.
+  or a new request resets the count. Only an explicit request
+  (`rag_index_workspace`) cuts the wait: it stops the armed timer and the run
+  starts at once, also during the lock wait above (it then meets the lock
+  again and re-arms the 2 s retry). The watcher, the catch-up and the retry
+  of locked files wait the timer out.
 - **Recreate that already dropped**: if the failed run had `Recreated` set,
   the retry becomes a full run, so what was re-indexed is not thrown away.
 - **`index.ErrHeadChanged`**: not a failure; a full run is queued at once.
@@ -411,12 +418,20 @@ directory from its watch list when the parent's rename event arrives.
 and calls `store.Search` on the workspace's collection. `Scroll` lists
 symbols matching a filter without a vector.
 
-Both map store errors through `mapErr`: when the collection does not exist
-(`store.ErrNotFound`), or exists with a vector size that differs from the
-embedder's (the embedding model changed), the error becomes `ErrNotIndexed`
+`Search` maps store errors through `mapErr`: when the collection does not
+exist (`store.ErrNotFound`), or exists with a vector size that differs from
+the embedder's (the embedding model changed), the error becomes `ErrNotIndexed`
 and, with `auto_index`, a full run is queued; `index.Run` then creates or
-recreates the collection. A cancelled context returns its own error. A
-failed query embed returns the embed error and queues nothing.
+recreates the collection. `Scroll` maps only the missing collection the same
+way: it never reads the vector size, so it never reaches the embedder, and any
+other store error comes back as it is. A cancelled context returns its own
+error. A failed query embed returns the embed error and queues nothing.
+
+`Search` and `Ready` call the embedder with `embed.WithoutFetchWait`: while the
+runtime or the model is being downloaded, which takes minutes, they do not wait
+for it. `Search` returns an error wrapping `embed.ErrUnavailable` and
+`embed.ErrFetching`, and `Ready` answers `FetchingMsg`; the download keeps
+running, and an index run, which carries no mark, waits through it.
 
 After each query both also check whether the store reopened the collection's
 file because it was deleted or replaced on disk (`resyncIfReopened`, through
@@ -432,9 +447,11 @@ instead of ranking incomparable vectors. A match is remembered until
 `state.json` changes (another server, started with another model, may have
 rebuilt the index). `Scroll` needs no vector and is not affected.
 
-`Ready` checks, in order, that the embedder answers (`Dimension`), that the
+`Ready` is for the searches that embed their query. It checks, in order, that
+the embedder answers (`Dimension`, without waiting for a download), that the
 store answers and that the collection exists; when not, the text says what
-to do (start Ollama and pull the model, or index the workspace).
+to do (see the embedder state in `rag_server_info`, wait for the download, or
+index the workspace). The tools that only read the index do not call it.
 
 ---
 
@@ -481,9 +498,9 @@ Keys from [internal/config](../internal/config/README.md):
 | `watch_debounce` | `1s` | Debounce period of the watcher. |
 | `exclude_patterns` | `node_modules`, `vendor`, `target`, `build`, `dist`, `__pycache__` | Directory names not watched, passed to `index.Run` as `Exclude`. |
 | `max_files` | `20000` | Passed to `index.Run` as `MaxFiles`: a full run over more indexable files fails and is not retried. `0` = no limit. |
+| `embed_max_tokens` | `8192` | Passed to `index.Run` as `EmbedTokens`: how much of a symbol is embedded. The next run after a change re-embeds the whole workspace. |
 | `allowed_workspace_paths` (env `RAGCODE_ALLOWED_PATHS`) | empty | When set, roots must be under one of these. |
 | `auto_create_ide_rules` | `true` | Read by the index tool before it calls `WriteIDERules`. |
-| `ollama_base_url` | `http://localhost:11434` | Only named in the `Ready` message, with the password of a `user:password@` URL shown as `xxxxx` (`config.Redacted`). |
 
 ### Files written
 

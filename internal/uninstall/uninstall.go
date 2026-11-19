@@ -21,12 +21,13 @@ import (
 	"github.com/doITmagic/rag-code-mcp/v2/engine"
 	"github.com/doITmagic/rag-code-mcp/v2/internal/config"
 	"github.com/doITmagic/rag-code-mcp/v2/internal/idepaths"
+	"github.com/doITmagic/rag-code-mcp/v2/internal/llama"
 )
 
 // Options controls Run.
 type Options struct {
 	Yes    bool // remove every <root>/.ragcode without asking
-	Docker bool // also remove the ragcode-ollama container and a leftover ragcode-qdrant (v1)
+	Docker bool // also remove the ragcode-ollama and ragcode-qdrant containers of earlier versions
 	In     io.Reader
 	Out    io.Writer
 }
@@ -52,6 +53,9 @@ func Run(ctx context.Context, o Options) error {
 	home := config.HomeDir()
 	step(o.Out, "Stopping rag-code-mcp processes")
 	StopProcess(ctx, Binary(home))
+	for _, p := range llama.ServerPaths(home) {
+		StopProcess(ctx, p) // an embedding server whose RagCode process was killed
+	}
 
 	step(o.Out, "Removing IDE entries")
 	targets := idepaths.Targets()
@@ -123,11 +127,22 @@ func Run(ctx context.Context, o Options) error {
 
 	if o.Docker {
 		step(o.Out, "Removing Docker containers")
-		for _, c := range []string{"ragcode-qdrant", "ragcode-ollama"} {
-			if out, err := exec.CommandContext(ctx, "docker", "rm", "-f", c).CombinedOutput(); err != nil {
-				warn(o.Out, c+": "+strings.TrimSpace(string(out)))
-			}
-			_ = exec.CommandContext(ctx, "docker", "volume", "rm", c).Run()
+		if out, err := exec.CommandContext(ctx, "docker", "rm", "-f", "ragcode-qdrant").CombinedOutput(); err != nil {
+			warn(o.Out, "ragcode-qdrant: "+strings.TrimSpace(string(out)))
+		}
+		_ = exec.CommandContext(ctx, "docker", "volume", "rm", "ragcode-qdrant").Run()
+		// The Ollama container goes only when it is RagCode's; its volume goes by
+		// name, because this flag is the explicit request to remove it.
+		switch out, err := RemoveOllama(ctx); {
+		case errors.Is(err, ErrNoDocker):
+			warn(o.Out, err.Error())
+		case err != nil:
+			warn(o.Out, ollamaName+": "+err.Error())
+		case out == Foreign:
+			warn(o.Out, "container "+ollamaName+" is not an Ollama of RagCode, left alone")
+		}
+		if err := RemoveOllamaVolume(ctx); err != nil && !errors.Is(err, ErrNoDocker) {
+			warn(o.Out, err.Error())
 		}
 	}
 	ok(o.Out, "RagCode MCP uninstalled")
@@ -254,3 +269,136 @@ func stripPath(rc, binDir string) error {
 func step(w io.Writer, s string) { fmt.Fprintf(w, "\033[0;34m==>\033[0m %s\n", s) }
 func ok(w io.Writer, s string)   { fmt.Fprintf(w, "\033[0;32m✓\033[0m %s\n", s) }
 func warn(w io.Writer, s string) { fmt.Fprintf(w, "\033[1;33m!\033[0m %s\n", s) }
+
+// ErrNoDocker says RemoveOllama could not ask Docker: it is not on PATH or
+// the daemon did not answer.
+var ErrNoDocker = errors.New("docker is not available")
+
+// Outcome is what is known about the container named ragcode-ollama.
+type Outcome int
+
+const (
+	Absent  Outcome = iota // no such container
+	Ours                   // an Ollama of RagCode, still there
+	Foreign                // something else under that name: never touched
+	Removed                // an Ollama of RagCode, removed
+)
+
+const (
+	ollamaName = "ragcode-ollama"
+	ollamaDir  = "/root/.ollama" // where every RagCode version mounted the models
+)
+
+// FindOllama says whether the container ragcode-ollama exists and is the one
+// RagCode v1 and v2 created: its image is ollama/ollama (any tag or digest,
+// any registry prefix) and it mounts ollamaDir. RagCode set no label, so
+// nothing else proves it. volume is the named volume ragcode-ollama that
+// holds the models, only when that is what the container mounts at ollamaDir;
+// a host directory (-models-dir, v1) is the user's and gives no volume.
+// The error is ErrNoDocker when Docker could not be asked, otherwise why
+// the container could not be read; nothing is removed here.
+func FindOllama(ctx context.Context) (c Outcome, volume string, err error) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return Absent, "", ErrNoDocker
+	}
+	listed, err := ollamaListed(ctx)
+	if err != nil {
+		return Absent, "", fmt.Errorf("%w: %w", ErrNoDocker, err)
+	}
+	if !listed {
+		return Absent, "", nil
+	}
+	out, err := exec.CommandContext(ctx, "docker", "container", "inspect", "--format",
+		"{{.Config.Image}}|{{range .Mounts}}{{.Type}}={{.Name}}={{.Destination}};{{end}}", ollamaName).CombinedOutput()
+	if err != nil {
+		if strings.Contains(strings.ToLower(string(out)), "no such container") {
+			return Absent, "", nil // removed between ps and inspect
+		}
+		return Absent, "", fmt.Errorf("docker container inspect %s: %w: %s", ollamaName, err, strings.TrimSpace(string(out)))
+	}
+	image, mounts, _ := strings.Cut(strings.TrimSpace(string(out)), "|")
+	if !isOllamaImage(image) {
+		return Foreign, "", nil
+	}
+	models := false
+	for _, m := range strings.Split(mounts, ";") {
+		parts := strings.SplitN(m, "=", 3) // type, name, destination
+		if len(parts) == 3 && parts[2] == ollamaDir {
+			models = true
+			if parts[0] == "volume" && parts[1] == ollamaName {
+				volume = ollamaName
+			}
+		}
+	}
+	if !models {
+		return Foreign, "", nil
+	}
+	return Ours, volume, nil
+}
+
+// isOllamaImage reports whether ref is the ollama/ollama repository, without
+// its tag or digest, with or without a registry in front.
+func isOllamaImage(ref string) bool {
+	ref, _, _ = strings.Cut(ref, "@")
+	if i := strings.LastIndex(ref, ":"); i > strings.LastIndex(ref, "/") {
+		ref = ref[:i]
+	}
+	return ref == "ollama/ollama" || strings.HasSuffix(ref, "/ollama/ollama")
+}
+
+// ollamaListed asks ps whether a container of exactly that name exists.
+func ollamaListed(ctx context.Context) (bool, error) {
+	names, err := exec.CommandContext(ctx, "docker", "ps", "-a", "--filter", "name=^"+ollamaName+"$", "--format", "{{.Names}}").Output()
+	return strings.TrimSpace(string(names)) == ollamaName, err
+}
+
+// DropOllamaContainer removes the container with docker rm -f. A refused
+// removal counts as done when the container is gone by then.
+func DropOllamaContainer(ctx context.Context) error {
+	out, err := exec.CommandContext(ctx, "docker", "rm", "-f", ollamaName).CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	if listed, lerr := ollamaListed(ctx); lerr == nil && !listed {
+		return nil
+	}
+	return fmt.Errorf("docker rm -f %s: %w: %s", ollamaName, err, strings.TrimSpace(string(out)))
+}
+
+// RemoveOllamaVolume removes the volume ragcode-ollama. A refused removal
+// counts as done when the volume is no longer listed (it was gone already);
+// otherwise the error carries Docker's answer.
+func RemoveOllamaVolume(ctx context.Context) error {
+	out, err := exec.CommandContext(ctx, "docker", "volume", "rm", ollamaName).CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	if names, lerr := exec.CommandContext(ctx, "docker", "volume", "ls", "-q", "--filter", "name=^"+ollamaName+"$").Output(); lerr == nil && strings.TrimSpace(string(names)) == "" {
+		return nil
+	}
+	return fmt.Errorf("volume %s not removed: %w: %s", ollamaName, err, strings.TrimSpace(string(out)))
+}
+
+// RemoveOllama removes the ragcode-ollama container and volume that RagCode
+// v2 created before it ran the embedding model itself: the container
+// restarts forever (--restart always) and would keep its memory. Only a
+// container FindOllama recognises is removed, and only the volume that it
+// mounted; a Foreign container and a volume without a container are left.
+// With a nil error the outcome is final. When the volume could not be removed
+// the outcome is Removed together with the error; when the container could
+// not, it is Ours. The error is ErrNoDocker when Docker could not be asked.
+func RemoveOllama(ctx context.Context) (Outcome, error) {
+	c, volume, err := FindOllama(ctx)
+	if c != Ours || err != nil {
+		return c, err
+	}
+	if err := DropOllamaContainer(ctx); err != nil {
+		return Ours, err
+	}
+	if volume != "" {
+		if err := RemoveOllamaVolume(ctx); err != nil {
+			return Removed, err
+		}
+	}
+	return Removed, nil
+}

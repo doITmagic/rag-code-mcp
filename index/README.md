@@ -76,7 +76,7 @@ graph LR
 
 | File | Covers |
 |------|--------|
-| `index_test.go` | The main suite, with a line-based fake analyzer and a hook embedder: full, incremental, delete, recreate, model and `Format` change, embed failure, parse failures and panics, cancel, `ErrHeadChanged`, relation resolution, `Skip`, `Walk`, `.gitignore`, linked worktrees, symlinks in `Files`, byte-budgeted upsert batches, empty collection with stale state, a crash between a recreate's state save and its drop, moved targets, vanished referrers, a file that changed between the two passes, deleted paths counted only when they were indexed, relation target kinds (`TestResolutionTargetKinds`) and inherited members through the owner's bases (`TestResolutionThroughBases`), in full and files runs, Go bases limited to embeddings (`TestResolutionThroughBasesGoEmbeddingOnly`), a run cancelled before it changed anything keeping the previous `done` status (`TestRunCancelledKeepsDoneStatus`), and a run with nothing to do keeping the last run's counters on disk (`TestRunWithoutChangesKeepsLastCounters`), and a model the embedder cannot serve leaving the old index and state untouched (`TestRunModelChangeUnavailableKeepsIndex`), the WARN for an unreadable directory (`TestWalkWarnsUnreadableDir`), RagCode's own home pruned (`TestWalkSkipsOwnHome`), a failed run that changed nothing keeping the last real counters under its error (`TestRunFailedUnchangedKeepsCounters`), a files run skipping a file inside a linked worktree (`TestRunFilesSkipsLinkedWorktree`), a run with nothing to do recording the current branch (`TestRunWithoutChangesRecordsBranch`), a run with nothing to do after one stopped by `ErrHeadChanged` keeping that run's counters (`TestRunAfterHeadChangedKeepsCounters`), and a file deleted between the scan and the parse purged, not counted as failed (`TestRunFileVanishedDuringRun`), and a full walk over `MaxFiles` refused before parsing, leaving no empty collection and keeping an existing index (`TestRunMaxFiles`), and a repository git refuses (a fake `git` answering `dubious ownership`, exit 128) reported once per run in the log and `Status.Warning`, cleared by the next run once git accepts it (`TestRunReportsGitRefusedRepository`). Its `TestMain` points `RAGCODE_HOME` at a temp dir. It also sets `TMPDIR`, `TMP` and `TEMP` to the symlink-resolved temp dir (macOS `/var` -> `/private/var`, Windows 8.3 short names), so `t.TempDir()` paths compare equal to the resolved paths the product returns. |
+| `index_test.go` | The main suite, with a line-based fake analyzer and a hook embedder: full, incremental, delete, recreate, model and `Format` change, a symbol embedded whole up to the memory bound, `embedText` at the default bound, and another limit re-embedding everything (`TestRunEmbedTokens`), embed failure, parse failures and panics, cancel, `ErrHeadChanged`, relation resolution, `Skip`, `Walk`, `.gitignore`, linked worktrees, symlinks in `Files`, byte-budgeted upsert batches, empty collection with stale state, a crash between a recreate's state save and its drop, moved targets, vanished referrers, a file that changed between the two passes, deleted paths counted only when they were indexed, relation target kinds (`TestResolutionTargetKinds`) and inherited members through the owner's bases (`TestResolutionThroughBases`), in full and files runs, Go bases limited to embeddings (`TestResolutionThroughBasesGoEmbeddingOnly`), a run cancelled before it changed anything keeping the previous `done` status (`TestRunCancelledKeepsDoneStatus`), and a run with nothing to do keeping the last run's counters on disk (`TestRunWithoutChangesKeepsLastCounters`), and a model the embedder cannot serve leaving the old index and state untouched (`TestRunModelChangeUnavailableKeepsIndex`), the WARN for an unreadable directory (`TestWalkWarnsUnreadableDir`), RagCode's own home pruned (`TestWalkSkipsOwnHome`), a failed run that changed nothing keeping the last real counters under its error (`TestRunFailedUnchangedKeepsCounters`), a files run skipping a file inside a linked worktree (`TestRunFilesSkipsLinkedWorktree`), a run with nothing to do recording the current branch (`TestRunWithoutChangesRecordsBranch`), a run with nothing to do after one stopped by `ErrHeadChanged` keeping that run's counters (`TestRunAfterHeadChangedKeepsCounters`), and a file deleted between the scan and the parse purged, not counted as failed (`TestRunFileVanishedDuringRun`), and a full walk over `MaxFiles` refused before parsing, leaving no empty collection and keeping an existing index (`TestRunMaxFiles`), and a repository git refuses (a fake `git` answering `dubious ownership`, exit 128) reported once per run in the log and `Status.Warning`, cleared by the next run once git accepts it (`TestRunReportsGitRefusedRepository`). Its `TestMain` points `RAGCODE_HOME` at a temp dir. It also sets `TMPDIR`, `TMP` and `TEMP` to the symlink-resolved temp dir (macOS `/var` -> `/private/var`, Windows 8.3 short names), so `t.TempDir()` paths compare equal to the resolved paths the product returns. |
 | `busy_unix_test.go` | Build tag `unix`. A file whose read fails with an error classified busy (faked: mode 000) is failed, listed in `Busy`, keeps its old points, and sets `Status.Warning` on disk; the next run that reads it clears both. |
 | `busy_windows_test.go` | Windows only. A file opened elsewhere with no sharing reads as busy (`fileBusy`), a missing file does not. |
 | `js_object_members_test.go` | With the real JavaScript analyzer: `Obj.f()` through a default or named import of an object literal with a shorthand or `key: ident` member (`export default { getToken }`, `export const api = { read }`) resolves exactly to the function the member names. |
@@ -116,6 +116,7 @@ type Options struct {
     Files      []string     // nil = full walk; otherwise only these files are checked
     Deleted    []string     // files to purge from the index
     MaxFiles   int          // a full walk with more indexable files fails with ErrTooManyFiles; 0 = no limit
+    EmbedTokens int         // the embedder's input limit in tokens; 0 = embed.DefaultTokens. A change re-embeds everything
     Recreate   bool         // drop the collection under the lock first
     Log        *slog.Logger // nil discards
     Progress   func(Status) // called at most every 500 ms, from the run goroutine
@@ -181,10 +182,11 @@ type Entry struct {
 type State struct {
     Model  string           `json:"model,omitempty"`  // embedding model of the points
     Format int              `json:"format,omitempty"` // Format of the points
+    EmbedTokens int         `json:"embed_tokens,omitempty"` // token limit the points were embedded up to
     Files  map[string]Entry `json:"files"`            // absolute path -> entry
 }
 
-const Format = 16
+const Format = 17
 ```
 
 `Format` is the version of what parsers and the indexer store. It is bumped
@@ -243,6 +245,8 @@ at the top of the same file, or `path.Join` of such consts and literals; a
 Gin `Use(mw)` result is a router with its receiver's prefix; a chi sub-router
 mounted in the same function gets the `Mount` path as its prefix, and a chi
 prefix's trailing `/` is dropped before the path is joined; Go interface methods are method symbols (metadata `interface`) that a name-only match never takes, so a call through a parameter or local typed with a workspace interface links exactly to the interface's method; a Go call through a named field of a non-generic struct declared in the same file targets the field's declared type, so `s.repo.Find()` links to `Repo.Find` and `s.db.Exec()` on an external type is no longer bound by name.
+Version 17: a symbol is embedded up to the embedder's token limit (8192 tokens
+for the built-in model) instead of its first 2000 bytes.
 
 ---
 
@@ -257,12 +261,15 @@ flowchart TD
     C -->|no| D
     C1 --> D[git rev-parse: branch + HEAD<br/>write status 'scanning']
     D --> E[LoadState state.json]
-    E --> E1[probe Embedder.Dimension]
-    E1 -->|error| E2[fail: index and state untouched]
-    E1 --> F{model changed or<br/>Format changed?}
-    F -->|yes| G[Recreate: save empty state,<br/>then DeleteCollection]
-    F -->|no| H
-    G --> H[EnsureCollection with embedder dimension]
+    E --> F{model, Format or<br/>embed token limit changed?}
+    F --> E1{index matches: take the size<br/>of the stored collection?}
+    E1 -->|no| E3[probe Embedder.Dimension]
+    E1 -->|yes| H
+    E3 -->|error| E2[fail: index and state untouched]
+    E3 --> G{any change, or Recreate?}
+    G -->|yes| G1[Recreate: save empty state,<br/>then DeleteCollection]
+    G -->|no| H
+    G1 --> H[EnsureCollection with the size]
     H --> I{collection new,<br/>recreated or empty?}
     I -->|yes| I1[fresh: empty state, Files = nil]
     I -->|no| J
@@ -294,21 +301,31 @@ re-does the files that were not recorded.
 
 ### 2. Model, Format and recreate
 
-First the embedder is probed for its dimension (`Embedder.Dimension`). A model
-it cannot serve (a typo in `ollama_embed`, a model not pulled) fails the run
-here, before the state or the collection change, so the index of the previous
-model survives.
+The state's `Model`, `Format` and embed limit are compared first: they need no
+embedder. Then the vector size is settled. When nothing changed, the state lists
+files and the collection exists, the size is the one stored with the collection
+(`Store.VectorSize`), and the embedder is not asked: a server restart on an
+unchanged workspace does not load the model, and a run with a file to embed
+starts it at its first `Embed`. In every other case (`Recreate`, a changed model,
+`Format` or limit, an empty state, a missing collection, a store that cannot
+tell the size) the embedder is probed for its dimension (`Embedder.Dimension`)
+before anything is dropped. A model it cannot serve (a missing or broken model
+file, an embedder that cannot start) fails the run here, before the state or the
+collection change, so the index of the previous model survives.
 
 The state's `Model` is compared with `Embedder.Model()`. Vectors of two
 models must never share a collection, so a different model forces a
-recreate, whatever the vector dimension. A non-empty state with another
+recreate, whatever the vector dimension. An index made with Ollama's
+`embeddinggemma-2:270m` carries that name, while the built-in model is named
+`embeddinggemma-2-Q8_0`, so the first run after upgrading re-embeds the
+workspace. A non-empty state with another
 `Format` forces one too.
 
 On recreate the empty state is saved **before** the collection is dropped:
 after a crash in between, a stale `state.json` would otherwise match every
 file and no incremental run would re-embed them.
 
-Then `EnsureCollection` creates the collection with the embedder's dimension
+Then `EnsureCollection` creates the collection with that size
 (when the collection exists with another vector size, the store drops and recreates it and reports `recreated`). The run is
 **fresh** when the collection did not exist, was recreated, or holds no
 points although the state lists some (an interrupted first run, a failed
@@ -316,7 +333,7 @@ recreate, a manual delete). When the collection holds points but the state
 lists no file (a crash between a recreate's state save and its drop, an
 unreadable `state.json`), the collection is dropped and the run is fresh too:
 otherwise the points of files deleted or ignored meanwhile would stay
-searchable forever. A fresh run starts from an empty state and walks
+searchable forever. A collection that holds nothing although the state lists files is probed for the embedder's size before it is filled again. A fresh run starts from an empty state and walks
 everything, since a files-only run on an empty store would leave a partial
 index nothing ever completes. A fresh run also skips every store lookup.
 
@@ -361,7 +378,7 @@ symbol IDs are remembered for `staleReferrers`.
 
 Parsing runs on 2 workers with at most 256 KiB of source being parsed at once
 (a weighted semaphore), whatever the CPU count: tree-sitter needs hundreds of
-times a file's size while it parses, and a laptop needs its CPU for Ollama.
+times a file's size while it parses, and a laptop needs its CPU for the embedding model.
 A panic in an analyzer is recovered and counted as a parse failure. The file
 is `stat`ed before it is read, so a write in between leaves a newer mtime on
 disk than in the state and the next run picks it up again. A file that grew
@@ -562,8 +579,15 @@ stopping): that run is interrupted and resumes on the next start.
 
 Symbols are embedded 16 at a time and upserted in batches of 64 items or
 8 MiB of `Content`, whichever comes first (a whole file can be one symbol).
-Each embed text is `kind qualifiedName\nsignature\ndoc\ncontent`, cut to 2000
-bytes on a rune boundary, then wrapped with `embed.DocText` for the model.
+Each embed text is `kind qualifiedName\nsignature\ndoc\ncontent`, cut on a rune
+boundary only at a memory bound of 64 bytes per token of `Options.EmbedTokens`
+(512 KiB for the default 8192 tokens; files over 256 KiB are never indexed, so
+it bites only for a limit under 4096), then wrapped with `embed.DocText` for
+the model. The bound is not a density estimate: a symbol under it goes whole
+and the embedder cuts a text the model refuses by the token count the server
+reports, so a symbol that fits the model's limit is embedded whole. What lies
+beyond the limit is not in the vector; the stored `Content` is
+whole either way.
 Transport retries are the embedder's job; a vector count that does not match
 the text count fails the run.
 
@@ -592,7 +616,7 @@ writes the previous counters back too, as `done` and with its own branch (a
 `git checkout -b` that changes no file). A previous run stopped by
 `ErrHeadChanged` counts as a previous `done` here: it changed the index, so
 its counters are the last real ones. A run that fails before it changes the
-index (Ollama down at catch-up, an unknown model) writes the previous counters
+index (embedder unavailable at catch-up, an unknown model) writes the previous counters
 back under its own `failed` phase and error, and the next run with nothing to
 do turns them into `done` again instead of showing 0/0. A failed run that did
 change the index writes its own status.
@@ -707,7 +731,8 @@ these keys from [internal/config](../internal/config/README.md) into `Options`:
 |-----|-------------|
 | `exclude_patterns` | `Options.Exclude`: directory names pruned at any depth. |
 | `max_files` | `Options.MaxFiles`: the limit of indexable files of a full walk (default `20000`, `0` = none). |
-| `ollama_embed` | The embedder's `Model()`; a change recreates the collection. |
+| `embed_max_tokens` | `Options.EmbedTokens`: how much of a symbol is embedded (default `8192`). The state records it (`embed_tokens`); a run with another value drops the collection and re-embeds every file, like a model change. |
+| `embed_model` | Through the embedder's `Model()` (the file name without `.gguf` plus a fingerprint of the file, or the built-in name); a change recreates the collection. |
 | `RAGCODE_HOME` (env) | Moves `Dir(root)` with the rest of the home. |
 
 ---

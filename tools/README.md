@@ -39,7 +39,7 @@ graph LR
 | [parser](../parser/README.md) | parses files on the fly (`rag_read_file_context`, the not-indexed search fallback), normalizes qualified names, lists the registered languages |
 | [index](../index/README.md) | the skip rules of its own walk (`Skip`, `Secret`, `GitIgnored`, `IsLinkedWorktree`), the per-root state (`LoadState`, `ReadStatus`, `Running`) |
 | [internal/update](../internal/update/README.md) | `Latest` (the cached release check), `Less` (version order), `GitHubLatest` |
-| [internal/config](../internal/config/README.md) | `Config` (Ollama URL and model, exclude patterns, `auto_create_ide_rules`) |
+| [internal/config](../internal/config/README.md) | `Config` (exclude patterns, `auto_create_ide_rules`, `min_free_memory_mb`) |
 
 ## Files
 
@@ -51,7 +51,7 @@ graph LR
 | [`usages.go`](usages.go) | `rag_find_usages` and `rag_call_hierarchy`: `twinKey`/`twinOf`/`mergeTwins` (one entry per qualified name, file and callable or not, never for doc chunks or routes, used by every tool), `resolveSymbol` (one symbol, twins merged, an equal qualified name before suffix matches, or an `ambiguous` answer), `referrers`, `vueDefault`/`vueTags` (a Vue component's `default` symbol and its tags with no import), `keepWithin` (one limit for distinct direct and via callers), `viaInterfaces` (`phpVia`, `goVia`, and `inheritors`, the down walk both share), `exactRel` (by_name or not), `ambiguousByName`, the hierarchy `walker` (`walk` level by level, `next`), `writeTree` |
 | [`exports.go`](exports.go) | `rag_list_package_exports`: `ExportsInput`, `Export`, `moduleSymbols`, `shortModule` for short package names, `dirModules` for a directory or a source file of the workspace |
 | [`readfile.go`](readfile.go) | `rag_read_file_context`: `ReadInput`, `Outline`, line ranges (`lineRange` streams a file over 8 MiB and returns its first 8 KiB for the binary check), outline, one symbol; line and signature clipping |
-| [`index.go`](index.go) | `rag_index_workspace` and `rag_server_info`: `IndexInput`, `Service`, `Update`, `KnownRoot`, the Ollama probe, the release check (through `update.Latest`), `knownRoots` |
+| [`index.go`](index.go) | `rag_index_workspace` and `rag_server_info`: `IndexInput`, `Update`, `KnownRoot`, `embedderStatus`, the release check (through `update.Latest`), `knownRoots` |
 
 Tests:
 
@@ -65,6 +65,7 @@ Tests:
 | [`js_browser_test.go`](js_browser_test.go) | with the real JavaScript and HTML analyzers, `rag_find_usages resolveError` of a function declared inside an IIFE lists the call from another script's ready callback and the `onclick` handler of a template; a helper inside the `describe` of a Jest file without imports is no symbol; `onclick="save()"` is no usage of a class method `Cart.save` nor of an ES module function; after `window.resolveError = handleResolve`, `onclick="resolveError(1)"` is a usage of the global `resolveError`, which is one of `handleResolve`; `<StatusCard />` is a usage of `src/StatusCard.default` of a `<script setup>` without top-level statements; `onclick` calls of a global two scripts declare are in `ambiguous_by_name` of each, not of a module function of that name. |
 | [`js_object_members_test.go`](js_object_members_test.go) | with the real JavaScript analyzer, `rag_find_usages getToken` counts `JwtService.getToken()` calls through `export default { getToken }` in each importer. |
 | [`laravel_test.go`](laravel_test.go) | with the real PHP analyzer, `rag_find_usages` of a controller action lists the route naming it by `'uses' => 'C@m'` inside a namespaced, prefixed group, and not the same action of another controller; `rag_find_usages users.show` lists the controller method returning `view('users.show')` as an exact `imports`; `rag_find_usages` of a model lists the relation method naming it as `belongsTo('App\Lawyer')` and of a listener the event provider's `$listen` property; `$this->mailer->send()` on a property assigned from a typed constructor parameter is an exact usage of that service's `send` only; a route registered inside a method (`App\Providers.map./`) does not make the method `map` ambiguous, and `/about` registered there is found by its path; a property `$items` and a method `items()` of one class: `rag_find_usages` by qualified name or by name picks the method and lists `$cart->items()` as its exact usage; a named route lists `redirect()->route('users.index')` in a controller and `route('users.index')` in a Blade view (`TestUsagesOfNamedLaravelRoute`). |
+| [`lookup_test.go`](lookup_test.go) | usages, hierarchy and exports answer at once from the index with the embedder down, short of memory or still loading (also during a model change) while `rag_search` reports it; without an index they say `not_indexed`; a failing store is named as the store; `rag_search` answers at once, with a retry message, while the model downloads (the index run keeps waiting), also when only the query embed meets the download. |
 | [`roots_test.go`](roots_test.go) | an empty `workspace_root` from a client without the `roots` capability is answered at once, `roots/list` is not sent; a client root `file://<host>/path` is refused outside Windows (naming the URI), `file://localhost/` is local. |
 | [`tools_test.go`](tools_test.go) | an MCP client and server over in-memory transports with a real engine on `store.NewMemory()`, `embed.Fake` and a fake `.fk` analyzer. Missing and bad roots, the root taken from client roots, every tool, the not-indexed and during-recreate fallbacks, dependency down, tool schemas, helpers, fallback skip rules, edits and deletes keeping results right, no Qdrant left in `rag_server_info`, same-name variants, lookup by declared name with `file_path` as a hard filter, `by_name` usages and hierarchy nodes, the live state of a root being indexed in `rag_server_info`, the last run's error kept after a restart, a deleted root reported as `missing`, overloads and get/set pairs resolved as one symbol, twins as one hierarchy node (both directions, every depth), one export (and count) and one search hit, `ambiguous_by_name` not counting calls that name another symbol's qualified name, the module spelling of a barrel file in `rag_list_package_exports`, an equal qualified name winning over suffix matches, a code symbol winning over a doc chunk of the same name, the no-exact-match message of an identifier query (and its not-indexed-yet variant during a run), a filtered miss during a run named by its filters when the index has the name outside them, the message of a filtered search with no hit, a qualified call bound by name only marked `by_name`, short directory names and file paths in `rag_list_package_exports` with one module per file (`.fkm` analyzer), the export-less file message, an unreadable directory reported as such, an excluded directory and file reported as not indexed, the zero-usage note not claiming imports, an unused object constant naming its called members, the text search beside the index (whole word, hidden directories skipped, none when the index knows the name, the 20-line cut), `indexing` (not `ok`, not the fallback) while a run goes over an existing index, `kinds` validation and the no-such-kinds message, `limit` respected exactly with `truncated` in usages and the hierarchy, a binary file with an unknown extension not dumped, also for a line range, a saved run warning shown as `index.warning` and in the `rag_server_info` root entry |
 | [`vue_auto_import_test.go`](vue_auto_import_test.go) | with the real JavaScript analyzer, a Vue component used by tag with no import (Nuxt auto-import) and by an importer: `rag_find_usages` and incoming `rag_call_hierarchy` (by the component's name and by its `default` symbol) list both parents, the tag with no import marked `by_name`; a recursive component uses itself once |
@@ -73,7 +74,6 @@ Tests:
 | [`usages_test.go`](usages_test.go) | `rag_find_usages` `limit` counts live callers: deleted caller files do not shrink the answer below `limit` nor clear `truncated`; usages, incoming hierarchy nodes and `ambiguous_by_name` stay in the symbol's language, while an `html` caller (`.fkh` analyzer) is still a usage; 1000 callers in another language do not mark one real usage `truncated`, and deleted callers filling the store scroll give the grep advice, not "raise limit"; a getter's candidate id selects the merged getter/setter with the outgoing calls of both |
 | [`readfile_test.go`](readfile_test.go) | a line range of a binary file over 8 MiB returns no lines (the first 8 KiB are checked although the file is streamed) |
 | [`source_files_test.go`](source_files_test.go) | the not-indexed fallback and the text search skip a non-hidden `RAGCODE_HOME` inside the root, and find nothing under a `path_prefix` in an excluded, hidden or linked-worktree directory |
-| [`ollama_password_test.go`](ollama_password_test.go) | the password of an `ollama_base_url` with basic auth is not in `rag_server_info` (`ollama.url`, `ollama.error`) nor in the `dependency_down` message |
 | [`inside_root_test.go`](inside_root_test.go) | `within`: with case folding (Windows) a path differing from the root only in case is inside it and gets the root's spelling; without it, outside; a sibling sharing the root's name prefix is never inside |
 | [`junction_windows_test.go`](junction_windows_test.go) | (Windows only) a file reached through an NTFS junction inside the root that points outside it is refused by `insideRoot` |
 | [`fifo_unix_test.go`](fifo_unix_test.go) | the not-indexed fallback keeps the index skip rules: no symlink out of the root, no fifo, no secret file (Unix only) |
@@ -107,8 +107,8 @@ type IndexInfo struct {
 | `ok` | every tool | the answer is in `data`. A lookup that finds nothing is still `ok`, with a message such as `no indexed symbol named "X"; try rag_search` |
 | `not_indexed` | search, usages, hierarchy, exports | the workspace has no index yet. `rag_search` still returns fallback results |
 | `indexing` | the same tools, and `rag_index_workspace` | an index run is running or queued; for `rag_index_workspace` it means "run queued". An answer that would be `ok` becomes `indexing`, keeps its `data` and adds `index run in progress: results may be incomplete until it ends` to the message (`rag_read_file_context` parses on the spot and stays `ok`) |
-| `low_memory` | the same tools as `dependency_down` | the machine has less free memory than `min_free_memory_mb` and the embedding model is not loaded; the message gives the free and the needed megabytes. Nothing is run until memory is freed (or the model is loaded) |
-| `dependency_down` | every tool except `rag_read_file_context` and `rag_server_info` | the embedder (Ollama) or the index store cannot be used; the message says what to do |
+| `low_memory` | `rag_search` | the machine has less free memory than `min_free_memory_mb` and the embedding server has to be started; the message gives the free and the needed megabytes. Nothing is run until memory is freed |
+| `dependency_down` | every tool except `rag_read_file_context`, `rag_index_workspace` and `rag_server_info` | for `rag_search`, the embedder or the index store cannot be used; the message says what to do (for the embedder, to see its state in `rag_server_info`; while the embedding model is being downloaded, to retry in a few minutes, and the download keeps running). For `rag_find_usages`, `rag_call_hierarchy` and `rag_list_package_exports` only the index store, named as such: they never use the embedder |
 | `ambiguous` | `rag_find_usages`, `rag_call_hierarchy` | several symbols match; `data.candidates` lists them |
 
 Input errors (empty query, bad mode, unknown `kinds` value, path outside the
@@ -226,11 +226,18 @@ for a root adds it to `~/.ragcode/roots.json` and, when `watch_enabled` and
 `auto_index` are both on, starts its file watcher. This happens for every
 tool that takes a root, `rag_read_file_context` included.
 
-After the root is resolved, every tool except `rag_read_file_context` and
-`rag_server_info` calls `open`, which also runs `Workspace.Ready`: when the
-embedder or the store is unavailable the answer is `dependency_down`; a
-missing index is let through so each tool can answer `not_indexed` (or fall
-back). With `auto_index` on (the default), a store call that finds the
+After the root is resolved, `rag_search` calls `open`, which also runs
+`Workspace.Ready`: when the embedder or the store is unavailable the answer is
+`dependency_down` (`low_memory` for too little memory); while the embedding
+model is being downloaded `Ready` does not wait for it and the answer is at
+once `dependency_down` with a message to retry shortly. A missing index is let
+through so the tool can answer `not_indexed` (or fall back).
+`rag_find_usages`, `rag_call_hierarchy` and `rag_list_package_exports` embed
+nothing and call `openLookup`, which only resolves the root: they read the index
+on disk and answer while the runtime downloads, the model loads, memory is low
+or the embedder is down, also during a re-embed (then `indexing`, the results
+may be incomplete). `rag_read_file_context`, `rag_index_workspace` (it only
+queues a run) and `rag_server_info` call neither. With `auto_index` on (the default), a store call that finds the
 collection missing, or built with another embedding model, also queues an
 index run, so the next answers report `indexing` without an explicit
 `rag_index_workspace`.
@@ -326,7 +333,8 @@ signature, score, match, content`.
 ### `rag_find_usages`
 
 Every indexed reference to a symbol (calls, extends, implements, uses),
-grouped by file, with the referencing symbol and the line.
+grouped by file, with the referencing symbol and the line. It needs the index
+but not the embedder.
 
 | Input | Type | Description |
 |---|---|---|
@@ -457,7 +465,8 @@ other (`truncated`, raise `limit`).
 
 ### `rag_call_hierarchy`
 
-Callers (incoming) and callees (outgoing) of a function as a tree.
+Callers (incoming) and callees (outgoing) of a function as a tree. It needs the
+index but not the embedder.
 
 | Input | Type | Description |
 |---|---|---|
@@ -507,7 +516,8 @@ per node indented two spaces per level, with ` [by name only]` and
 
 ### `rag_list_package_exports`
 
-The exported symbols of a package or module, grouped by kind.
+The exported symbols of a package or module, grouped by kind. It needs the
+index but not the embedder.
 
 | Input | Type | Description |
 |---|---|---|
@@ -575,7 +585,7 @@ indexed files directly in it (...)` instead of the no-exports messages.
 ### `rag_read_file_context`
 
 Reads a file of the workspace. It parses the file on the spot, so it needs
-neither the index nor Ollama.
+neither the index nor the embedder.
 
 | Input | Type | Description |
 |---|---|---|
@@ -636,10 +646,17 @@ Indexes the workspace.
   (`<root>/.ragcode/RAGCODE.md` and the pointers, see
   [engine](../engine/README.md)); a failure there is added to the message, not
   fatal. Then it queues the run and answers `indexing` right away; no
-  confirmation step. When the existing index has another `Format`, an
+  confirmation step. It does not wait for the embedder, which on first use
+  downloads its runtime and loads the model: an embedder that cannot start
+  (also `low_memory`) is the failure of the queued run, seen in the `index`
+  block and in `rag_server_info`, not a `dependency_down` answer here. When the existing index has another `Format`, or was
+  embedded up to another `embed_max_tokens`, an
   `incremental` request also carries `data.full_reindex`: every file is
-  re-indexed anyway. Progress is visible in the `index` block of any later
-  call, or in `rag_server_info`.
+  re-indexed anyway. Progress is visible in `rag_server_info`, which answers
+  at once, and in the `index` block of any later call. While the runtime or
+  model downloads, `rag_search` answers `dependency_down` at once with a
+  message to retry shortly and waits only for a model load; the three lookup
+  tools never wait for the embedder.
 
 Output `data`: `{root, collection, mode, full_reindex?}`.
 
@@ -652,7 +669,7 @@ Output `data`: `{root, collection, mode, full_reindex?}`.
 
 ### `rag_server_info`
 
-Server version, uptime, Ollama reachability, update availability, registered
+Server version, uptime, embedder state, update availability, registered
 languages and known workspaces. It takes no input and has no `index` block.
 
 Output `data`:
@@ -660,7 +677,7 @@ Output `data`:
 | Key | Content |
 |---|---|
 | `version`, `pid`, `uptime` | this server process |
-| `ollama` | `{url, model, reachable, error}`: `GET <ollama_base_url>/api/tags` (the password of a `user:password@` URL shows as `xxxxx` in `url` and `error`); a probe that times out says Ollama did not answer in time (overloaded or low on memory), any other failure says to start Ollama; reachable but without the model (with or without `:latest`) sets `error` to `model X not pulled: run ollama pull X` |
+| `embedder` | `{model, runtime, state, error?, idle_stop?}`: the embedder's own report, which starts and downloads nothing and does not wait for a start in progress. `state` is `running` (the model is loaded), `starting` (the files are being fetched or the model is loading, also after the call that began it gave up), `stopped` (it starts on the next call) or `not_installed` (the next call downloads the runtime and model first). `error` is why the last start failed. `idle_stop` is how long the loaded model outlives the last call (e.g. `30m0s`, or `never`). `runtime` is e.g. `llama.cpp b12359 (cpu)`; `model` is the name the index stores |
 | `update` | `{current, latest, available}` (see below) |
 | `languages` | the languages of the registered parsers |
 | `roots` | every root in `~/.ragcode/roots.json` with `{root, state, last_run_files, total?, ended_at, warning?}` from its saved index status (`warning` as `index.warning`). A root that no longer exists on disk (its status outlives it under `~/.ragcode`) is reported as `missing`. A status without `ended_at` whose lock nobody holds is reported as `interrupted`. A root this process is indexing or has queued shows its live state instead, as the `index` block does: `queued` or `indexing`, with `last_run_files` the files done so far and `total` the files of the run |
@@ -681,7 +698,7 @@ No clock decides how long a probe may take. `rag_server_info` never waits for
 GitHub: it answers from the cache (`update.Cached`), and a missing or old
 cache is refreshed in the background for the next answer, so the first
 answer after a day says the old tag, or `unknown` when there is none. The
-Ollama probe is waited for as long as the caller waits.
+embedder state needs no wait at all.
 
 ```json
 {"name": "rag_server_info", "arguments": {}}
@@ -729,7 +746,7 @@ CGO_ENABLED=0 go test -short ./tools/   # skips the ~9 s stalled-endpoint test
 
 `index_unix_test.go` has the `unix` build tag. `TestMain` points
 `RAGCODE_HOME` at a temporary directory so no test writes to the real
-`~/.ragcode`; no Ollama or network is needed (the release URL points at a
+`~/.ragcode`; no embedding model or network is needed (the release URL points at a
 closed local port).
 
 ## See also

@@ -50,7 +50,7 @@ func (t *tools) listExports(ctx context.Context, req *mcp.CallToolRequest, in Ex
 	if err != nil {
 		return fail(err.Error())
 	}
-	w, res := t.open(ctx, req, in.WorkspaceRoot)
+	w, res := t.openLookup(ctx, req, in.WorkspaceRoot)
 	if res != nil {
 		return res, nil, nil
 	}
@@ -60,7 +60,7 @@ func (t *tools) listExports(ctx context.Context, req *mcp.CallToolRequest, in Ex
 	}
 	hits, capped, file, err := moduleSymbols(ctx, w, pkg, scroll)
 	if err != nil {
-		return storeErr(ctx, w, err)
+		return lookupErr(ctx, w, err)
 	}
 	hits = mergeTwins(live(w, hits), func(h *store.Hit) *parser.Symbol { return &h.Symbol })
 	byKind := map[string][]Export{}
@@ -112,7 +112,7 @@ func (t *tools) listExports(ctx context.Context, req *mcp.CallToolRequest, in Ex
 	if len(mods) == 0 && len(ks) > 0 {
 		all, _, _, err := moduleSymbols(ctx, w, pkg, nil)
 		if err != nil {
-			return storeErr(ctx, w, err)
+			return lookupErr(ctx, w, err)
 		}
 		if slices.ContainsFunc(live(w, all), func(h store.Hit) bool { return h.Symbol.Exported }) {
 			return reply("ok", fmt.Sprintf("%q has no exported symbols of kinds %v; drop kinds to list them all", pkg, ks), map[string]any{"package": pkg, "modules": mods, "exports": byKind, "truncated": capped}, w)

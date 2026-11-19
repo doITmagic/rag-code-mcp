@@ -2,6 +2,7 @@ package embed
 
 import (
 	"context"
+	"fmt"
 	"hash/fnv"
 	"math"
 	"math/rand/v2"
@@ -14,6 +15,33 @@ type Fake struct {
 	Dim  int          // vector size; 0 means 8
 	Fail atomic.Int32 // Embed fails this many more calls with ErrUnavailable
 	Name string       // Model() result; empty means "fake"
+
+	// Fetch stands for a download in progress while it is open (not closed):
+	// a call marked WithoutFetchWait fails at once with ErrFetching, any other
+	// waits for it to close. Nil means nothing is downloading.
+	Fetch chan struct{}
+}
+
+// fetched waits for the download Fetch stands for, or reports it to a call
+// that must not wait.
+func (f *Fake) fetched(ctx context.Context) error {
+	if f.Fetch == nil {
+		return nil
+	}
+	select {
+	case <-f.Fetch:
+		return nil
+	default:
+	}
+	if fetchWaitDisabled(ctx) {
+		return fmt.Errorf("%w: %w", ErrUnavailable, ErrFetching)
+	}
+	select {
+	case <-f.Fetch:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (f *Fake) dim() int {
@@ -26,6 +54,9 @@ func (f *Fake) dim() int {
 // Embed returns one vector per text.
 func (f *Fake) Embed(ctx context.Context, texts []string) ([][]float32, error) {
 	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := f.fetched(ctx); err != nil {
 		return nil, err
 	}
 	if f.Fail.Add(-1) >= 0 { // counts down past zero; only the first N calls fail
@@ -58,7 +89,12 @@ func (f *Fake) Vector(text string) []float32 {
 }
 
 // Dimension returns Dim.
-func (f *Fake) Dimension(context.Context) (int, error) { return f.dim(), nil }
+func (f *Fake) Dimension(ctx context.Context) (int, error) {
+	if err := f.fetched(ctx); err != nil {
+		return 0, err
+	}
+	return f.dim(), nil
+}
 
 // Model returns Name, or "fake".
 func (f *Fake) Model() string {
@@ -70,5 +106,5 @@ func (f *Fake) Model() string {
 
 var (
 	_ Embedder = (*Fake)(nil)
-	_ Embedder = (*Ollama)(nil)
+	_ Embedder = (*Llama)(nil)
 )

@@ -77,7 +77,7 @@ func (t *tools) register(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{Name: "rag_list_package_exports", Description: "The exported symbols of a package or module, grouped by kind."}, t.listExports)
 	mcp.AddTool(server, &mcp.Tool{Name: "rag_read_file_context", Description: "Read a file of the workspace: a symbol with its relations, a line range, or the outline plus the first 120 lines."}, t.readFile)
 	mcp.AddTool(server, &mcp.Tool{Name: "rag_index_workspace", Description: "Index the workspace: queues a run and returns at once. mode=incremental re-indexes changed files; mode=recreate drops the collection and re-embeds everything."}, t.indexWorkspace)
-	mcp.AddTool(server, &mcp.Tool{Name: "rag_server_info", Description: "Server version, uptime, Ollama reachability, update availability, registered languages and known workspaces."}, t.serverInfo)
+	mcp.AddTool(server, &mcp.Tool{Name: "rag_server_info", Description: "Server version, uptime, embedder state, update availability, registered languages and known workspaces."}, t.serverInfo)
 }
 
 // ---- responses ----
@@ -184,9 +184,9 @@ func (t *tools) resolveRoot(ctx context.Context, req *mcp.CallToolRequest, root 
 	return t.e.Workspace(root)
 }
 
-// open resolves the root and checks the dependencies. The result is nil when
-// the tool can go on; otherwise it is the answer to return.
-func (t *tools) open(ctx context.Context, req *mcp.CallToolRequest, root string) (*engine.Workspace, *mcp.CallToolResult) {
+// resolve is the part of open that every tool shares: the workspace for root,
+// or the answer to return.
+func (t *tools) resolve(ctx context.Context, req *mcp.CallToolRequest, root string) (*engine.Workspace, *mcp.CallToolResult) {
 	w, err := t.resolveRoot(ctx, req, root)
 	if err != nil {
 		res, _, _ := fail(err.Error())
@@ -194,6 +194,25 @@ func (t *tools) open(ctx context.Context, req *mcp.CallToolRequest, root string)
 	}
 	if err := ctx.Err(); err != nil {
 		res, _, _ := fail(err.Error())
+		return nil, res
+	}
+	return w, nil
+}
+
+// openLookup is open for the tools that read the index and embed nothing
+// (usages, call hierarchy, package exports): they never wait for the embedder,
+// which may be downloading its model, loading it or short of memory. A missing
+// index comes back from the first read as not_indexed.
+func (t *tools) openLookup(ctx context.Context, req *mcp.CallToolRequest, root string) (*engine.Workspace, *mcp.CallToolResult) {
+	return t.resolve(ctx, req, root)
+}
+
+// open resolves the root and checks the dependencies of a search: the embedder
+// answers at once, or says that it is downloading, low on memory or down. The
+// result is nil when the tool can go on; otherwise it is the answer to return.
+func (t *tools) open(ctx context.Context, req *mcp.CallToolRequest, root string) (*engine.Workspace, *mcp.CallToolResult) {
+	w, res := t.resolve(ctx, req, root)
+	if res != nil {
 		return nil, res
 	}
 	if ok, msg := w.Ready(ctx); !ok && msg != engine.ErrNotIndexed.Error() {
@@ -229,7 +248,22 @@ func storeErr(ctx context.Context, w *engine.Workspace, err error) (*mcp.CallToo
 	if errors.Is(err, embed.ErrLowMemory) {
 		return reply("low_memory", err.Error(), nil, w)
 	}
-	return reply("dependency_down", err.Error()+": check that Ollama is running (rag_server_info)", nil, w)
+	if errors.Is(err, embed.ErrFetching) {
+		return reply("dependency_down", engine.FetchingMsg, nil, w)
+	}
+	return reply("dependency_down", err.Error()+": see the embedder state in rag_server_info", nil, w)
+}
+
+// lookupErr is storeErr for the tools that embed nothing: a failure there is
+// the index store's, not the embedder's.
+func lookupErr(ctx context.Context, w *engine.Workspace, err error) (*mcp.CallToolResult, any, error) {
+	if cerr := ctx.Err(); cerr != nil {
+		return fail(cerr.Error())
+	}
+	if errors.Is(err, engine.ErrNotIndexed) {
+		return notIndexed(w)
+	}
+	return reply("dependency_down", fmt.Sprintf("index store unavailable (%v)", err), nil, w)
 }
 
 // insideRoot resolves p (absolute or relative to root, symlinks followed like

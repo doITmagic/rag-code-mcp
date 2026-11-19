@@ -25,11 +25,12 @@ func TestVerifyLoadOddInputs(t *testing.T) {
 		{"whitespace only", []byte("\n\n  \n"), ""},
 		{"one byte scalar", []byte("x"), "parse"},
 		{"binary garbage", []byte{0xff, 0xfe, 0x00, 0x01, 0x80, 0x7f, 0x0a, 0x00}, "parse"},
-		{"truncated mapping", []byte("ollama_embed: \"abc"), "parse"},
+		{"truncated mapping", []byte("embed_model: \"abc"), "parse"},
 		{"wrong type", []byte("log_max_size_mb: ten\n"), "parse"},
-		{"unknown keys ignored", []byte("llamafile_url: http://x\nollama_embed: m\n"), ""},
+		{"unknown keys ignored", []byte("llamafile_url: http://x\nollama_base_url: http://y\n"), ""},
 		{"empty exclude list wins", []byte("exclude_patterns: []\n"), ""},
-		{"bad url from file", []byte("ollama_base_url: ':oops'\n"), "ollama_base_url"},
+		{"bad runtime from file", []byte("embed_runtime: gpu\n"), "embed_runtime"},
+		{"relative model from file", []byte("embed_model: m.gguf\n"), "embed_model"},
 		{"negative size", []byte("log_max_size_mb: -3\n"), "log_max_size_mb"},
 	}
 	for _, tt := range tests {
@@ -80,13 +81,22 @@ func TestVerifyLoadMissingFileUnwritableParent(t *testing.T) {
 
 func TestVerifyEnvAppliesOnMissingFileAndIsValidated(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	t.Setenv("OLLAMA_EMBED", "env-model")
+	t.Setenv("RAGCODE_EMBED_MODEL", abs("/env/model.gguf"))
 	cfg, err := Load(path)
 	require.NoError(t, err)
-	assert.Equal(t, "env-model", cfg.OllamaEmbed)
+	assert.Equal(t, abs("/env/model.gguf"), cfg.EmbedModel)
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
-	assert.Contains(t, string(data), "embeddinggemma-2:270m", "written default must not carry env values")
+	assert.NotContains(t, string(data), "env/model.gguf", "written default must not carry env values")
+
+	t.Setenv("RAGCODE_EMBED_RUNTIME", "gpu")
+	_, err = Load(path)
+	assert.ErrorContains(t, err, "embed_runtime")
+	t.Setenv("RAGCODE_EMBED_RUNTIME", "")
+	t.Setenv("RAGCODE_EMBED_MODEL", "relative.gguf")
+	_, err = Load(path)
+	assert.ErrorContains(t, err, "embed_model")
+	t.Setenv("RAGCODE_EMBED_MODEL", "")
 
 	t.Setenv("MCP_LOG_LEVEL", "loud")
 	_, err = Load(path)
@@ -105,19 +115,23 @@ func TestVerifyEnvAppliesOnMissingFileAndIsValidated(t *testing.T) {
 
 func TestVerifyEnvEmptyValueDoesNotOverride(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	require.NoError(t, os.WriteFile(path, []byte("ollama_embed: fromfile\n"), 0o644))
-	t.Setenv("OLLAMA_EMBED", "")
+	require.NoError(t, os.WriteFile(path, []byte("embed_model: "+abs("/from/file.gguf")+"\n"), 0o644))
+	t.Setenv("RAGCODE_EMBED_MODEL", "")
 	cfg, err := Load(path)
 	require.NoError(t, err)
-	assert.Equal(t, "fromfile", cfg.OllamaEmbed)
+	assert.Equal(t, abs("/from/file.gguf"), cfg.EmbedModel)
 }
 
 func TestVerifyYAMLTagsSnakeCase(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(strings.Join([]string{
-		"ollama_base_url: http://o:1",
-		"ollama_embed: m",
+		"embed_model: " + abs("/m/x.gguf"),
+		"llama_server: " + abs("/m/llama-server"),
+		"embed_runtime: vulkan",
 		"embed_threads: 3",
+		"embed_max_tokens: 512",
+		"embed_idle_stop: 45m",
+		"embed_warm_start: true",
 		"min_free_memory_mb: 7",
 		"log_level: error",
 		"log_max_size_mb: 3",
@@ -135,7 +149,7 @@ func TestVerifyYAMLTagsSnakeCase(t *testing.T) {
 	cfg, err := Load(path)
 	require.NoError(t, err)
 	assert.Equal(t, Config{
-		OllamaBaseURL: "http://o:1", OllamaEmbed: "m", EmbedThreads: 3, MinFreeMemoryMB: 7,
+		EmbedModel: abs("/m/x.gguf"), LlamaServer: abs("/m/llama-server"), EmbedRuntime: "vulkan", EmbedThreads: 3, EmbedMaxTokens: 512, EmbedIdleStop: 45 * time.Minute, EmbedWarmStart: true, MinFreeMemoryMB: 7,
 		LogLevel: "error", LogMaxSizeMB: 3, ExcludePatterns: []string{"a", "b"}, MaxFiles: 5,
 		AllowedWorkspacePaths: []string{abs("/x")}, AutoIndex: false, WatchEnabled: false,
 		WatchDebounce: 2 * time.Minute, AutoCreateIDERules: false,
@@ -145,8 +159,9 @@ func TestVerifyYAMLTagsSnakeCase(t *testing.T) {
 
 func TestVerifyDefaultsExact(t *testing.T) {
 	d := Default()
-	assert.Equal(t, "http://localhost:11434", d.OllamaBaseURL)
-	assert.Equal(t, "embeddinggemma-2:270m", d.OllamaEmbed)
+	assert.Equal(t, "auto", d.EmbedRuntime)
+	assert.Empty(t, d.EmbedModel)
+	assert.Empty(t, d.LlamaServer)
 	assert.Equal(t, "info", d.LogLevel)
 	assert.Equal(t, 10, d.LogMaxSizeMB)
 	assert.Equal(t, []string{"node_modules", "vendor", "target", "build", "dist", "__pycache__"}, d.ExcludePatterns)

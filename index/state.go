@@ -81,15 +81,19 @@ type Entry struct {
 // with a workspace interface links exactly to the interface's method; a Go
 // call through a named field of a non-generic struct declared in the same
 // file targets the field's declared type.
-const Format = 16
+// 17: a symbol is embedded up to the embedder's token limit (8192 tokens for
+// the built-in model) instead of its first 2000 bytes.
+const Format = 17
 
 // State is the per-root snapshot stored at Dir(root)/state.json. Only
 // the run goroutine touches it; nothing here locks.
 type State struct {
 	root   string
-	Model  string           `json:"model,omitempty"`  // embedding model the points were made with
-	Format int              `json:"format,omitempty"` // Format the points were made with
-	Files  map[string]Entry `json:"files"`
+	Model  string `json:"model,omitempty"`  // embedding model the points were made with
+	Format int    `json:"format,omitempty"` // Format the points were made with
+	// EmbedTokens is the token limit the points were embedded up to.
+	EmbedTokens int              `json:"embed_tokens,omitempty"`
+	Files       map[string]Entry `json:"files"`
 }
 
 func newState(root string) *State {

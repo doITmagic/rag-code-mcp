@@ -163,6 +163,9 @@ type Engine struct {
 	rootsMu sync.Mutex        // with roots.json.lock across processes: held across the roots.json rewrite
 }
 
+// Embedder is the embedder the engine was built with, for status output.
+func (e *Engine) Embedder() embed.Embedder { return e.embed }
+
 // New returns an engine. log may be nil.
 func New(cfg config.Config, st store.Store, em embed.Embedder, log *slog.Logger) *Engine {
 	if log == nil {
@@ -571,7 +574,10 @@ const (
 // when idle; false once Close has begun. A request that is not explicit (the
 // watcher, a tool call on a missing index) is dropped while w.refuse covers
 // its kind: it would walk the whole tree only to be refused again (max_files),
-// or the index belongs to a newer RagCode (index.ErrNewerFormat).
+// or the index belongs to a newer RagCode (index.ErrNewerFormat). An explicit
+// request also cuts the armed retry timer (failure backoff or lock wait), so
+// it starts at once: the user acts after fixing the cause and must not wait.
+// The other requests wait the timer out.
 func (e *Engine) enqueue(w *Workspace, kind queueKind, files, deleted []string, explicit bool) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -581,6 +587,12 @@ func (e *Engine) enqueue(w *Workspace, kind queueKind, files, deleted []string, 
 	if !e.closed {
 		w.fails = 0 // a new request gets a fresh backoff
 		e.merge(w, kind, files, deleted)
+		if explicit && w.retry != nil {
+			// A timer that already fired waits for e.mu: its func then finds
+			// retry nil, and kick is guarded by running and queued.
+			w.retry.Stop()
+			w.retry = nil
+		}
 		e.kick(w)
 	}
 	return !e.closed
@@ -770,7 +782,7 @@ func (e *Engine) runJobs(w *Workspace) {
 
 func (e *Engine) runOne(w *Workspace, kind queueKind, files, deleted []string) (index.Status, error) {
 	o := index.Options{Root: w.Root, Collection: w.Collection, Store: e.store, Embedder: e.embed,
-		Recreate: kind == kindRecreate, Exclude: e.cfg.ExcludePatterns, MaxFiles: e.cfg.MaxFiles, Log: e.log, Progress: func(s index.Status) {
+		Recreate: kind == kindRecreate, Exclude: e.cfg.ExcludePatterns, MaxFiles: e.cfg.MaxFiles, EmbedTokens: e.cfg.EmbedMaxTokens, Log: e.log, Progress: func(s index.Status) {
 			e.mu.Lock()
 			w.status = s
 			e.mu.Unlock()

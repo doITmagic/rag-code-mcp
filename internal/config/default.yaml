@@ -1,16 +1,27 @@
 # RagCode MCP configuration. Written on first run; every key is optional
 # and falls back to the value shown here.
 
-ollama_base_url: http://localhost:11434
-ollama_embed: embeddinggemma-2:270m   # needs Ollama 0.40 or later
-# CPU threads Ollama may use for embeddings. Default: a third of the logical
-# CPUs, at least 2, so a machine without a GPU stays usable while indexing.
-# 0 lets Ollama use every performance core (fastest, loudest).
+# The embedding model runs on this machine, in a llama.cpp server that RagCode
+# starts on first use and stops after 5 idle minutes. Runtime and model are
+# downloaded once into ~/.ragcode (llama/ and models/), checked against pinned
+# checksums.
+
+# Which llama.cpp build to run: cpu, vulkan (any GPU with a Vulkan driver) or
+# auto: vulkan when an NVIDIA driver and a Vulkan loader are present, cpu
+# otherwise. macOS always uses its one build (Metal).
+embed_runtime: auto
+# Your own files instead of the downloaded ones (absolute paths). Changing the
+# model makes the next index run re-embed every workspace.
+# embed_model: /path/to/model.gguf
+# llama_server: /path/to/llama-server
+# CPU threads the model may use. Default: a third of the logical CPUs, at
+# least 2, so a machine without a GPU stays usable while indexing.
+# 0 lets llama.cpp use every performance core (fastest, loudest).
 # embed_threads: 4
 
-# Free memory (MB) a local Ollama needs to load the embedding model. With
-# less, indexing and searches stop with status low_memory instead of loading
-# a model that cannot start. 0 turns the check off.
+# Free memory (MB) needed to load the embedding model. With less, indexing and
+# searches stop with status low_memory instead of loading a model that cannot
+# start. 0 turns the check off.
 min_free_memory_mb: 750
 
 log_level: info      # debug | info | warn | error

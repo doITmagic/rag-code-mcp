@@ -54,14 +54,16 @@ Tests:
 ## Configuration keys
 
 All keys are optional; a missing key keeps the default. Unknown keys are
-ignored (so a v1 `config.yaml` with Qdrant settings still loads).
+ignored (so a v1 `config.yaml` with Qdrant settings, or a v2.0 one with
+`ollama_base_url` and `ollama_embed`, still loads; those keys no longer do anything).
 
 | YAML key | Go field | Default | Meaning / used by |
 |:---|:---|:---|:---|
-| `ollama_base_url` | `OllamaBaseURL` | `http://localhost:11434` | Ollama URL; must be `http` or `https` with a host. [`embed`](../../embed/README.md), installer, `rag_server_info`. |
-| `ollama_embed` | `OllamaEmbed` | `embeddinggemma-2:270m` | Embedding model; required. Needs Ollama 0.40 or later. |
-| `embed_threads` | `EmbedThreads` | `max(2, NumCPU/3)` | CPU threads Ollama may use for embeddings (`num_thread`). `0` lets Ollama choose (every performance core). Must not be negative. |
-| `min_free_memory_mb` | `MinFreeMemoryMB` | `750` | Free memory a local Ollama needs to load the model (measured: the model holds 0.3 GB of RAM on a GPU and up to 0.9 GB on CPU; a load with under 600 MB free failed). With less, indexing and searches answer `low_memory` and no embed request is sent, unless Ollama already has the model loaded. `0` turns the check off. Must not be negative. |
+| `embed_runtime` | `EmbedRuntime` | `auto` | Which llama.cpp build runs the model: `auto`, `cpu` or `vulkan`. `auto` picks Vulkan when an NVIDIA driver and a Vulkan loader are found, else CPU; macOS has one build (Metal). Anything else is invalid. See [`llama`](../llama/README.md). |
+| `embed_model` | `EmbedModel` | empty | Absolute path of a `.gguf` embedding model to use instead of the downloaded one. The index names the model after the file name without `.gguf`, then `@` and a 12-character fingerprint of the file (its size and its first and last MiB), e.g. `my-embed@3fa9c01b77d2`, so another file, even under the same name, re-embeds every workspace. |
+| `llama_server` | `LlamaServer` | empty | Absolute path of a `llama-server` binary to use instead of the downloaded one. |
+| `embed_threads` | `EmbedThreads` | `max(2, NumCPU/3)` | CPU threads llama.cpp may use for embeddings (`-t`, `-tb`). `0` lets llama.cpp choose (every performance core). Must not be negative. |
+| `min_free_memory_mb` | `MinFreeMemoryMB` | `750` | Free memory needed to start the embedding server (measured: the model holds 0.3 GB of RAM on a GPU and up to 0.9 GB on CPU; a load with under 600 MB free failed). With less, a call that has to start the server answers `low_memory`; a server already running is not checked. `0` turns the check off. Must not be negative. |
 | `log_level` | `LogLevel` | `info` | `debug`, `info`, `warn` or `error`. |
 | `log_max_size_mb` | `LogMaxSizeMB` | `10` | Size at which `ragcode.log` is rotated. Must be positive. |
 | `exclude_patterns` | `ExcludePatterns` | `node_modules`, `vendor`, `target`, `build`, `dist`, `__pycache__` | Directory names skipped while indexing and watching. Hidden directories are always skipped. Setting the key replaces the whole list. |
@@ -74,8 +76,9 @@ ignored (so a v1 `config.yaml` with Qdrant settings still loads).
 | `auto_update` | `AutoUpdate` | `true` | At server start, install a newer release over `~/.ragcode/bin/rag-code-mcp` (GitHub asked at most once a day). See [update](../update/README.md). |
 | `update_source` | `UpdateSource` | empty | Where releases come from: empty is GitHub; a directory with the release archive and `checksums.txt`, or a URL answering like the GitHub latest-release API, for testing. |
 
-`embed_threads` is commented out in `default.yaml` on purpose: the written
-file does not pin a CPU count, so the default keeps following the machine.
+`embed_threads`, `embed_model` and `llama_server` are commented out in
+`default.yaml` on purpose: the written file does not pin a CPU count or a
+path, so the defaults keep following the machine.
 
 ### Environment overrides
 
@@ -84,8 +87,9 @@ override.
 
 | Variable | Overrides |
 |:---|:---|
-| `OLLAMA_BASE_URL` | `ollama_base_url` |
-| `OLLAMA_EMBED` | `ollama_embed` |
+| `RAGCODE_EMBED_RUNTIME` | `embed_runtime` |
+| `RAGCODE_EMBED_MODEL` | `embed_model` |
+| `RAGCODE_LLAMA_SERVER` | `llama_server` |
 | `MCP_LOG_LEVEL` | `log_level` |
 | `RAGCODE_UPDATE_SOURCE` | `update_source` |
 | `RAGCODE_ALLOWED_PATHS` | `allowed_workspace_paths`, as an OS path list (`:` on Linux/macOS, `;` on Windows); blank entries are dropped |
@@ -125,8 +129,9 @@ Errors are prefixed `config:`: `create dir`, `write default`, `read <path>`,
 
 ### `Validate() error`
 
-Returns the first invalid field: `ollama_base_url` not an http(s) URL with a
-host, empty `ollama_embed`, unknown `log_level`, negative `embed_threads`,
+Returns the first invalid field: `embed_model` not an absolute path ending in
+`.gguf`, `embed_runtime` other than `auto`, `cpu` or `vulkan`, `llama_server`
+not an absolute path, unknown `log_level`, negative `embed_threads`,
 negative `max_files`, negative `min_free_memory_mb`,
 non-positive `log_max_size_mb`, negative `watch_debounce`, or a relative
 `allowed_workspace_paths` entry.
@@ -173,5 +178,5 @@ the real `~/.ragcode`.
 - [internal](../README.md)
 - [cmd/rag-code-mcp](../../cmd/rag-code-mcp/README.md): loads the config and opens the log
 - [engine](../../engine/README.md): `auto_index`, `watch_*`, `allowed_workspace_paths`, `exclude_patterns`
-- [embed](../../embed/README.md): `ollama_*`, `embed_threads`
+- [embed](../../embed/README.md): `embed_runtime`, `embed_model`, `llama_server`, `embed_threads`, `min_free_memory_mb`
 - [install](../install/README.md): writes the config on install

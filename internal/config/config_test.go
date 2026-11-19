@@ -24,15 +24,16 @@ func TestDefaultMatchesEmbeddedYAML(t *testing.T) {
 func TestLoadFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(`
-ollama_embed: other-model
+embed_runtime: cpu
 log_level: debug
 watch_debounce: 250ms
 exclude_patterns: [foo]
 `), 0o644))
 	cfg, err := Load(path)
 	require.NoError(t, err)
-	assert.Equal(t, "other-model", cfg.OllamaEmbed)
-	assert.Equal(t, "http://localhost:11434", cfg.OllamaBaseURL, "untouched keys keep defaults")
+	assert.Equal(t, "cpu", cfg.EmbedRuntime)
+	assert.Empty(t, cfg.EmbedModel, "untouched keys keep defaults")
+	assert.Equal(t, Default().MinFreeMemoryMB, cfg.MinFreeMemoryMB)
 	assert.Equal(t, "debug", cfg.LogLevel)
 	assert.Equal(t, 250*time.Millisecond, cfg.WatchDebounce)
 	assert.Equal(t, []string{"foo"}, cfg.ExcludePatterns)
@@ -57,15 +58,17 @@ func TestLoadInvalidYAML(t *testing.T) {
 
 func TestEnvOverrides(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	require.NoError(t, os.WriteFile(path, []byte("ollama_embed: file-embed\nallowed_workspace_paths: ['"+abs("/from/file")+"']\n"), 0o644))
-	t.Setenv("OLLAMA_BASE_URL", "http://env:11434")
-	t.Setenv("OLLAMA_EMBED", "env-embed")
+	require.NoError(t, os.WriteFile(path, []byte("embed_model: "+abs("/file/m.gguf")+"\nembed_runtime: cpu\nallowed_workspace_paths: ['"+abs("/from/file")+"']\n"), 0o644))
+	t.Setenv("RAGCODE_EMBED_MODEL", abs("/env/m.gguf"))
+	t.Setenv("RAGCODE_LLAMA_SERVER", abs("/env/llama-server"))
+	t.Setenv("RAGCODE_EMBED_RUNTIME", "vulkan")
 	t.Setenv("MCP_LOG_LEVEL", "warn")
 	t.Setenv("RAGCODE_ALLOWED_PATHS", strings.Join([]string{abs("/a"), " " + abs("/b") + " ", ""}, string(os.PathListSeparator)))
 	cfg, err := Load(path)
 	require.NoError(t, err)
-	assert.Equal(t, "http://env:11434", cfg.OllamaBaseURL)
-	assert.Equal(t, "env-embed", cfg.OllamaEmbed, "env wins over file")
+	assert.Equal(t, abs("/env/m.gguf"), cfg.EmbedModel, "env wins over file")
+	assert.Equal(t, abs("/env/llama-server"), cfg.LlamaServer)
+	assert.Equal(t, "vulkan", cfg.EmbedRuntime, "env wins over file")
 	assert.Equal(t, "warn", cfg.LogLevel)
 	assert.Equal(t, []string{abs("/a"), abs("/b")}, cfg.AllowedWorkspacePaths)
 }
@@ -84,8 +87,14 @@ func TestValidate(t *testing.T) {
 		mutate  func(*Config)
 		wantErr string
 	}{
-		{"bad ollama url", func(c *Config) { c.OllamaBaseURL = "localhost:11434" }, "ollama_base_url"},
-		{"empty embed", func(c *Config) { c.OllamaEmbed = "" }, "ollama_embed"},
+		{"relative embed model", func(c *Config) { c.EmbedModel = "m.gguf" }, "embed_model"},
+		{"embed model not gguf", func(c *Config) { c.EmbedModel = abs("/m/model.bin") }, "embed_model"},
+		{"absolute embed model ok", func(c *Config) { c.EmbedModel = abs("/m/model.gguf") }, ""},
+		{"relative llama server", func(c *Config) { c.LlamaServer = "llama-server" }, "llama_server"},
+		{"absolute llama server ok", func(c *Config) { c.LlamaServer = abs("/opt/llama-server") }, ""},
+		{"bad embed runtime", func(c *Config) { c.EmbedRuntime = "cuda" }, "embed_runtime"},
+		{"empty embed runtime", func(c *Config) { c.EmbedRuntime = "" }, "embed_runtime"},
+		{"vulkan ok", func(c *Config) { c.EmbedRuntime = "vulkan" }, ""},
 		{"bad level", func(c *Config) { c.LogLevel = "verbose" }, "log_level"},
 		{"zero log size", func(c *Config) { c.LogMaxSizeMB = 0 }, "log_max_size_mb"},
 		{"negative embed threads", func(c *Config) { c.EmbedThreads = -1 }, "embed_threads"},
@@ -234,7 +243,7 @@ func TestOpenLogFileFollowsRotationByAnotherProcess(t *testing.T) {
 }
 
 // embed_threads defaults to a third of the logical CPUs (at least 2), so a
-// CPU-only Ollama does not take every core; 0 hands the choice to Ollama.
+// CPU-only llama.cpp does not take every core; 0 hands the choice to llama.cpp.
 func TestEmbedThreads(t *testing.T) {
 	assert.Equal(t, max(2, runtime.NumCPU()/3), Default().EmbedThreads)
 	path := filepath.Join(t.TempDir(), "config.yaml")
@@ -249,18 +258,6 @@ func TestEmbedThreads(t *testing.T) {
 
 // Redacted hides the password of a user:password@ URL and leaves any other
 // value (a URL without one, a local path) as it is.
-// An invalid ollama_base_url with basic auth never shows its password in
-// the error, which reaches the log and the terminal.
-func TestValidateHidesURLPassword(t *testing.T) {
-	for _, raw := range []string{"ftp://u:secret@h:11434", "http://u:secret@h:11434/%zz", "http://u:secret@", "http:u:secret@h:11434", "u:secret@h:11434"} {
-		cfg := Default()
-		cfg.OllamaBaseURL = raw
-		err := cfg.Validate()
-		assert.ErrorContains(t, err, "ollama_base_url", raw)
-		assert.NotContains(t, err.Error(), "secret", raw)
-	}
-}
-
 func TestRedacted(t *testing.T) {
 	assert.Equal(t, "http://u:xxxxx@h:11434", Redacted("http://u:secret@h:11434"))
 	assert.Equal(t, "http://h:11434", Redacted("http://h:11434"))

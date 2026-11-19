@@ -22,8 +22,9 @@ var defaultYAML []byte
 
 // Config is the whole user-facing configuration.
 type Config struct {
-	OllamaBaseURL         string        `yaml:"ollama_base_url"`
-	OllamaEmbed           string        `yaml:"ollama_embed"`
+	EmbedModel            string        `yaml:"embed_model"`
+	LlamaServer           string        `yaml:"llama_server"`
+	EmbedRuntime          string        `yaml:"embed_runtime"`
 	EmbedThreads          int           `yaml:"embed_threads"`
 	MinFreeMemoryMB       int           `yaml:"min_free_memory_mb"`
 	LogLevel              string        `yaml:"log_level"`
@@ -42,9 +43,8 @@ type Config struct {
 // Default returns the built-in configuration; default.yaml mirrors it.
 func Default() Config {
 	return Config{
-		OllamaBaseURL: "http://localhost:11434",
-		OllamaEmbed:   "embeddinggemma-2:270m",
-		// A CPU-only Ollama otherwise takes every performance core.
+		EmbedRuntime: "auto",
+		// llama.cpp otherwise takes every performance core.
 		EmbedThreads:       max(2, runtime.NumCPU()/3),
 		MinFreeMemoryMB:    750,
 		LogLevel:           "info",
@@ -107,8 +107,9 @@ func (c *Config) applyEnv() {
 			*dst = v
 		}
 	}
-	set(&c.OllamaBaseURL, "OLLAMA_BASE_URL")
-	set(&c.OllamaEmbed, "OLLAMA_EMBED")
+	set(&c.EmbedModel, "RAGCODE_EMBED_MODEL")
+	set(&c.LlamaServer, "RAGCODE_LLAMA_SERVER")
+	set(&c.EmbedRuntime, "RAGCODE_EMBED_RUNTIME")
 	set(&c.LogLevel, "MCP_LOG_LEVEL")
 	set(&c.UpdateSource, "RAGCODE_UPDATE_SOURCE")
 	if v := os.Getenv("RAGCODE_ALLOWED_PATHS"); v != "" {
@@ -123,11 +124,16 @@ func (c *Config) applyEnv() {
 
 // Validate reports the first invalid field.
 func (c Config) Validate() error {
-	if err := checkURL("ollama_base_url", c.OllamaBaseURL); err != nil {
-		return err
+	if c.EmbedModel != "" && (!filepath.IsAbs(c.EmbedModel) || !strings.HasSuffix(c.EmbedModel, ".gguf")) {
+		return fmt.Errorf("config: embed_model %q must be the absolute path of a .gguf file (leave it out for the built-in model)", c.EmbedModel)
 	}
-	if c.OllamaEmbed == "" {
-		return errors.New("config: ollama_embed is required")
+	switch c.EmbedRuntime {
+	case "auto", "cpu", "vulkan":
+	default:
+		return fmt.Errorf("config: embed_runtime %q must be auto, cpu or vulkan", c.EmbedRuntime)
+	}
+	if c.LlamaServer != "" && !filepath.IsAbs(c.LlamaServer) {
+		return fmt.Errorf("config: llama_server %q must be an absolute path (leave it out for the built-in runtime)", c.LlamaServer)
 	}
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":
@@ -153,18 +159,6 @@ func (c Config) Validate() error {
 		if !filepath.IsAbs(p) {
 			return fmt.Errorf("config: allowed_workspace_paths entry %q is not absolute", p)
 		}
-	}
-	return nil
-}
-
-func checkURL(field, raw string) error {
-	u, err := url.Parse(raw)
-	if err != nil {
-		// not shown: what does not parse cannot have its password hidden
-		return fmt.Errorf("config: %s must be an http(s) URL, it does not parse as a URL", field)
-	}
-	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return fmt.Errorf("config: %s %q must be an http(s) URL", field, Redacted(raw))
 	}
 	return nil
 }

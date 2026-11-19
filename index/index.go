@@ -52,13 +52,17 @@ const (
 	embedBatch  = 16
 	upsertBatch = 64
 	upsertBytes = 8 << 20 // Content bytes per upsert, so one batch never holds a huge transaction
-	// embedBytesPerToken turns the embedder's token limit into the byte cap
-	// of an embed text. Code runs at 3 to 4 bytes a token, so the cap is
-	// rarely what cuts: the embedder cuts a text the model refuses, by the
-	// token count the server reports.
-	embedBytesPerToken = 4
-	maxLookups         = 500 // store lookups per run while finding stale referrers
-	lookupBatch        = 500 // values per lookup: ids, qualified names or names
+	// embedMaxBytesPerToken turns the embedder's token limit into a memory
+	// bound on an embed text. It is not an estimate of density (code runs at
+	// 3 to 4 bytes a token, whitespace runs at most about 31): it is above
+	// the longest run one token can span, so a text over it cannot fit the
+	// model anyway. A symbol under it goes whole and the model decides: the
+	// embedder cuts a text the server refuses, by the token count the server
+	// reports. Walk skips files over 256 KiB, so the bound only bites for an
+	// embed_max_tokens below 4096.
+	embedMaxBytesPerToken = 64
+	maxLookups            = 500 // store lookups per run while finding stale referrers
+	lookupBatch           = 500 // values per lookup: ids, qualified names or names
 )
 
 // clock is time.Now; tests fix it.
@@ -198,7 +202,7 @@ func Run(ctx context.Context, o Options) (Status, error) {
 		o.Recreate = true
 	}
 	tokens := EmbedTokens(o.EmbedTokens)
-	r.embedBytes = tokens * embedBytesPerToken
+	r.embedBytes = tokens * embedMaxBytesPerToken
 	if len(r.state.Files) > 0 && r.state.EmbedTokens != tokens {
 		// Same model, but a vector of the first part of a symbol is not the
 		// vector of more of it: one collection holds one kind.
@@ -1565,7 +1569,9 @@ func EmbedTokens(n int) int {
 	return n
 }
 
-// embedText is what a symbol is embedded as, cut to limit bytes.
+// embedText is what a symbol is embedded as, cut to limit bytes. The limit is
+// the memory bound (embedMaxBytesPerToken a token), not the model's limit:
+// the embedder cuts by tokens a text the model refuses.
 func embedText(s *parser.Symbol, limit int) string {
 	t := string(s.Kind) + " " + s.QualifiedName + "\n" + s.Signature + "\n" + s.Doc + "\n"
 	// Slice Content before concatenating, or a megabyte symbol is copied

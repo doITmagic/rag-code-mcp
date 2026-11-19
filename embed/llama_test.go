@@ -1085,6 +1085,12 @@ func TestLlamaModelChangedDimension(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, p.Kill())
 	waitDead(t, pid)
+	// The process is gone for the system before the goroutine that waits for
+	// it has said so, and Dimension asks that goroutine: on Windows the gap
+	// was wide enough to answer from the cache.
+	srv := l.up.Load()
+	require.NotNil(t, srv)
+	require.Eventually(t, srv.exited, 5*time.Second, 5*time.Millisecond)
 	_, err = l.Dimension(context.Background())
 	require.ErrorIs(t, err, ErrModelChanged)
 	require.ErrorIs(t, err, ErrUnavailable)

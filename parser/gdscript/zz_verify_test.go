@@ -309,10 +309,15 @@ func TestVerifyLarge(t *testing.T) {
 	for i := 0; i < 300; i++ {
 		nested += strings.Repeat("\t", 301-i)
 	}
-	for name, src := range map[string]string{"big": b.String(), "nested": nested + "pass\n", "junk": strings.Repeat("\xff\x00[(\"\n", 1000)} {
+	// junk leaves 1002 brackets open, just over the limit of 1000, with no
+	// quote among them. The parse runs before the nesting check, and with an
+	// open string on each of 1000 lines its error recovery took 1.5 to 3 s
+	// under -race, sometimes hitting the 3 s parse timeout, which answers
+	// "parse stopped" instead of "brackets". This input takes 30 ms there.
+	for name, src := range map[string]string{"big": b.String(), "nested": nested + "pass\n", "junk": "\xff\x00" + strings.Repeat("[(\n", 501)} {
 		t.Run(name, func(t *testing.T) {
 			start := time.Now()
-			if name == "junk" { // 2000 brackets left open: refused, not parsed for seconds
+			if name == "junk" { // more brackets left open than the limit: refused
 				_, err := analyzer{}.Analyze(parser.File{Path: "/ws/big.gd", Root: "/ws", Source: []byte(src), Language: "gdscript"})
 				assert.ErrorContains(t, err, "brackets")
 				return

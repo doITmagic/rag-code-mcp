@@ -81,7 +81,8 @@ func TestRun(t *testing.T) {
 	assert.Contains(t, string(cursor), "other")
 
 	log, _ := os.ReadFile(f.dockerLog)
-	assert.Equal(t, "rm -f ragcode-qdrant\nvolume rm ragcode-qdrant\nrm -f ragcode-ollama\nvolume rm ragcode-ollama\n", string(log))
+	assert.Equal(t, "rm -f ragcode-qdrant\nvolume rm ragcode-qdrant\nps -a --filter name=^ragcode-ollama$ --format {{.Names}}\nvolume rm ragcode-ollama\n", string(log),
+		"ragcode-ollama: looked up, never removed by name; its volume only because -docker asks for it")
 }
 
 func TestRunAsksForWorkspaceData(t *testing.T) {

@@ -31,9 +31,12 @@ func TestMain(m *testing.M) {
 }
 
 // env sets up a temp HOME and a fake docker first on PATH that logs its
-// arguments; `docker ps` lists a ragcode-ollama container only when the file
-// "container" exists next to the script. It returns the home and the docker
-// log path. The real docker is never run.
+// arguments and keeps a ragcode-ollama container and volume as files next to
+// it: "container" (listed by ps and inspect), "image" and "mounts" (what
+// inspect reports; ollamaContainer sets them), "volume" (listed by volume ls);
+// "volfail" makes `volume rm` fail; "pending-at-rm" is created when `rm -f`
+// runs while cache/ollama-volume-pending exists. It returns the home and the docker log
+// path. The real docker is never run.
 func env(t *testing.T) (home, dockerLog string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -48,10 +51,33 @@ func env(t *testing.T) (home, dockerLog string) {
 	t.Setenv("RAGCODE_EMBED_RUNTIME", "")
 	bin := t.TempDir()
 	dockerLog = filepath.Join(bin, "docker.log")
-	script := "#!/bin/sh\necho \"$*\" >> " + dockerLog + "\ncase \"$1\" in ps) [ -f " + filepath.Join(bin, "container") + " ] && echo ragcode-ollama;; esac\nexit 0\n"
+	script := `#!/bin/sh
+D=` + bin + `
+echo "$*" >> $D/docker.log
+case "$1 $2 $3" in
+"ps -a "*) [ -f $D/container ] && echo ragcode-ollama; exit 0;;
+"container inspect "*)
+  if [ ! -f $D/container ]; then echo "Error: No such container: ragcode-ollama"; exit 1; fi
+  echo "$(cat $D/image)|$(cat $D/mounts)"; exit 0;;
+"rm -f ragcode-ollama") if [ -f $D/rmfail ]; then echo "cannot remove the container"; exit 1; fi; [ -f "$HOME/.ragcode/cache/ollama-volume-pending" ] && touch $D/pending-at-rm; rm -f $D/container; exit 0;;
+"volume ls "*) [ -f $D/volume ] && echo ragcode-ollama; exit 0;;
+"volume rm ragcode-ollama") if [ -f $D/volfail ]; then echo "volume is in use"; exit 1; fi; rm -f $D/volume; exit 0;;
+esac
+exit 0
+`
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o755))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return home, dockerLog
+}
+
+// ollamaContainer makes the fake docker list a v2 container that mounts the
+// named volume ragcode-ollama, which exists.
+func ollamaContainer(t *testing.T, dockerLog, image string) {
+	t.Helper()
+	bin := filepath.Dir(dockerLog)
+	for name, content := range map[string]string{"container": "", "volume": "", "image": image, "mounts": "volume=ragcode-ollama=/root/.ollama;"} {
+		require.NoError(t, os.WriteFile(filepath.Join(bin, name), []byte(content), 0o644))
+	}
 }
 
 // countEnsure replaces the download with a counter that returns err.
@@ -166,19 +192,133 @@ func TestRunEnsureNotCalledWhenInstalled(t *testing.T) {
 // A ragcode-ollama container left by an earlier installer is removed, with its volume.
 func TestRunRemovesOldOllamaContainer(t *testing.T) {
 	_, dockerLog := env(t)
-	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(dockerLog), "container"), nil, 0o644))
+	ollamaContainer(t, dockerLog, "ollama/ollama")
 	var out bytes.Buffer
 	require.NoError(t, Run(context.Background(), Options{Yes: true, SkipIDE: true, SkipDownload: true, Out: &out, srcDir: src(t)}), out.String())
 	log, _ := os.ReadFile(dockerLog)
 	lines := strings.Split(strings.TrimSpace(string(log)), "\n")
-	assert.Contains(t, lines, "ps -a --filter name=^ragcode-ollama$ --format {{.Names}}")
-	assert.Contains(t, lines, "rm -f ragcode-ollama")
-	assert.Contains(t, lines, "volume rm ragcode-ollama")
+	require.Len(t, lines, 4, string(log))
+	assert.Equal(t, "ps -a --filter name=^ragcode-ollama$ --format {{.Names}}", lines[0])
+	assert.True(t, strings.HasPrefix(lines[1], "container inspect "), lines[1])
+	assert.Equal(t, "rm -f ragcode-ollama", lines[2])
+	assert.Equal(t, "volume rm ragcode-ollama", lines[3])
 	for _, l := range lines {
 		assert.NotContains(t, l, "run", "no container is started")
 		assert.NotContains(t, l, "pull")
 	}
 	assert.Contains(t, out.String(), "Removed the ragcode-ollama container")
+}
+
+// A container that only has the name is somebody else's: it stays, with a warning.
+func TestRunKeepsForeignOllamaContainer(t *testing.T) {
+	_, dockerLog := env(t)
+	ollamaContainer(t, dockerLog, "nginx")
+	var out bytes.Buffer
+	require.NoError(t, Run(context.Background(), Options{Yes: true, SkipIDE: true, SkipDownload: true, Out: &out, srcDir: src(t)}), out.String())
+	log, _ := os.ReadFile(dockerLog)
+	assert.NotContains(t, string(log), "rm ")
+	assert.Contains(t, out.String(), "container ragcode-ollama is not an Ollama of RagCode, left alone")
+	assert.NotContains(t, out.String(), "Removed the ragcode-ollama container")
+}
+
+// A volume that cannot be removed is reported with Docker's answer and the
+// commands to finish by hand; the install goes on.
+func TestRunOllamaVolumeFails(t *testing.T) {
+	_, dockerLog := env(t)
+	ollamaContainer(t, dockerLog, "ollama/ollama")
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(dockerLog), "volfail"), nil, 0o644))
+	var out bytes.Buffer
+	require.NoError(t, Run(context.Background(), Options{Yes: true, SkipIDE: true, SkipDownload: true, Out: &out, srcDir: src(t)}), out.String())
+	assert.Contains(t, out.String(), "volume is in use")
+	assert.Contains(t, out.String(), "docker rm -f ragcode-ollama")
+	assert.Contains(t, out.String(), "docker volume rm ragcode-ollama")
+	assert.Contains(t, out.String(), "RagCode MCP installed")
+}
+
+// The container is gone but its volume is not: the installer leaves the proof
+// that the volume was RagCode's, which the server's next start retries from,
+// and takes back the marker of an earlier start so that it does look.
+func TestRunOllamaVolumeFailsLeavesPending(t *testing.T) {
+	home, dockerLog := env(t)
+	ollamaContainer(t, dockerLog, "ollama/ollama")
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(dockerLog), "volfail"), nil, 0o644))
+	cache := filepath.Join(home, ".ragcode", "cache")
+	require.NoError(t, os.MkdirAll(cache, 0o755))
+	marker := filepath.Join(cache, "ollama-removed")
+	require.NoError(t, os.WriteFile(marker, nil, 0o644))
+	var out bytes.Buffer
+	require.NoError(t, Run(context.Background(), Options{Yes: true, SkipIDE: true, SkipDownload: true, Out: &out, srcDir: src(t)}), out.String())
+	assert.FileExists(t, filepath.Join(filepath.Dir(dockerLog), "pending-at-rm"))
+	assert.FileExists(t, filepath.Join(cache, "ollama-volume-pending"))
+	assert.NoFileExists(t, marker)
+}
+
+// The container cannot be removed with the proof already written: the proof
+// stays, the marker of an earlier start goes (or the server would never look
+// again), and the user is told how to finish by hand.
+func TestRunOllamaContainerFailsLeavesPending(t *testing.T) {
+	home, dockerLog := env(t)
+	ollamaContainer(t, dockerLog, "ollama/ollama")
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(dockerLog), "rmfail"), nil, 0o644))
+	cache := filepath.Join(home, ".ragcode", "cache")
+	require.NoError(t, os.MkdirAll(cache, 0o755))
+	marker := filepath.Join(cache, "ollama-removed")
+	require.NoError(t, os.WriteFile(marker, nil, 0o644))
+	var out bytes.Buffer
+	require.NoError(t, Run(context.Background(), Options{Yes: true, SkipIDE: true, SkipDownload: true, Out: &out, srcDir: src(t)}), out.String())
+	assert.FileExists(t, filepath.Join(cache, "ollama-volume-pending"))
+	assert.NoFileExists(t, marker)
+	assert.Contains(t, out.String(), "docker rm -f ragcode-ollama")
+	assert.Contains(t, out.String(), "RagCode MCP installed")
+}
+
+// The proof that the volume is RagCode's is written before the container is
+// removed, so an installer that dies in between leaves it for the next start;
+// once the volume is really gone the proof goes too.
+func TestRunOllamaVolumeRemovedLeavesNoPending(t *testing.T) {
+	home, dockerLog := env(t)
+	ollamaContainer(t, dockerLog, "ollama/ollama")
+	var out bytes.Buffer
+	require.NoError(t, Run(context.Background(), Options{Yes: true, SkipIDE: true, SkipDownload: true, Out: &out, srcDir: src(t)}), out.String())
+	assert.FileExists(t, filepath.Join(filepath.Dir(dockerLog), "pending-at-rm"), "pending file must exist when rm -f runs")
+	assert.NoFileExists(t, filepath.Join(home, ".ragcode", "cache", "ollama-volume-pending"))
+}
+
+// A container without the named volume (a host directory, v1) needs no proof.
+func TestRunOllamaHostDirWritesNoPending(t *testing.T) {
+	home, dockerLog := env(t)
+	ollamaContainer(t, dockerLog, "ollama/ollama")
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(dockerLog), "mounts"), []byte("bind=/home/u/models=/root/.ollama;"), 0o644))
+	var out bytes.Buffer
+	require.NoError(t, Run(context.Background(), Options{Yes: true, SkipIDE: true, SkipDownload: true, Out: &out, srcDir: src(t)}), out.String())
+	assert.NoFileExists(t, filepath.Join(filepath.Dir(dockerLog), "pending-at-rm"))
+	assert.NoFileExists(t, filepath.Join(home, ".ragcode", "cache", "ollama-volume-pending"))
+}
+
+// A proof left by an installer that died after removing the container: the
+// volume is removed now and the proof with it.
+func TestRunOllamaPendingVolumeRetried(t *testing.T) {
+	home, dockerLog := env(t)
+	cache := filepath.Join(home, ".ragcode", "cache")
+	require.NoError(t, os.MkdirAll(cache, 0o755))
+	pending := filepath.Join(cache, "ollama-volume-pending")
+	require.NoError(t, os.WriteFile(pending, nil, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(dockerLog), "volume"), nil, 0o644))
+	var out bytes.Buffer
+	require.NoError(t, Run(context.Background(), Options{Yes: true, SkipIDE: true, SkipDownload: true, Out: &out, srcDir: src(t)}), out.String())
+	log, _ := os.ReadFile(dockerLog)
+	assert.Contains(t, string(log), "volume rm ragcode-ollama")
+	assert.NoFileExists(t, pending)
+}
+
+// A volume of that name without a container is not proven to be RagCode's: it is left.
+func TestRunKeepsOrphanOllamaVolume(t *testing.T) {
+	_, dockerLog := env(t)
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(dockerLog), "volume"), nil, 0o644))
+	var out bytes.Buffer
+	require.NoError(t, Run(context.Background(), Options{Yes: true, SkipIDE: true, SkipDownload: true, Out: &out, srcDir: src(t)}), out.String())
+	log, _ := os.ReadFile(dockerLog)
+	assert.NotContains(t, string(log), "volume rm")
 }
 
 // Without docker on PATH the leftover check is skipped silently.

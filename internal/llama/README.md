@@ -80,7 +80,7 @@ func FromConfig(cfg config.Config, progress func(string)) Options
 func (o Options) Ensure(ctx context.Context) (server, model string, err error)
 func (o Options) Installed() bool
 func (o Options) RuntimeName() string // "llama.cpp b12359 (cpu)", or the path of your server
-func (o Options) ModelLabel() string
+func (o Options) ModelLabel() string // read from the file each time it is called
 func (o Options) ServerPath() string
 func (o Options) ModelPath() string
 func ServerPaths(home string) []string // the downloaded server of each variant, for stopping left-over processes
@@ -91,12 +91,20 @@ func ServerPaths(home string) []string // the downloaded server of each variant,
 `~/.ragcode/cache/llama.lock` (another process downloading makes it wait,
 saying so through `Progress`), downloads what is missing and returns. A `llama_server` or `embed_model` that is not a
 file is an error; there is no fallback to the download. On a platform with no
-build, the error tells you to set `llama_server`. Downloads have no clock of
-their own: a slow line still finishes. The context passed to `Ensure` ends the
-wait for the lock and the download. The installer passes its own (Ctrl+C ends
-it); the embedder passes one of its own that ends only at `Close`, so a search
-or index call that gives up does not cancel a download in progress, and the
-next call joins it.
+build, the error tells you to set `llama_server`. A download has no overall
+clock, but a stall rule: when less than 64 KiB arrive in 2 minutes, counted
+from before the request is sent (so the wait for the response headers counts,
+and the time spent writing and hashing does not), it ends with an error
+wrapping `ErrStalled`, and leaves nothing behind. A slow line that delivers
+more than that, about half a KiB a second, still finishes. The two numbers are
+package variables that the tests lower, not config keys. The wait for the lock
+has no limit of its own: a process that holds it is downloading under the same
+rule, so it ends or fails within minutes of making no progress, and one that
+died has released it. The context passed to `Ensure` ends the wait for the
+lock and the download too, with its own error, not `ErrStalled`. The installer
+passes its own (Ctrl+C ends it); the embedder passes one of its own that ends
+only at `Close`, so a search or index call that gives up does not cancel a
+download in progress, and the next call joins it.
 
 ### Model name and the index
 
@@ -109,6 +117,12 @@ counts as another model and the next index run re-embeds; the same file moved
 elsewhere keeps its name. A file that cannot be read has only its name. The
 embedding prefixes in [`embed`](../../embed/README.md) follow the start of the
 same name.
+The label follows the file on disk: the embedder asks for it again each time it
+starts the server, and refuses to start on a file whose label is not the one
+the index was named after (see the `embed_model` row in
+[`embed`](../../embed/README.md)). The built-in model is not checked again: it
+is verified by its SHA-256 at download and its label is a constant. The
+fingerprint does not see an edit in the middle of a file that keeps its size.
 An index made with the earlier Ollama model `embeddinggemma-2:270m` has another
 model name, so the next index run re-embeds that workspace; see
 [`index`](../../index/README.md).
@@ -125,4 +139,4 @@ network.
 
 | File | Covers |
 |:---|:---|
-| `llama_test.go` | The unpack of a `.tar.gz` and a `.zip` keeps only `llama-server`, its libraries and the licence, flat; a wrong checksum, a link pointing outside the directory and an archive without the server each fail and leave no runtime directory (the first two also no temporary file); an HTTP error fails with its status; `untar` and `unzip` refuse input that is not an archive; `Ensure` downloads nothing, takes no lock and creates no `cache` directory when both files are present, and a `llama_server` or `embed_model` that is not a file is an error naming the key; it downloads only the runtime when only the model is present, and nothing on a second call; it removes what a killed run left (`.download-*` in `models/`, `.download-*` and unpack directories in `llama/`), leaves other files there alone and leaves a directory alone when its `embed_model` or `llama_server` is user-provided; it waits for the lock another process holds, and a waiter whose context ends gives up with `context.DeadlineExceeded`; the names `RuntimeName`, `ModelLabel` (with the fingerprint of a user-provided model: other bytes give another name, the same bytes the same one), `ServerPath`, `ModelPath` and `ServerPaths` give. |
+| `llama_test.go` | The unpack of a `.tar.gz` and a `.zip` keeps only `llama-server`, its libraries and the licence, flat; a wrong checksum, a link pointing outside the directory and an archive without the server each fail and leave no runtime directory (the first two also no temporary file); an HTTP error fails with its status; `untar` and `unzip` refuse input that is not an archive; `Ensure` downloads nothing, takes no lock and creates no `cache` directory when both files are present, and a `llama_server` or `embed_model` that is not a file is an error naming the key; it downloads only the runtime when only the model is present, and nothing on a second call; it removes what a killed run left (`.download-*` in `models/`, `.download-*` and unpack directories in `llama/`), leaves other files there alone and leaves a directory alone when its `embed_model` or `llama_server` is user-provided; it waits for the lock another process holds, and a waiter whose context ends gives up with `context.DeadlineExceeded`; a download that sends its headers and then nothing, that never sends them, or that trickles less than the minimum fails with `ErrStalled` and leaves no temporary file, a slow one above the minimum finishes, a window that meets a write is not judged until the write ends (`watchStall`), and a caller that cancels gets its own error, not `ErrStalled`; the names `RuntimeName`, `ModelLabel` (with the fingerprint of a user-provided model: other bytes give another name, the same bytes the same one; the label follows the file when it is rewritten and back), `ServerPath`, `ModelPath` and `ServerPaths` give. |

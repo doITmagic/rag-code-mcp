@@ -39,8 +39,8 @@ graph LR
 |-----------|---------|----------|
 | Created by | [internal/app](../internal/app/README.md) | `embed.NewLlama(model, runtime, ~/.ragcode/run)` with the runtime from `llama.FromConfig`, then `Threads`, `MinFreeMB` and `MaxTokens` from the config; `Close` when the app closes. Tests pass `&embed.Fake{}` instead. |
 | Called by | [index](../index/README.md) | Embeds symbol texts during a run (with `DocText`), reads `Dimension` to create the collection and `Model` to detect a model change. |
-| Called by | [engine](../engine/README.md) | Embeds search queries (with `QueryText`); `Dimension` for `Ready` and to detect a vector size change. |
-| Calls | [internal/llama](../internal/llama/README.md) (through the small `Runtime` interface) | `Ensure` returns the paths of `llama-server` and the model, downloading what is missing; `Installed` and `RuntimeName` feed the status. |
+| Called by | [engine](../engine/README.md) | Embeds search queries (with `QueryText`); `Dimension` for `Ready` and to detect a vector size change after a failed search; both are asked with `WithoutFetchWait`, so a search does not wait for a download. |
+| Calls | [internal/llama](../internal/llama/README.md) (through the small `Runtime` interface) | `Ensure` returns the paths of `llama-server` and the model, downloading what is missing; `Installed` and `RuntimeName` feed the status; `ModelLabel` is read before each server start. |
 | Calls | `llama-server` | `GET /health` and `POST /v1/embeddings` on `127.0.0.1`. Only the Go standard library is used, and no CGO. |
 
 ---
@@ -49,7 +49,7 @@ graph LR
 
 | File | Contents |
 |------|----------|
-| `embed.go` | Package doc, the `Embedder` interface and `ErrUnavailable`. |
+| `embed.go` | Package doc, the `Embedder` interface, `ErrUnavailable`, `ErrFetching` and `WithoutFetchWait` (see "The child process"), and `ErrModelChanged`. |
 | `llama.go` | `Llama`, `NewLlama`, `Runtime`, `Status`, batching in `Embed`, the cut of an input that is too long, the cached `Dimension` probe, `embedBatch` (one retry), `call` (HTTP, status handling), `transportError`. |
 | `server.go` | The child process: `acquire` and `release` (start, wait for `/health`, idle stop), `start` (flags, API key, record file), `stop`, `sweep` of orphans, `freePort`, the output tail used in error messages. |
 | `proc_linux.go`, `proc_windows.go`, `proc_other.go` | `procAttr`: on Linux the kernel kills the child with its parent (`Pdeathsig`); on Windows the child gets no console window, and the file also holds that platform's `pidAlive`; no attributes elsewhere. |
@@ -62,9 +62,9 @@ graph LR
 
 | File | Covers |
 |------|--------|
-| `llama_test.go` | `Llama` against a stand-in `llama-server` (the test binary re-run as the server): order and batching by count and size, cached dimension, `Status`, one start for concurrent callers, idle stop and its single reused timer, `Close` stops the server and removes the record, restart after the server was killed, an input over the context is cut to the share that fits and a lone refused text is not sent twice, `MaxTokens` sets the server's context, a model trained for a shorter context is cut to its own limit, both refusal messages parsed (`TestParseTooLarge`) and `cut` (`TestCut`), a server that exits at start (with the `embed_runtime: cpu` hint for Vulkan), low memory checked only on start, `Status` answers `starting` while `Ensure` blocks, `starting` ends when a download finishes or fails after its caller gave up, `Close` returns while a call waits for a model that never loads, and `sweep` (dead owner is removed, live owner or wrong key is left alone). |
+| `llama_test.go` | `Llama` against a stand-in `llama-server` (the test binary re-run as the server): order and batching by count and size, a text long in bytes but short in tokens (the stand-in counts `RAGCODE_FAKE_BYTES_PER_TOKEN` bytes a token) going whole while one over the context is refused once and cut by the reported count, cached dimension, `Status`, one start for concurrent callers, a call marked `WithoutFetchWait` returns `ErrFetching` at once during a download, starts the download when none runs, reports a failed or stalled one once with its own error and then restarts it, while a call without the mark keeps waiting and a model load is waited for by both, a model that never loads is given up after `loadCeiling` (process stopped, error in `Status`, next call starts anew) and a slow load under it is not cut, a stalled download is reported in `Status`, a model file replaced is refused at the next start and by a cached `Dimension` without a running server (`ErrModelChanged`; the old file back heals; a running server reads no file; no runtime means nothing to check), idle stop and its single reused timer, `Close` stops the server and removes the record, restart after the server was killed, an input over the context is cut to the share that fits and a lone refused text is not sent twice, `MaxTokens` sets the server's context, a model trained for a shorter context is cut to its own limit, both refusal messages parsed (`TestParseTooLarge`) and `cut` (`TestCut`), a server that exits at start (with the `embed_runtime: cpu` hint for Vulkan), low memory checked only on start, `Status` answers `starting` while `Ensure` blocks, `starting` ends when a download finishes or fails after its caller gave up, `Close` returns while a call waits for a model that never loads, and `sweep` (dead owner is removed, live owner or wrong key is left alone). |
 | `prefix_test.go` | Prefixes per model family. |
-| `fake_test.go` | `Fake` vectors are deterministic and unit-length; `Fail` makes the first N calls fail. |
+| `fake_test.go` | `Fake` vectors are deterministic and unit-length; `Fail` makes the first N calls fail; `Fetch` makes a marked call fail with `ErrFetching` and lets an unmarked one wait. |
 | `mem_test.go` | `checkMemory`: off when `MinFreeMB` is 0, and the low-memory error. |
 | `zz_verify_test.go` | `Fake` edge cases. |
 
@@ -105,6 +105,7 @@ type Runtime interface {
     Ensure(ctx context.Context) (server, model string, err error)
     Installed() bool
     RuntimeName() string
+    ModelLabel() string // the model file's label as it is on disk now
 }
 ```
 
@@ -133,8 +134,13 @@ type Fake struct {
     Dim  int          // vector size; 0 means 8
     Fail atomic.Int32 // Embed fails this many more calls with ErrUnavailable
     Name string       // Model() result; empty means "fake"
+    Fetch chan struct{} // while open, a download is running (see below); nil means none
 }
 ```
+
+While `Fetch` is open, `Embed` and `Dimension` called with a `WithoutFetchWait`
+context fail at once with `ErrFetching` (wrapped in `ErrUnavailable`) and the
+others wait for it to be closed or their context to end.
 
 `Fake.Vector(text)` is a pseudo-random unit vector seeded by the FNV-64a hash
 of the text, so the same text always gets the same vector. `Embed` honours a
@@ -175,13 +181,41 @@ slot, no web UI, `--offline`, and `-t`/`-tb` when `Threads > 0`. It also gets
 the model from memory by itself. A random 32-byte API key is passed in the
 environment variable `LLAMA_API_KEY` (not on the command line, where other
 users could read it) and sent as a bearer token. The call then waits for
-`GET /health`, with no clock of its own: a model load takes what the machine
-needs, and the caller's context ends the wait. A caller that gives up leaves the
-load running, and the next call waits for the same server.
+`GET /health`. A model load takes seconds, so the wait ends only when the
+model is ready, the process exits, the caller's context ends, or 15 minutes
+have passed since the process started (`loadCeiling`, a variable the tests
+lower): then the process is stopped, its record removed, the error is kept in
+`Status` and the call fails with `ErrUnavailable`, and the next call starts a
+new server. A caller that gives up leaves the load running, and the next call
+waits for the same server.
 
 The download of the runtime and model runs under the embedder's own context,
 not the caller's: a call that gives up stops waiting, the download goes on, and
-the next call waits for the same download. Only `Close` cancels it.
+the next call waits for the same download. Only `Close` cancels it. The
+download ends by itself when it stalls (see
+[internal/llama](../internal/llama/README.md)); the error is kept in `Status`.
+A call that waits downloads again; a call marked `WithoutFetchWait` that comes
+next reports the error once, and the one after that downloads again.
+
+A call that only needs a query vector, such as a search, does not have to wait
+minutes for that download: `WithoutFetchWait(ctx)` marks the context it passes
+to `Embed` or `Dimension`. While the runtime or the model is being downloaded,
+such a call starts the download if none runs and returns at once with an error
+wrapping `ErrUnavailable` and `ErrFetching` (the embedding runtime or model is
+downloading; retry shortly), without taking the lock the download holds. A
+download that nobody waited for and that failed (offline, stalled) is
+reported by the next such call with its own error, once; the call after that
+starts the download again. A model that is loading is still waited for. Calls without the mark, such as an
+index run, wait through the download.
+
+Before every server start the model file's label (`Runtime.ModelLabel`) is
+compared with the name the index was made under. A file replaced while RagCode
+runs gives another label: the start fails with `ErrModelChanged` (wrapped in
+`ErrUnavailable`, naming both labels), no server is launched on the file, and
+`Status` shows the error. Putting the old file back works again at once.
+`Dimension` does the same check when its cached size is returned while no
+server runs, because the index run reads it before it drops a collection of
+another model.
 
 The server runs while calls use it. After the last call ends, one timer (reused, not one per call) of
 `IdleStop` (5 minutes) stops it, and the next call starts it again. The timer
@@ -222,9 +256,10 @@ partial result is returned. An empty input returns an empty result without a
 request.
 
 (The [index](../index/README.md) package calls `Embed` with 16 texts at a
-time, each cut to four bytes per token of the limit before the prefix: 32 KiB
-for 8192 tokens. Such a text is over 8 KiB far more often than before, and
-then travels alone.)
+time, each cut only at a memory bound of 64 bytes per token of the limit
+before the prefix: 512 KiB for 8192 tokens. A text over 8 KiB travels alone;
+one the model refuses costs one answered refusal and is then cut by the
+reported count.)
 
 ### Inputs longer than the context
 
@@ -244,8 +279,8 @@ limit, and the text is cut to that.
 
 Measured with the built-in model: code and Markdown run at 2.7 to 3.8 bytes a
 token, about 3 on average, so 8192 tokens are roughly 24 KB of source. The
-index sends up to 4 bytes a token (32 KiB), which leaves the cut to the token
-count instead of guessing it from bytes.
+index does not estimate that density: it sends the whole text, and only the
+server's refusal, with its token count, decides what is cut.
 
 ### Retry and timeouts
 
@@ -264,7 +299,8 @@ count instead of guessing it from bytes.
 
 `Dimension` embeds the text `"dimension probe"` once and caches the vector
 length (atomically). A failed probe is not cached and is retried on the next
-call.
+call. With the size cached and no server running it still checks the model file
+(`ErrModelChanged`, see "The child process"), without taking the lock.
 
 ## Query and document prefixes
 
@@ -294,7 +330,7 @@ Keys from [internal/config](../internal/config/README.md), applied in
 | Key | Env override | Default | Effect |
 |-----|--------------|---------|--------|
 | `embed_runtime` | `RAGCODE_EMBED_RUNTIME` | `auto` | Which llama.cpp build runs: `auto`, `cpu` or `vulkan`. |
-| `embed_model` | `RAGCODE_EMBED_MODEL` | empty | Absolute path of a `.gguf` model instead of the built-in one. The model name the index stores is the file name without `.gguf`, then `@` and a 12-character fingerprint of the file (its size and its first and last MiB), e.g. `my-embed@3fa9c01b77d2`; another file, even under the same name, makes the next index run recreate the collection. |
+| `embed_model` | `RAGCODE_EMBED_MODEL` | empty | Absolute path of a `.gguf` model instead of the built-in one. The model name the index stores is the file name without `.gguf`, then `@` and a 12-character fingerprint of the file (its size and its first and last MiB), e.g. `my-embed@3fa9c01b77d2`; another file, even under the same name, makes the next index run after a restart recreate the collection. A file replaced while RagCode runs makes every call that would start the server fail with `ErrModelChanged` until RagCode is restarted or the old file is put back (a file that could not be read at start is named without the fingerprint, so it is refused once it appears). An edit in the middle of a file of the same size is not seen. |
 | `llama_server` | `RAGCODE_LLAMA_SERVER` | empty | Absolute path of a `llama-server` instead of the downloaded one. |
 | `embed_threads` | none | `max(2, NumCPU/3)` | `Llama.Threads` -> `-t` and `-tb`. `0` lets llama.cpp use every performance core; negative values are rejected by config validation. |
 | `embed_max_tokens` | none | `8192` | `Llama.MaxTokens` -> `-c`, `-b` and `-ub`: the longest input embedded whole. The index embeds a symbol up to it. |

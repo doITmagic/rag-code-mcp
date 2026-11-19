@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -31,6 +32,7 @@ type server struct {
 	tail  *tailBuf      // the end of its output, for error messages
 	ready bool          // /health has answered 200
 	rec   string        // path of the record sweep reads
+	began time.Time     // when the process was started
 }
 
 func (s *server) exited() bool {
@@ -60,6 +62,28 @@ func (l *Llama) lock(ctx context.Context) error {
 	}
 }
 
+var errFetching = fmt.Errorf("%w: %w", ErrUnavailable, ErrFetching)
+
+// lockUnlessFetching is lock for a call that must not wait for a download:
+// the lock is held by the call that waits for it, so this gives up with
+// ErrFetching as soon as one runs, and waits only for what takes seconds.
+func (l *Llama) lockUnlessFetching(ctx context.Context) error {
+	for {
+		// Ensure runs for an instant at every start, even with the files in
+		// place: only a download that is really needed counts.
+		if l.fetchOn.Load() && !l.rt.Installed() {
+			return errFetching
+		}
+		select {
+		case l.sem <- struct{}{}:
+			return nil
+		case <-ctx.Done():
+			return fmt.Errorf("%w: %w", ErrUnavailable, ctx.Err())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+}
+
 // setState records what Status reports; a non-empty err replaces the last
 // start failure, and reaching "running" clears it.
 func (l *Llama) setState(state, err string) {
@@ -74,12 +98,16 @@ func (l *Llama) setState(state, err string) {
 // acquire returns the running server, starting it when needed, and counts
 // the caller as a user until release.
 func (l *Llama) acquire(ctx context.Context) (*server, error) {
-	// Close ends the wait too: a model load has no clock, and Close needs the
-	// lock this call holds while it waits.
+	// Close ends the wait too: a call may wait for a model load up to
+	// loadCeiling, and Close needs the lock this call holds while it waits.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	defer context.AfterFunc(l.bg, cancel)()
-	if err := l.lock(ctx); err != nil {
+	lock := l.lock
+	if fetchWaitDisabled(ctx) {
+		lock = l.lockUnlessFetching
+	}
+	if err := lock(ctx); err != nil {
 		return nil, err
 	}
 	defer func() { <-l.sem }()
@@ -103,7 +131,7 @@ func (l *Llama) acquire(ctx context.Context) (*server, error) {
 		// A caller that gives up leaves the load running: the next one waits
 		// for the same server instead of starting the load again.
 		if err := l.srv.waitReady(ctx, l.client); err != nil {
-			if l.srv.exited() {
+			if l.srv.exited() || errors.Is(err, errLoadCeiling) {
 				if strings.Contains(l.rt.RuntimeName(), "vulkan") {
 					err = fmt.Errorf("%w (set embed_runtime: cpu in config.yaml to run without the GPU)", err)
 				}
@@ -115,6 +143,7 @@ func (l *Llama) acquire(ctx context.Context) (*server, error) {
 			return nil, err
 		}
 		l.srv.ready = true
+		l.up.Store(l.srv)
 		l.setState("running", "")
 	}
 	l.users++
@@ -159,6 +188,7 @@ func (l *Llama) drop() {
 	}
 	l.srv.stop()
 	l.srv = nil
+	l.up.Store(nil)
 	l.setState("", "")
 }
 
@@ -174,11 +204,24 @@ type fetch struct {
 // cancel minutes of download that the next call would have to start again.
 // The caller holds the lock.
 func (l *Llama) ensure(ctx context.Context) (string, string, error) {
+	if fetchWaitDisabled(ctx) && l.fetch == nil {
+		// The download that nobody waited for failed: a call that cannot wait
+		// would otherwise start it again and answer "downloading" for good. It
+		// gets the failure, once; the next call starts the download again.
+		failed := l.failed
+		l.failed = nil
+		if failed != nil && !l.rt.Installed() {
+			return "", "", failed
+		}
+	}
 	if l.fetch == nil {
 		f := &fetch{done: make(chan struct{})}
 		l.fetch = f
+		l.failed = nil // a new attempt replaces the failure of the one before
+		l.fetchOn.Store(true)
 		go func() {
 			f.server, f.model, f.err = l.rt.Ensure(l.bg)
+			l.fetchOn.Store(false)
 			close(f.done)
 			// A caller waiting for f holds the lock and takes the result. With
 			// none left (it gave up), "starting" ends here, and the next call
@@ -192,6 +235,7 @@ func (l *Llama) ensure(ctx context.Context) (string, string, error) {
 			if l.srv != nil || l.closed {
 				return
 			}
+			l.failed = f.err
 			// Not setState: a download that worked also ends the failure of
 			// the one before it.
 			l.stMu.Lock()
@@ -203,9 +247,19 @@ func (l *Llama) ensure(ctx context.Context) (string, string, error) {
 		}()
 	}
 	f := l.fetch
+	if fetchWaitDisabled(ctx) && !l.rt.Installed() {
+		// The download runs on, and its end clears "starting" as for a caller
+		// that gave up (acquire leaves the state alone while l.fetch is set).
+		select {
+		case <-f.done:
+		default:
+			return "", "", errFetching
+		}
+	}
 	select {
 	case <-f.done:
 		l.fetch = nil
+		l.failed = nil // the waiting caller takes the result, success or error
 		return f.server, f.model, f.err
 	case <-ctx.Done():
 		return "", "", ctx.Err()
@@ -219,8 +273,16 @@ func (l *Llama) start(ctx context.Context) error {
 		return err
 	}
 	bin, model, err := l.ensure(ctx)
+	if errors.Is(err, ErrFetching) {
+		return err
+	}
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrUnavailable, err)
+	}
+	// The file may have been replaced since the name of the index was made:
+	// no server is started on it.
+	if err := l.checkModel(); err != nil {
+		return err
 	}
 	sweep(l.runDir, l.client)
 	port, err := freePort()
@@ -269,16 +331,30 @@ func (l *Llama) start(ctx context.Context) error {
 			s.rec = ""
 		}
 	}
+	s.began = time.Now()
 	l.srv = s
 	return nil
 }
 
-// waitReady polls /health until the model is loaded. No clock: a load takes
-// what the machine needs; the process ending or the caller giving up ends it.
+// loadCeiling is the longest a model load may take, counted from the start of
+// the process. A load takes seconds, a minute on a slow disk under memory
+// pressure; a server that is alive but never ready would otherwise hold every
+// call for good. A variable so that the tests can lower it.
+var loadCeiling = 15 * time.Minute
+
+// errLoadCeiling marks the error of a load that went past loadCeiling.
+var errLoadCeiling = errors.New("model load too long")
+
+// waitReady polls /health until the model is loaded. The process ending, the
+// caller giving up or loadCeiling ends it; a caller that gives up leaves the
+// load running.
 func (s *server) waitReady(ctx context.Context, c *http.Client) error {
 	for {
 		if s.exited() {
 			return fmt.Errorf("%w: llama-server stopped while starting: %s", ErrUnavailable, s.tail.last())
+		}
+		if time.Since(s.began) >= loadCeiling {
+			return fmt.Errorf("%w: %w: llama-server did not load the model in %s: %s", ErrUnavailable, errLoadCeiling, loadCeiling, s.tail.last())
 		}
 		rctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		req, err := http.NewRequestWithContext(rctx, http.MethodGet, s.base+"/health", nil)

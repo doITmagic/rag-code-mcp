@@ -13,6 +13,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/doITmagic/rag-code-mcp/v2/internal/config"
+	"github.com/doITmagic/rag-code-mcp/v2/internal/uninstall"
 )
 
 func TestRunRemovesV1(t *testing.T) {
@@ -27,9 +30,16 @@ func TestRunRemovesV1(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(cursor), 0o755))
 	require.NoError(t, os.WriteFile(cursor, []byte(`{"mcpServers":{"ragcode":{"command":"`+v1Bin+`/rag-code-mcp"},"github":{"command":"gh"}}}`), 0o644))
 
+	// v1 started ollama/ollama:latest with the user's own models directory.
+	bin := filepath.Dir(dockerLog)
+	for name, content := range map[string]string{"container": "", "image": "ollama/ollama:latest", "mounts": "bind==/root/.ollama;"} {
+		require.NoError(t, os.WriteFile(filepath.Join(bin, name), []byte(content), 0o644))
+	}
+
 	var out bytes.Buffer
 	require.NoError(t, Run(context.Background(), Options{SkipDownload: true, Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}), out.String())
 
+	assert.NoFileExists(t, filepath.Join(bin, "container"), "the v1 Ollama container is removed")
 	assert.NoDirExists(t, filepath.Join(home, ".local", "share", "ragcode"))
 	assert.NoDirExists(t, filepath.Join(home, ".local", "share", "qdrant"))
 	data, _ := os.ReadFile(filepath.Join(home, ".bashrc"))
@@ -39,7 +49,8 @@ func TestRunRemovesV1(t *testing.T) {
 	assert.NotContains(t, string(data), "ragcode")
 	assert.Contains(t, string(data), "github")
 	log, _ := os.ReadFile(dockerLog)
-	assert.Contains(t, string(log), "rm -f ragcode-qdrant ragcode-ollama")
+	assert.Contains(t, string(log), "rm -f ragcode-qdrant\n")
+	assert.NotContains(t, string(log), "rm -f ragcode-qdrant ragcode-ollama", "the Ollama container goes through its identity check")
 	assert.FileExists(t, filepath.Join(home, ".ragcode", "bin", "rag-code-mcp"))
 }
 
@@ -169,10 +180,7 @@ func TestInstallIntoV1DirViaSymlinkOrRelativePathKeepsItself(t *testing.T) {
 		v1Dir := filepath.Join(home, ".local", "share", "ragcode")
 		require.NoError(t, os.MkdirAll(v1Dir, 0o755))
 
-		wd, err := os.Getwd()
-		require.NoError(t, err)
-		require.NoError(t, os.Chdir(home))
-		t.Cleanup(func() { _ = os.Chdir(wd) })
+		t.Chdir(home)
 
 		relHome := filepath.Join(".local", "share", "ragcode")
 		t.Setenv("RAGCODE_HOME", relHome)
@@ -183,6 +191,7 @@ func TestInstallIntoV1DirViaSymlinkOrRelativePathKeepsItself(t *testing.T) {
 
 		assert.FileExists(t, filepath.Join(v1Dir, "bin", "rag-code-mcp"))
 		assert.FileExists(t, filepath.Join(v1Dir, "config.yaml"))
+		assert.True(t, filepath.IsAbs(uninstall.Binary(config.HomeDir())), "the installed binary path is absolute")
 	})
 }
 

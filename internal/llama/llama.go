@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/doITmagic/rag-code-mcp/v2/index"
@@ -44,8 +45,25 @@ const (
 var (
 	runtimeBase = "https://github.com/ggml-org/llama.cpp/releases/download/" + Tag + "/"
 	modelURL    = "https://huggingface.co/ggml-org/embeddinggemma-2-GGUF/resolve/6ea3e3a309d12a4779cfda98b8c19800d2d5da71/" + modelFile
-	client      = &http.Client{} // no clock: a slow line still finishes; the context given to Ensure ends it
+	// No overall clock: a slow line still finishes. A download that gets less
+	// than stallMinBytes in stallWindow is ended as stalled instead (see
+	// download), and the context given to Ensure ends it as well.
+	client = &http.Client{}
 )
+
+// The stall rule of a download: it ends with ErrStalled when less than
+// stallMinBytes arrive in stallWindow (the wait for the response headers
+// counts too). 64 KiB in 2 minutes is about half a KiB a second: any real line
+// keeps the 310 MB model going, and a trickle that would hold the embedder for
+// hours does not. Variables so that the tests can lower them.
+var (
+	stallWindow         = 2 * time.Minute
+	stallMinBytes int64 = 64 << 10
+)
+
+// ErrStalled wraps the error of a download that ended because too little data
+// arrived; the next call starts it again.
+var ErrStalled = errors.New("the download stalled")
 
 type asset struct{ name, sha string }
 
@@ -144,7 +162,8 @@ func (o Options) RuntimeName() string {
 	return "llama.cpp " + Tag + " (" + o.variant() + ")"
 }
 
-// ModelLabel is the model name the index stores: the built-in name (one file,
+// ModelLabel is the model name the index stores (the embedder asks again each
+// time it starts the server, so it follows the file on disk): the built-in name (one file,
 // pinned by modelSHA: a new built-in model needs a new ModelName), or the
 // file name of a user-provided model without ".gguf", followed by "@" and a
 // fingerprint of the file. Vectors of two models are not comparable even at
@@ -240,6 +259,9 @@ func (o Options) Ensure(ctx context.Context) (server, model string, err error) {
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
 		return "", "", fmt.Errorf("llama: %w", err)
 	}
+	// The wait has no limit of its own on purpose: a holder that is alive is
+	// downloading under the stall rule of download, so it ends or fails within
+	// minutes of making no progress, and a dead one has released the lock.
 	var unlock func()
 	for said := false; ; {
 		unlock, err = index.LockFile(lockPath)
@@ -343,7 +365,48 @@ func (o Options) fetchRuntime(ctx context.Context, dir string) error {
 
 // download saves url to a temporary file in dir and returns its path once the
 // SHA-256 matches. size, when known, is checked too and gives the percent.
+//
+// A download that gets less than stallMinBytes in stallWindow, from before the
+// request is sent, ends with an error wrapping ErrStalled. The time spent
+// writing and hashing does not count against it: a slow disk is not a stall.
 func (o Options) download(ctx context.Context, url, sha string, size int64, dir, what string) (string, error) {
+	dctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil) // also ends the watcher
+	var got atomic.Int64
+	var busy atomic.Bool // the loop is writing: no data is expected meanwhile
+	go watchStall(dctx, cancel, stallWindow, stallMinBytes, &got, &busy)
+	file, err := o.transfer(dctx, url, sha, size, dir, what, &got, &busy)
+	if err != nil && ctx.Err() == nil && errors.Is(context.Cause(dctx), ErrStalled) {
+		return "", fmt.Errorf("llama: download %s: %w (less than %d KiB in %s)", what, ErrStalled, stallMinBytes>>10, stallWindow)
+	}
+	return file, err
+}
+
+// watchStall cancels ctx with ErrStalled when a whole window passes with less
+// than minBytes read. A window that meets a write is not judged: it is carried
+// into the next one.
+func watchStall(ctx context.Context, cancel context.CancelCauseFunc, window time.Duration, minBytes int64, got *atomic.Int64, busy *atomic.Bool) {
+	tick := time.NewTicker(window)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			if busy.Load() {
+				continue
+			}
+			if got.Swap(0) < minBytes {
+				cancel(ErrStalled)
+				return
+			}
+		}
+	}
+}
+
+// transfer is the transfer of download: got counts the bytes read, and busy is
+// set while it writes them.
+func (o Options) transfer(ctx context.Context, url, sha string, size int64, dir, what string, got *atomic.Int64, busy *atomic.Bool) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", fmt.Errorf("llama: %w", err)
@@ -376,10 +439,14 @@ func (o Options) download(ctx context.Context, url, sha string, size int64, dir,
 	for {
 		n, rerr := resp.Body.Read(buf)
 		if n > 0 {
-			if _, err := f.Write(buf[:n]); err != nil {
-				return fail(fmt.Errorf("llama: %w", err))
-			}
+			got.Add(int64(n))
+			busy.Store(true)
+			_, werr := f.Write(buf[:n])
 			h.Write(buf[:n])
+			busy.Store(false)
+			if werr != nil {
+				return fail(fmt.Errorf("llama: %w", werr))
+			}
 			done += int64(n)
 			if size > 0 {
 				if pct := int(done * 100 / size); pct >= lastPct+10 && pct < 100 {
@@ -395,8 +462,8 @@ func (o Options) download(ctx context.Context, url, sha string, size int64, dir,
 			return fail(fmt.Errorf("llama: download %s: %w", what, rerr))
 		}
 	}
-	if got := hex.EncodeToString(h.Sum(nil)); got != sha {
-		return fail(fmt.Errorf("llama: %s does not match its pinned checksum (got %s, %d bytes): not used", what, got, done))
+	if have := hex.EncodeToString(h.Sum(nil)); have != sha {
+		return fail(fmt.Errorf("llama: %s does not match its pinned checksum (got %s, %d bytes): not used", what, have, done))
 	}
 	if err := f.Close(); err != nil {
 		os.Remove(f.Name())
@@ -465,12 +532,16 @@ func untar(archive, dir string) error {
 	}
 }
 
-func unzip(archive, dir string) error {
+func unzip(archive, dir string) (err error) {
 	zr, err := zip.OpenReader(archive)
 	if err != nil {
 		return err
 	}
-	defer zr.Close()
+	defer func() {
+		if cerr := zr.Close(); err == nil {
+			err = cerr
+		}
+	}()
 	for _, zf := range zr.File {
 		base := path.Base(strings.ReplaceAll(zf.Name, `\`, "/"))
 		if zf.FileInfo().IsDir() || !zf.Mode().IsRegular() || !wanted(base) {

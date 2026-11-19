@@ -62,7 +62,7 @@ func resolveSymbol(ctx context.Context, w *engine.Workspace, query, filePath str
 		hits, err = byName(ctx, w, store.Filter{}, query, candidateLimit) // for the "elsewhere" answer below
 	}
 	if err != nil {
-		res, _, _ := storeErr(ctx, w, err)
+		res, _, _ := lookupErr(ctx, w, err)
 		return nil, res
 	}
 	if hits = live(w, hits); len(hits) == 0 {
@@ -259,7 +259,7 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 	if in.Limit <= 0 {
 		in.Limit = 100
 	}
-	w, res := t.open(ctx, req, in.WorkspaceRoot)
+	w, res := t.openLookup(ctx, req, in.WorkspaceRoot)
 	if res != nil {
 		return res, nil, nil
 	}
@@ -272,7 +272,7 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 	sym = vueDefault(ctx, w, sym)
 	callers, cut, err := referrers(ctx, w, sym, in.Limit)
 	if err != nil {
-		return storeErr(ctx, w, err)
+		return lookupErr(ctx, w, err)
 	}
 	byFile := map[string]*FileUsages{}
 	lines := map[string][]string{}
@@ -308,7 +308,7 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 	}
 	tags, isTag, err := vueTags(ctx, w, sym, in.Limit)
 	if err != nil {
-		return storeErr(ctx, w, err)
+		return lookupErr(ctx, w, err)
 	}
 	tags, dropped := keepWithin(tags, seen, in.Limit)
 	cut = cut || dropped
@@ -318,7 +318,7 @@ func (t *tools) findUsages(ctx context.Context, req *mcp.CallToolRequest, in Usa
 		// at most len(seen) of them were counted already: in.Limit rows hold every new one that fits
 		vc, vcut, err := referrers(ctx, w, &m, in.Limit)
 		if err != nil {
-			return storeErr(ctx, w, err)
+			return lookupErr(ctx, w, err)
 		}
 		vc, dropped := keepWithin(vc, seen, in.Limit)
 		cut = cut || vcut || dropped
@@ -820,7 +820,7 @@ func (t *tools) callHierarchy(ctx context.Context, req *mcp.CallToolRequest, in 
 		in.Depth = 2
 	}
 	in.Depth = min(in.Depth, maxDepth)
-	w, res := t.open(ctx, req, in.WorkspaceRoot)
+	w, res := t.openLookup(ctx, req, in.WorkspaceRoot)
 	if res != nil {
 		return res, nil, nil
 	}
@@ -840,7 +840,7 @@ func (t *tools) callHierarchy(ctx context.Context, req *mcp.CallToolRequest, in 
 		root := &Node{Candidate: toCandidate(*sym)}
 		wk.walk(ctx, root, *sym, dir == "incoming", in.Depth)
 		if wk.err != nil {
-			return storeErr(ctx, w, wk.err)
+			return lookupErr(ctx, w, wk.err)
 		}
 		data[dir] = root
 		fmt.Fprintf(&text, "%s:\n", dir)

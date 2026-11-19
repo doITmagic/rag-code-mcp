@@ -64,7 +64,7 @@ graph TD
 | File | Contents |
 |------|----------|
 | `engine.go` | Package doc, `Engine`, `New`, errors (`ErrNotIndexed`, `ErrLocked`, `ErrClosed`), `RootError`, `UnsureRootError`, `ConfirmRoot`, `Loaded`, `Workspace`, `validateRoot`, `roots.json` (`registerRoot`, `ReadRoots`), `Resume`, `Close`, and the job queue (`enqueue`, `merge`, `kick`, `runJobs`, `runOne`, `retryDelay`). |
-| `workspace.go` | `Workspace` and its job fields, `Status`, `Index`, `IndexFiles`, `Search`, `Scroll`, `mapErr`/`dimChanged` (the `ErrNotIndexed` mapping), `resyncIfReopened`, `Ready`. |
+| `workspace.go` | `Workspace` and its job fields, `Status`, `Index`, `IndexFiles`, `Search`, `Scroll`, `mapErr`/`dimChanged`/`notIndexed` (the `ErrNotIndexed` mapping), `resyncIfReopened`, `Ready`, `FetchingMsg`. |
 | `watch.go` | The per-root `watcher`: `startWatcher` (leader lock `watch.lock`), `follow`/`takeOver` (a follower's takeover poll, `takeoverPoll`), `addTree`, `watchGit`, event `handle`, `dropDir`, debounce (`add`, `flush`), `full`, `Stop`. |
 | `nonotify_linux.go`, `nonotify_other.go` | `noNotify`: names a root whose file system reports no changes to inotify (9p, the WSL2 `/mnt` drives); always empty off Linux. |
 | `iderules.go` | `WriteIDERules`, `IDEPointer`, `PointerFiles`, the list of agent instruction files, `tracked`, `within`, `appendPointer`. |
@@ -85,6 +85,7 @@ graph TD
 | `windows_root_test.go` | Windows system directories refused as roots: `windowsSystemDir`, `wslWindowsSystemDir` and `wslBroadDir` (`/mnt`, a drive mount, the Windows user home seen from WSL) and `diskCase` (the on-disk spelling, on a temp dir) as pure functions on every OS, and through `validateRoot` on Windows only. |
 | `busy_test.go` | A run reporting locked files (`index.Status.Busy`, fake run) queues a files run for just them after `lockRetryDelay(0)`, without holding back a request made meanwhile; a clean run resets the count; after `busyRetries` no retry is scheduled. |
 | `junction_windows_test.go` | (Windows only) a root that is an NTFS junction, or lies below one, is accepted by `validateRoot` and resolved to the real directory. |
+| `fetching_test.go` | `Scroll` never reaches `Dimension`; a missing collection is `ErrNotIndexed` for `Scroll` without the embedder; during a download `Search` and `Ready` answer at once with `ErrFetching` and the index run still waits. |
 | `zz_verify_test.go` | Verification tests: concurrent `Workspace` calls, cancelled contexts, enqueue during a lock retry, recreate while locked, a directory moved out and the forced debounce flush, status read from disk before any run, home symlink guard, `Close` cancelling a blocked run, junk `roots.json`, a files run with only deletions, junk paths, `Ready` remediation text, a failed query embed does not enqueue, recreate absorbing queued files, catch-up with and without `auto_index`, double `Close`, `.git/refs` plus hidden and excluded directories, kernel file systems refused. |
 
 ---
@@ -411,12 +412,20 @@ directory from its watch list when the parent's rename event arrives.
 and calls `store.Search` on the workspace's collection. `Scroll` lists
 symbols matching a filter without a vector.
 
-Both map store errors through `mapErr`: when the collection does not exist
-(`store.ErrNotFound`), or exists with a vector size that differs from the
-embedder's (the embedding model changed), the error becomes `ErrNotIndexed`
+`Search` maps store errors through `mapErr`: when the collection does not
+exist (`store.ErrNotFound`), or exists with a vector size that differs from
+the embedder's (the embedding model changed), the error becomes `ErrNotIndexed`
 and, with `auto_index`, a full run is queued; `index.Run` then creates or
-recreates the collection. A cancelled context returns its own error. A
-failed query embed returns the embed error and queues nothing.
+recreates the collection. `Scroll` maps only the missing collection the same
+way: it never reads the vector size, so it never reaches the embedder, and any
+other store error comes back as it is. A cancelled context returns its own
+error. A failed query embed returns the embed error and queues nothing.
+
+`Search` and `Ready` call the embedder with `embed.WithoutFetchWait`: while the
+runtime or the model is being downloaded, which takes minutes, they do not wait
+for it. `Search` returns an error wrapping `embed.ErrUnavailable` and
+`embed.ErrFetching`, and `Ready` answers `FetchingMsg`; the download keeps
+running, and an index run, which carries no mark, waits through it.
 
 After each query both also check whether the store reopened the collection's
 file because it was deleted or replaced on disk (`resyncIfReopened`, through
@@ -432,9 +441,11 @@ instead of ranking incomparable vectors. A match is remembered until
 `state.json` changes (another server, started with another model, may have
 rebuilt the index). `Scroll` needs no vector and is not affected.
 
-`Ready` checks, in order, that the embedder answers (`Dimension`), that the
+`Ready` is for the searches that embed their query. It checks, in order, that
+the embedder answers (`Dimension`, without waiting for a download), that the
 store answers and that the collection exists; when not, the text says what
-to do (see the embedder state in `rag_server_info`, or index the workspace).
+to do (see the embedder state in `rag_server_info`, wait for the download, or
+index the workspace). The tools that only read the index do not call it.
 
 ---
 

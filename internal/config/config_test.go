@@ -132,13 +132,30 @@ func TestLoadValidationError(t *testing.T) {
 }
 
 func TestHomeDirAndDefaultPath(t *testing.T) {
-	t.Setenv("RAGCODE_HOME", "/custom")
-	assert.Equal(t, "/custom", HomeDir())
-	assert.Equal(t, filepath.Join("/custom", "config.yaml"), DefaultPath())
+	t.Setenv("RAGCODE_HOME", abs("/custom"))
+	assert.Equal(t, abs("/custom"), HomeDir())
+	assert.Equal(t, filepath.Join(abs("/custom"), "config.yaml"), DefaultPath())
 	t.Setenv("RAGCODE_HOME", "")
 	home, err := os.UserHomeDir()
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(home, ".ragcode"), HomeDir())
+}
+
+// A relative RAGCODE_HOME is resolved against the working directory: the
+// embedding server runs with another working directory and would not find
+// a relative binary or model.
+func TestHomeDirIsAbsolute(t *testing.T) {
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	want, err := filepath.Abs(cwd)
+	require.NoError(t, err)
+
+	t.Setenv("RAGCODE_HOME", filepath.Join("rel", "..", "rel", "home")+string(filepath.Separator))
+	assert.Equal(t, filepath.Join(want, "rel", "home"), HomeDir())
+	assert.Equal(t, filepath.Join(want, "rel", "home", "config.yaml"), DefaultPath())
+
+	t.Setenv("RAGCODE_HOME", ".")
+	assert.Equal(t, want, HomeDir())
 }
 
 func TestNewLogger(t *testing.T) {

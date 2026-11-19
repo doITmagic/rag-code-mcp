@@ -3,6 +3,7 @@ package embed
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"net/http"
@@ -22,8 +23,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The fake server counts one token per byte and refuses an input over its
-// context (-c) with llama-server's own messages.
+// The fake server counts one token per byte (RAGCODE_FAKE_BYTES_PER_TOKEN
+// changes that) and refuses an input over its context (-c) with
+// llama-server's own messages.
 const fakeDim = 6
 
 // TestMain lets the test binary act as the llama-server: the tests start it
@@ -81,11 +83,17 @@ func fakeLlamaServer() {
 	if n, _ := strconv.Atoi(os.Getenv("RAGCODE_FAKE_TRAIN_CTX")); n > 0 && n < ctxSize {
 		ctxSize = n
 	}
+	// A text of dense tokens: RAGCODE_FAKE_BYTES_PER_TOKEN bytes make one token.
+	bytesPerToken := 1
+	if n, _ := strconv.Atoi(os.Getenv("RAGCODE_FAKE_BYTES_PER_TOKEN")); n > 0 {
+		bytesPerToken = n
+	}
 	if os.Getenv("RAGCODE_FAKE_MODE") == "exit" {
 		fmt.Fprintln(os.Stderr, "error: failed to load model "+model)
 		os.Exit(1)
 	}
 	key := os.Getenv("LLAMA_API_KEY")
+	began := time.Now()
 	fakeLog("start " + strconv.Itoa(os.Getpid()))
 	fakeLog(fmt.Sprintf("ctx c=%d ub=%d", ctxSize, batch))
 	auth := func(w http.ResponseWriter, r *http.Request) bool {
@@ -98,6 +106,11 @@ func fakeLlamaServer() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		if os.Getenv("RAGCODE_FAKE_MODE") == "loading" { // a model that never finishes loading
+			http.Error(w, `{"error":{"message":"Loading model"}}`, http.StatusServiceUnavailable)
+			return
+		}
+		// A model that loads for RAGCODE_FAKE_LOAD_MS milliseconds.
+		if n, _ := strconv.Atoi(os.Getenv("RAGCODE_FAKE_LOAD_MS")); time.Since(began) < time.Duration(n)*time.Millisecond {
 			http.Error(w, `{"error":{"message":"Loading model"}}`, http.StatusServiceUnavailable)
 			return
 		}
@@ -125,14 +138,15 @@ func fakeLlamaServer() {
 		}
 		fakeLog(fmt.Sprintf("emb n=%d bytes=%d", len(req.Input), total))
 		for _, t := range req.Input {
-			if len(t) > batch {
+			tokens := len(t) / bytesPerToken
+			if tokens > batch {
 				w.WriteHeader(http.StatusInternalServerError)
-				fmt.Fprintf(w, `{"error":{"code":500,"message":"input (%d tokens) is too large to process. increase the physical batch size (current batch size: %d)","type":"server_error"}}`, len(t), batch)
+				fmt.Fprintf(w, `{"error":{"code":500,"message":"input (%d tokens) is too large to process. increase the physical batch size (current batch size: %d)","type":"server_error"}}`, tokens, batch)
 				return
 			}
-			if len(t) > ctxSize {
+			if tokens > ctxSize {
 				w.WriteHeader(http.StatusBadRequest)
-				fmt.Fprintf(w, `{"error":{"code":400,"message":"input (%d tokens) is larger than the max context size (%d tokens). skipping","type":"exceed_context_size_error"}}`, len(t), ctxSize)
+				fmt.Fprintf(w, `{"error":{"code":400,"message":"input (%d tokens) is larger than the max context size (%d tokens). skipping","type":"exceed_context_size_error"}}`, tokens, ctxSize)
 				return
 			}
 		}
@@ -166,6 +180,9 @@ type testRT struct {
 	name          string        // RuntimeName; empty means "test"
 	block         chan struct{} // when set, Ensure waits for it to close
 	fail          atomic.Bool   // Ensure fails, as a download that broke
+	stall         atomic.Bool   // Ensure fails as a stalled download
+	label         atomic.Value  // ModelLabel, a string; unset means "test-model", what newTestLlama names the model
+	labels        atomic.Int32  // calls of ModelLabel
 }
 
 func (r *testRT) Ensure(context.Context) (string, string, error) {
@@ -176,10 +193,20 @@ func (r *testRT) Ensure(context.Context) (string, string, error) {
 	if r.fail.Load() {
 		return "", "", fmt.Errorf("download broke")
 	}
+	if r.stall.Load() {
+		return "", "", fmt.Errorf("llama: download thing: the download stalled (less than 64 KiB in 2m0s)")
+	}
 	r.installed.Store(true)
 	return r.server, r.model, nil
 }
 func (r *testRT) Installed() bool { return r.installed.Load() }
+func (r *testRT) ModelLabel() string {
+	r.labels.Add(1)
+	if v, ok := r.label.Load().(string); ok {
+		return v
+	}
+	return "test-model"
+}
 func (r *testRT) RuntimeName() string {
 	if r.name != "" {
 		return r.name
@@ -426,6 +453,29 @@ func TestParseTooLarge(t *testing.T) {
 	assert.Zero(t, big.limit)
 	assert.Nil(t, parseTooLarge("Request Entity Too Large"))
 	assert.Nil(t, parseTooLarge("model not loaded"))
+}
+
+// The model counts tokens, not bytes: a text long in bytes and short in
+// tokens goes through whole, and only a text over the context is refused once
+// and then cut by the count the server reports.
+func TestLlamaLongBytesFewTokensIsNotCut(t *testing.T) {
+	l, _, log := newTestLlama(t)
+	t.Setenv("RAGCODE_FAKE_BYTES_PER_TOKEN", "7")
+	ctx := context.Background()
+
+	whole := strings.Repeat("x", 40000) // 5714 tokens, over the 8 KiB a request carries
+	vecs, err := l.Embed(ctx, []string{whole})
+	require.NoError(t, err)
+	assert.Equal(t, fakeVec(whole), vecs[0])
+	assert.Equal(t, []string{"emb n=1 bytes=40000"}, logLines(t, log, "emb"), "one request, no refusal")
+
+	require.NoError(t, os.Remove(log))
+	long := strings.Repeat("x", 400000) // 57142 tokens
+	vecs, err = l.Embed(ctx, []string{long})
+	require.NoError(t, err)
+	kept := len(long) * (DefaultTokens - cutMargin) / (len(long) / 7)
+	assert.Equal(t, fakeVec(long[:kept]), vecs[0])
+	assert.Equal(t, []string{"emb n=1 bytes=400000", "emb n=1 bytes=" + strconv.Itoa(kept)}, logLines(t, log, "emb"), "refused once, then cut")
 }
 
 func TestCut(t *testing.T) {
@@ -709,4 +759,360 @@ func TestLlamaIdleTimerReused(t *testing.T) {
 	time.Sleep(1200 * time.Millisecond)
 	assert.True(t, pidAlive(pid), "the first deadline no longer applies")
 	waitDead(t, pid)
+}
+
+// A caller that only wants a query vector does not wait for a download: it
+// gets ErrFetching at once, while the caller that began the download (an
+// index run) keeps waiting for it.
+func TestLlamaQuickCallDuringADownloadFailsAtOnce(t *testing.T) {
+	l, rt, _ := newTestLlama(t)
+	rt.installed.Store(false)
+	rt.block = make(chan struct{})
+	errc := make(chan error, 1)
+	go func() {
+		_, err := l.Embed(context.Background(), []string{"a"})
+		errc <- err
+	}()
+	require.Eventually(t, func() bool { return rt.ensures.Load() == 1 }, 5*time.Second, 10*time.Millisecond)
+
+	quick := WithoutFetchWait(context.Background())
+	for _, call := range []func() error{
+		func() error { _, err := l.Embed(quick, []string{"q"}); return err },
+		func() error { _, err := l.Dimension(quick); return err },
+	} {
+		done := make(chan error, 1)
+		go func() { done <- call() }()
+		select {
+		case err := <-done:
+			require.ErrorIs(t, err, ErrFetching)
+			require.ErrorIs(t, err, ErrUnavailable)
+			assert.Contains(t, err.Error(), "downloading")
+			assert.Contains(t, err.Error(), "retry")
+		case <-time.After(2 * time.Second):
+			t.Fatal("a quick call waits for the download")
+		}
+	}
+	assert.Equal(t, int32(1), rt.ensures.Load(), "no second download")
+	assert.Equal(t, "starting", l.Status().State)
+
+	select {
+	case err := <-errc:
+		t.Fatalf("the call that began the download gave up: %v", err)
+	default:
+	}
+	close(rt.block)
+	require.NoError(t, <-errc, "an index run keeps waiting through the download")
+	_, err := l.Embed(quick, []string{"q"})
+	require.NoError(t, err, "installed now")
+}
+
+// With no download running, a quick call starts one and returns at once.
+func TestLlamaQuickCallStartsTheDownload(t *testing.T) {
+	l, rt, _ := newTestLlama(t)
+	rt.installed.Store(false)
+	rt.block = make(chan struct{})
+	quick := WithoutFetchWait(context.Background())
+	_, err := l.Embed(quick, []string{"q"})
+	require.ErrorIs(t, err, ErrFetching)
+	require.ErrorIs(t, err, ErrUnavailable)
+	require.Eventually(t, func() bool { return rt.ensures.Load() == 1 }, 5*time.Second, 10*time.Millisecond)
+	assert.Equal(t, "starting", l.Status().State)
+
+	_, err = l.Embed(quick, []string{"q"})
+	require.ErrorIs(t, err, ErrFetching)
+	assert.Equal(t, int32(1), rt.ensures.Load(), "the download that runs is joined")
+
+	close(rt.block)
+	require.Eventually(t, func() bool { return l.Status().State == "stopped" }, 5*time.Second, 10*time.Millisecond)
+	_, err = l.Embed(quick, []string{"q"})
+	require.NoError(t, err)
+}
+
+// A failed download is not hidden behind "downloading": the quick call after it
+// ends gets the real error, once, and the one after that starts the download again.
+func TestLlamaQuickCallReportsAFailedDownload(t *testing.T) {
+	l, rt, _ := newTestLlama(t)
+	rt.installed.Store(false)
+	rt.fail.Store(true)
+	rt.block = make(chan struct{})
+	quick := WithoutFetchWait(context.Background())
+	_, err := l.Embed(quick, []string{"q"})
+	require.ErrorIs(t, err, ErrFetching)
+	close(rt.block)
+	require.Eventually(t, func() bool { return l.Status().State == "not_installed" }, 5*time.Second, 10*time.Millisecond)
+	assert.Contains(t, l.Status().Error, "download broke")
+
+	_, err = l.Embed(quick, []string{"q"})
+	require.ErrorIs(t, err, ErrUnavailable)
+	require.NotErrorIs(t, err, ErrFetching, "the failure is shown, not a download that does not run")
+	assert.Contains(t, err.Error(), "download broke")
+	assert.Equal(t, int32(1), rt.ensures.Load(), "the failure is reported without a new attempt")
+
+	rt.fail.Store(false)
+	rt.block = make(chan struct{})
+	_, err = l.Embed(quick, []string{"q"})
+	require.ErrorIs(t, err, ErrFetching, "a new download began")
+	close(rt.block)
+	require.Eventually(t, func() bool { return rt.ensures.Load() == 2 && l.Status().State == "stopped" }, 5*time.Second, 10*time.Millisecond)
+	_, err = l.Embed(quick, []string{"q"})
+	require.NoError(t, err)
+}
+
+// A failure that a later download which was waited for has outlived is not
+// reported again: with the files gone once more, a quick call starts the download.
+func TestLlamaWaitedDownloadClearsAStaleFailure(t *testing.T) {
+	l, rt, _ := newTestLlama(t)
+	rt.installed.Store(false)
+	rt.fail.Store(true)
+	rt.block = make(chan struct{})
+	quick := WithoutFetchWait(context.Background())
+	_, err := l.Embed(quick, []string{"q"})
+	require.ErrorIs(t, err, ErrFetching)
+	close(rt.block)
+	require.Eventually(t, func() bool { return l.Status().State == "not_installed" }, 5*time.Second, 10*time.Millisecond)
+
+	// An index run downloads and waits; the failure is not read by anyone.
+	rt.fail.Store(false)
+	rt.block = nil
+	_, err = l.Embed(context.Background(), []string{"a"})
+	require.NoError(t, err)
+
+	// The files vanish and the server stops.
+	rt.installed.Store(false)
+	rt.block = make(chan struct{})
+	l.sem <- struct{}{}
+	l.drop()
+	<-l.sem
+	_, err = l.Embed(quick, []string{"q"})
+	require.ErrorIs(t, err, ErrFetching, "a new download began, not the old failure")
+	assert.NotContains(t, err.Error(), "download broke")
+	close(rt.block)
+}
+
+// Ensure runs at every start, even with the files in place: nothing is
+// downloading then, and a quick call waits for it as for a model load.
+func TestLlamaQuickCallDuringAnInstantEnsureIsNotRefused(t *testing.T) {
+	l, rt, _ := newTestLlama(t) // installed
+	rt.block = make(chan struct{})
+	errc := make(chan error, 1)
+	go func() {
+		_, err := l.Embed(context.Background(), []string{"a"})
+		errc <- err
+	}()
+	require.Eventually(t, func() bool { return rt.ensures.Load() == 1 }, 5*time.Second, 10*time.Millisecond)
+
+	qerr := make(chan error, 1)
+	go func() {
+		_, err := l.Embed(WithoutFetchWait(context.Background()), []string{"q"})
+		qerr <- err
+	}()
+	select {
+	case err := <-qerr:
+		t.Fatalf("the quick call did not wait for the start: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(rt.block)
+	require.NoError(t, <-errc)
+	require.NoError(t, <-qerr)
+}
+
+// A failure stored before the files were put in place by something else (the
+// installer) is not reported: the runtime is there.
+func TestLlamaQuickCallIgnoresAFailureOnceInstalled(t *testing.T) {
+	l, rt, _ := newTestLlama(t) // installed
+	l.sem <- struct{}{}
+	l.failed = errors.New("download broke")
+	<-l.sem
+	_, err := l.Embed(WithoutFetchWait(context.Background()), []string{"q"})
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), rt.ensures.Load())
+}
+
+// A stalled download is shown the same way.
+func TestLlamaQuickCallReportsAStalledDownload(t *testing.T) {
+	l, rt, _ := newTestLlama(t)
+	rt.installed.Store(false)
+	rt.stall.Store(true)
+	rt.block = make(chan struct{})
+	quick := WithoutFetchWait(context.Background())
+	_, err := l.Embed(quick, []string{"q"})
+	require.ErrorIs(t, err, ErrFetching)
+	close(rt.block)
+	require.Eventually(t, func() bool { return l.Status().State == "not_installed" }, 5*time.Second, 10*time.Millisecond)
+	_, err = l.Embed(quick, []string{"q"})
+	require.NotErrorIs(t, err, ErrFetching)
+	assert.Contains(t, err.Error(), "stalled")
+}
+
+// A model load is waited for by a quick call too: it takes seconds, and every
+// first search after the idle stop goes through it.
+func TestLlamaQuickCallWaitsForTheModelLoad(t *testing.T) {
+	l, _, log := newTestLlama(t)
+	t.Setenv("RAGCODE_FAKE_LOAD_MS", "700")
+	start := time.Now()
+	vecs, err := l.Embed(WithoutFetchWait(context.Background()), []string{"q"})
+	require.NoError(t, err)
+	assert.Equal(t, fakeVec("q"), vecs[0])
+	assert.GreaterOrEqual(t, time.Since(start), 600*time.Millisecond)
+	assert.Len(t, logLines(t, log, "start"), 1)
+}
+
+// A quick call that waits for a model load, held by another call, waits for it too.
+func TestLlamaQuickCallWaitsBehindALoadInProgress(t *testing.T) {
+	l, _, log := newTestLlama(t)
+	t.Setenv("RAGCODE_FAKE_LOAD_MS", "700")
+	errc := make(chan error, 1)
+	go func() {
+		_, err := l.Embed(context.Background(), []string{"a"})
+		errc <- err
+	}()
+	require.Eventually(t, func() bool { return len(logLines(t, log, "start")) == 1 }, 5*time.Second, 10*time.Millisecond)
+	vecs, err := l.Embed(WithoutFetchWait(context.Background()), []string{"q"})
+	require.NoError(t, err)
+	assert.Equal(t, fakeVec("q"), vecs[0])
+	require.NoError(t, <-errc)
+	assert.Len(t, logLines(t, log, "start"), 1)
+}
+
+// A model that never finishes loading is given up after loadCeiling: the
+// process is stopped, the error is reported, and the next call starts anew.
+func TestLlamaModelLoadCeiling(t *testing.T) {
+	l, _, log := newTestLlama(t)
+	old := loadCeiling
+	loadCeiling = 400 * time.Millisecond
+	t.Cleanup(func() { loadCeiling = old })
+	t.Setenv("RAGCODE_FAKE_MODE", "loading")
+	_, err := l.Embed(context.Background(), []string{"a"})
+	require.ErrorIs(t, err, ErrUnavailable)
+	assert.Contains(t, err.Error(), "did not load")
+	starts := logLines(t, log, "start")
+	require.Len(t, starts, 1)
+	pid, convErr := strconv.Atoi(strings.TrimPrefix(starts[0], "start "))
+	require.NoError(t, convErr)
+	waitDead(t, pid)
+	st := l.Status()
+	assert.Equal(t, "stopped", st.State)
+	assert.Contains(t, st.Error, "did not load")
+	_, statErr := os.Stat(filepath.Join(l.runDir, "llama-"+strconv.Itoa(os.Getpid())+".json"))
+	assert.True(t, os.IsNotExist(statErr), "record removed")
+
+	t.Setenv("RAGCODE_FAKE_MODE", "")
+	_, err = l.Embed(context.Background(), []string{"a"})
+	require.NoError(t, err)
+	assert.Len(t, logLines(t, log, "start"), 2)
+	assert.Empty(t, l.Status().Error)
+}
+
+// A slow load under the ceiling is not cut.
+func TestLlamaSlowModelLoadIsNotCut(t *testing.T) {
+	l, _, log := newTestLlama(t)
+	old := loadCeiling
+	loadCeiling = 30 * time.Second // counted from the spawn: room for a slow runner
+	t.Cleanup(func() { loadCeiling = old })
+	t.Setenv("RAGCODE_FAKE_LOAD_MS", "1200")
+	_, err := l.Embed(context.Background(), []string{"a"})
+	require.NoError(t, err)
+	assert.Len(t, logLines(t, log, "start"), 1)
+}
+
+// A stalled download ends Ensure with an error that the embedder reports as
+// "unavailable" and shows in the status.
+func TestLlamaStalledDownloadIsReported(t *testing.T) {
+	l, rt, _ := newTestLlama(t)
+	rt.installed.Store(false)
+	rt.stall.Store(true)
+	_, err := l.Embed(context.Background(), []string{"a"})
+	require.ErrorIs(t, err, ErrUnavailable)
+	assert.Contains(t, err.Error(), "stalled")
+	assert.Contains(t, l.Status().Error, "stalled")
+}
+
+// The model file replaced while RagCode runs is refused at the next start: no
+// server is launched on it, and putting the old file back heals without a restart.
+func TestLlamaModelFileChangedRefusedOnRestart(t *testing.T) {
+	l, rt, log := newTestLlama(t)
+	_, err := l.Embed(context.Background(), []string{"a"})
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), rt.labels.Load(), "asked once, at the start")
+	pid := serverPid(t, l)
+	l.sem <- struct{}{} // the idle stop
+	l.drop()
+	<-l.sem
+	waitDead(t, pid)
+
+	rt.label.Store("other@0123456789ab")
+	_, err = l.Embed(context.Background(), []string{"a"})
+	require.ErrorIs(t, err, ErrModelChanged)
+	require.ErrorIs(t, err, ErrUnavailable)
+	assert.Len(t, logLines(t, log, "start"), 1, "no server on the changed file")
+	st := l.Status()
+	assert.Equal(t, "stopped", st.State)
+	assert.Contains(t, st.Error, "test-model")
+	assert.Contains(t, st.Error, "other@0123456789ab")
+	assert.Contains(t, st.Error, "restart")
+
+	rt.label.Store("test-model")
+	_, err = l.Embed(context.Background(), []string{"a"})
+	require.NoError(t, err)
+	assert.Len(t, logLines(t, log, "start"), 2)
+	assert.Empty(t, l.Status().Error)
+	assert.Equal(t, int32(3), rt.labels.Load())
+
+	rt.label.Store("other@0123456789ab")
+	_, err = l.Embed(context.Background(), []string{"a"})
+	require.NoError(t, err, "the running server is the labelled one: no file read")
+	assert.Equal(t, int32(3), rt.labels.Load())
+}
+
+// Dimension is cached, but the cache must not bypass the check when no server
+// runs: index.Run reads it before it drops a collection.
+func TestLlamaModelChangedDimension(t *testing.T) {
+	l, rt, log := newTestLlama(t)
+	d, err := l.Dimension(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, fakeDim, d)
+	assert.Equal(t, int32(1), rt.labels.Load())
+
+	rt.label.Store("other@0123456789ab")
+	d, err = l.Dimension(context.Background())
+	require.NoError(t, err, "a running server is the labelled one")
+	assert.Equal(t, fakeDim, d)
+	assert.Equal(t, int32(1), rt.labels.Load(), "the cache with a server up reads no file")
+
+	// A server that died by itself is still in the struct but is not running.
+	pid := serverPid(t, l)
+	p, err := os.FindProcess(pid)
+	require.NoError(t, err)
+	require.NoError(t, p.Kill())
+	waitDead(t, pid)
+	_, err = l.Dimension(context.Background())
+	require.ErrorIs(t, err, ErrModelChanged)
+	require.ErrorIs(t, err, ErrUnavailable)
+	assert.Len(t, logLines(t, log, "start"), 1, "Dimension starts no server")
+
+	rt.label.Store("test-model")
+	d, err = l.Dimension(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, fakeDim, d)
+	assert.Len(t, logLines(t, log, "start"), 1, "the cached size needs no server")
+
+	// A server stopped by the idle timer, as well.
+	_, err = l.Embed(context.Background(), []string{"a"})
+	require.NoError(t, err)
+	l.sem <- struct{}{}
+	l.drop()
+	<-l.sem
+	rt.label.Store("other@0123456789ab")
+	_, err = l.Dimension(context.Background())
+	require.ErrorIs(t, err, ErrModelChanged)
+}
+
+// Without a runtime the check has nothing to ask.
+func TestLlamaModelCheckWithoutRuntime(t *testing.T) {
+	l := NewLlama("m", nil, "")
+	t.Cleanup(func() { l.Close() })
+	l.dim.Store(3)
+	d, err := l.Dimension(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 3, d)
 }

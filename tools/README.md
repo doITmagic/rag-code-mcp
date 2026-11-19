@@ -65,6 +65,7 @@ Tests:
 | [`js_browser_test.go`](js_browser_test.go) | with the real JavaScript and HTML analyzers, `rag_find_usages resolveError` of a function declared inside an IIFE lists the call from another script's ready callback and the `onclick` handler of a template; a helper inside the `describe` of a Jest file without imports is no symbol; `onclick="save()"` is no usage of a class method `Cart.save` nor of an ES module function; after `window.resolveError = handleResolve`, `onclick="resolveError(1)"` is a usage of the global `resolveError`, which is one of `handleResolve`; `<StatusCard />` is a usage of `src/StatusCard.default` of a `<script setup>` without top-level statements; `onclick` calls of a global two scripts declare are in `ambiguous_by_name` of each, not of a module function of that name. |
 | [`js_object_members_test.go`](js_object_members_test.go) | with the real JavaScript analyzer, `rag_find_usages getToken` counts `JwtService.getToken()` calls through `export default { getToken }` in each importer. |
 | [`laravel_test.go`](laravel_test.go) | with the real PHP analyzer, `rag_find_usages` of a controller action lists the route naming it by `'uses' => 'C@m'` inside a namespaced, prefixed group, and not the same action of another controller; `rag_find_usages users.show` lists the controller method returning `view('users.show')` as an exact `imports`; `rag_find_usages` of a model lists the relation method naming it as `belongsTo('App\Lawyer')` and of a listener the event provider's `$listen` property; `$this->mailer->send()` on a property assigned from a typed constructor parameter is an exact usage of that service's `send` only; a route registered inside a method (`App\Providers.map./`) does not make the method `map` ambiguous, and `/about` registered there is found by its path; a property `$items` and a method `items()` of one class: `rag_find_usages` by qualified name or by name picks the method and lists `$cart->items()` as its exact usage; a named route lists `redirect()->route('users.index')` in a controller and `route('users.index')` in a Blade view (`TestUsagesOfNamedLaravelRoute`). |
+| [`lookup_test.go`](lookup_test.go) | usages, hierarchy and exports answer at once from the index with the embedder down, short of memory or still loading (also during a model change) while `rag_search` reports it; without an index they say `not_indexed`; a failing store is named as the store; `rag_search` answers at once, with a retry message, while the model downloads (the index run keeps waiting), also when only the query embed meets the download. |
 | [`roots_test.go`](roots_test.go) | an empty `workspace_root` from a client without the `roots` capability is answered at once, `roots/list` is not sent; a client root `file://<host>/path` is refused outside Windows (naming the URI), `file://localhost/` is local. |
 | [`tools_test.go`](tools_test.go) | an MCP client and server over in-memory transports with a real engine on `store.NewMemory()`, `embed.Fake` and a fake `.fk` analyzer. Missing and bad roots, the root taken from client roots, every tool, the not-indexed and during-recreate fallbacks, dependency down, tool schemas, helpers, fallback skip rules, edits and deletes keeping results right, no Qdrant left in `rag_server_info`, same-name variants, lookup by declared name with `file_path` as a hard filter, `by_name` usages and hierarchy nodes, the live state of a root being indexed in `rag_server_info`, the last run's error kept after a restart, a deleted root reported as `missing`, overloads and get/set pairs resolved as one symbol, twins as one hierarchy node (both directions, every depth), one export (and count) and one search hit, `ambiguous_by_name` not counting calls that name another symbol's qualified name, the module spelling of a barrel file in `rag_list_package_exports`, an equal qualified name winning over suffix matches, a code symbol winning over a doc chunk of the same name, the no-exact-match message of an identifier query (and its not-indexed-yet variant during a run), a filtered miss during a run named by its filters when the index has the name outside them, the message of a filtered search with no hit, a qualified call bound by name only marked `by_name`, short directory names and file paths in `rag_list_package_exports` with one module per file (`.fkm` analyzer), the export-less file message, an unreadable directory reported as such, an excluded directory and file reported as not indexed, the zero-usage note not claiming imports, an unused object constant naming its called members, the text search beside the index (whole word, hidden directories skipped, none when the index knows the name, the 20-line cut), `indexing` (not `ok`, not the fallback) while a run goes over an existing index, `kinds` validation and the no-such-kinds message, `limit` respected exactly with `truncated` in usages and the hierarchy, a binary file with an unknown extension not dumped, also for a line range, a saved run warning shown as `index.warning` and in the `rag_server_info` root entry |
 | [`vue_auto_import_test.go`](vue_auto_import_test.go) | with the real JavaScript analyzer, a Vue component used by tag with no import (Nuxt auto-import) and by an importer: `rag_find_usages` and incoming `rag_call_hierarchy` (by the component's name and by its `default` symbol) list both parents, the tag with no import marked `by_name`; a recursive component uses itself once |
@@ -106,8 +107,8 @@ type IndexInfo struct {
 | `ok` | every tool | the answer is in `data`. A lookup that finds nothing is still `ok`, with a message such as `no indexed symbol named "X"; try rag_search` |
 | `not_indexed` | search, usages, hierarchy, exports | the workspace has no index yet. `rag_search` still returns fallback results |
 | `indexing` | the same tools, and `rag_index_workspace` | an index run is running or queued; for `rag_index_workspace` it means "run queued". An answer that would be `ok` becomes `indexing`, keeps its `data` and adds `index run in progress: results may be incomplete until it ends` to the message (`rag_read_file_context` parses on the spot and stays `ok`) |
-| `low_memory` | the same tools as `dependency_down` | the machine has less free memory than `min_free_memory_mb` and the embedding server has to be started; the message gives the free and the needed megabytes. Nothing is run until memory is freed |
-| `dependency_down` | every tool except `rag_read_file_context`, `rag_index_workspace` and `rag_server_info` | the embedder or the index store cannot be used; the message says what to do (for the embedder, to see its state in `rag_server_info`) |
+| `low_memory` | `rag_search` | the machine has less free memory than `min_free_memory_mb` and the embedding server has to be started; the message gives the free and the needed megabytes. Nothing is run until memory is freed |
+| `dependency_down` | every tool except `rag_read_file_context`, `rag_index_workspace` and `rag_server_info` | for `rag_search`, the embedder or the index store cannot be used; the message says what to do (for the embedder, to see its state in `rag_server_info`; while the embedding model is being downloaded, to retry in a few minutes, and the download keeps running). For `rag_find_usages`, `rag_call_hierarchy` and `rag_list_package_exports` only the index store, named as such: they never use the embedder |
 | `ambiguous` | `rag_find_usages`, `rag_call_hierarchy` | several symbols match; `data.candidates` lists them |
 
 Input errors (empty query, bad mode, unknown `kinds` value, path outside the
@@ -225,11 +226,18 @@ for a root adds it to `~/.ragcode/roots.json` and, when `watch_enabled` and
 `auto_index` are both on, starts its file watcher. This happens for every
 tool that takes a root, `rag_read_file_context` included.
 
-After the root is resolved, every tool except `rag_read_file_context`,
-`rag_index_workspace` (it only queues a run) and `rag_server_info` calls `open`, which also runs `Workspace.Ready`: when the
-embedder or the store is unavailable the answer is `dependency_down`; a
-missing index is let through so each tool can answer `not_indexed` (or fall
-back). With `auto_index` on (the default), a store call that finds the
+After the root is resolved, `rag_search` calls `open`, which also runs
+`Workspace.Ready`: when the embedder or the store is unavailable the answer is
+`dependency_down` (`low_memory` for too little memory); while the embedding
+model is being downloaded `Ready` does not wait for it and the answer is at
+once `dependency_down` with a message to retry shortly. A missing index is let
+through so the tool can answer `not_indexed` (or fall back).
+`rag_find_usages`, `rag_call_hierarchy` and `rag_list_package_exports` embed
+nothing and call `openLookup`, which only resolves the root: they read the index
+on disk and answer while the runtime downloads, the model loads, memory is low
+or the embedder is down, also during a re-embed (then `indexing`, the results
+may be incomplete). `rag_read_file_context`, `rag_index_workspace` (it only
+queues a run) and `rag_server_info` call neither. With `auto_index` on (the default), a store call that finds the
 collection missing, or built with another embedding model, also queues an
 index run, so the next answers report `indexing` without an explicit
 `rag_index_workspace`.
@@ -325,7 +333,8 @@ signature, score, match, content`.
 ### `rag_find_usages`
 
 Every indexed reference to a symbol (calls, extends, implements, uses),
-grouped by file, with the referencing symbol and the line.
+grouped by file, with the referencing symbol and the line. It needs the index
+but not the embedder.
 
 | Input | Type | Description |
 |---|---|---|
@@ -456,7 +465,8 @@ other (`truncated`, raise `limit`).
 
 ### `rag_call_hierarchy`
 
-Callers (incoming) and callees (outgoing) of a function as a tree.
+Callers (incoming) and callees (outgoing) of a function as a tree. It needs the
+index but not the embedder.
 
 | Input | Type | Description |
 |---|---|---|
@@ -506,7 +516,8 @@ per node indented two spaces per level, with ` [by name only]` and
 
 ### `rag_list_package_exports`
 
-The exported symbols of a package or module, grouped by kind.
+The exported symbols of a package or module, grouped by kind. It needs the
+index but not the embedder.
 
 | Input | Type | Description |
 |---|---|---|
@@ -642,8 +653,10 @@ Indexes the workspace.
   embedded up to another `embed_max_tokens`, an
   `incremental` request also carries `data.full_reindex`: every file is
   re-indexed anyway. Progress is visible in `rag_server_info`, which answers
-  at once, and in the `index` block of any later call; the other tools wait
-  for the embedder while it downloads or loads.
+  at once, and in the `index` block of any later call. While the runtime or
+  model downloads, `rag_search` answers `dependency_down` at once with a
+  message to retry shortly and waits only for a model load; the three lookup
+  tools never wait for the embedder.
 
 Output `data`: `{root, collection, mode, full_reindex?}`.
 

@@ -362,7 +362,8 @@ Every package directory has its own README. Good starting points:
 | `~/.ragcode/run/` | one small record per running `llama-server`, so a server whose owner was killed can be removed |
 | `~/.ragcode/cache/llama.lock` | held while one process downloads the runtime |
 | `~/.ragcode/cache/update.json` | the cached result of the release check |
-| `~/.ragcode/cache/ollama-removed` | empty marker: the server looked once for the `ragcode-ollama` container of earlier versions (and removed it) |
+| `~/.ragcode/cache/ollama-removed` | empty marker: the container `ragcode-ollama` of earlier versions is gone, was not RagCode's, or was removed with its volume |
+| `~/.ragcode/cache/ollama-volume-pending` | empty file: the volume `ragcode-ollama` belonged to that container and is still to be removed; deleted when it is gone |
 | `~/.ragcode/cache/update.lock` | held while one server installs an update |
 | `<workspace>/.ragcode/RAGCODE.md` | the instructions the AI clients read |
 | `<workspace>/.ragcode/.gitignore` | `*`, so git ignores `.ragcode` |

@@ -39,6 +39,10 @@ type Runtime interface {
 	Installed() bool
 	// RuntimeName names the runtime for status output.
 	RuntimeName() string
+	// ModelLabel is the name of the model file as it is on disk now; the
+	// embedder compares it, each time it starts the server, with the one it was
+	// created with.
+	ModelLabel() string
 }
 
 // Status is what rag_server_info reports about the embedder.
@@ -79,10 +83,13 @@ type Llama struct {
 
 	sem     chan struct{} // one-slot lock over the fields below; a channel so that waiting honours a context
 	srv     *server
-	users   int         // calls using srv now
-	lastUse time.Time   // when users last dropped to 0
-	timer   *time.Timer // the idle stop, armed by the last release
-	fetch   *fetch      // a download in progress
+	up      atomic.Pointer[server] // srv once its model is loaded; readable without the lock
+	users   int                    // calls using srv now
+	lastUse time.Time              // when users last dropped to 0
+	timer   *time.Timer            // the idle stop, armed by the last release
+	fetch   *fetch                 // a download in progress
+	fetchOn atomic.Bool            // fetch's Ensure is running; readable without the lock
+	failed  error                  // how the last download nobody waited for ended, until a call that cannot wait reports it
 	closed  bool
 	bg      context.Context // ends with Close; downloads run under it
 	bgStop  context.CancelFunc
@@ -114,7 +121,10 @@ func (l *Llama) maxTokens() int {
 
 // Embed embeds texts in batches of at most 16 texts and 8 KiB (a longer
 // text goes alone), one request per batch. A text longer than the model
-// context is cut to fit.
+// context is cut to fit. The server's refusal is the one place a symbol is
+// cut by tokens: the caller sends whole whatever it holds (the index bounds
+// only the bytes, far above what the model takes), so a text that fits the
+// model is never cut by an estimate.
 func (l *Llama) Embed(ctx context.Context, texts []string) ([][]float32, error) {
 	out := make([][]float32, 0, len(texts))
 	for start, end := 0, 0; start < len(texts); start = end {
@@ -139,6 +149,15 @@ func (l *Llama) Embed(ctx context.Context, texts []string) ([][]float32, error) 
 // is retried on the next call.
 func (l *Llama) Dimension(ctx context.Context) (int, error) {
 	if d := l.dim.Load(); d > 0 {
+		// A running server holds the model the name was made for. Without one,
+		// the cached size must not hide a replaced file from the caller that
+		// drops an index on a changed model; this takes no lock, so it does not
+		// wait for a download or a model load.
+		if s := l.up.Load(); s == nil || s.exited() {
+			if err := l.checkModel(); err != nil {
+				return 0, err
+			}
+		}
 		return int(d), nil
 	}
 	vecs, err := l.embedBatch(ctx, []string{probeText})
@@ -147,6 +166,23 @@ func (l *Llama) Dimension(ctx context.Context) (int, error) {
 	}
 	l.dim.Store(int32(len(vecs[0])))
 	return len(vecs[0]), nil
+}
+
+// checkModel refuses a model file other than the one the index is named
+// after. It is asked at every server start and by Dimension while no server
+// runs, so a file replaced while RagCode runs is never loaded under the old
+// name; putting the old file back makes the next call work again. A model
+// that could not be read when RagCode started is named without a fingerprint,
+// so it is refused once it appears, until RagCode is restarted.
+func (l *Llama) checkModel() error {
+	if l.rt == nil {
+		return nil
+	}
+	now := l.rt.ModelLabel()
+	if now == l.model {
+		return nil
+	}
+	return fmt.Errorf("%w: %w (indexed as %s, the file is now %s): restart RagCode to re-index with it, or put the old file back", ErrUnavailable, ErrModelChanged, l.model, now)
 }
 
 // Status reports the embedder without starting or downloading anything.

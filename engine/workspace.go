@@ -128,6 +128,9 @@ func (w *Workspace) Search(ctx context.Context, query string, f store.Filter, li
 			return nil, ErrNotIndexed
 		}
 	}
+	// A search must not sit through a download of minutes: it answers at once
+	// with embed.ErrFetching, while an index run waits for it.
+	ctx = embed.WithoutFetchWait(ctx)
 	vecs, err := w.e.embed.Embed(ctx, []string{embed.QueryText(w.e.embed.Model(), query)})
 	if err != nil {
 		return nil, err
@@ -140,11 +143,16 @@ func (w *Workspace) Search(ctx context.Context, query string, f store.Filter, li
 	return hits, w.mapErr(ctx, err)
 }
 
-// Scroll lists symbols matching f without a vector.
+// Scroll lists symbols matching f without a vector. It never reads the vector
+// size nor starts the embedder: only a missing collection is ErrNotIndexed,
+// any other error comes back as it is.
 func (w *Workspace) Scroll(ctx context.Context, f store.Filter, limit int) ([]store.Hit, error) {
 	hits, err := w.e.store.Scroll(ctx, w.Collection, f, limit)
 	w.resyncIfReopened()
-	return hits, w.mapErr(ctx, err)
+	if errors.Is(err, store.ErrNotFound) && ctx.Err() == nil {
+		return hits, w.notIndexed()
+	}
+	return hits, err
 }
 
 // resyncIfReopened queues an incremental run when the store reopened the
@@ -171,6 +179,12 @@ func (w *Workspace) mapErr(ctx context.Context, err error) error {
 	if !errors.Is(err, store.ErrNotFound) && !w.dimChanged(ctx) {
 		return err
 	}
+	return w.notIndexed()
+}
+
+// notIndexed is ErrNotIndexed; with auto_index it also queues the run that
+// builds the index.
+func (w *Workspace) notIndexed() error {
 	if w.e.cfg.AutoIndex {
 		w.catchUp()
 	}
@@ -178,7 +192,8 @@ func (w *Workspace) mapErr(ctx context.Context, err error) error {
 }
 
 // dimChanged reports whether the collection's vector size differs from the
-// embedder's; index.Run then recreates the collection.
+// embedder's; index.Run then recreates the collection. It is asked only after
+// a search, whose ctx is marked WithoutFetchWait.
 func (w *Workspace) dimChanged(ctx context.Context) bool {
 	dim, err := w.e.embed.Dimension(ctx)
 	if err != nil {
@@ -188,11 +203,17 @@ func (w *Workspace) dimChanged(ctx context.Context) bool {
 	return err == nil && size != dim
 }
 
+// FetchingMsg is the answer while the embedding runtime or model downloads.
+const FetchingMsg = "the embedding model is being downloaded; retry in a few minutes (the download keeps running)"
+
 // Ready reports whether searches can be answered now; when not, the text
-// says what to do about it.
+// says what to do about it. It is for searches only: it does not wait for a
+// download, it says it is running.
 func (w *Workspace) Ready(ctx context.Context) (bool, string) {
-	if _, err := w.e.embed.Dimension(ctx); errors.Is(err, embed.ErrLowMemory) {
+	if _, err := w.e.embed.Dimension(embed.WithoutFetchWait(ctx)); errors.Is(err, embed.ErrLowMemory) {
 		return false, err.Error()
+	} else if errors.Is(err, embed.ErrFetching) {
+		return false, FetchingMsg
 	} else if err != nil {
 		return false, fmt.Sprintf("embedder %s unavailable (%v): see rag_server_info", w.e.embed.Model(), err)
 	}

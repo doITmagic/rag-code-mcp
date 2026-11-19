@@ -4,14 +4,16 @@
 # The embedding model runs on this machine, in a llama.cpp server that RagCode
 # starts on first use and stops after 5 idle minutes. Runtime and model are
 # downloaded once into ~/.ragcode (llama/ and models/), checked against pinned
-# checksums.
+# checksums. A download that gets almost no data for 2 minutes is stopped and
+# tried again on the next call; a slow one that keeps going is not.
 
 # Which llama.cpp build to run: cpu, vulkan (any GPU with a Vulkan driver) or
 # auto: vulkan when an NVIDIA driver and a Vulkan loader are present, cpu
 # otherwise. macOS always uses its one build (Metal).
 embed_runtime: auto
-# Your own files instead of the downloaded ones (absolute paths). Changing the
-# model makes the next index run re-embed every workspace.
+# Your own files instead of the downloaded ones (absolute paths). Change the
+# model with RagCode stopped: a file replaced while it runs is refused until
+# RagCode restarts, and then every workspace is re-embedded.
 # embed_model: /path/to/model.gguf
 # llama_server: /path/to/llama-server
 # CPU threads the model may use. Default: a third of the logical CPUs, at
@@ -28,8 +30,9 @@ embed_runtime: auto
 embed_max_tokens: 8192
 
 # Free memory (MB) needed to load the embedding model. With less, indexing and
-# searches stop with status low_memory instead of loading a model that cannot
-# start. 0 turns the check off.
+# rag_search stop with status low_memory instead of loading a model that cannot
+# start (usages, call hierarchy and package exports keep answering from the
+# index). 0 turns the check off.
 min_free_memory_mb: 750
 
 log_level: info      # debug | info | warn | error

@@ -120,29 +120,75 @@ func autoUpdate(ctx context.Context, source string, log *slog.Logger) {
 }
 
 // removeOllama removes, once per home, the ragcode-ollama container of the
-// v2 versions that embedded through Ollama. An auto-update replaces only the
-// binary, so without this the container (--restart always) would keep its
-// memory until someone ran the installer. The marker is written only after
-// Docker answered: a daemon that is down is asked again at the next start.
+// v2 versions that embedded through Ollama, and the volume it mounted. An
+// auto-update replaces only the binary, so without this the container
+// (--restart always) would keep its memory until someone ran the installer.
+// Only a container that is RagCode's is removed (uninstall.FindOllama); one
+// that is not is left with a warning. The file cache/ollama-volume-pending is
+// written before the container is removed: it is the proof that a volume of
+// that name was RagCode's, so a start that finds the container gone and the
+// volume still there removes the volume, and a volume without that proof is
+// never touched. The marker cache/ollama-removed is written only when nothing
+// is left to retry: Docker answered, and the container is absent, foreign, or
+// removed together with its volume. A daemon that is down, a refused removal
+// or a stopped server leave no marker, so the next start asks again.
 func removeOllama(ctx context.Context, home string, log *slog.Logger) {
-	marker := filepath.Join(home, "cache", "ollama-removed")
+	cache := filepath.Join(home, "cache")
+	marker := filepath.Join(cache, "ollama-removed")
+	pending := filepath.Join(cache, "ollama-volume-pending")
 	if _, err := os.Stat(marker); err == nil {
 		return
 	}
+	_, statErr := os.Stat(pending)
+	volume := statErr == nil
+	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, time.Minute) // a daemon that hangs must not hold a goroutine forever
 	defer cancel()
-	removed, err := uninstall.RemoveOllama(ctx)
+	fail := func(msg string, err error) {
+		if parent.Err() == nil { // the server stopping is not a problem
+			log.Warn(msg, "err", err)
+		}
+	}
+
+	c, name, err := uninstall.FindOllama(ctx)
 	switch {
 	case errors.Is(err, uninstall.ErrNoDocker):
 		log.Debug("ollama: container not checked", "err", err)
 		return
 	case err != nil:
-		log.Warn("ollama: the ragcode-ollama container is no longer used and could not be removed", "err", err)
+		fail("ollama: the ragcode-ollama container could not be checked", err)
 		return
-	case removed:
-		log.Info("ollama: removed the ragcode-ollama container and volume; RagCode runs the embedding model itself")
+	case c == uninstall.Foreign:
+		if !volume {
+			log.Warn("ollama: a container named ragcode-ollama is not an Ollama of RagCode; left alone")
+		}
+	case c == uninstall.Ours:
+		if name != "" {
+			if err := os.MkdirAll(cache, 0o755); err != nil {
+				fail("ollama: the ragcode-ollama container is no longer used and was not removed", err)
+				return
+			}
+			if err := os.WriteFile(pending, nil, 0o644); err != nil {
+				fail("ollama: the ragcode-ollama container is no longer used and was not removed", err)
+				return
+			}
+			volume = true
+		}
+		if err := uninstall.DropOllamaContainer(ctx); err != nil {
+			fail("ollama: the ragcode-ollama container is no longer used and could not be removed", err)
+			return
+		}
+		log.Info("ollama: removed the ragcode-ollama container; RagCode runs the embedding model itself")
 	}
-	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err == nil {
+	if volume {
+		if err := uninstall.RemoveOllamaVolume(ctx); err != nil {
+			fail("ollama: the ragcode-ollama volume could not be removed; it is tried again at the next start", err)
+			return
+		}
+		_ = os.Remove(pending)
+		log.Info("ollama: removed the ragcode-ollama volume")
+	}
+	if err := os.MkdirAll(cache, 0o755); err == nil {
 		_ = os.WriteFile(marker, nil, 0o644)
 	}
 }

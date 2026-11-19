@@ -69,16 +69,23 @@ func Default() Config {
 	}
 }
 
-// HomeDir is the global RagCode directory: $RAGCODE_HOME or ~/.ragcode.
+// HomeDir is the global RagCode directory: $RAGCODE_HOME or ~/.ragcode. The
+// result is always absolute (a relative one is resolved against the working
+// directory): llama-server runs with its own directory as working directory
+// and would not find a relative binary or model path.
 func HomeDir() string {
-	if h := os.Getenv("RAGCODE_HOME"); h != "" {
-		return h
+	h := os.Getenv("RAGCODE_HOME")
+	if h == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			home = "."
+		}
+		h = filepath.Join(home, ".ragcode")
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
+	if a, err := filepath.Abs(h); err == nil {
+		return a
 	}
-	return filepath.Join(home, ".ragcode")
+	return filepath.Clean(h)
 }
 
 // DefaultPath is HomeDir()/config.yaml.

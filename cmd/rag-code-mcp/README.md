@@ -148,12 +148,21 @@ Earlier v2 versions embedded through Ollama in a Docker container,
 replaces only the binary and never runs the installer, so the new server
 removes that container itself: when the running binary is the installed one,
 `removeOllama` runs in a goroutine at start and calls
-`uninstall.RemoveOllama` (`docker ps -a` for exactly that name, then
-`docker rm -f` and `docker volume rm`), with one minute at most. It then
-writes the empty marker `~/.ragcode/cache/ollama-removed` and never asks
-again. The marker is written only when Docker answered (container removed, or
-none there): without `docker` on `PATH`, with a daemon that is down or after a
-removal that failed (logged as a warning), the next start tries again. A
+`uninstall.FindOllama` (`docker ps -a` for exactly that name, then
+`docker container inspect`: it is RagCode's only with the image
+`ollama/ollama` and a mount at `/root/.ollama`), with one minute at most. A
+container that is not RagCode's is left and logged once as a warning. For
+RagCode's it writes the empty file `~/.ragcode/cache/ollama-volume-pending`
+when the container mounts the volume `ragcode-ollama` (a host directory is
+never touched), then runs `docker rm -f` and `docker volume rm`. The empty
+marker `~/.ragcode/cache/ollama-removed` is written only when nothing is left
+to retry: the container is absent, is not RagCode's, or was removed with its
+volume, and the server never asks again. Without `docker` on `PATH`, with a
+daemon that is down, or after a removal that failed (logged as a warning),
+there is no marker and the next start tries again; when only the volume is
+left, the pending file is the proof that it was RagCode's and the retry
+removes just the volume. A volume of that name with no container and no
+pending file is left alone. A
 build run from another path never touches Docker. A server of the old version
 still running elsewhere loses its embedder when the container goes; its
 client has to restart it.

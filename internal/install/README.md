@@ -38,8 +38,8 @@ graph LR
 - **Calls:** [`config`](../config/README.md), [`idepaths`](../idepaths/README.md),
   [`uninstall`](../uninstall/README.md) (`Binary` for the install path,
   `StopProcess` to stop running servers before replacing the binary and to
-  stop left-over `llama-server` processes, `RemoveOllama` for the leftover
-  container, through the `docker` CLI) and [`llama`](../llama/README.md)
+  stop left-over `llama-server` processes, `FindOllama`, `DropOllamaContainer` and
+  `RemoveOllamaVolume` for the leftover container, through the `docker` CLI) and [`llama`](../llama/README.md)
   (the runtime and model download).
 
 ## Files
@@ -53,7 +53,7 @@ Tests:
 
 | File | Covers |
 |:---|:---|
-| `install_test.go` | Full run with a fake `docker` and a stubbed download: binary mode `0755`, config written, the runtime and model requested once, PATH line once, Cursor entry and summary snippet; a second run keeps the existing config and does not duplicate the PATH line; with both files already present (here a `llama_server` and an `embed_model` set in `config.yaml`) nothing is downloaded, the output says "already present" and the summary shows that server (`TestRunEnsureNotCalledWhenInstalled`); `-skip-download` does no download; a failed download is a warning, not an error; a leftover `ragcode-ollama` container and volume are removed, and a missing `docker` is not an error; no Qdrant is started; errors (binary missing, user answers no); with `RAGCODE_HOME` set to the v1 directory itself, the v1 cleanup does not delete the binary just installed (`TestInstallIntoV1DirKeepsItself`); the Windows PATH hint appends to the user Path with no `setx` and no `%PATH%`, and escapes a quote in the bin dir (`TestWindowsPathHint`). |
+| `install_test.go` | Full run with a fake `docker` and a stubbed download: binary mode `0755`, config written, the runtime and model requested once, PATH line once, Cursor entry and summary snippet; a second run keeps the existing config and does not duplicate the PATH line; with both files already present (here a `llama_server` and an `embed_model` set in `config.yaml`) nothing is downloaded, the output says "already present" and the summary shows that server (`TestRunEnsureNotCalledWhenInstalled`); `-skip-download` does no download; a failed download is a warning, not an error; a leftover `ragcode-ollama` container and volume are removed (the pending file exists when `rm -f` runs and is gone after the volume is removed; a volume that cannot be removed leaves `cache/ollama-volume-pending` and takes back `cache/ollama-removed`; a left-over pending file gets its volume removed), and a missing `docker` is not an error; no Qdrant is started; errors (binary missing, user answers no); with `RAGCODE_HOME` set to the v1 directory itself, the v1 cleanup does not delete the binary just installed (`TestInstallIntoV1DirKeepsItself`); the Windows PATH hint appends to the user Path with no `setx` and no `%PATH%`, and escapes a quote in the bin dir (`TestWindowsPathHint`). |
 | `v1_test.go` | A v1 install is removed (install dir, `~/.local/share/qdrant` when it holds only ragcode collections, PATH line, the `ragcode` entry in `~/.cursor/mcp.config.json`, Docker `rm -f`); answering no to "Replace?", a failed copy or an invalid config leaves v1 untouched; a collection RagCode did not create, or an unreadable collections directory, is kept; a running v1 server is stopped; `RAGCODE_HOME` reaching the v1 directory through a symlink or a relative path keeps the new install (`TestInstallIntoV1DirViaSymlinkOrRelativePathKeepsItself`); on Windows the v1 entries under `%APPDATA%` (Claude Desktop, VS Code) are removed (`TestRemoveV1IDEWindowsAppData`, runs on every OS). |
 | `zz_verify_test.go` | Verification tests: a cancelled context does not hang `Run`; a reinstall replaces the binary, leaves no temp file and writes `.zshrc` when `SHELL` is zsh. |
 
@@ -122,15 +122,27 @@ the run.
 
 ### Earlier Ollama install
 
-Earlier v2 versions ran Ollama in a Docker container. `removeOllama` (through
-`uninstall.RemoveOllama`, which the server also calls on its first start
-after an automatic update) removes a
-container named `ragcode-ollama` (`docker rm -f`) and then the volume of that
-name, because the server now runs the embedding model itself and the container
-(`--restart always`) would keep its memory. It does nothing when `docker` is
-not on `PATH` or no such container exists; if the removal fails it warns and
-prints the `docker rm -f ragcode-ollama` command. A host directory that was
-given to the old `-models-dir` is not touched.
+Earlier v2 versions ran Ollama in a Docker container. `removeOllama` removes
+the container named `ragcode-ollama` (`docker rm -f`) and then the volume of
+that name, because the server now runs the embedding model itself and the
+container (`--restart always`) would keep its memory. It follows the same
+order as the server's first start after an automatic update, through the same
+`uninstall` functions: `FindOllama` checks the identity (only a container
+whose image is `ollama/ollama` and that mounts `/root/.ollama` is removed, the
+v1 container too, so `removeV1` no longer removes it by name; any other
+container with that name is left with a warning); when it mounts the named
+volume, `cache/ollama-volume-pending` is written BEFORE `docker rm -f`, so an
+installer that dies in between leaves the proof that the volume is RagCode's;
+then `DropOllamaContainer` and `RemoveOllamaVolume` run and the pending file is
+deleted once the volume is really gone. A pending file with no container (an
+earlier interrupted run) gets its volume removed now. A host directory given
+to the old `-models-dir` is never removed, and a volume with no container and
+no pending file is left. It does nothing when `docker` is not on `PATH` or no
+such container exists; if a removal fails it warns with Docker's answer and
+prints the `docker rm -f ragcode-ollama` and `docker volume rm ragcode-ollama`
+commands, keeps `cache/ollama-volume-pending` and deletes `cache/ollama-removed`,
+so that the server's next start removes what is left. The install never fails
+because of this.
 
 ### Embedding runtime
 
@@ -175,7 +187,7 @@ Most users upgrade from v1, whose indexes are not compatible with v2. When
 `~/.local/share/ragcode` exists and `RAGCODE_HOME` is not that directory or
 inside it, `removeV1`:
 
-1. runs `docker rm -f ragcode-qdrant ragcode-ollama` (v1 used both names);
+1. runs `docker rm -f ragcode-qdrant` (the v1 `ragcode-ollama` container is removed afterwards by `removeOllama`, after its identity check);
 2. removes the `ragcode` entry from the IDE files v1 wrote (Windsurf,
    `~/.cursor/mcp.config.json`, `~/.gemini/antigravity/mcp_config.json`,
    `~/.aitk/mcp.json`, `~/.config/mcp-servers.json`,

@@ -96,7 +96,7 @@ func Run(ctx context.Context, o Options) error {
 	if userHome, err := os.UserHomeDir(); err == nil {
 		removeV1(ctx, userHome, o.Out) // only once v2 is in place
 	}
-	removeOllama(ctx, o.Out)
+	removeOllama(ctx, home, o.Out)
 
 	rt := llama.FromConfig(cfg, func(s string) { fmt.Fprintln(o.Out, "  "+s) })
 	for _, p := range llama.ServerPaths(home) { // not a llama_server of the user's own
@@ -194,14 +194,62 @@ func copyFile(src, dst string) error {
 // v2 installer created: the server runs the embedding model itself now, and
 // the container would keep its memory forever (--restart always).
 // The server does the same on its first start (an auto-update replaces only
-// the binary), through the same uninstall.RemoveOllama.
-func removeOllama(ctx context.Context, out io.Writer) {
-	switch removed, err := uninstall.RemoveOllama(ctx); {
+// the binary), in the same order and through the same uninstall functions:
+// identity check (uninstall.FindOllama), then, for a container that is
+// RagCode's and mounts the named volume, the file cache/ollama-volume-pending
+// (the proof that the volume is RagCode's) BEFORE the container is removed, so
+// an installer that dies in between leaves the proof for the server's next
+// start; the file goes once the volume is really gone. A pending file with no
+// container is the same interrupted run: its volume is removed now. A
+// container that is not RagCode's is left, and so is a volume without proof.
+// Nothing here fails the install. When the volume stays, the file stays and
+// the marker cache/ollama-removed of an earlier start is taken back: the next
+// start of the server removes the volume.
+func removeOllama(ctx context.Context, home string, out io.Writer) {
+	cache := filepath.Join(home, "cache")
+	pending := filepath.Join(cache, "ollama-volume-pending")
+	_, statErr := os.Stat(pending)
+	volume := statErr == nil
+	hint := "remove them with: docker rm -f ragcode-ollama; docker volume rm ragcode-ollama"
+	unused := "the ragcode-ollama container or volume is no longer used and could not be removed ("
+
+	c, name, err := uninstall.FindOllama(ctx)
+	switch {
 	case errors.Is(err, uninstall.ErrNoDocker):
+		return
 	case err != nil:
-		warn(out, "the ragcode-ollama container is no longer used; remove it with: docker rm -f ragcode-ollama")
-	case removed:
+		warn(out, "the ragcode-ollama container could not be checked ("+err.Error()+"); "+hint)
+		return
+	case c == uninstall.Foreign:
+		warn(out, "container ragcode-ollama is not an Ollama of RagCode, left alone")
+	case c == uninstall.Ours:
+		if name != "" {
+			if err := os.MkdirAll(cache, 0o755); err != nil {
+				warn(out, unused+err.Error()+"); "+hint)
+				return
+			}
+			if err := os.WriteFile(pending, nil, 0o644); err != nil {
+				warn(out, unused+err.Error()+"); "+hint)
+				return
+			}
+			volume = true
+		}
+		if err := uninstall.DropOllamaContainer(ctx); err != nil {
+			if volume {
+				_ = os.Remove(filepath.Join(cache, "ollama-removed")) // the proof is there: the server looks again
+			}
+			warn(out, unused+err.Error()+"); "+hint)
+			return
+		}
 		ok(out, "Removed the ragcode-ollama container: RagCode no longer uses Ollama")
+	}
+	if volume {
+		if err := uninstall.RemoveOllamaVolume(ctx); err != nil {
+			_ = os.Remove(filepath.Join(cache, "ollama-removed"))
+			warn(out, unused+err.Error()+"); "+hint+"; RagCode also tries again at its next start")
+			return
+		}
+		_ = os.Remove(pending)
 	}
 }
 

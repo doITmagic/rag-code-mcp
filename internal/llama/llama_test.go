@@ -412,3 +412,168 @@ func exe(n string) string {
 	}
 	return n
 }
+
+// slowServer serves handler for download; the sources are set by the caller.
+func slowServer(t *testing.T, handler http.HandlerFunc) string {
+	t.Helper()
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+	return srv.URL + "/file"
+}
+
+// stallRule lowers the stall rule of download for one test.
+func stallRule(t *testing.T, window time.Duration, minBytes int64) {
+	t.Helper()
+	oldW, oldB := stallWindow, stallMinBytes
+	stallWindow, stallMinBytes = window, minBytes
+	t.Cleanup(func() { stallWindow, stallMinBytes = oldW, oldB })
+}
+
+// A server that sends its headers and a few bytes and then says nothing: the
+// download ends as stalled and leaves no temporary file.
+func TestDownloadStalledAfterHeaders(t *testing.T) {
+	stallRule(t, 300*time.Millisecond, 1<<10)
+	url := slowServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("abc"))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	})
+	dir := t.TempDir()
+	start := time.Now()
+	_, err := Options{}.download(context.Background(), url, sum([]byte("x")), 0, dir, "thing")
+	require.ErrorIs(t, err, ErrStalled)
+	assert.Contains(t, err.Error(), "thing")
+	assert.Less(t, time.Since(start), 5*time.Second)
+	assert.Empty(t, names(t, dir), "no temporary file")
+}
+
+// The wait for the response headers counts too: the timer starts before the request.
+func TestDownloadStalledBeforeHeaders(t *testing.T) {
+	stallRule(t, 300*time.Millisecond, 1<<10)
+	url := slowServer(t, func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() })
+	dir := t.TempDir()
+	_, err := Options{}.download(context.Background(), url, sum([]byte("x")), 0, dir, "thing")
+	require.ErrorIs(t, err, ErrStalled)
+	assert.Empty(t, names(t, dir))
+}
+
+// Data that keeps coming but under the minimum is a stall as well: a trickle
+// must not hold the embedder for hours.
+func TestDownloadTrickleBelowTheMinimumStalls(t *testing.T) {
+	stallRule(t, 300*time.Millisecond, 1<<10)
+	url := slowServer(t, func(w http.ResponseWriter, r *http.Request) {
+		for {
+			w.Write([]byte("x"))
+			w.(http.Flusher).Flush()
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(30 * time.Millisecond):
+			}
+		}
+	})
+	dir := t.TempDir()
+	_, err := Options{}.download(context.Background(), url, sum([]byte("x")), 0, dir, "thing")
+	require.ErrorIs(t, err, ErrStalled)
+	assert.Empty(t, names(t, dir))
+}
+
+// A slow line that delivers the minimum in every window is not cut, though
+// the whole download takes several windows.
+func TestDownloadSlowButAboveTheMinimumFinishes(t *testing.T) {
+	stallRule(t, 500*time.Millisecond, 100)
+	payload := bytes.Repeat([]byte("0123456789"), 120) // 1200 bytes: 12 chunks of 100, 1.2 s
+	url := slowServer(t, func(w http.ResponseWriter, r *http.Request) {
+		for i := 0; i < len(payload); i += 100 {
+			w.Write(payload[i : i+100])
+			w.(http.Flusher).Flush()
+			time.Sleep(100 * time.Millisecond)
+		}
+	})
+	dir := t.TempDir()
+	tmp, err := Options{}.download(context.Background(), url, sum(payload), 0, dir, "thing")
+	require.NoError(t, err)
+	got, err := os.ReadFile(tmp)
+	require.NoError(t, err)
+	assert.Equal(t, payload, got)
+}
+
+// A window that meets a write is not judged, however long the write lasts: a
+// slow disk is not a stall. Once the write is over, a window with too little
+// read ends the download.
+func TestWatchStallDoesNotJudgeAWindowWithAWrite(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	var got atomic.Int64
+	var busy atomic.Bool
+	busy.Store(true) // a write that outlasts many windows, with nothing read meanwhile
+	done := make(chan struct{})
+	go func() {
+		watchStall(ctx, cancel, 20*time.Millisecond, 1<<10, &got, &busy)
+		close(done)
+	}()
+	select {
+	case <-done:
+		t.Fatal("a window with a write was judged as a stall")
+	case <-time.After(300 * time.Millisecond):
+	}
+	assert.NoError(t, context.Cause(ctx))
+
+	busy.Store(false)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stall after the write was not seen")
+	}
+	assert.ErrorIs(t, context.Cause(ctx), ErrStalled)
+}
+
+// The caller giving up is its own error, not a stall.
+func TestDownloadCallerCancelIsNotAStall(t *testing.T) {
+	url := slowServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("abc"))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	dir := t.TempDir()
+	_, err := Options{}.download(ctx, url, sum([]byte("x")), 0, dir, "thing")
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.NotErrorIs(t, err, ErrStalled)
+	assert.Empty(t, names(t, dir))
+}
+
+// Ensure reports a stalled download with the error of the download.
+func TestEnsureStalledDownloadIsReported(t *testing.T) {
+	stallRule(t, 300*time.Millisecond, 1<<10)
+	serve(t, "rt.tar.gz", "x", nil)
+	runtimeBase = slowServer(t, func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() })
+	home := t.TempDir()
+	model := filepath.Join(home, "my.gguf")
+	require.NoError(t, os.WriteFile(model, []byte("m"), 0o644))
+	_, _, err := Options{Home: home, Variant: CPU, Model: model}.Ensure(context.Background())
+	require.ErrorIs(t, err, ErrStalled)
+	assert.NoDirExists(t, filepath.Dir(Options{Home: home, Variant: CPU}.ServerPath()))
+}
+
+// The label is asked again every time and follows the file on disk, and the
+// built-in model's label never reads a file.
+func TestModelLabelFollowsFile(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "my-embed.gguf")
+	write := func(last byte) {
+		data := make([]byte, 3<<20)
+		data[len(data)-1] = last
+		require.NoError(t, os.WriteFile(p, data, 0o600))
+	}
+	o := Options{Model: p}
+	write(1)
+	l1 := o.ModelLabel()
+	write(2)
+	l2 := o.ModelLabel()
+	assert.NotEqual(t, l1, l2, "the same Options value follows the file")
+	write(1)
+	assert.Equal(t, l1, o.ModelLabel(), "the old file back is the old label")
+
+	assert.Equal(t, ModelName, Options{Home: t.TempDir()}.ModelLabel(), "no file read for the built-in model")
+}

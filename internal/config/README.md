@@ -60,7 +60,7 @@ ignored (so a v1 `config.yaml` with Qdrant settings, or a v2.0 one with
 | YAML key | Go field | Default | Meaning / used by |
 |:---|:---|:---|:---|
 | `embed_runtime` | `EmbedRuntime` | `auto` | Which llama.cpp build runs the model: `auto`, `cpu` or `vulkan`. `auto` picks Vulkan when an NVIDIA driver and a Vulkan loader are found, else CPU; macOS has one build (Metal). Anything else is invalid. See [`llama`](../llama/README.md). |
-| `embed_model` | `EmbedModel` | empty | Absolute path of a `.gguf` embedding model to use instead of the downloaded one. The index names the model after the file name without `.gguf`, then `@` and a 12-character fingerprint of the file (its size and its first and last MiB), e.g. `my-embed@3fa9c01b77d2`, so another file, even under the same name, re-embeds every workspace. |
+| `embed_model` | `EmbedModel` | empty | Absolute path of a `.gguf` embedding model to use instead of the downloaded one. The index names the model after the file name without `.gguf`, then `@` and a 12-character fingerprint of the file (its size and its first and last MiB), e.g. `my-embed@3fa9c01b77d2`, so another file, even under the same name, re-embeds every workspace after a restart. A file replaced while RagCode runs is refused (indexing and search fail with an error naming both labels) until RagCode is restarted or the old file is put back. |
 | `llama_server` | `LlamaServer` | empty | Absolute path of a `llama-server` binary to use instead of the downloaded one. |
 | `embed_threads` | `EmbedThreads` | `max(2, NumCPU/3)` | CPU threads llama.cpp may use for embeddings (`-t`, `-tb`). `0` lets llama.cpp choose (every performance core). Must not be negative. |
 | `embed_max_tokens` | `EmbedMaxTokens` | `8192` | How much of a function, class or section the model reads, in tokens (about 3 bytes of code each, so 8192 tokens are roughly 24 KB). A longer symbol is embedded by its first part only; its stored content is whole. `8192` is the context window of the built-in model. A lower value makes long symbols faster to index and bounds the memory of the embedding server (on one laptop's CPU a 24 KB symbol took 61 s and 1.5 GB; a 12 KB one 23 s and 0.9 GB). Between `256` and `32768`, and at most `8192` without `embed_model`. With your own `embed_model`, set it to that model's context length: a model trained for less is cut to its own limit anyway, but every long symbol then costs one refused request first. Changing it makes the next index run of each workspace re-embed every file. |
@@ -104,7 +104,10 @@ Priority, highest first: environment, `config.yaml`, `Default()`. The server's
 ### `HomeDir() string` and `DefaultPath() string`
 
 `HomeDir` returns `$RAGCODE_HOME` when set, otherwise `<user home>/.ragcode`
-(falling back to `./.ragcode` if the user home cannot be determined).
+(falling back to `.ragcode` in the working directory if the user home cannot
+be determined). The result is always absolute: a relative `RAGCODE_HOME` is
+resolved against the working directory, because `llama-server` runs from its
+own directory and would not find a relative path.
 `DefaultPath` is `HomeDir()/config.yaml`. Every other package builds its paths
 (`bin/`, `index/`, `logs/`, `roots.json`) from `HomeDir`.
 

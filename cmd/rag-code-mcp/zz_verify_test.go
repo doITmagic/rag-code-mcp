@@ -2,9 +2,14 @@ package main
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,7 +79,7 @@ func TestVerifyServeHTTP(t *testing.T) {
 func TestVerifyRunBadConfig(t *testing.T) {
 	t.Setenv("RAGCODE_HOME", t.TempDir())
 	dir := t.TempDir()
-	require.NoError(t, writeFile(dir+"/config.yaml", "ollama_base_url: ':::'\n"))
+	require.NoError(t, writeFile(dir+"/config.yaml", "embed_runtime: gpu\n"))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	err := run(ctx, dir+"/config.yaml", "", "")
@@ -91,4 +96,59 @@ func TestVerifyRunBadLogLevelFlag(t *testing.T) {
 	defer cancel()
 	err := run(ctx, dir+"/config.yaml", "", "debgu")
 	require.ErrorContains(t, err, "log_level")
+}
+
+// fakeDocker puts a docker on PATH that logs its arguments; ps lists the
+// ragcode-ollama container while the file "container" exists, and every
+// command fails while the file "down" does. The real docker is never run.
+func fakeDocker(t *testing.T) (dir string, calls func() []string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("shell scripts")
+	}
+	dir = t.TempDir()
+	log := filepath.Join(dir, "docker.log")
+	script := "#!/bin/sh\necho \"$*\" >> " + log + "\n[ -f " + filepath.Join(dir, "down") + " ] && exit 1\ncase \"$1\" in ps) [ -f " + filepath.Join(dir, "container") + " ] && echo ragcode-ollama;; esac\nexit 0\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte(script), 0o755))
+	t.Setenv("PATH", dir)
+	return dir, func() []string {
+		data, _ := os.ReadFile(log)
+		return strings.Fields(strings.ReplaceAll(strings.TrimSpace(string(data)), " ", "_"))
+	}
+}
+
+// The server removes the container of the Ollama versions once per home:
+// an auto-update replaces only the binary and never runs the installer.
+func TestVerifyRemoveOllamaOnce(t *testing.T) {
+	dir, calls := fakeDocker(t)
+	home := t.TempDir()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	marker := filepath.Join(home, "cache", "ollama-removed")
+	ps := "ps_-a_--filter_name=^ragcode-ollama$_--format_{{.Names}}"
+
+	// A daemon that does not answer: nothing is concluded, the next start asks again.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "down"), nil, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "container"), nil, 0o644))
+	removeOllama(context.Background(), home, log)
+	assert.Equal(t, []string{ps}, calls())
+	assert.NoFileExists(t, marker)
+
+	require.NoError(t, os.Remove(filepath.Join(dir, "down")))
+	removeOllama(context.Background(), home, log)
+	assert.Equal(t, []string{ps, ps, "rm_-f_ragcode-ollama", "volume_rm_ragcode-ollama"}, calls())
+	assert.FileExists(t, marker)
+
+	removeOllama(context.Background(), home, log)
+	assert.Len(t, calls(), 4, "once per home")
+
+	// No container: one question, then never again. No docker at all: asked at every start.
+	require.NoError(t, os.Remove(filepath.Join(dir, "container")))
+	other := t.TempDir()
+	removeOllama(context.Background(), other, log)
+	removeOllama(context.Background(), other, log)
+	assert.Len(t, calls(), 5)
+	t.Setenv("PATH", t.TempDir())
+	none := t.TempDir()
+	removeOllama(context.Background(), none, log)
+	assert.NoFileExists(t, filepath.Join(none, "cache", "ollama-removed"))
 }

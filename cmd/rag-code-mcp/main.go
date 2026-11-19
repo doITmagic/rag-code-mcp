@@ -119,6 +119,34 @@ func autoUpdate(ctx context.Context, source string, log *slog.Logger) {
 	}
 }
 
+// removeOllama removes, once per home, the ragcode-ollama container of the
+// v2 versions that embedded through Ollama. An auto-update replaces only the
+// binary, so without this the container (--restart always) would keep its
+// memory until someone ran the installer. The marker is written only after
+// Docker answered: a daemon that is down is asked again at the next start.
+func removeOllama(ctx context.Context, home string, log *slog.Logger) {
+	marker := filepath.Join(home, "cache", "ollama-removed")
+	if _, err := os.Stat(marker); err == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Minute) // a daemon that hangs must not hold a goroutine forever
+	defer cancel()
+	removed, err := uninstall.RemoveOllama(ctx)
+	switch {
+	case errors.Is(err, uninstall.ErrNoDocker):
+		log.Debug("ollama: container not checked", "err", err)
+		return
+	case err != nil:
+		log.Warn("ollama: the ragcode-ollama container is no longer used and could not be removed", "err", err)
+		return
+	case removed:
+		log.Info("ollama: removed the ragcode-ollama container and volume; RagCode runs the embedding model itself")
+	}
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err == nil {
+		_ = os.WriteFile(marker, nil, 0o644)
+	}
+}
+
 func sameFile(a, b string) bool {
 	fa, errA := os.Stat(a)
 	fb, errB := os.Stat(b)
@@ -168,6 +196,9 @@ func run(ctx context.Context, cfgPath, httpAddr, logLevel string) error {
 	if exe, err := os.Executable(); err == nil {
 		if bin := uninstall.Binary(config.HomeDir()); sameFile(exe, bin) {
 			update.Remember(bin) // tool answers ask for a restart once it is replaced
+			// Only the installed binary: a build run from elsewhere (a test, a
+			// second home) must not remove a container another install uses.
+			go removeOllama(ctx, config.HomeDir(), log)
 		}
 	}
 	if cfg.AutoUpdate {

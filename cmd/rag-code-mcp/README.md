@@ -37,7 +37,7 @@ graph TD
 
 | File | Contents |
 |:---|:---|
-| `main.go` | Flags, `main`, `run` (remembers the installed binary for the restart note), `updateNow` (`-update`), `autoUpdate`, `sameFile`, `setMemoryLimit`, `httpHandler`, `serveHTTP`, `versionLine` and the build-time `Version` variable. |
+| `main.go` | Flags, `main`, `run` (remembers the installed binary for the restart note), `updateNow` (`-update`), `autoUpdate`, `removeOllama`, `sameFile`, `setMemoryLimit`, `httpHandler`, `serveHTTP`, `versionLine` and the build-time `Version` variable. |
 
 Tests:
 
@@ -45,7 +45,7 @@ Tests:
 |:---|:---|
 | `main_test.go` | `versionLine` output; `GET /health` returns the version and the PID as JSON; `onEOF` runs its hook when stdin ends. |
 | `memlimit_test.go` | `setMemoryLimit` sets 1 GiB when `GOMEMLIMIT` is unset and leaves the runtime limit alone when it is set. |
-| `zz_verify_test.go` | Verification tests: `serveHTTP` fails fast on an unusable address, serves `/health` and the MCP endpoint (not 404), and stops cleanly on context cancel; `run` returns a config error (bad `ollama_base_url`) without touching the network; a mistyped `-log-level` flag is an error naming `log_level`, not a silent fall back to `info`. |
+| `zz_verify_test.go` | Verification tests: `serveHTTP` fails fast on an unusable address, serves `/health` and the MCP endpoint (not 404), and stops cleanly on context cancel; `run` returns a config error without touching the network; a mistyped `-log-level` flag is an error naming `log_level`, not a silent fall back to `info`. |
 
 ## Flags
 
@@ -78,6 +78,7 @@ sequenceDiagram
     M->>A: New(Options{Config, Version, Log})
     opt this is ~/.ragcode/bin/rag-code-mcp
         M->>M: update.Remember(installed binary)
+        M->>M: go removeOllama (once per home)
         M->>M: go autoUpdate when auto_update (update.Latest, then update.Run)
     end
     alt stdio
@@ -140,6 +141,23 @@ at start, so once it is replaced their tool answers end with "RagCode was
 updated on disk: restart this MCP server ...". Details in
 [internal/update](../../internal/update/README.md).
 
+### The container of the Ollama versions
+
+Earlier v2 versions embedded through Ollama in a Docker container,
+`ragcode-ollama`, created with `--restart always`. An automatic update
+replaces only the binary and never runs the installer, so the new server
+removes that container itself: when the running binary is the installed one,
+`removeOllama` runs in a goroutine at start and calls
+`uninstall.RemoveOllama` (`docker ps -a` for exactly that name, then
+`docker rm -f` and `docker volume rm`), with one minute at most. It then
+writes the empty marker `~/.ragcode/cache/ollama-removed` and never asks
+again. The marker is written only when Docker answered (container removed, or
+none there): without `docker` on `PATH`, with a daemon that is down or after a
+removal that failed (logged as a warning), the next start tries again. A
+build run from another path never touches Docker. A server of the old version
+still running elsewhere loses its embedder when the container goes; its
+client has to restart it.
+
 ### HTTP mode
 
 `-http addr` serves:
@@ -191,7 +209,11 @@ go test ./cmd/rag-code-mcp/
 ```
 
 No build tags. The tests use an in-memory store and a fake embedder, set
-`RAGCODE_HOME` to a temp directory and never dial Ollama.
+`RAGCODE_HOME` to a temp directory and never start the embedding server.
+`TestVerifyRemoveOllamaOnce` puts a fake `docker` script alone on `PATH` (the
+real one is never run): a daemon that does not answer leaves no marker, the
+container and volume are removed once, a home without the container is asked
+once, and without `docker` nothing is concluded.
 
 ## See also
 

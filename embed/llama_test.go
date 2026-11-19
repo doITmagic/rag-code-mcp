@@ -265,6 +265,15 @@ func waitDead(t *testing.T, pid int) {
 	require.Eventually(t, func() bool { return !pidAlive(pid) }, 5*time.Second, 20*time.Millisecond)
 }
 
+// waitStopped waits for the embedder to say its server is stopped. The process
+// is gone for the system before drop has cleared the state behind it, and on
+// Windows, where stop kills at once, a test that read the state right after
+// waitDead still saw "running".
+func waitStopped(t *testing.T, l *Llama) {
+	t.Helper()
+	require.Eventually(t, func() bool { return l.Status().State == "stopped" }, 5*time.Second, 5*time.Millisecond)
+}
+
 func TestLlamaEmbedOrderAndBatches(t *testing.T) {
 	l, _, log := newTestLlama(t)
 	ctx := context.Background()
@@ -355,7 +364,7 @@ func TestLlamaIdleStop(t *testing.T) {
 	require.NoError(t, err)
 	first := serverPid(t, l)
 	waitDead(t, first)
-	assert.Equal(t, "stopped", l.Status().State)
+	waitStopped(t, l)
 	_, err = l.Embed(context.Background(), []string{"b"})
 	require.NoError(t, err)
 	assert.NotEqual(t, first, serverPid(t, l))
@@ -438,7 +447,7 @@ func TestLlamaWarm(t *testing.T) {
 	assert.Len(t, logLines(t, log, "start"), 1, "the call found the model loaded")
 	assert.Equal(t, int32(1), rt.ensures.Load())
 	waitDead(t, pid)
-	assert.Equal(t, "stopped", l.Status().State)
+	waitStopped(t, l)
 }
 
 func TestLlamaWarmNeverDownloads(t *testing.T) {
@@ -1163,8 +1172,8 @@ func TestLlamaModelLoadCeiling(t *testing.T) {
 	pid, convErr := strconv.Atoi(strings.TrimPrefix(starts[0], "start "))
 	require.NoError(t, convErr)
 	waitDead(t, pid)
+	waitStopped(t, l)
 	st := l.Status()
-	assert.Equal(t, "stopped", st.State)
 	assert.Contains(t, st.Error, "did not load")
 	_, statErr := os.Stat(filepath.Join(l.runDir, "llama-"+strconv.Itoa(os.Getpid())+".json"))
 	assert.True(t, os.IsNotExist(statErr), "record removed")

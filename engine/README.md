@@ -73,7 +73,7 @@ graph TD
 
 | File | Covers |
 |------|--------|
-| `engine_test.go` | Root validation, auto-index on first contact, request coalescing, `ErrHeadChanged` re-queue, retry of failed runs, a failed recreate that resumes without dropping again, no watcher without `auto_index`, recreate, embedding model change, concurrent root registration from several engines, a search refused on an index of another model with the same vector size, a lock held by another engine, `Resume`, no goroutines left after `Close`, `WriteIDERules` (tracked files, symlinks, symlinked parent directories, continuing after a refused file), backoff, a run waiting for the slot counts as queued, the end of a run logged with its counts and duration, another process's run shown as running and a dead run's phase shown as `interrupted` (`TestStatusOfAnotherProcessRun`), the first retry after another process's lock within seconds (`TestLockedRetrySoon`), parents of home and broad system directories refused as roots (`TestValidateRootRefusesBroadDirs`), the watcher's full run logged once while queued, a request queued while the runner exits is still picked up, a run failing because the root was deleted is not retried and the root is caught up when it is back, a query after the store reopened a replaced collection file queues an incremental run (`TestQueryAfterReopenQueuesResync`), a root over `max_files` refused once, without a retry (`TestMaxFilesRefusedWithoutRetry`). `TestMain` points `RAGCODE_HOME` at a temp dir. It also sets `TMPDIR`, `TMP` and `TEMP` to the symlink-resolved temp dir (macOS `/var` -> `/private/var`, Windows 8.3 short names), so `t.TempDir()` paths compare equal to the resolved paths the product returns. |
+| `engine_test.go` | Root validation, auto-index on first contact, request coalescing, `ErrHeadChanged` re-queue, retry of failed runs, an explicit index cutting the failure backoff while a non-explicit request waits it out, a failed recreate that resumes without dropping again, no watcher without `auto_index`, recreate, embedding model change, concurrent root registration from several engines, a search refused on an index of another model with the same vector size, a lock held by another engine, `Resume`, no goroutines left after `Close`, `WriteIDERules` (tracked files, symlinks, symlinked parent directories, continuing after a refused file), backoff, a run waiting for the slot counts as queued, the end of a run logged with its counts and duration, another process's run shown as running and a dead run's phase shown as `interrupted` (`TestStatusOfAnotherProcessRun`), the first retry after another process's lock within seconds (`TestLockedRetrySoon`), parents of home and broad system directories refused as roots (`TestValidateRootRefusesBroadDirs`), the watcher's full run logged once while queued, a request queued while the runner exits is still picked up, a run failing because the root was deleted is not retried and the root is caught up when it is back, a query after the store reopened a replaced collection file queues an incremental run (`TestQueryAfterReopenQueuesResync`), a root over `max_files` refused once, without a retry (`TestMaxFilesRefusedWithoutRetry`). `TestMain` points `RAGCODE_HOME` at a temp dir. It also sets `TMPDIR`, `TMP` and `TEMP` to the symlink-resolved temp dir (macOS `/var` -> `/private/var`, Windows 8.3 short names), so `t.TempDir()` paths compare equal to the resolved paths the product returns. |
 | `newer_format_test.go` | A leader that meets an index of a newer Format leaves `index_status.json` as it is and gives up `watch.lock`; the follower of the newer version then indexes the next edit. |
 | `watch_test.go` | The watcher end to end, a `.gitignore` edit queues a full run, a directory that becomes a linked worktree after it was watched is dropped with a full run (`TestWatcherLinkedWorktreeAdded`), a `.git` created after start queues a full run and is watched with its refs (`TestWatcherGitInitAfterStart`), a ref moved through its `.lock` file queues one full run (`TestWatcherRefUpdateQueuesOneFullRun`), RagCode's own home inside a root neither watched nor accepted as a root (`TestWatcherIgnoresOwnHome`), root removed, root that comes back, unreadable subdirectory, watcher restart retried, `Close` beginning during `Resume`'s watcher setup (no catch-up, no warning), only one of two servers on a root watches and indexes a save (`TestWatcherOneLeaderPerRoot`), the follower takes over with a catch-up run when the leader exits (`TestWatcherFollowerTakesOver`), `Resume` in a follower queues no catch-up (`TestResumeFollowerSkipsCatchUp`). |
 | `nonotify_linux_test.go` | A root on 9p is named by `noNotify`, warned once per process and reported in `Status.Unwatched`; its watcher walks no directory; other file systems are not. Build: Linux. |
@@ -86,7 +86,7 @@ graph TD
 | `busy_test.go` | A run reporting locked files (`index.Status.Busy`, fake run) queues a files run for just them after `lockRetryDelay(0)`, without holding back a request made meanwhile; a clean run resets the count; after `busyRetries` no retry is scheduled. |
 | `junction_windows_test.go` | (Windows only) a root that is an NTFS junction, or lies below one, is accepted by `validateRoot` and resolved to the real directory. |
 | `fetching_test.go` | `Scroll` never reaches `Dimension`; a missing collection is `ErrNotIndexed` for `Scroll` without the embedder; during a download `Search` and `Ready` answer at once with `ErrFetching` and the index run still waits. |
-| `zz_verify_test.go` | Verification tests: concurrent `Workspace` calls, cancelled contexts, enqueue during a lock retry, recreate while locked, a directory moved out and the forced debounce flush, status read from disk before any run, home symlink guard, `Close` cancelling a blocked run, junk `roots.json`, a files run with only deletions, junk paths, `Ready` remediation text, a failed query embed does not enqueue, recreate absorbing queued files, catch-up with and without `auto_index`, double `Close`, `.git/refs` plus hidden and excluded directories, kernel file systems refused. |
+| `zz_verify_test.go` | Verification tests: concurrent `Workspace` calls, cancelled contexts, an explicit call cutting a lock retry and a non-explicit one waiting, recreate while locked, a directory moved out and the forced debounce flush, status read from disk before any run, home symlink guard, `Close` cancelling a blocked run, junk `roots.json`, a files run with only deletions, junk paths, `Ready` remediation text, a failed query embed does not enqueue, recreate absorbing queued files, catch-up with and without `auto_index`, double `Close`, `.git/refs` plus hidden and excluded directories, kernel file systems refused. |
 
 ---
 
@@ -241,7 +241,8 @@ run absorbs file requests (their lists are dropped, the walk covers them);
 pending file requests accumulate their changed and deleted sets.
 
 **Runner.** `kick` starts one runner goroutine per workspace when there is a
-request and no runner or retry timer. The runner takes the pending request,
+request and no runner or retry timer; an explicit request (`Index`, so
+`rag_index_workspace`) first stops an armed retry timer, so it starts at once. The runner takes the pending request,
 waits for the global slot, runs `index.Run` with the engine's context, then
 loops: a request made during the run starts right after it. Runs of
 different workspaces serialize on the slot. `Progress` updates the
@@ -253,7 +254,8 @@ a 1,800-file root: 384 MB resident while idle before, 70 MB after).
 ```mermaid
 flowchart TD
     A[Index / IndexFiles / watcher] --> B[enqueue: fails = 0, merge]
-    B --> C{runner, retry timer<br/>or nothing queued?}
+    B --> B1[explicit: stop the retry timer]
+    B1 --> C{runner, retry timer<br/>or nothing queued?}
     C -->|none of these| D[start runner]
     C -->|otherwise| Z[wait: the runner picks it up]
     D --> E[take pending request]
@@ -283,7 +285,11 @@ process's lock nor an embedder or store outage drops its files.
   ran).
 - **Any other error**: `retryDelay(fails)` = 30 s doubled per consecutive
   failure, capped at 10 minutes (30 s, 1 m, 2 m, 4 m, 8 m, 10 m). A success
-  or a new request resets the count.
+  or a new request resets the count. Only an explicit request
+  (`rag_index_workspace`) cuts the wait: it stops the armed timer and the run
+  starts at once, also during the lock wait above (it then meets the lock
+  again and re-arms the 2 s retry). The watcher, the catch-up and the retry
+  of locked files wait the timer out.
 - **Recreate that already dropped**: if the failed run had `Recreated` set,
   the retry becomes a full run, so what was re-indexed is not thrown away.
 - **`index.ErrHeadChanged`**: not a failure; a full run is queued at once.

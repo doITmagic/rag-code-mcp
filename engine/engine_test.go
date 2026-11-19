@@ -318,6 +318,63 @@ func TestFailedRunIsRetried(t *testing.T) {
 	assert.True(t, files["a.go"], "failed file still queued")
 }
 
+// An explicit rag_index_workspace after a failed run starts at once: the user
+// has fixed the cause and must not wait out the armed failure backoff.
+func TestExplicitIndexCutsFailureBackoff(t *testing.T) {
+	cfg := testConfig(t)
+	rec := &runRecorder{errs: []error{errors.New("embed: connection refused")}}
+	e := New(cfg, store.NewMemory(), &embed.Fake{}, nil)
+	defer e.Close()
+	e.run = rec.run
+	w, err := e.Workspace(t.TempDir())
+	require.NoError(t, err)
+	w.IndexFiles([]string{"a.go"}, nil)
+	require.Eventually(t, func() bool { s := w.Status(); return s.LastError != "" && !s.Running }, 2*time.Second, 5*time.Millisecond)
+
+	e.mu.Lock()
+	cut := w.retry
+	e.mu.Unlock()
+	require.NotNil(t, cut)
+
+	w.Index(false)
+	require.Eventually(t, func() bool { return len(rec.snapshot()) == 2 }, time.Second, 5*time.Millisecond, "the explicit call starts the second run")
+	// A timer left running would fire later, clear the reference of the next
+	// failure's timer and start its retry before its delay.
+	assert.False(t, cut.Stop(), "the cut timer was stopped, not only forgotten")
+	require.Eventually(t, func() bool {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		return !w.running
+	}, time.Second, 5*time.Millisecond)
+	e.mu.Lock()
+	armed := w.retry != nil
+	e.mu.Unlock()
+	assert.False(t, armed, "no retry timer stays armed")
+}
+
+// The watcher, the catch-up and the busy retry are not explicit: they keep
+// waiting out the failure backoff.
+func TestNonExplicitRequestWaitsOutFailureBackoff(t *testing.T) {
+	cfg := testConfig(t)
+	rec := &runRecorder{errs: []error{errors.New("embed: connection refused")}}
+	e := New(cfg, store.NewMemory(), &embed.Fake{}, nil)
+	defer e.Close()
+	e.run = rec.run
+	w, err := e.Workspace(t.TempDir())
+	require.NoError(t, err)
+	w.IndexFiles([]string{"a.go"}, nil)
+	require.Eventually(t, func() bool { s := w.Status(); return s.LastError != "" && !s.Running }, 2*time.Second, 5*time.Millisecond)
+
+	w.IndexFiles([]string{"b.go"}, nil)
+	time.Sleep(150 * time.Millisecond)
+	assert.Len(t, rec.snapshot(), 1, "no run before the retry timer fires")
+	e.mu.Lock()
+	armed, files := w.retry != nil, w.files
+	e.mu.Unlock()
+	assert.True(t, armed, "retry timer still armed")
+	assert.True(t, files["a.go"] && files["b.go"], "both requests queued")
+}
+
 // A recreate that fails after its drop (Ollama down mid-run) retries as a
 // full run: dropping again would throw away every file already re-indexed.
 func TestFailedRecreateRetriesWithoutDropping(t *testing.T) {

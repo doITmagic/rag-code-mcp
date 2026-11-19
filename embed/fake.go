@@ -70,5 +70,5 @@ func (f *Fake) Model() string {
 
 var (
 	_ Embedder = (*Fake)(nil)
-	_ Embedder = (*Ollama)(nil)
+	_ Embedder = (*Llama)(nil)
 )

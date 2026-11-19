@@ -1,5 +1,6 @@
-// Package embed turns text into vectors. One implementation talks to Ollama's
-// /api/embed over plain HTTP; a deterministic fake backs the tests.
+// Package embed turns text into vectors. One implementation runs llama.cpp's
+// llama-server as a child process and talks to it over loopback HTTP; a
+// deterministic fake backs the tests.
 package embed
 
 import (
@@ -7,7 +8,7 @@ import (
 	"errors"
 )
 
-// ErrUnavailable wraps every transport failure so callers can report
+// ErrUnavailable wraps every start, transport and protocol failure so callers can report
 // "embedder down" without inspecting the cause.
 var ErrUnavailable = errors.New("embed: embedder unavailable")
 

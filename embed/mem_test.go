@@ -1,67 +1,24 @@
 package embed
 
 import (
-	"context"
-	"net/http"
-	"net/http/httptest"
 	"runtime"
-	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-// With too little free memory a local Ollama is not called at all: the model
-// load would only time out and start again. A warm model needs no new memory.
-func TestLowMemory(t *testing.T) {
-	var calls atomic.Int32
-	var ps atomic.Value // what Ollama has loaded
-	ps.Store("")
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/ps" {
-			w.Write([]byte(`{"models":[` + ps.Load().(string) + `]}`))
-			return
-		}
-		calls.Add(1)
-		w.Write([]byte(`{"embeddings":[[1,2,3]]}`))
-	}))
-	defer srv.Close()
-	free := 500
+// MinFreeMB 0 turns the memory check off; the check with a low value is in
+// TestLlamaLowMemory.
+func TestCheckMemoryOff(t *testing.T) {
 	old := freeMB
-	freeMB = func() (int, bool) { return free, true }
+	freeMB = func() (int, bool) { return 1, true }
 	t.Cleanup(func() { freeMB = old })
-
-	o := NewOllama(srv.URL, "m", nil)
-	o.MinFreeMB = 1536
-	_, err := o.Embed(context.Background(), []string{"a"})
-	require.ErrorIs(t, err, ErrLowMemory)
-	assert.Contains(t, err.Error(), "500 MB free, at least 1536 MB needed")
-	_, err = o.Dimension(context.Background())
-	require.ErrorIs(t, err, ErrLowMemory)
-	assert.Zero(t, calls.Load(), "no embed request")
-
-	// Another server already loaded the model: no new memory is needed.
-	ps.Store(`{"name":"m:latest"}`)
-	_, err = o.Embed(context.Background(), []string{"a"})
-	require.NoError(t, err)
-	ps.Store(`{"name":"other"}`)
-	o.lastOK.Store(0)
-	_, err = o.Embed(context.Background(), []string{"a"})
-	require.ErrorIs(t, err, ErrLowMemory)
-
-	free = 4000
-	_, err = o.Embed(context.Background(), []string{"a"})
-	require.NoError(t, err)
-	free = 500 // the model is loaded now: no check
-	_, err = o.Embed(context.Background(), []string{"a"})
-	require.NoError(t, err)
-
-	remote := NewOllama("http://ollama.example:11434", "m", nil)
-	remote.MinFreeMB = 1536
-	assert.NoError(t, remote.checkMemory(context.Background()), "another machine's memory is not ours")
-	o.MinFreeMB, o.lastOK = 0, atomic.Int64{}
-	assert.NoError(t, o.checkMemory(context.Background()), "0 turns the check off")
+	l := NewLlama("m", nil, "")
+	assert.NoError(t, l.checkMemory(), "0 turns the check off")
+	l.MinFreeMB = 100
+	assert.ErrorIs(t, l.checkMemory(), ErrLowMemory)
+	freeMB = func() (int, bool) { return 0, false }
+	assert.NoError(t, l.checkMemory(), "an unreadable free memory does not block")
 	if _, ok := availableMB(); runtime.GOOS == "linux" || runtime.GOOS == "windows" {
 		assert.True(t, ok, "this platform reads its free memory")
 	}

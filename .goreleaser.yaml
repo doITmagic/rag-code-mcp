@@ -124,7 +124,7 @@ release:
 
     **Upgrading from v1:** run `./rag-code-install` from the archive. Do not use v1's `rag-code-mcp --update` or `brew upgrade`: they replace only the binary and leave the v1 setup (Qdrant, old config, IDE entries) behind.
     
-    Local semantic code navigation for AI clients over MCP: an embedded SQLite index per workspace and one Ollama embedding model.
+    Local semantic code navigation for AI clients over MCP: an embedded SQLite index per workspace and one small embedding model that RagCode runs itself (llama.cpp), with no Docker or Ollama.
     
     ### Installation
     
@@ -150,7 +150,7 @@ release:
     **Or download the archive for your platform below.**
   
   footer: |
-    The installer copies the server to `~/.ragcode/bin`, starts Ollama (Docker by default; `-ollama local` uses one already running), pulls the embedding model and registers the server in the IDEs it finds. A RagCode v1 install is removed first and projects are indexed again.
+    The installer copies the server to `~/.ragcode/bin`, downloads the embedding runtime (llama.cpp) and model (`-skip-download` leaves that to the server's first use) and registers the server in the IDEs it finds. A RagCode v1 install is removed first and projects are indexed again. From an earlier v2 that used Ollama, the installer also removes the `ragcode-ollama` container, and each project is re-embedded on its next index run because the embedding model changed.
 
     **Full documentation:** https://github.com/doITmagic/rag-code-mcp
 

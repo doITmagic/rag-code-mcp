@@ -130,6 +130,8 @@ func TestVerifyYAMLTagsSnakeCase(t *testing.T) {
 		"embed_runtime: vulkan",
 		"embed_threads: 3",
 		"embed_max_tokens: 512",
+		"embed_idle_stop: 45m",
+		"embed_warm_start: true",
 		"min_free_memory_mb: 7",
 		"log_level: error",
 		"log_max_size_mb: 3",
@@ -147,7 +149,7 @@ func TestVerifyYAMLTagsSnakeCase(t *testing.T) {
 	cfg, err := Load(path)
 	require.NoError(t, err)
 	assert.Equal(t, Config{
-		EmbedModel: abs("/m/x.gguf"), LlamaServer: abs("/m/llama-server"), EmbedRuntime: "vulkan", EmbedThreads: 3, EmbedMaxTokens: 512, MinFreeMemoryMB: 7,
+		EmbedModel: abs("/m/x.gguf"), LlamaServer: abs("/m/llama-server"), EmbedRuntime: "vulkan", EmbedThreads: 3, EmbedMaxTokens: 512, EmbedIdleStop: 45 * time.Minute, EmbedWarmStart: true, MinFreeMemoryMB: 7,
 		LogLevel: "error", LogMaxSizeMB: 3, ExcludePatterns: []string{"a", "b"}, MaxFiles: 5,
 		AllowedWorkspacePaths: []string{abs("/x")}, AutoIndex: false, WatchEnabled: false,
 		WatchDebounce: 2 * time.Minute, AutoCreateIDERules: false,

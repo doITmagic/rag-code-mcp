@@ -27,6 +27,8 @@ type Config struct {
 	EmbedRuntime          string        `yaml:"embed_runtime"`
 	EmbedThreads          int           `yaml:"embed_threads"`
 	EmbedMaxTokens        int           `yaml:"embed_max_tokens"`
+	EmbedIdleStop         time.Duration `yaml:"embed_idle_stop"`
+	EmbedWarmStart        bool          `yaml:"embed_warm_start"`
 	MinFreeMemoryMB       int           `yaml:"min_free_memory_mb"`
 	LogLevel              string        `yaml:"log_level"`
 	LogMaxSizeMB          int           `yaml:"log_max_size_mb"`
@@ -41,12 +43,28 @@ type Config struct {
 	UpdateSource          string        `yaml:"update_source"`
 }
 
+// UnmarshalYAML reads the file into c. yaml.v3 takes a duration from text
+// only, so a bare 0 in embed_idle_stop (never stop the model) would be refused
+// as a number: it is read as the text "0", which is a duration.
+func (c *Config) UnmarshalYAML(n *yaml.Node) error {
+	if n.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			if v := n.Content[i+1]; n.Content[i].Value == "embed_idle_stop" && v.Tag == "!!int" && v.Value == "0" {
+				v.Tag = "!!str"
+			}
+		}
+	}
+	type plain Config // without the method, so that Decode does not call it again
+	return n.Decode((*plain)(c))
+}
+
 // The bounds of embed_max_tokens. BuiltinModelTokens is the context window of
 // the built-in model, EmbeddingGemma 2 (embed.DefaultTokens).
 const (
 	BuiltinModelTokens = 8192
 	minEmbedTokens     = 256 // llama.cpp rounds a context up to a multiple of it
 	maxEmbedTokens     = 32768
+	minEmbedIdleStop   = time.Minute // a shorter one only reloads the model between two searches
 )
 
 // Default returns the built-in configuration; default.yaml mirrors it.
@@ -56,6 +74,7 @@ func Default() Config {
 		// llama.cpp otherwise takes every performance core.
 		EmbedThreads:       max(2, runtime.NumCPU()/3),
 		EmbedMaxTokens:     BuiltinModelTokens,
+		EmbedIdleStop:      30 * time.Minute,
 		MinFreeMemoryMB:    750,
 		LogLevel:           "info",
 		LogMaxSizeMB:       10,
@@ -165,6 +184,9 @@ func (c Config) Validate() error {
 	}
 	if c.EmbedModel == "" && c.EmbedMaxTokens > BuiltinModelTokens {
 		return fmt.Errorf("config: embed_max_tokens %d is over the %d tokens the built-in model takes (a higher value needs your own embed_model)", c.EmbedMaxTokens, BuiltinModelTokens)
+	}
+	if c.EmbedIdleStop != 0 && c.EmbedIdleStop < minEmbedIdleStop {
+		return fmt.Errorf("config: embed_idle_stop must be 0 (never stop) or at least %s, got %s", minEmbedIdleStop, c.EmbedIdleStop)
 	}
 	if c.MaxFiles < 0 {
 		return fmt.Errorf("config: max_files must not be negative, got %d", c.MaxFiles)

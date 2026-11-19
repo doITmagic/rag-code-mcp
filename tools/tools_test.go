@@ -668,7 +668,7 @@ func (s statusEmbedder) Status() embed.Status { return s.st }
 
 // rag_server_info shows the embedder's own state and the reason of its last failure.
 func TestServerInfoEmbedderState(t *testing.T) {
-	want := embed.Status{Model: "m", Runtime: "llama.cpp b1 (cpu)", State: "not_installed", Error: "download failed"}
+	want := embed.Status{Model: "m", Runtime: "llama.cpp b1 (cpu)", State: "not_installed", Error: "download failed", IdleStop: "30m0s"}
 	v := newEnvWith(t, statusEmbedder{&embed.Fake{}, want}, false, func(c *config.Config) { c.AutoIndex = false })
 	r, _ := v.call(t, "rag_server_info", map[string]any{})
 	require.Equal(t, "ok", r.Status, r.Message)
@@ -677,6 +677,11 @@ func TestServerInfoEmbedderState(t *testing.T) {
 	}
 	data(t, r, &out)
 	assert.Equal(t, want, out.Embedder)
+	var raw struct {
+		Embedder map[string]any `json:"embedder"`
+	}
+	data(t, r, &raw)
+	assert.Equal(t, "30m0s", raw.Embedder["idle_stop"], "the idle stop is in the reply under that name")
 }
 
 func TestDependencyDown(t *testing.T) {

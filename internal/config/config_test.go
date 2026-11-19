@@ -104,6 +104,10 @@ func TestValidate(t *testing.T) {
 		{"embed tokens over the built-in model", func(c *Config) { c.EmbedMaxTokens = 8193 }, "built-in model"},
 		{"embed tokens of an own model", func(c *Config) { c.EmbedModel = abs("/m/x.gguf"); c.EmbedMaxTokens = 16384 }, ""},
 		{"fewer embed tokens", func(c *Config) { c.EmbedMaxTokens = 256 }, ""},
+		{"negative embed idle stop", func(c *Config) { c.EmbedIdleStop = -time.Minute }, "embed_idle_stop"},
+		{"embed idle stop under a minute", func(c *Config) { c.EmbedIdleStop = 59 * time.Second }, "embed_idle_stop"},
+		{"embed idle stop of a minute", func(c *Config) { c.EmbedIdleStop = time.Minute }, ""},
+		{"embed idle stop never", func(c *Config) { c.EmbedIdleStop = 0 }, ""},
 		{"negative max files", func(c *Config) { c.MaxFiles = -1 }, "max_files"},
 		{"negative free memory", func(c *Config) { c.MinFreeMemoryMB = -1 }, "min_free_memory_mb"},
 		{"negative debounce", func(c *Config) { c.WatchDebounce = -1 }, "watch_debounce"},
@@ -287,4 +291,25 @@ func TestRedacted(t *testing.T) {
 	assert.Equal(t, `C:\rel\latest.json`, Redacted(`C:\rel\latest.json`))
 	assert.Equal(t, "xxxxx@h:11434", Redacted("http:u:secret@h:11434"))
 	assert.Equal(t, "/srv/@scope/latest.json", Redacted("/srv/@scope/latest.json"))
+}
+
+func TestEmbedIdleStopAndWarmStart(t *testing.T) {
+	assert.Equal(t, 30*time.Minute, Default().EmbedIdleStop)
+	assert.False(t, Default().EmbedWarmStart)
+	load := func(yml string) (Config, error) {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		require.NoError(t, os.WriteFile(path, []byte(yml), 0o644))
+		return Load(path)
+	}
+	cfg, err := load("embed_idle_stop: 2h\nembed_warm_start: true\n")
+	require.NoError(t, err)
+	assert.Equal(t, 2*time.Hour, cfg.EmbedIdleStop)
+	assert.True(t, cfg.EmbedWarmStart)
+	cfg, err = load("embed_idle_stop: 0\n")
+	require.NoError(t, err)
+	assert.Zero(t, cfg.EmbedIdleStop, "0 is a choice, not a missing key: it is not replaced by the default")
+	_, err = load("embed_idle_stop: 30s\n")
+	assert.ErrorContains(t, err, "embed_idle_stop")
+	_, err = load("embed_idle_stop: soon\n")
+	assert.ErrorContains(t, err, "parse")
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -66,6 +67,7 @@ func fakeLog(line string) {
 func fakeLlamaServer() {
 	port, model := "", ""
 	ctxSize, batch := 0, 0
+	sleep := "" // the value of --sleep-idle-seconds; empty when the flag is missing
 	args := os.Args[1:]
 	for i := 0; i+1 < len(args); i++ {
 		switch args[i] {
@@ -77,6 +79,8 @@ func fakeLlamaServer() {
 			ctxSize, _ = strconv.Atoi(args[i+1])
 		case "-ub":
 			batch, _ = strconv.Atoi(args[i+1])
+		case "--sleep-idle-seconds":
+			sleep = args[i+1]
 		}
 	}
 	// A model trained for less than -c: the server caps the slot at it.
@@ -96,6 +100,7 @@ func fakeLlamaServer() {
 	began := time.Now()
 	fakeLog("start " + strconv.Itoa(os.Getpid()))
 	fakeLog(fmt.Sprintf("ctx c=%d ub=%d", ctxSize, batch))
+	fakeLog("sleep " + sleep)
 	auth := func(w http.ResponseWriter, r *http.Request) bool {
 		if r.Header.Get("Authorization") != "Bearer "+key {
 			http.Error(w, `{"error":{"message":"Invalid API Key"}}`, http.StatusUnauthorized)
@@ -316,11 +321,11 @@ func TestLlamaDimensionCached(t *testing.T) {
 func TestLlamaStatus(t *testing.T) {
 	l, rt, _ := newTestLlama(t)
 	rt.installed.Store(false)
-	assert.Equal(t, Status{Model: "test-model", Runtime: "test", State: "not_installed"}, l.Status())
+	assert.Equal(t, Status{Model: "test-model", Runtime: "test", State: "not_installed", IdleStop: "30m0s"}, l.Status())
 	// The first call fetches what is missing, then starts the server.
 	_, err := l.Embed(context.Background(), []string{"a"})
 	require.NoError(t, err)
-	assert.Equal(t, Status{Model: "test-model", Runtime: "test", State: "running"}, l.Status())
+	assert.Equal(t, Status{Model: "test-model", Runtime: "test", State: "running", IdleStop: "30m0s"}, l.Status())
 	require.NoError(t, l.Close())
 	assert.Equal(t, "stopped", l.Status().State)
 }
@@ -355,6 +360,150 @@ func TestLlamaIdleStop(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, first, serverPid(t, l))
 	assert.Len(t, logLines(t, log, "start"), 2)
+}
+
+// The server's own sleep must never come before our idle stop: it unloads the
+// model by itself, even while this process lives.
+func TestLlamaSleepFollowsIdleStop(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		idle time.Duration
+		want string
+	}{
+		{"default 30m plus a minute", 0, "1860"},
+		{"long", 2 * time.Hour, "7260"},
+		{"short keeps the 10 minutes", 5 * time.Second, "600"},
+		{"never disables it", IdleNever, "-1"},
+		// d+sleepMargin would wrap negative and give 600: the model would unload
+		// after 10 minutes although the idle time is practically endless.
+		{"too long to add the margin disables it", time.Duration(math.MaxInt64), "-1"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			l, _, log := newTestLlama(t)
+			l.IdleStop = c.idle
+			_, err := l.Embed(context.Background(), []string{"a"})
+			require.NoError(t, err)
+			assert.Equal(t, []string{"sleep " + c.want}, logLines(t, log, "sleep"))
+		})
+	}
+}
+
+// IdleNever keeps the server up for as long as the process lives, also when a
+// timer was armed under a finite value before; Close stops it.
+func TestLlamaIdleNeverKeepsServerUp(t *testing.T) {
+	l, _, _ := newTestLlama(t)
+	l.IdleStop = 300 * time.Millisecond
+	_, err := l.Embed(context.Background(), []string{"a"})
+	require.NoError(t, err)
+	l.sem <- struct{}{}
+	l.IdleStop = IdleNever
+	<-l.sem
+	_, err = l.Embed(context.Background(), []string{"b"}) // its release stops the armed timer
+	require.NoError(t, err)
+	pid := serverPid(t, l)
+	time.Sleep(900 * time.Millisecond) // three times the idle time it would have had
+	assert.True(t, pidAlive(pid), "never means never")
+	assert.Equal(t, "running", l.Status().State)
+	assert.Equal(t, "never", l.Status().IdleStop)
+	require.NoError(t, l.Close())
+	waitDead(t, pid)
+}
+
+// A timer made under one idle value honours a later one: the callback reads
+// the current value, not the one it was created with.
+func TestLlamaIdleChangedAfterTimerExists(t *testing.T) {
+	l, _, _ := newTestLlama(t)
+	l.IdleStop = time.Hour
+	_, err := l.Embed(context.Background(), []string{"a"})
+	require.NoError(t, err)
+	l.sem <- struct{}{}
+	l.IdleStop = 300 * time.Millisecond
+	<-l.sem
+	_, err = l.Embed(context.Background(), []string{"b"})
+	require.NoError(t, err)
+	waitDead(t, serverPid(t, l))
+}
+
+// A warm-up loads the model with no caller, and the server then obeys the idle
+// stop like one a call started.
+func TestLlamaWarm(t *testing.T) {
+	l, rt, log := newTestLlama(t)
+	l.IdleStop = 600 * time.Millisecond
+	require.NoError(t, l.Warm(context.Background()))
+	assert.Equal(t, "running", l.Status().State)
+	assert.Len(t, logLines(t, log, "start"), 1)
+	pid := serverPid(t, l)
+	_, err := l.Embed(context.Background(), []string{"a"})
+	require.NoError(t, err)
+	assert.Len(t, logLines(t, log, "start"), 1, "the call found the model loaded")
+	assert.Equal(t, int32(1), rt.ensures.Load())
+	waitDead(t, pid)
+	assert.Equal(t, "stopped", l.Status().State)
+}
+
+func TestLlamaWarmNeverDownloads(t *testing.T) {
+	l, rt, log := newTestLlama(t)
+	rt.installed.Store(false)
+	require.NoError(t, l.Warm(context.Background()))
+	assert.Zero(t, rt.ensures.Load(), "no Ensure, so no download")
+	assert.Empty(t, logLines(t, log, "start"))
+	assert.Equal(t, Status{Model: "test-model", Runtime: "test", State: "not_installed", IdleStop: "30m0s"}, l.Status())
+}
+
+func TestLlamaWarmNeedsTwiceTheMemory(t *testing.T) {
+	l, _, log := newTestLlama(t)
+	old := freeMB
+	freeMB = func() (int, bool) { return 1000, true }
+	t.Cleanup(func() { freeMB = old })
+	l.MinFreeMB = 750
+	err := l.Warm(context.Background())
+	require.ErrorIs(t, err, ErrLowMemory)
+	assert.Contains(t, err.Error(), "at least 1500 MB needed")
+	assert.Empty(t, logLines(t, log, "start"))
+	assert.Equal(t, Status{Model: "test-model", Runtime: "test", State: "stopped", IdleStop: "30m0s"}, l.Status(), "nothing recorded")
+	_, err = l.Embed(context.Background(), []string{"a"})
+	require.NoError(t, err, "a real call needs it once")
+}
+
+func TestLlamaWarmFailureIsSilent(t *testing.T) {
+	l, _, _ := newTestLlama(t)
+	t.Setenv("RAGCODE_FAKE_MODE", "exit")
+	require.ErrorIs(t, l.Warm(context.Background()), ErrUnavailable)
+	assert.Empty(t, l.Status().Error)
+	assert.Equal(t, "stopped", l.Status().State)
+}
+
+// A warm-up that cannot start the server (here the model file was replaced)
+// returns the error but leaves Status clean, like one that fails while loading.
+func TestLlamaWarmStartFailureIsSilent(t *testing.T) {
+	l, rt, log := newTestLlama(t)
+	rt.label.Store("another-model")
+	require.ErrorIs(t, l.Warm(context.Background()), ErrModelChanged)
+	assert.Empty(t, logLines(t, log, "start"))
+	assert.Empty(t, l.Status().Error)
+	assert.Equal(t, "stopped", l.Status().State)
+}
+
+// Close ends a warm-up that is still loading the model.
+func TestLlamaWarmDoesNotOutliveClose(t *testing.T) {
+	l, _, log := newTestLlama(t)
+	t.Setenv("RAGCODE_FAKE_LOAD_MS", "60000")
+	done := make(chan error, 1)
+	go func() { done <- l.Warm(context.Background()) }()
+	require.Eventually(t, func() bool { return l.Status().State == "starting" }, 5*time.Second, 10*time.Millisecond)
+	// The load holds the lock: the pid is the one the fake logged.
+	require.Eventually(t, func() bool { return len(logLines(t, log, "start")) == 1 }, 5*time.Second, 10*time.Millisecond)
+	pid, err := strconv.Atoi(strings.TrimPrefix(logLines(t, log, "start")[0], "start "))
+	require.NoError(t, err)
+	require.NoError(t, l.Close())
+	select {
+	case err := <-done:
+		require.Error(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Warm did not return after Close")
+	}
+	waitDead(t, pid)
+	assert.Empty(t, l.Status().Error)
 }
 
 func TestLlamaCloseStopsAndRecord(t *testing.T) {
@@ -585,6 +734,30 @@ func TestSweepDeadOwner(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "record removed")
 }
 
+// A server orphaned by a killed RagCode is removed when the next RagCode
+// creates its embedder, not only when a model is about to be loaded: a restart
+// on an unchanged workspace may load nothing for a long time.
+func TestNewLlamaSweepsOrphan(t *testing.T) {
+	dir := t.TempDir()
+	port, err := freePort()
+	require.NoError(t, err)
+	cmd, done := startFake(t, port, "k3")
+	dead := exec.Command(os.Args[0], "-test.run=^$")
+	dead.Env = append(os.Environ(), "RAGCODE_FAKE_LLAMA=", "RAGCODE_FAKE_MODE=")
+	require.NoError(t, dead.Run())
+	rec := writeRecord(t, dir, dead.Process.Pid, cmd.Process.Pid, port, "k3")
+
+	l := NewLlama("test-model", &testRT{}, dir)
+	t.Cleanup(func() { l.Close() })
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the server of a dead owner is still running after NewLlama")
+	}
+	_, err = os.Stat(rec)
+	assert.True(t, os.IsNotExist(err), "record removed")
+}
+
 func TestSweepLiveOwnerAndWrongKey(t *testing.T) {
 	dir := t.TempDir()
 	port, err := freePort()
@@ -687,7 +860,7 @@ func TestLlamaStartingEndsWithAnUnwatchedDownload(t *testing.T) {
 	rt.block = nil
 	_, err := l.Embed(context.Background(), []string{"a"})
 	require.NoError(t, err)
-	assert.Equal(t, Status{Model: "test-model", Runtime: "test", State: "running"}, l.Status())
+	assert.Equal(t, Status{Model: "test-model", Runtime: "test", State: "running", IdleStop: "30m0s"}, l.Status())
 	assert.Equal(t, int32(3), rt.ensures.Load(), "no result of an earlier download is kept for a later call")
 }
 

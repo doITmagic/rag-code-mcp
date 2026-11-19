@@ -81,6 +81,7 @@ sequenceDiagram
         M->>M: go removeOllama (once per home)
         M->>M: go autoUpdate when auto_update (update.Latest, then update.Run)
     end
+    M->>A: go Warm(ctx) when embed_warm_start
     alt stdio
         M->>E: go Resume(ctx)
         M->>A: Server.Run(ctx, stdin/stdout; EOF on stdin closes the engine)
@@ -125,6 +126,12 @@ After the server is built, `Engine.Resume` runs in a goroutine. It walks the
 workspaces recorded in `~/.ragcode/roots.json` and, for those that were
 indexed before and when `auto_index` is on, queues an incremental index. See
 the [engine README](../../engine/README.md).
+
+### Warm start
+
+With `embed_warm_start` on, `run` starts `App.Warm` in a goroutine, before
+the transport, so the model is loaded when the first search arrives. It never
+delays a call: a search that comes while it loads waits for that load.
 
 ### Automatic update
 

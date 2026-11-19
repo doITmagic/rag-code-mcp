@@ -13,8 +13,9 @@ embedder so tests never need a model.
 
 - **One small interface**: `Embed`, `Dimension`, `Model`; the indexer and the
   engine know nothing about HTTP.
-- **Nothing to install by hand**: the server is started on the first call and
-  stopped after 5 idle minutes and on `Close`; no Docker, no separate service.
+- **Nothing to install by hand**: the server is started on the first call (or
+  by `Warm`) and stopped after 30 idle minutes (`IdleStop`) and on `Close`; no
+  Docker, no separate service.
 - **Gentle on CPU-only machines**: small batches, so a search query queued
   behind indexing is not delayed, and an optional cap on the model's threads.
 - **Clear failures**: every transport or protocol failure wraps
@@ -95,7 +96,7 @@ func NewLlama(model string, rt Runtime, runDir string) *Llama
 type Llama struct {
     Threads   int           // CPU threads (-t, -tb); 0 lets llama.cpp pick. Set before use.
     MinFreeMB int           // free memory needed to start the server; 0 turns the check off
-    IdleStop  time.Duration // how long the server outlives the last call; 0 means 5 minutes
+    IdleStop  time.Duration // how long the server outlives the last call; 0 means 30 minutes, IdleNever until Close
     MaxTokens int           // the context the server is started with; 0 means DefaultTokens (8192)
     // ...
 }
@@ -109,7 +110,7 @@ type Runtime interface {
 }
 ```
 
-`Status()` reports `{model, runtime, state, error}` without starting or
+`Status()` reports `{model, runtime, state, error, idle_stop}` without starting or
 downloading anything, and never waits for a start in progress: `running` (the
 model is loaded), `starting` (the files are being fetched or the model is
 loading, also after the call that began it gave up), `stopped` (the next call
@@ -177,8 +178,15 @@ The first call starts `llama-server` from the files `Runtime.Ensure` returns
 loaded in embedding mode, a context of `MaxTokens` tokens (`-c`, `-b`, `-ub`;
 8192 by default, the context window of the built-in model), one
 slot, no web UI, `--offline`, and `-t`/`-tb` when `Threads > 0`. It also gets
-`--sleep-idle-seconds 600`, so a server whose RagCode process was killed drops
-the model from memory by itself. A random 32-byte API key is passed in the
+`--sleep-idle-seconds`, because llama-server drops the model from memory by
+itself after that idle time even while its owner lives, and `/health` does not
+count as activity (an embedding does). The value follows `IdleStop` so that it
+never comes before our own stop: `IdleStop` plus a minute, and at least 600
+(`sleepSeconds`); with `IdleNever`, `-1`, which llama-server reads as
+disabled. It is also what unloads the model of a server whose RagCode process
+was killed; with `IdleNever` that server keeps the model until the next RagCode
+start sweeps it (on Windows and macOS, where the child does not die with its
+parent). A random 32-byte API key is passed in the
 environment variable `LLAMA_API_KEY` (not on the command line, where other
 users could read it) and sent as a bearer token. The call then waits for
 `GET /health`. A model load takes seconds, so the wait ends only when the
@@ -218,7 +226,9 @@ server runs, because the index run reads it before it drops a collection of
 another model.
 
 The server runs while calls use it. After the last call ends, one timer (reused, not one per call) of
-`IdleStop` (5 minutes) stops it, and the next call starts it again. The timer
+`IdleStop` (30 minutes by default; `IdleNever` arms none) stops it, and the
+next call starts it again. The timer reads `IdleStop` when it fires, not when
+it was made. The timer
 is also armed when a caller gives up while the server is still loading, so a
 server nobody comes back for is stopped too. A stop
 sends an interrupt, then a kill after 3 s (Windows kills at once). `Close` stops
@@ -231,7 +241,7 @@ started it dies (`Pdeathsig`; the goroutine that starts it stays locked to its
 thread, since the signal is tied to the thread). Elsewhere, and as a second
 guard, each running server is recorded in `~/.ragcode/run/llama-<pid>.json`
 (owner pid, server pid, port, key; mode `0600`) and removed on a clean stop.
-Before starting a server, `sweep` reads the records, skips the ones whose owner
+When an embedder is created (`NewLlama`) and again before each server start, `sweep` reads the records, skips the ones whose owner
 still runs, and for the others kills the server pid only when its port still
 answers `/props` with the recorded key (so a reused pid is never killed), then
 removes the record.
@@ -334,6 +344,8 @@ Keys from [internal/config](../internal/config/README.md), applied in
 | `llama_server` | `RAGCODE_LLAMA_SERVER` | empty | Absolute path of a `llama-server` instead of the downloaded one. |
 | `embed_threads` | none | `max(2, NumCPU/3)` | `Llama.Threads` -> `-t` and `-tb`. `0` lets llama.cpp use every performance core; negative values are rejected by config validation. |
 | `embed_max_tokens` | none | `8192` | `Llama.MaxTokens` -> `-c`, `-b` and `-ub`: the longest input embedded whole. The index embeds a symbol up to it. |
+| `embed_idle_stop` | none | `30m` | `Llama.IdleStop`: how long the loaded model outlives the last call. At least `1m`; `0` is passed as `IdleNever` (the zero value of `Llama.IdleStop` means the default). Also sets `--sleep-idle-seconds`. |
+| `embed_warm_start` | none | `false` | `App.Warm` calls `Llama.Warm` at process start. See "Low memory" below. |
 | `min_free_memory_mb` | none | `750` | `Llama.MinFreeMB`. See "Low memory" below. |
 
 ### Speed on one machine
@@ -365,7 +377,10 @@ the available memory (`mem_linux.go`: `MemAvailable` in `/proc/meminfo`;
 `mem_windows.go`: `GlobalMemoryStatusEx`). Below `MinFreeMB` the call returns
 `ErrLowMemory` with the free and the needed megabytes, and nothing is started or
 downloaded. A server that is already running holds the model, so it is never
-checked. Seen on a 16 GB Windows laptop with 570 MB free: the load did not
+checked. `Warm`, which loads the model before any call, asks for twice
+`MinFreeMB`, never downloads (it does nothing while the runtime or model is
+missing), and leaves nothing in `Status` when it is refused or fails; the
+caller logs the error. Seen on a 16 GB Windows laptop with 570 MB free: the load did not
 finish and every retry started it again. macOS and the BSDs have no reading
 (`mem_other.go`), so the check never fires there. `mem_test.go` covers it.
 

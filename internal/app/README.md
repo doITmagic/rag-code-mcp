@@ -66,8 +66,8 @@ When `Embedder` is nil, `New` creates the embedder: `llama.FromConfig` gives
 the runtime (`embed_runtime`, `llama_server`, `embed_model`; its progress lines
 go to the log), `embed.NewLlama` wraps it with the runtime's model name and
 `~/.ragcode/run` for the server records, and `Threads`, `MinFreeMB` and
-`MaxTokens` come from `embed_threads`, `min_free_memory_mb` and
-`embed_max_tokens`. When `Store` is nil it uses one SQLite index per workspace
+`MaxTokens` and `IdleStop` come from `embed_threads`, `min_free_memory_mb`,
+`embed_max_tokens` and `embed_idle_stop` (0, never, becomes `embed.IdleNever`). When `Store` is nil it uses one SQLite index per workspace
 under `$RAGCODE_HOME/index` (default `~/.ragcode/index`).
 
 ### `App`
@@ -90,6 +90,13 @@ index file. Those happen lazily when a tool first needs a workspace. It also:
 - names the MCP implementation `ragcode` with `o.Version`;
 - installs the receiving middleware `logClient` and the SDK log filter
   `sdkLog` (below).
+
+### `(*App) Warm(ctx)`
+
+With `embed_warm_start` on and an embedder that has a `Warm`, loads the model
+and returns when it is loaded or given up; main runs it in a goroutine. A skipped
+or failed warm-up is an info line, `embedder: warm-up skipped`; a stop of the
+process is not logged.
 
 ### `(*App) Close(ctx)`
 

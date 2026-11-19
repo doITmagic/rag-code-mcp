@@ -46,6 +46,7 @@ type App struct {
 	store  store.Store
 	embed  embed.Embedder
 	log    *slog.Logger
+	warm   bool // embed_warm_start
 }
 
 // New builds the app. Nothing here starts the embedder or opens an index file.
@@ -60,6 +61,10 @@ func New(o Options) (*App, error) {
 		em.Threads = o.Config.EmbedThreads
 		em.MinFreeMB = o.Config.MinFreeMemoryMB
 		em.MaxTokens = o.Config.EmbedMaxTokens
+		em.IdleStop = o.Config.EmbedIdleStop
+		if em.IdleStop == 0 { // the embedder's own 0 means its default
+			em.IdleStop = embed.IdleNever
+		}
 		o.Embedder = em
 	}
 	if o.Store == nil {
@@ -72,7 +77,7 @@ func New(o Options) (*App, error) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "ragcode", Version: o.Version}, &mcp.ServerOptions{Logger: slog.New(sdkLog{o.Log.Handler()})})
 	srv.AddReceivingMiddleware(logClient(o.Log))
 	tools.Register(srv, eng, o.Config, o.Version, time.Now())
-	return &App{Server: srv, Engine: eng, store: o.Store, embed: o.Embedder, log: o.Log}, nil
+	return &App{Server: srv, Engine: eng, store: o.Store, embed: o.Embedder, log: o.Log, warm: o.Config.EmbedWarmStart}, nil
 }
 
 // logClient names each client once per process: several clients share one
@@ -114,6 +119,26 @@ func (h sdkLog) Handle(ctx context.Context, r slog.Record) error {
 
 func (h sdkLog) WithAttrs(as []slog.Attr) slog.Handler { return sdkLog{h.Handler.WithAttrs(as)} }
 func (h sdkLog) WithGroup(n string) slog.Handler       { return sdkLog{h.Handler.WithGroup(n)} }
+
+// Warm loads the embedding model in the background when embed_warm_start is
+// set and the embedder can be warmed, so that the first search finds it
+// loaded. It blocks until the model is loaded or the warm-up is given up; run
+// it in a goroutine. A skipped or failed warm-up is an info line: nothing is
+// wrong, the first call loads the model as it would have. A stop of the
+// process (ctx done) is not logged.
+func (a *App) Warm(ctx context.Context) {
+	w, ok := a.embed.(interface{ Warm(context.Context) error })
+	if !a.warm || !ok {
+		return
+	}
+	if err := w.Warm(ctx); err != nil {
+		if ctx.Err() == nil {
+			a.log.Info("embedder: warm-up skipped", "err", err)
+		}
+		return
+	}
+	a.log.Debug("embedder: warm-up finished")
+}
 
 // Close stops the engine, giving it until ctx is done, then stops the
 // embedder's server and closes the store.

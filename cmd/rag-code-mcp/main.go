@@ -254,6 +254,9 @@ func run(ctx context.Context, cfgPath, httpAddr, logLevel string) error {
 	// The SDK waits for in-flight calls before it returns; closing the engine
 	// first ends a call stuck in a watcher walk (fsnotify refuses new watches).
 	defer context.AfterFunc(ctx, a.Engine.Close)()
+	// Loads the model in the background when embed_warm_start is set; it ends
+	// with ctx, and a.Close stops a load still going.
+	go a.Warm(ctx)
 	if httpAddr == "" {
 		go a.Engine.Resume(ctx)
 		closeEngine := sync.OnceFunc(func() { go a.Engine.Close() })

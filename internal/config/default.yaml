@@ -2,9 +2,9 @@
 # and falls back to the value shown here.
 
 # The embedding model runs on this machine, in a llama.cpp server that RagCode
-# starts on first use and stops after 5 idle minutes. Runtime and model are
-# downloaded once into ~/.ragcode (llama/ and models/), checked against pinned
-# checksums. A download that gets almost no data for 2 minutes is stopped and
+# starts on first use and stops after 30 idle minutes (embed_idle_stop). Runtime
+# and model are downloaded once into ~/.ragcode (llama/ and models/), checked
+# against pinned checksums. A download that gets almost no data for 2 minutes is stopped and
 # tried again on the next call; a slow one that keeps going is not.
 
 # Which llama.cpp build to run: cpu, vulkan (any GPU with a Vulkan driver) or
@@ -28,6 +28,19 @@ embed_runtime: auto
 # context length. Changing it makes the next index run re-embed every
 # workspace.
 embed_max_tokens: 8192
+
+# How long the loaded model stays in memory after the last search or index run;
+# the next one after that loads it again, which takes a few seconds on the CPU
+# and longer on some GPUs. A longer time keeps more memory in use while the
+# editor is open (about 0.4 to 0.9 GB per RagCode process). At least 1m.
+# 0 never stops it while RagCode runs: a RagCode killed on Windows or macOS
+# then leaves its model server running until the next RagCode start removes it.
+embed_idle_stop: 30m
+# true loads the model in the background when RagCode starts, so the first
+# search finds it loaded. It downloads nothing (the first search does), needs
+# twice min_free_memory_mb free, and gives up without a message to the AI when
+# it cannot. The loaded model stops after embed_idle_stop like any other.
+embed_warm_start: false
 
 # Free memory (MB) needed to load the embedding model. With less, indexing and
 # rag_search stop with status low_memory instead of loading a model that cannot

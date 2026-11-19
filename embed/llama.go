@@ -26,8 +26,12 @@ const (
 	// cutMargin is how many tokens short of the limit a refused input is cut
 	// to: the count of the cut text is an estimate.
 	cutMargin = 64
-	// defaultIdle is how long the server stays up after the last call.
-	defaultIdle = 5 * time.Minute
+	// defaultIdle is how long the server stays up after the last call: the
+	// model is loaded for the next search of a work session, and freed when the
+	// editor is left open and idle.
+	defaultIdle = 30 * time.Minute
+	// IdleNever, as Llama.IdleStop, keeps the server up until Close.
+	IdleNever time.Duration = -1
 )
 
 // Runtime finds the files the embedder runs: llama.cpp's llama-server and a
@@ -55,11 +59,14 @@ type Status struct {
 	// call downloads it first).
 	State string `json:"state"`
 	Error string `json:"error,omitempty"` // why the last start failed
+	// IdleStop is how long the loaded model outlives the last call: a duration,
+	// or "never" while this process runs.
+	IdleStop string `json:"idle_stop,omitempty"`
 }
 
 // Llama embeds with a llama-server this process runs itself: started on a
-// loopback port by the first call, stopped after IdleStop without one and by
-// Close. Nothing else is needed on the machine.
+// loopback port by the first call (or by Warm), stopped after IdleStop without
+// one and by Close. Nothing else is needed on the machine.
 type Llama struct {
 	// Threads caps the CPU threads the model computes with; 0 lets llama.cpp
 	// pick. Set before use.
@@ -68,7 +75,8 @@ type Llama struct {
 	// call that would start the server fails with ErrLowMemory. 0 turns the
 	// check off.
 	MinFreeMB int
-	// IdleStop is how long the server outlives the last call; 0 means 5 minutes.
+	// IdleStop is how long the server outlives the last call; 0 means 30
+	// minutes, IdleNever keeps it until Close. Set before use.
 	IdleStop time.Duration
 	// MaxTokens is the context the server is started with: the longest input
 	// it embeds whole. 0 means DefaultTokens. A model trained for less gets
@@ -102,14 +110,28 @@ type Llama struct {
 }
 
 // NewLlama returns an embedder for model, run from the files rt provides.
-// runDir holds one small record per running server.
+// runDir holds one small record per running server. It first removes the
+// servers that RagCode processes killed before this one left behind: waiting
+// for a model load to do it would leave them up as long as nothing loads.
 func NewLlama(model string, rt Runtime, runDir string) *Llama {
 	bg, stop := context.WithCancel(context.Background())
-	return &Llama{model: model, rt: rt, runDir: runDir, client: &http.Client{}, sem: make(chan struct{}, 1), bg: bg, bgStop: stop}
+	l := &Llama{model: model, rt: rt, runDir: runDir, client: &http.Client{}, sem: make(chan struct{}, 1), bg: bg, bgStop: stop}
+	if runDir != "" {
+		sweep(runDir, l.client)
+	}
+	return l
 }
 
 // Model returns the embedding model name.
 func (l *Llama) Model() string { return l.model }
+
+// idle is IdleStop with 0 resolved to the default; negative means never.
+func (l *Llama) idle() time.Duration {
+	if l.IdleStop == 0 {
+		return defaultIdle
+	}
+	return l.IdleStop
+}
 
 // maxTokens is the context the server is started with.
 func (l *Llama) maxTokens() int {
@@ -187,7 +209,10 @@ func (l *Llama) checkModel() error {
 
 // Status reports the embedder without starting or downloading anything.
 func (l *Llama) Status() Status {
-	s := Status{Model: l.model, Runtime: l.rt.RuntimeName(), State: "stopped"}
+	s := Status{Model: l.model, Runtime: l.rt.RuntimeName(), State: "stopped", IdleStop: "never"}
+	if d := l.idle(); d > 0 {
+		s.IdleStop = d.String()
+	}
 	l.stMu.Lock()
 	state, lastErr := l.state, l.lastErr
 	l.stMu.Unlock()
@@ -199,6 +224,27 @@ func (l *Llama) Status() Status {
 	}
 	s.Error = lastErr
 	return s
+}
+
+// Warm loads the model before any call needs it, so that the first search
+// finds it loaded. It never downloads: with the runtime or model missing it
+// does nothing, and the first real call fetches them. It asks for twice
+// MinFreeMB, since nobody is waiting for it, and records nothing in Status
+// when it is refused or fails: the error is for the caller to log. The loaded
+// server is stopped by IdleStop like any other, and Close ends a load in
+// progress.
+func (l *Llama) Warm(ctx context.Context) error {
+	if l.rt == nil || !l.rt.Installed() || l.up.Load() != nil {
+		return nil
+	}
+	if err := l.checkMemory(2); err != nil {
+		return err
+	}
+	if _, err := l.acquire(WithoutFetchWait(ctx), true); err != nil {
+		return err
+	}
+	l.release()
+	return nil
 }
 
 // Close stops the server; later calls fail with ErrUnavailable.
@@ -292,7 +338,7 @@ func (l *Llama) embedBatch(ctx context.Context, texts []string) ([][]float32, er
 
 // call makes sure the server runs and posts body to /v1/embeddings.
 func (l *Llama) call(ctx context.Context, body []byte, n int) ([][]float32, error) {
-	s, err := l.acquire(ctx)
+	s, err := l.acquire(ctx, false)
 	if err != nil {
 		return nil, err
 	}

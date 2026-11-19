@@ -14,15 +14,17 @@ var ErrLowMemory = errors.New("embed: not enough free memory to run the embeddin
 var freeMB = availableMB
 
 // checkMemory returns ErrLowMemory when the model would have to be loaded
-// with less than MinFreeMB of memory available. A running server holds the
-// model already, so only start asks.
-func (l *Llama) checkMemory() error {
+// with less than factor times MinFreeMB of memory available: 1 for a call
+// that needs the model, 2 for a warm-up that nobody waits for. A running server
+// holds the model already, so only start asks.
+func (l *Llama) checkMemory(factor int) error {
+	need := factor * l.MinFreeMB
 	if l.MinFreeMB <= 0 {
 		return nil
 	}
 	free, ok := freeMB()
-	if !ok || free >= l.MinFreeMB {
+	if !ok || free >= need {
 		return nil
 	}
-	return fmt.Errorf("%w: %d MB free, at least %d MB needed (min_free_memory_mb): close applications to free memory, then retry", ErrLowMemory, free, l.MinFreeMB)
+	return fmt.Errorf("%w: %d MB free, at least %d MB needed (min_free_memory_mb): close applications to free memory, then retry", ErrLowMemory, free, need)
 }

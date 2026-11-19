@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -19,9 +20,30 @@ import (
 	"time"
 )
 
-// orphanSleep makes a server whose RagCode process was killed drop the model
-// from memory by itself; the next RagCode start removes the process (sweep).
+// orphanSleep is the least time llama-server idles before it drops the model
+// from memory by itself (--sleep-idle-seconds). It also does so while its
+// owner lives, and /health does not count as activity, so the flag follows
+// IdleStop (sleepSeconds): it is what unloads the model of a server whose
+// RagCode process was killed, where the system does not end the child with its
+// parent (Windows, macOS); the next RagCode start removes the process (sweep,
+// run by NewLlama).
 const orphanSleep = 10 * time.Minute
+
+// sleepMargin is how long after IdleStop llama-server's own sleep may fire, so
+// that it never comes before our own stop.
+const sleepMargin = time.Minute
+
+// sleepSeconds is the value of --sleep-idle-seconds: at least orphanSleep and
+// IdleStop plus sleepMargin; -1, which llama-server reads as "disabled", with
+// IdleNever.
+func (l *Llama) sleepSeconds() int {
+	d := l.idle()
+	// d+sleepMargin would wrap negative: an idle time that long is "never".
+	if d < 0 || d > math.MaxInt64-sleepMargin {
+		return -1
+	}
+	return int(max(orphanSleep, d+sleepMargin) / time.Second)
+}
 
 // server is one running llama-server.
 type server struct {
@@ -96,8 +118,9 @@ func (l *Llama) setState(state, err string) {
 }
 
 // acquire returns the running server, starting it when needed, and counts
-// the caller as a user until release.
-func (l *Llama) acquire(ctx context.Context) (*server, error) {
+// the caller as a user until release. A warm-up (warm) never downloads and
+// leaves no failure in Status.
+func (l *Llama) acquire(ctx context.Context, warm bool) (*server, error) {
 	// Close ends the wait too: a call may wait for a model load up to
 	// loadCeiling, and Close needs the lock this call holds while it waits.
 	ctx, cancel := context.WithCancel(ctx)
@@ -119,11 +142,15 @@ func (l *Llama) acquire(ctx context.Context) (*server, error) {
 	}
 	if l.srv == nil {
 		l.setState("starting", "")
-		if err := l.start(ctx); err != nil {
+		if err := l.start(ctx, warm); err != nil {
 			if l.fetch != nil { // the caller gave up; the download goes on
 				return nil, err
 			}
-			l.setState("", err.Error())
+			if warm {
+				l.setState("", "")
+			} else {
+				l.setState("", err.Error())
+			}
 			return nil, err
 		}
 	}
@@ -135,7 +162,11 @@ func (l *Llama) acquire(ctx context.Context) (*server, error) {
 				if strings.Contains(l.rt.RuntimeName(), "vulkan") {
 					err = fmt.Errorf("%w (set embed_runtime: cpu in config.yaml to run without the GPU)", err)
 				}
-				l.setState("", err.Error())
+				if warm {
+					l.setState("", "")
+				} else {
+					l.setState("", err.Error())
+				}
 				l.drop()
 			} else if l.users == 0 {
 				l.armIdle() // nobody may come back for a server that is still loading
@@ -164,9 +195,12 @@ func (l *Llama) release() {
 // armIdle (re)starts the idle stop. The caller holds the lock.
 func (l *Llama) armIdle() {
 	l.lastUse = time.Now()
-	idle := l.IdleStop
-	if idle <= 0 {
-		idle = defaultIdle
+	idle := l.idle()
+	if idle < 0 {
+		if l.timer != nil {
+			l.timer.Stop() // armed while IdleStop was a duration
+		}
+		return
 	}
 	if l.timer != nil {
 		l.timer.Reset(idle)
@@ -175,7 +209,9 @@ func (l *Llama) armIdle() {
 	l.timer = time.AfterFunc(idle, func() {
 		l.sem <- struct{}{}
 		defer func() { <-l.sem }()
-		if l.users == 0 && l.srv != nil && time.Since(l.lastUse) >= idle {
+		// The value now, not the one this timer was made with: later calls only
+		// reset it.
+		if idle := l.idle(); idle > 0 && l.users == 0 && l.srv != nil && time.Since(l.lastUse) >= idle {
 			l.drop()
 		}
 	})
@@ -267,10 +303,14 @@ func (l *Llama) ensure(ctx context.Context) (string, string, error) {
 }
 
 // start launches llama-server on a free loopback port. It returns once the
-// process runs; waitReady waits for the model.
-func (l *Llama) start(ctx context.Context) error {
-	if err := l.checkMemory(); err != nil {
+// process runs; waitReady waits for the model. A warm-up (warm) fails when the
+// files are not on disk instead of fetching them.
+func (l *Llama) start(ctx context.Context, warm bool) error {
+	if err := l.checkMemory(1); err != nil {
 		return err
+	}
+	if warm && !l.rt.Installed() {
+		return fmt.Errorf("%w: the runtime or model is not installed", ErrUnavailable)
 	}
 	bin, model, err := l.ensure(ctx)
 	if errors.Is(err, ErrFetching) {
@@ -297,7 +337,7 @@ func (l *Llama) start(ctx context.Context) error {
 	n := strconv.Itoa(l.maxTokens())
 	args := []string{"-m", model, "--embedding", "--host", "127.0.0.1", "--port", strconv.Itoa(port),
 		"-c", n, "-b", n, "-ub", n, "-np", "1", "--no-ui", "--no-slots", "--offline",
-		"--sleep-idle-seconds", strconv.Itoa(int(orphanSleep / time.Second))}
+		"--sleep-idle-seconds", strconv.Itoa(l.sleepSeconds())}
 	if l.Threads > 0 {
 		t := strconv.Itoa(l.Threads)
 		args = append(args, "-t", t, "-tb", t)

@@ -64,6 +64,8 @@ ignored (so a v1 `config.yaml` with Qdrant settings, or a v2.0 one with
 | `llama_server` | `LlamaServer` | empty | Absolute path of a `llama-server` binary to use instead of the downloaded one. |
 | `embed_threads` | `EmbedThreads` | `max(2, NumCPU/3)` | CPU threads llama.cpp may use for embeddings (`-t`, `-tb`). `0` lets llama.cpp choose (every performance core). Must not be negative. |
 | `embed_max_tokens` | `EmbedMaxTokens` | `8192` | How much of a function, class or section the model reads, in tokens (about 3 bytes of code each, so 8192 tokens are roughly 24 KB). A longer symbol is embedded by its first part only; its stored content is whole. `8192` is the context window of the built-in model. A lower value makes long symbols faster to index and bounds the memory of the embedding server (on one laptop's CPU a 24 KB symbol took 61 s and 1.5 GB; a 12 KB one 23 s and 0.9 GB). Between `256` and `32768`, and at most `8192` without `embed_model`. With your own `embed_model`, set it to that model's context length: a model trained for less is cut to its own limit anyway, but every long symbol then costs one refused request first. Changing it makes the next index run of each workspace re-embed every file. |
+| `embed_idle_stop` | `EmbedIdleStop` | `30m` | How long the loaded embedding model stays in memory after the last search or index run; the next one loads it again. At least `1m`. `0` never stops it while RagCode runs (a RagCode killed on Windows or macOS then leaves its model server until the next RagCode start removes it). A bare `0` is read as a duration. |
+| `embed_warm_start` | `EmbedWarmStart` | `false` | `true` loads the model in the background at start. It downloads nothing, needs twice `min_free_memory_mb` free, and gives up silently. |
 | `min_free_memory_mb` | `MinFreeMemoryMB` | `750` | Free memory needed to start the embedding server (measured: the model holds 0.3 GB of RAM on a GPU and up to 0.9 GB on CPU for inputs up to 12 KB, 1.5 GB on CPU for a symbol at the 8192-token limit; a load with under 600 MB free failed). The check covers loading only: on a CPU machine short of memory, lower `embed_max_tokens`, since a long symbol raises the peak. With less, a call that has to start the server answers `low_memory`; a server already running is not checked. `0` turns the check off. Must not be negative. |
 | `log_level` | `LogLevel` | `info` | `debug`, `info`, `warn` or `error`. |
 | `log_max_size_mb` | `LogMaxSizeMB` | `10` | Size at which `ragcode.log` is rotated. Must be positive. |
@@ -137,6 +139,7 @@ Returns the first invalid field: `embed_model` not an absolute path ending in
 `.gguf`, `embed_runtime` other than `auto`, `cpu` or `vulkan`, `llama_server`
 not an absolute path, unknown `log_level`, negative `embed_threads`,
 `embed_max_tokens` outside 256..32768 or over 8192 with the built-in model,
+`embed_idle_stop` negative or under one minute (other than 0),
 negative `max_files`, negative `min_free_memory_mb`,
 non-positive `log_max_size_mb`, negative `watch_debounce`, or a relative
 `allowed_workspace_paths` entry.

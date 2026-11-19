@@ -71,7 +71,9 @@ func TestVerifyEmbedWrongCount(t *testing.T) {
 	require.NoError(t, err)
 	state, _ := LoadState(e.root)
 	require.Len(t, state.Files, 1)
-	e.emb.Dim = 6
+	// A vector size comes with a model, which has another name: a run on an
+	// unchanged index trusts the size stored with the collection.
+	e.emb.Dim, e.emb.Name = 6, "fake6"
 	st, err := e.run(t, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, st.Total, "model change must re-embed everything")

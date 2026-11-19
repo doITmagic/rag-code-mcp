@@ -261,12 +261,15 @@ flowchart TD
     C -->|no| D
     C1 --> D[git rev-parse: branch + HEAD<br/>write status 'scanning']
     D --> E[LoadState state.json]
-    E --> E1[probe Embedder.Dimension]
-    E1 -->|error| E2[fail: index and state untouched]
-    E1 --> F{model, Format or<br/>embed token limit changed?}
-    F -->|yes| G[Recreate: save empty state,<br/>then DeleteCollection]
-    F -->|no| H
-    G --> H[EnsureCollection with embedder dimension]
+    E --> F{model, Format or<br/>embed token limit changed?}
+    F --> E1{index matches: take the size<br/>of the stored collection?}
+    E1 -->|no| E3[probe Embedder.Dimension]
+    E1 -->|yes| H
+    E3 -->|error| E2[fail: index and state untouched]
+    E3 --> G{any change, or Recreate?}
+    G -->|yes| G1[Recreate: save empty state,<br/>then DeleteCollection]
+    G -->|no| H
+    G1 --> H[EnsureCollection with the size]
     H --> I{collection new,<br/>recreated or empty?}
     I -->|yes| I1[fresh: empty state, Files = nil]
     I -->|no| J
@@ -298,10 +301,17 @@ re-does the files that were not recorded.
 
 ### 2. Model, Format and recreate
 
-First the embedder is probed for its dimension (`Embedder.Dimension`). A model
-it cannot serve (a missing or broken model file, an embedder that cannot start) fails the run
-here, before the state or the collection change, so the index of the previous
-model survives.
+The state's `Model`, `Format` and embed limit are compared first: they need no
+embedder. Then the vector size is settled. When nothing changed, the state lists
+files and the collection exists, the size is the one stored with the collection
+(`Store.VectorSize`), and the embedder is not asked: a server restart on an
+unchanged workspace does not load the model, and a run with a file to embed
+starts it at its first `Embed`. In every other case (`Recreate`, a changed model,
+`Format` or limit, an empty state, a missing collection, a store that cannot
+tell the size) the embedder is probed for its dimension (`Embedder.Dimension`)
+before anything is dropped. A model it cannot serve (a missing or broken model
+file, an embedder that cannot start) fails the run here, before the state or the
+collection change, so the index of the previous model survives.
 
 The state's `Model` is compared with `Embedder.Model()`. Vectors of two
 models must never share a collection, so a different model forces a
@@ -315,7 +325,7 @@ On recreate the empty state is saved **before** the collection is dropped:
 after a crash in between, a stale `state.json` would otherwise match every
 file and no incremental run would re-embed them.
 
-Then `EnsureCollection` creates the collection with the embedder's dimension
+Then `EnsureCollection` creates the collection with that size
 (when the collection exists with another vector size, the store drops and recreates it and reports `recreated`). The run is
 **fresh** when the collection did not exist, was recreated, or holds no
 points although the state lists some (an interrupted first run, a failed
@@ -323,7 +333,7 @@ recreate, a manual delete). When the collection holds points but the state
 lists no file (a crash between a recreate's state save and its drop, an
 unreadable `state.json`), the collection is dropped and the run is fresh too:
 otherwise the points of files deleted or ignored meanwhile would stay
-searchable forever. A fresh run starts from an empty state and walks
+searchable forever. A collection that holds nothing although the state lists files is probed for the embedder's size before it is filled again. A fresh run starts from an empty state and walks
 everything, since a files-only run on an empty store would leave a partial
 index nothing ever completes. A fresh run also skips every store lookup.
 

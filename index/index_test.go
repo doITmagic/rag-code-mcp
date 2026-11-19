@@ -1070,15 +1070,15 @@ func TestRunModelChangeUnavailableKeepsIndex(t *testing.T) {
 	assert.Len(t, hits, 1, "points of the old model kept")
 }
 
-// A run that fails before it changes the index (Ollama down at catch-up)
-// records its error over the last real counters, and the next run with
+// A run that fails before it changes the index (a model the embedder cannot
+// serve, at catch-up) records its error over the last real counters, and the next run with
 // nothing to do keeps them instead of showing 0/0.
 func TestRunFailedUnchangedKeepsCounters(t *testing.T) {
 	e := newEnv(t)
 	e.write(t, "a.go", "func A\n")
 	_, err := e.run(t, nil)
 	require.NoError(t, err)
-	_, err = e.run(t, func(o *Options) { o.Embedder = deadEmbedder{namedEmbedder{o.Embedder, o.Embedder.Model()}} })
+	_, err = e.run(t, func(o *Options) { o.Embedder = deadEmbedder{namedEmbedder{o.Embedder, "nosuchmodel"}} })
 	require.Error(t, err)
 	disk, ok := ReadStatus(e.root)
 	require.True(t, ok)

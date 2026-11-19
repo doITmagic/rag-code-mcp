@@ -185,12 +185,8 @@ func Run(ctx context.Context, o Options) (Status, error) {
 	}
 	r.writeStatus()
 
-	// Probed before the state or collection change: a model the embedder
-	// cannot serve (a typo, not pulled) must not drop the index of the old one.
-	dim, err := o.Embedder.Dimension(ctx)
-	if err != nil {
-		return r.finish(ctx, err)
-	}
+	// The comparisons that decide a re-create need no embedder: they run
+	// before anything asks it for a vector size.
 	model := o.Embedder.Model()
 	if r.state.Model != "" && r.state.Model != model {
 		// Same dimension or not, vectors of two models must not share a collection.
@@ -208,6 +204,34 @@ func Run(ctx context.Context, o Options) (Status, error) {
 		// vector of more of it: one collection holds one kind.
 		o.Log.Info("index: embed text limit changed, re-embedding everything", "root", root, "from", r.state.EmbedTokens, "to", tokens)
 		o.Recreate = true
+	}
+
+	// The vector size is asked of the embedder, which in a fresh process starts
+	// the model, only when it protects something. Probed before the state or
+	// collection change, so a model the embedder cannot serve (a typo, not
+	// pulled) does not drop the index of the old one. An index that matches
+	// the embedder (same model, format and limit, files recorded, collection
+	// there) keeps its stored size: a restart on an unchanged workspace does not
+	// load the model, and a run with a file to embed starts it at the first Embed.
+	// That run does not go through the embedder's own model-file check either;
+	// the server runs it when it starts.
+	dim, known := 0, false
+	if !o.Recreate && r.state.Model != "" && len(r.state.Files) > 0 {
+		if exists, err := o.Store.CollectionExists(ctx, o.Collection); err == nil && exists {
+			if n, err := o.Store.VectorSize(ctx, o.Collection); err == nil && n > 0 {
+				dim, known = n, true
+			}
+		}
+	}
+	probe := func() error {
+		var err error
+		dim, err = o.Embedder.Dimension(ctx)
+		return err
+	}
+	if !known {
+		if err := probe(); err != nil {
+			return r.finish(ctx, err)
+		}
 	}
 	r.state.Model, r.state.Format, r.state.EmbedTokens = model, Format, tokens
 	if o.Recreate {
@@ -249,6 +273,16 @@ func Run(ctx context.Context, o Options) (Status, error) {
 		case err != nil:
 		case len(hits) == 0:
 			r.fresh = true
+			if known {
+				// Emptied behind the state's back: it is filled again, with the
+				// size the embedder gives, not the one the empty collection kept.
+				if err := probe(); err != nil {
+					return r.finish(ctx, err)
+				}
+				if _, err := o.Store.EnsureCollection(ctx, o.Collection, dim); err != nil {
+					return r.finish(ctx, err)
+				}
+			}
 		case len(r.state.Files) == 0:
 			// Points no state lists (a crash between a recreate's state save and
 			// its drop, an unreadable state.json): gone files would stay forever.

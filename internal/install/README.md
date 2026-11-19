@@ -8,19 +8,19 @@ behind [`rag-code-install`](../../cmd/rag-code-install/README.md):
 1. copy the `rag-code-mcp` server binary to `~/.ragcode/bin`;
 2. write `~/.ragcode/config.yaml` (an existing one is kept);
 3. remove a RagCode v1 install, if there is one;
-4. start Ollama in Docker (or use a running one);
-5. pull the embedding model;
+4. remove the `ragcode-ollama` container of an earlier v2 installer, and stop
+   left-over `llama-server` processes;
+5. download the embedding runtime (llama.cpp) and the model, unless
+   `-skip-download`;
 6. register the server in every installed IDE;
 7. put `~/.ragcode/bin` on `PATH`;
 8. print a summary with an `mcp.json` snippet for any other client.
 
 Only a few problems stop the run (the installer cannot locate its own
-executable, bad `-ollama` value, missing server binary,
-the user declining to replace an install, a failed copy, an invalid config,
-a `-models-dir` that cannot be created). Everything else after the binary
-copy (Docker, Ollama, model, IDEs, PATH) is
-reported as a warning and skipped, so a machine without Docker still gets a
-working install.
+executable, missing server binary, the user declining to replace an install,
+a failed copy, an invalid config). Everything else after the binary copy
+(download, IDEs, PATH) is reported as a warning and skipped; a download that
+fails is tried again by the server on first use.
 
 ## Where it sits
 
@@ -29,31 +29,33 @@ graph LR
     CMD[cmd/rag-code-install] -->|Run| IN[install]
     IN -->|HomeDir, DefaultPath, Load| CFG[internal/config]
     IN -->|Targets, Write, Remove| IDE[internal/idepaths]
-    IN -->|Binary, StopProcess| UN[internal/uninstall]
-    IN -->|docker rm / run| DOCKER[docker CLI]
-    IN -->|GET /api/tags, POST /api/pull| OLLAMA[Ollama HTTP API]
+    IN -->|Binary, StopProcess, RemoveOllama| UN[internal/uninstall]
+    IN -->|FromConfig, ServerPaths, Ensure| LL[internal/llama]
+    UN -->|RemoveOllama: docker rm of ragcode-ollama| DOCKER[docker CLI]
 ```
 
 - **Called by:** [`cmd/rag-code-install`](../../cmd/rag-code-install/README.md).
 - **Calls:** [`config`](../config/README.md), [`idepaths`](../idepaths/README.md),
   [`uninstall`](../uninstall/README.md) (`Binary` for the install path,
-  `StopProcess` to stop running servers before replacing the binary), the
-  `docker` CLI and Ollama's HTTP API.
+  `StopProcess` to stop running servers before replacing the binary and to
+  stop left-over `llama-server` processes, `RemoveOllama` for the leftover
+  container, through the `docker` CLI) and [`llama`](../llama/README.md)
+  (the runtime and model download).
 
 ## Files
 
 | File | Contents |
 |:---|:---|
-| `install.go` | `Options`, `Run`, and the helpers `copyFile`, `runContainer`, `waitHTTP`, `pullModel`, `addPath` and the coloured `step`/`ok`/`warn` printers. |
+| `install.go` | `Options`, `Run`, and the helpers `copyFile`, `removeOllama`, `addPath` and the coloured `step`/`ok`/`warn` printers. |
 | `v1.go` | `removeV1` (with `removeV1IDE`, `v1ConfigDir`): deletes a RagCode v1 install (`~/.local/share/ragcode`), its IDE entries, PATH line, containers and Qdrant data. |
 
 Tests:
 
 | File | Covers |
 |:---|:---|
-| `install_test.go` | Full run with a fake `docker` (GPU start fails, CPU retry) and an `httptest` Ollama: binary mode `0755`, config written, exact Docker commands, model pulled with progress, PATH line once, Cursor entry and summary snippet; a second run with `-ollama skip` keeps the config and does no Docker or model work; `-ollama local` and `-models-dir`; a relative `-models-dir` is mounted as the absolute host directory (`TestRunRelativeModelsDirMountsHostDir`); errors (bad `-ollama`, binary missing, user answers no); `pullModel` errors and the 412 "Ollama too old" message; a failed container still pulls from an Ollama already on the port; the Ollama image is pulled before the container starts and a failed pull keeps the local image (`TestOllamaImagePulledFirst`); no Qdrant is started; a password in `OLLAMA_BASE_URL` is printed neither in the summary nor in the Ollama wait timeout (`TestInstallHidesOllamaPassword`, `TestWaitHTTPHidesPassword`); the Windows PATH hint appends to the user Path with no `setx` and no `%PATH%`, and escapes a quote in the bin dir (`TestWindowsPathHint`). Its `TestMain` sets `TMPDIR`, `TMP` and `TEMP` to the symlink-resolved temp dir (macOS `/var` -> `/private/var`, Windows 8.3 short names), since models dirs are mounted symlink-resolved. |
+| `install_test.go` | Full run with a fake `docker` and a stubbed download: binary mode `0755`, config written, the runtime and model requested once, PATH line once, Cursor entry and summary snippet; a second run keeps the existing config and does not duplicate the PATH line; with both files already present (here a `llama_server` and an `embed_model` set in `config.yaml`) nothing is downloaded, the output says "already present" and the summary shows that server (`TestRunEnsureNotCalledWhenInstalled`); `-skip-download` does no download; a failed download is a warning, not an error; a leftover `ragcode-ollama` container and volume are removed, and a missing `docker` is not an error; no Qdrant is started; errors (binary missing, user answers no); with `RAGCODE_HOME` set to the v1 directory itself, the v1 cleanup does not delete the binary just installed (`TestInstallIntoV1DirKeepsItself`); the Windows PATH hint appends to the user Path with no `setx` and no `%PATH%`, and escapes a quote in the bin dir (`TestWindowsPathHint`). |
 | `v1_test.go` | A v1 install is removed (install dir, `~/.local/share/qdrant` when it holds only ragcode collections, PATH line, the `ragcode` entry in `~/.cursor/mcp.config.json`, Docker `rm -f`); answering no to "Replace?", a failed copy or an invalid config leaves v1 untouched; a collection RagCode did not create, or an unreadable collections directory, is kept; a running v1 server is stopped; `RAGCODE_HOME` reaching the v1 directory through a symlink or a relative path keeps the new install (`TestInstallIntoV1DirViaSymlinkOrRelativePathKeepsItself`); on Windows the v1 entries under `%APPDATA%` (Claude Desktop, VS Code) are removed (`TestRemoveV1IDEWindowsAppData`, runs on every OS). |
-| `zz_verify_test.go` | Verification tests: `-ollama local` without Docker still waits and pulls; a cancelled context does not hang `Run`; `waitHTTP` on an unreachable URL returns an error; a reinstall replaces the binary, leaves no temp file and writes `.zshrc` when `SHELL` is zsh. |
+| `zz_verify_test.go` | Verification tests: a cancelled context does not hang `Run`; a reinstall replaces the binary, leaves no temp file and writes `.zshrc` when `SHELL` is zsh. |
 
 ## Key types and functions
 
@@ -61,39 +63,37 @@ Tests:
 
 ```go
 type Options struct {
-    Ollama    string    // docker | local | skip
-    GPU       bool      // try "--gpus all" for the container first
-    Yes       bool      // replace an existing installation without asking
-    ModelsDir string    // host dir mounted at /root/.ollama; "" uses a volume
-    SkipIDE   bool
-    In        io.Reader // default os.Stdin
-    Out       io.Writer // default os.Stdout
+    Yes          bool      // replace an existing installation without asking
+    SkipDownload bool      // leave the runtime and model for the server's first use
+    SkipIDE      bool
+    In           io.Reader // default os.Stdin
+    Out          io.Writer // default os.Stdout
     // srcDir (unexported): where rag-code-mcp is copied from; tests set it
+    // ensure (unexported): fetches the runtime and model; tests replace it
 }
 ```
 
 ### `Run(ctx, Options) error`
 
 ```go
-err := install.Run(ctx, install.Options{Ollama: "docker", GPU: true, Yes: true})
+err := install.Run(ctx, install.Options{Yes: true})
 ```
 
 ## The steps in detail
 
 ```mermaid
 flowchart TD
-    A[validate -ollama] --> B{rag-code-mcp next to installer?}
+    A[start] --> B{rag-code-mcp next to installer?}
     B -- no --> X[error]
     B -- yes --> C{already installed and not -y?}
     C -- answer no --> Y[error: cancelled]
     C -- yes / -y --> E[StopProcess, copy binary]
     E --> F[config.Load: keep or write config.yaml]
     F --> D[removeV1 if ~/.local/share/ragcode exists]
-    D --> G{-ollama}
-    G -- docker --> H[docker pull, then docker run ragcode-ollama, GPU then CPU]
-    G -- local --> I
-    H --> I[wait for /api/tags, pull model]
-    G -- skip --> J
+    D --> H[remove ragcode-ollama container and volume;<br/>stop left-over llama-server]
+    H --> G{-skip-download}
+    G -- no --> I[download runtime and model]
+    G -- yes --> J
     I --> J[IDE configs unless -skip-ide]
     J --> K[PATH]
     K --> L[summary]
@@ -116,31 +116,39 @@ binary cannot be overwritten but can be renamed, the old one is moved to
 
 `config.Load(config.DefaultPath())` writes `config.yaml` from the embedded
 default when it is missing and leaves an existing file alone. The loaded
-values (with environment overrides such as `OLLAMA_BASE_URL`) decide which
-Ollama URL and model the next steps use. An invalid config stops the run.
+values (with environment overrides such as `RAGCODE_EMBED_RUNTIME`) decide
+which llama.cpp build and model the next steps use. An invalid config stops
+the run.
 
-### Ollama
+### Earlier Ollama install
 
-| `-ollama` | What happens |
+Earlier v2 versions ran Ollama in a Docker container. `removeOllama` (through
+`uninstall.RemoveOllama`, which the server also calls on its first start
+after an automatic update) removes a
+container named `ragcode-ollama` (`docker rm -f`) and then the volume of that
+name, because the server now runs the embedding model itself and the container
+(`--restart always`) would keep its memory. It does nothing when `docker` is
+not on `PATH` or no such container exists; if the removal fails it warns and
+prints the `docker rm -f ragcode-ollama` command. A host directory that was
+given to the old `-models-dir` is not touched.
+
+### Embedding runtime
+
+`llama.FromConfig(cfg, ...)` gives the runtime the config asks for (see
+[llama](../llama/README.md)). First the installer stops any `llama-server`
+running from the download path of either variant (`llama.ServerPaths`,
+`uninstall.StopProcess`): a server whose RagCode process was killed would
+hold the files and the memory. A `llama_server` you configured yourself is
+never stopped. Then:
+
+| State | What happens |
 |:---|:---|
-| `docker` | If `docker` is not on `PATH`, warn and continue as `local`. Otherwise `docker pull -q ollama/ollama` first (`docker run` would reuse a cached image however old, and the model needs Ollama 0.40 or later; a failed pull, for example offline, warns and keeps the local image), then remove any container named `ragcode-ollama` and run `docker run -d --name ragcode-ollama --restart always [--gpus all] -p 127.0.0.1:11434:11434 -v <volume or ModelsDir>:/root/.ollama ollama/ollama`. With `GPU`, a failed GPU start is retried on CPU. If the container still fails (for example a native Ollama holds port 11434), warn and continue: the wait below may find that Ollama. |
-| `local` | No container; wait and pull. |
-| `skip` | Nothing: no wait, no pull. |
+| `-skip-download` | Nothing is downloaded; a warning says the server fetches the runtime on first use. |
+| Both files already present | One line says so. |
+| Otherwise | `Ensure` downloads the pinned llama.cpp build and the model, printing a line per step and per 10% of a download. A failure is a warning ("the server tries again on first use"). |
 
-The wait polls `<ollama_base_url>/api/tags` every 500 ms (3 s per request)
-for up to 60 s; a timeout prints the URL without its password. Then the model is pulled with streaming `POST /api/pull`,
-showing progress on one line. HTTP 412 is reported as "this model needs a
-newer Ollama, 0.40 or later". On any failure the installer prints
-`run manually: ollama pull <model>` and carries on.
-
-The volume is named `ragcode-ollama`; `-models-dir` mounts a host directory
-instead (a relative path is made absolute first, since `docker -v` reads a
-bare name as a named volume; created with `0755`; if it cannot be created the install stops with
-`install: models dir: ...`).
-
-Running the installer again with `-ollama docker` repeats these steps: the
-`ragcode-ollama` container is removed and recreated, and the model pull is
-sent again. Only `-ollama skip` avoids the Docker and model work.
+Running the installer again therefore downloads nothing once both files are in
+place.
 
 ### IDE configs
 
@@ -158,7 +166,7 @@ cfgPath)`. IDEs that are not installed are skipped silently; other errors
 
 ### Summary
 
-Prints the binary, config, Ollama URL and model, the index directory
+Prints the binary, config, embedder (runtime and model), the index directory
 (`~/.ragcode/index`) and a ready-to-paste `mcpServers` JSON entry.
 
 ## Removing RagCode v1 (`v1.go`)
@@ -167,7 +175,7 @@ Most users upgrade from v1, whose indexes are not compatible with v2. When
 `~/.local/share/ragcode` exists and `RAGCODE_HOME` is not that directory or
 inside it, `removeV1`:
 
-1. runs `docker rm -f ragcode-qdrant ragcode-ollama`;
+1. runs `docker rm -f ragcode-qdrant ragcode-ollama` (v1 used both names);
 2. removes the `ragcode` entry from the IDE files v1 wrote (Windsurf,
    `~/.cursor/mcp.config.json`, `~/.gemini/antigravity/mcp_config.json`,
    `~/.aitk/mcp.json`, `~/.config/mcp-servers.json`,
@@ -206,8 +214,8 @@ go test ./internal/install/
 ```
 
 No build tags. The tests set a temporary `HOME`, put a fake `docker` shell
-script on `PATH` (it logs its arguments and fails on `--gpus`) and point
-`OLLAMA_BASE_URL` at an `httptest` server. They skip on Windows.
+script on `PATH` and replace the download with a stub, so nothing is fetched.
+They skip on Windows.
 
 ## See also
 
@@ -216,3 +224,4 @@ script on `PATH` (it logs its arguments and fails on `--gpus`) and point
 - [uninstall](../uninstall/README.md): the reverse
 - [idepaths](../idepaths/README.md): the IDE config files
 - [config](../config/README.md): `config.yaml` and `HomeDir`
+- [llama](../llama/README.md): the runtime and model the installer downloads

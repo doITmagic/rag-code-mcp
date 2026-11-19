@@ -37,15 +37,13 @@ There are no tests in this package; the behaviour is tested in
 
 | Flag | Default | Meaning |
 |:---|:---|:---|
-| `-ollama` | `docker` | How to get Ollama: `docker` runs a `ragcode-ollama` container, `local` uses the one already running, `skip` does nothing (no wait, no model pull). Any other value is an error. |
-| `-gpu` | `true` | Start the container with `--gpus all` first; on failure retry on CPU. Use `-gpu=false` to go straight to CPU. |
 | `-y` | `false` | Answer yes to every prompt. For install: replace an existing binary without asking. For uninstall: remove every `<workspace>/.ragcode` without asking. |
-| `-models-dir` | empty | Host directory mounted as the Ollama model store (`/root/.ollama`) instead of the `ragcode-ollama` Docker volume. Created if missing; a relative path is taken from the current directory. |
+| `-skip-download` | `false` | Do not download the embedding runtime (llama.cpp) and model now; the server fetches them on its first use. |
 | `-skip-ide` | `false` | Do not write IDE MCP configs. |
 | `-uninstall` | `false` | Remove RagCode instead of installing it. |
-| `-docker` | `false` | With `-uninstall`: also remove the `ragcode-ollama` container and volume (and a leftover v1 `ragcode-qdrant`). |
+| `-docker` | `false` | With `-uninstall`: also remove the `ragcode-ollama` and `ragcode-qdrant` containers and volumes that earlier versions left. |
 
-`-ollama`, `-gpu`, `-models-dir` and `-skip-ide` are ignored with
+`-skip-download` and `-skip-ide` are ignored with
 `-uninstall`; `-docker` is ignored without it.
 
 The installer takes flags only: a positional argument (for example a stray glob
@@ -57,14 +55,13 @@ parser stops at it and would silently ignore every flag after it.
 ```bash
 CGO_ENABLED=0 go build -o dist/ ./cmd/...
 
-dist/rag-code-install -y                      # Docker Ollama, GPU if available
-dist/rag-code-install -y -ollama local        # use a native Ollama
-dist/rag-code-install -y -ollama skip -skip-ide
-dist/rag-code-install -uninstall -y -docker   # remove everything
+dist/rag-code-install -y                      # download runtime and model, configure IDEs
+dist/rag-code-install -y -skip-download -skip-ide
+dist/rag-code-install -uninstall -y -docker   # remove everything, and old containers
 ```
 
-Ctrl+C cancels the context passed to `install.Run` / `uninstall.Run`; Docker
-commands, HTTP polls and the model pull stop with it.
+Ctrl+C cancels the context passed to `install.Run` / `uninstall.Run`; the
+download of the runtime and model stops with it.
 
 ## See also
 

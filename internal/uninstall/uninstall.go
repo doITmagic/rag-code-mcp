@@ -21,12 +21,13 @@ import (
 	"github.com/doITmagic/rag-code-mcp/v2/engine"
 	"github.com/doITmagic/rag-code-mcp/v2/internal/config"
 	"github.com/doITmagic/rag-code-mcp/v2/internal/idepaths"
+	"github.com/doITmagic/rag-code-mcp/v2/internal/llama"
 )
 
 // Options controls Run.
 type Options struct {
 	Yes    bool // remove every <root>/.ragcode without asking
-	Docker bool // also remove the ragcode-ollama container and a leftover ragcode-qdrant (v1)
+	Docker bool // also remove the ragcode-ollama and ragcode-qdrant containers of earlier versions
 	In     io.Reader
 	Out    io.Writer
 }
@@ -52,6 +53,9 @@ func Run(ctx context.Context, o Options) error {
 	home := config.HomeDir()
 	step(o.Out, "Stopping rag-code-mcp processes")
 	StopProcess(ctx, Binary(home))
+	for _, p := range llama.ServerPaths(home) {
+		StopProcess(ctx, p) // an embedding server whose RagCode process was killed
+	}
 
 	step(o.Out, "Removing IDE entries")
 	targets := idepaths.Targets()
@@ -254,3 +258,30 @@ func stripPath(rc, binDir string) error {
 func step(w io.Writer, s string) { fmt.Fprintf(w, "\033[0;34m==>\033[0m %s\n", s) }
 func ok(w io.Writer, s string)   { fmt.Fprintf(w, "\033[0;32m✓\033[0m %s\n", s) }
 func warn(w io.Writer, s string) { fmt.Fprintf(w, "\033[1;33m!\033[0m %s\n", s) }
+
+// ErrNoDocker says RemoveOllama could not ask Docker: it is not on PATH or
+// the daemon did not answer.
+var ErrNoDocker = errors.New("docker is not available")
+
+// RemoveOllama removes the ragcode-ollama container and volume that RagCode
+// v2 created before it ran the embedding model itself: the container
+// restarts forever (--restart always) and would keep its memory. removed is
+// false when no container of exactly that name exists. The error is
+// ErrNoDocker when Docker could not be asked, or why the removal failed.
+func RemoveOllama(ctx context.Context) (removed bool, err error) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return false, ErrNoDocker
+	}
+	names, err := exec.CommandContext(ctx, "docker", "ps", "-a", "--filter", "name=^ragcode-ollama$", "--format", "{{.Names}}").Output()
+	if err != nil {
+		return false, fmt.Errorf("%w: %w", ErrNoDocker, err)
+	}
+	if strings.TrimSpace(string(names)) != "ragcode-ollama" {
+		return false, nil
+	}
+	if out, err := exec.CommandContext(ctx, "docker", "rm", "-f", "ragcode-ollama").CombinedOutput(); err != nil {
+		return false, fmt.Errorf("docker rm -f ragcode-ollama: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	_ = exec.CommandContext(ctx, "docker", "volume", "rm", "ragcode-ollama").Run()
+	return true, nil
+}

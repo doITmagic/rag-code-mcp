@@ -16,7 +16,7 @@ import (
 )
 
 func TestRunRemovesV1(t *testing.T) {
-	home, dockerLog, _ := env(t)
+	home, dockerLog := env(t)
 	v1Bin := filepath.Join(home, ".local", "share", "ragcode", "bin")
 	require.NoError(t, os.MkdirAll(v1Bin, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(v1Bin, "rag-code-mcp"), []byte("v1"), 0o755))
@@ -28,7 +28,7 @@ func TestRunRemovesV1(t *testing.T) {
 	require.NoError(t, os.WriteFile(cursor, []byte(`{"mcpServers":{"ragcode":{"command":"`+v1Bin+`/rag-code-mcp"},"github":{"command":"gh"}}}`), 0o644))
 
 	var out bytes.Buffer
-	require.NoError(t, Run(context.Background(), Options{Ollama: "skip", Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}), out.String())
+	require.NoError(t, Run(context.Background(), Options{SkipDownload: true, Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}), out.String())
 
 	assert.NoDirExists(t, filepath.Join(home, ".local", "share", "ragcode"))
 	assert.NoDirExists(t, filepath.Join(home, ".local", "share", "qdrant"))
@@ -45,13 +45,13 @@ func TestRunRemovesV1(t *testing.T) {
 
 // Answering no to "Replace?" must leave everything as it was, v1 included.
 func TestRunCancelKeepsV1(t *testing.T) {
-	home, _, _ := env(t)
+	home, _ := env(t)
 	v1Dir := filepath.Join(home, ".local", "share", "ragcode")
 	require.NoError(t, os.MkdirAll(v1Dir, 0o755))
 	good := src(t)
 	require.NoError(t, os.MkdirAll(filepath.Join(home, ".ragcode", "bin"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(home, ".ragcode", "bin", "rag-code-mcp"), []byte("v2"), 0o755))
-	err := Run(context.Background(), Options{Ollama: "skip", SkipIDE: true, In: strings.NewReader("n\n"), Out: &bytes.Buffer{}, srcDir: good})
+	err := Run(context.Background(), Options{SkipDownload: true, SkipIDE: true, In: strings.NewReader("n\n"), Out: &bytes.Buffer{}, srcDir: good})
 	require.ErrorContains(t, err, "cancelled")
 	assert.DirExists(t, v1Dir)
 }
@@ -59,14 +59,14 @@ func TestRunCancelKeepsV1(t *testing.T) {
 // ~/.local/share/qdrant is a generic path: a user's own Qdrant may keep its
 // collections there too. Only v1's ragcode collections are deleted.
 func TestRunRemovesV1KeepsForeignQdrantCollections(t *testing.T) {
-	home, _, _ := env(t)
+	home, _ := env(t)
 	require.NoError(t, os.MkdirAll(filepath.Join(home, ".local", "share", "ragcode", "bin"), 0o755))
 	colls := filepath.Join(home, ".local", "share", "qdrant", "collections")
 	require.NoError(t, os.MkdirAll(filepath.Join(colls, "ragcode-abc123"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(colls, "my-app"), 0o755))
 
 	var out bytes.Buffer
-	require.NoError(t, Run(context.Background(), Options{Ollama: "skip", Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}), out.String())
+	require.NoError(t, Run(context.Background(), Options{SkipDownload: true, Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}), out.String())
 
 	assert.NoDirExists(t, filepath.Join(colls, "ragcode-abc123"))
 	assert.DirExists(t, filepath.Join(colls, "my-app"), "a collection RagCode did not create is kept")
@@ -75,7 +75,7 @@ func TestRunRemovesV1KeepsForeignQdrantCollections(t *testing.T) {
 // An unreadable collections directory may hold anything: Qdrant is kept, not
 // deleted through the root container.
 func TestRunRemovesV1KeepsUnreadableQdrant(t *testing.T) {
-	home, dockerLog, _ := env(t)
+	home, dockerLog := env(t)
 	require.NoError(t, os.MkdirAll(filepath.Join(home, ".local", "share", "ragcode", "bin"), 0o755))
 	colls := filepath.Join(home, ".local", "share", "qdrant", "collections")
 	require.NoError(t, os.MkdirAll(filepath.Join(colls, "my-app"), 0o755))
@@ -83,7 +83,7 @@ func TestRunRemovesV1KeepsUnreadableQdrant(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(colls, 0o755) })
 
 	var out bytes.Buffer
-	require.NoError(t, Run(context.Background(), Options{Ollama: "skip", Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}), out.String())
+	require.NoError(t, Run(context.Background(), Options{SkipDownload: true, Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}), out.String())
 
 	require.NoError(t, os.Chmod(colls, 0o755))
 	assert.DirExists(t, filepath.Join(colls, "my-app"))
@@ -105,11 +105,11 @@ func TestRunFailureKeepsV1(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			home, dockerLog, _ := env(t)
+			home, dockerLog := env(t)
 			v1Dir := filepath.Join(home, ".local", "share", "ragcode")
 			require.NoError(t, os.MkdirAll(v1Dir, 0o755))
 			breakIt(t, home)
-			err := Run(context.Background(), Options{Ollama: "skip", Yes: true, SkipIDE: true, Out: &bytes.Buffer{}, srcDir: src(t)})
+			err := Run(context.Background(), Options{SkipDownload: true, Yes: true, SkipIDE: true, Out: &bytes.Buffer{}, srcDir: src(t)})
 			require.Error(t, err)
 			assert.DirExists(t, v1Dir)
 			log, _ := os.ReadFile(dockerLog)
@@ -121,7 +121,7 @@ func TestRunFailureKeepsV1(t *testing.T) {
 // A v1 server still running would keep serving from deleted files with its
 // Qdrant gone: the upgrade stops it.
 func TestRunStopsV1Server(t *testing.T) {
-	home, _, _ := env(t)
+	home, _ := env(t)
 	v1Bin := filepath.Join(home, ".local", "share", "ragcode", "bin", "rag-code-mcp")
 	require.NoError(t, os.MkdirAll(filepath.Dir(v1Bin), 0o755))
 	sleep, err := exec.LookPath("sleep")
@@ -136,7 +136,7 @@ func TestRunStopsV1Server(t *testing.T) {
 	go func() { done <- server.Wait() }()
 	time.Sleep(100 * time.Millisecond)
 
-	require.NoError(t, Run(context.Background(), Options{Ollama: "skip", Yes: true, SkipIDE: true, Out: &bytes.Buffer{}, srcDir: src(t)}))
+	require.NoError(t, Run(context.Background(), Options{SkipDownload: true, Yes: true, SkipIDE: true, Out: &bytes.Buffer{}, srcDir: src(t)}))
 	select {
 	case <-done:
 	case <-time.After(10 * time.Second):
@@ -148,7 +148,7 @@ func TestRunStopsV1Server(t *testing.T) {
 // the v1 cleanup must still see it is the new install and not delete it.
 func TestInstallIntoV1DirViaSymlinkOrRelativePathKeepsItself(t *testing.T) {
 	t.Run("symlink_ragcode_home", func(t *testing.T) {
-		home, _, _ := env(t)
+		home, _ := env(t)
 		v1Dir := filepath.Join(home, ".local", "share", "ragcode")
 		require.NoError(t, os.MkdirAll(v1Dir, 0o755))
 
@@ -157,7 +157,7 @@ func TestInstallIntoV1DirViaSymlinkOrRelativePathKeepsItself(t *testing.T) {
 		t.Setenv("RAGCODE_HOME", link)
 
 		var out bytes.Buffer
-		opts := Options{Ollama: "skip", SkipIDE: true, Yes: true, Out: &out, srcDir: src(t)}
+		opts := Options{SkipDownload: true, SkipIDE: true, Yes: true, Out: &out, srcDir: src(t)}
 		require.NoError(t, Run(context.Background(), opts), out.String())
 
 		assert.FileExists(t, filepath.Join(link, "bin", "rag-code-mcp"))
@@ -165,7 +165,7 @@ func TestInstallIntoV1DirViaSymlinkOrRelativePathKeepsItself(t *testing.T) {
 	})
 
 	t.Run("relative_ragcode_home", func(t *testing.T) {
-		home, _, _ := env(t)
+		home, _ := env(t)
 		v1Dir := filepath.Join(home, ".local", "share", "ragcode")
 		require.NoError(t, os.MkdirAll(v1Dir, 0o755))
 
@@ -178,7 +178,7 @@ func TestInstallIntoV1DirViaSymlinkOrRelativePathKeepsItself(t *testing.T) {
 		t.Setenv("RAGCODE_HOME", relHome)
 
 		var out bytes.Buffer
-		opts := Options{Ollama: "skip", SkipIDE: true, Yes: true, Out: &out, srcDir: src(t)}
+		opts := Options{SkipDownload: true, SkipIDE: true, Yes: true, Out: &out, srcDir: src(t)}
 		require.NoError(t, Run(context.Background(), opts), out.String())
 
 		assert.FileExists(t, filepath.Join(v1Dir, "bin", "rag-code-mcp"))

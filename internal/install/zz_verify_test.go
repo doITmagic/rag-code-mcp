@@ -15,17 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// -ollama=local must still wait for Ollama and pull the model when docker is
-// absent.
-func TestVerifyLocalOllamaWithoutDocker(t *testing.T) {
-	_, dockerLog, pulled := env(t)
-	t.Setenv("PATH", t.TempDir()) // no docker, no codex
-	var out bytes.Buffer
-	require.NoError(t, Run(context.Background(), Options{Ollama: "local", Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}), out.String())
-	assert.NoFileExists(t, dockerLog)
-	assert.Equal(t, 1, len(*pulled), "local Ollama was skipped because docker is missing")
-}
-
 // A cancelled context must not hang Run (containers, polls and pulls bail out).
 func TestVerifyCancelledCtxNoHang(t *testing.T) {
 	env(t)
@@ -33,7 +22,7 @@ func TestVerifyCancelledCtxNoHang(t *testing.T) {
 	cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(ctx, Options{Ollama: "docker", Yes: true, SkipIDE: true, Out: &bytes.Buffer{}, srcDir: src(t)})
+		done <- Run(ctx, Options{SkipDownload: true, Yes: true, SkipIDE: true, Out: &bytes.Buffer{}, srcDir: src(t)})
 	}()
 	select {
 	case <-done:
@@ -42,22 +31,13 @@ func TestVerifyCancelledCtxNoHang(t *testing.T) {
 	}
 }
 
-// Unreachable Ollama with a short wait returns an error, no panic.
-func TestVerifyWaitHTTPUnreachable(t *testing.T) {
-	err := waitHTTP(context.Background(), "http://127.0.0.1:1/readyz", 300*time.Millisecond)
-	assert.Error(t, err)
-	err = pullModel(context.Background(), &bytes.Buffer{}, "http://127.0.0.1:1", "m")
-	assert.Error(t, err)
-	_ = os.Stdout
-}
-
 // Reinstall replaces the binary contents, leaves no temp file behind and
 // writes .zshrc when SHELL is zsh.
 func TestVerifyReinstallAndZsh(t *testing.T) {
-	home, _, _ := env(t)
+	home, _ := env(t)
 	t.Setenv("SHELL", "/usr/bin/zsh")
 	s := src(t)
-	opts := Options{Ollama: "skip", Yes: true, SkipIDE: true, Out: &bytes.Buffer{}, srcDir: s}
+	opts := Options{SkipDownload: true, Yes: true, SkipIDE: true, Out: &bytes.Buffer{}, srcDir: s}
 	require.NoError(t, Run(context.Background(), opts))
 	require.NoError(t, os.WriteFile(filepath.Join(s, "rag-code-mcp"), []byte("v2"), 0o644))
 	require.NoError(t, Run(context.Background(), opts))

@@ -4,19 +4,18 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/doITmagic/rag-code-mcp/v2/internal/llama"
 )
 
 func TestMain(m *testing.M) {
@@ -31,10 +30,11 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// env sets up a temp HOME, a fake docker on PATH that logs its arguments and
-// fails on --gpus, and an httptest Ollama. It returns the home, the
-// docker log path and the pulled model names.
-func env(t *testing.T) (home, dockerLog string, pulled *[]string) {
+// env sets up a temp HOME and a fake docker first on PATH that logs its
+// arguments; `docker ps` lists a ragcode-ollama container only when the file
+// "container" exists next to the script. It returns the home and the docker
+// log path. The real docker is never run.
+func env(t *testing.T) (home, dockerLog string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("shell scripts")
@@ -43,30 +43,21 @@ func env(t *testing.T) (home, dockerLog string, pulled *[]string) {
 	t.Setenv("HOME", home)
 	t.Setenv("RAGCODE_HOME", "")
 	t.Setenv("SHELL", "/bin/bash")
+	t.Setenv("RAGCODE_EMBED_MODEL", "")
+	t.Setenv("RAGCODE_LLAMA_SERVER", "")
+	t.Setenv("RAGCODE_EMBED_RUNTIME", "")
 	bin := t.TempDir()
 	dockerLog = filepath.Join(bin, "docker.log")
-	script := "#!/bin/sh\necho \"$*\" >> " + dockerLog + "\ncase \"$*\" in *--gpus*) exit 1;; esac\n"
+	script := "#!/bin/sh\necho \"$*\" >> " + dockerLog + "\ncase \"$1\" in ps) [ -f " + filepath.Join(bin, "container") + " ] && echo ragcode-ollama;; esac\nexit 0\n"
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o755))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return home, dockerLog
+}
 
-	pulled = &[]string{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/readyz":
-		case "/api/tags":
-			w.Write([]byte(`{"models":[]}`))
-		case "/api/pull":
-			var req struct{ Name string }
-			json.NewDecoder(r.Body).Decode(&req)
-			*pulled = append(*pulled, req.Name)
-			w.Write([]byte("{\"status\":\"pulling manifest\"}\n{\"status\":\"pulling\",\"completed\":50,\"total\":100}\n{\"status\":\"success\"}\n"))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(srv.Close)
-	t.Setenv("OLLAMA_BASE_URL", srv.URL)
-	return home, dockerLog, pulled
+// countEnsure replaces the download with a counter that returns err.
+func countEnsure(err error) (func(context.Context, llama.Options) error, *int) {
+	n := new(int)
+	return func(context.Context, llama.Options) error { *n++; return err }, n
 }
 
 // exe is the server binary suffix the installer expects next to itself.
@@ -79,11 +70,15 @@ func src(t *testing.T) string {
 }
 
 func TestRun(t *testing.T) {
-	home, dockerLog, pulled := env(t)
+	home, dockerLog := env(t)
 	require.NoError(t, os.MkdirAll(filepath.Join(home, ".cursor"), 0o755))
 	var out bytes.Buffer
-	opts := Options{Ollama: "docker", GPU: true, Yes: true, Out: &out, srcDir: src(t)}
+	ensure, calls := countEnsure(nil)
+	opts := Options{Yes: true, Out: &out, srcDir: src(t), ensure: ensure}
 	require.NoError(t, Run(context.Background(), opts), out.String())
+	assert.Equal(t, 1, *calls, "the runtime and model are fetched once")
+	assert.Contains(t, out.String(), "Embedding runtime and model ready")
+	assert.Contains(t, out.String(), "Embedder: ")
 
 	binary := filepath.Join(home, ".ragcode", "bin", "rag-code-mcp")
 	st, err := os.Stat(binary)
@@ -92,18 +87,9 @@ func TestRun(t *testing.T) {
 	cfgPath := filepath.Join(home, ".ragcode", "config.yaml")
 	assert.FileExists(t, cfgPath)
 
+	// Docker is only asked for a leftover container; nothing is started or pulled.
 	log, _ := os.ReadFile(dockerLog)
-	lines := strings.Split(strings.TrimSpace(string(log)), "\n")
-	assert.Equal(t, []string{
-		"pull -q ollama/ollama",
-		"rm -f ragcode-ollama",
-		"run -d --name ragcode-ollama --restart always --gpus all -p 127.0.0.1:11434:11434 -v ragcode-ollama:/root/.ollama ollama/ollama",
-		"rm -f ragcode-ollama",
-		"rm -f ragcode-ollama",
-		"run -d --name ragcode-ollama --restart always -p 127.0.0.1:11434:11434 -v ragcode-ollama:/root/.ollama ollama/ollama",
-	}, lines)
-	assert.Equal(t, []string{"embeddinggemma-2:270m"}, *pulled)
-	assert.Contains(t, out.String(), "pulling 50%")
+	assert.Equal(t, "ps -a --filter name=^ragcode-ollama$ --format {{.Names}}", strings.TrimSpace(string(log)))
 
 	rc, _ := os.ReadFile(filepath.Join(home, ".bashrc"))
 	pathLine := "# RagCode MCP\nexport PATH=\"" + filepath.Dir(binary) + ":$PATH\"\n"
@@ -122,66 +108,85 @@ func TestRun(t *testing.T) {
 	assert.Equal(t, []string{"--config", cfgPath}, cursor.Servers["ragcode"].Args)
 	assert.Contains(t, out.String(), `"command": "`+binary+`"`, "summary snippet")
 
-	// Second run: config kept, PATH line not duplicated, no docker/model work.
+	// Second run: config kept, PATH line not duplicated.
 	require.NoError(t, os.WriteFile(cfgPath, []byte("# keep\nlog_level: debug\n"), 0o644))
-	require.NoError(t, os.Remove(dockerLog))
-	*pulled = nil
 	out.Reset()
-	opts.Ollama, opts.SkipIDE = "skip", true
+	opts.SkipIDE = true
 	require.NoError(t, Run(context.Background(), opts), out.String())
 	data, _ = os.ReadFile(cfgPath)
 	assert.Equal(t, "# keep\nlog_level: debug\n", string(data))
 	rc, _ = os.ReadFile(filepath.Join(home, ".bashrc"))
 	assert.Equal(t, 1, strings.Count(string(rc), pathLine))
-	assert.NoFileExists(t, dockerLog)
-	assert.Empty(t, *pulled)
 }
 
-func TestRunLocalOllamaAndModelsDir(t *testing.T) {
-	home, dockerLog, pulled := env(t)
-	models := filepath.Join(home, "models")
+func TestRunEnsureHook(t *testing.T) {
+	env(t)
+	// Files missing: ensure runs once.
 	var out bytes.Buffer
-	require.NoError(t, Run(context.Background(), Options{Ollama: "local", Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}))
-	assert.NoFileExists(t, dockerLog)
-	assert.Len(t, *pulled, 1)
+	ensure, calls := countEnsure(nil)
+	require.NoError(t, Run(context.Background(), Options{Yes: true, SkipIDE: true, Out: &out, srcDir: src(t), ensure: ensure}), out.String())
+	assert.Equal(t, 1, *calls)
 
-	*pulled = nil
-	require.NoError(t, Run(context.Background(), Options{Ollama: "docker", ModelsDir: models, Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}))
+	// SkipDownload: not at all.
+	ensure, calls = countEnsure(nil)
+	out.Reset()
+	require.NoError(t, Run(context.Background(), Options{Yes: true, SkipIDE: true, SkipDownload: true, Out: &out, srcDir: src(t), ensure: ensure}), out.String())
+	assert.Zero(t, *calls)
+	assert.Contains(t, out.String(), "-skip-download")
+
+	// A failing ensure is a warning: the server fetches on first use.
+	ensure, calls = countEnsure(errors.New("network down"))
+	out.Reset()
+	require.NoError(t, Run(context.Background(), Options{Yes: true, SkipIDE: true, Out: &out, srcDir: src(t), ensure: ensure}), out.String())
+	assert.Equal(t, 1, *calls)
+	assert.Contains(t, out.String(), "network down")
+	assert.Contains(t, out.String(), "tries again on first use")
+	assert.NotContains(t, out.String(), "Embedding runtime and model ready")
+	assert.Contains(t, out.String(), "RagCode MCP installed")
+}
+
+// With both files present (user-provided paths) nothing is fetched.
+func TestRunEnsureNotCalledWhenInstalled(t *testing.T) {
+	home, _ := env(t)
+	d := t.TempDir()
+	model, server := filepath.Join(d, "m.gguf"), filepath.Join(d, "llama-server")
+	require.NoError(t, os.WriteFile(model, []byte("m"), 0o644))
+	require.NoError(t, os.WriteFile(server, []byte("s"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".ragcode"), 0o755))
+	cfg := "embed_model: " + model + "\nllama_server: " + server + "\n"
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".ragcode", "config.yaml"), []byte(cfg), 0o644))
+	ensure, calls := countEnsure(nil)
+	var out bytes.Buffer
+	require.NoError(t, Run(context.Background(), Options{Yes: true, SkipIDE: true, Out: &out, srcDir: src(t), ensure: ensure}), out.String())
+	assert.Zero(t, *calls)
+	assert.Contains(t, out.String(), "already present")
+	assert.Contains(t, out.String(), server)
+}
+
+// A ragcode-ollama container left by an earlier installer is removed, with its volume.
+func TestRunRemovesOldOllamaContainer(t *testing.T) {
+	_, dockerLog := env(t)
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(dockerLog), "container"), nil, 0o644))
+	var out bytes.Buffer
+	require.NoError(t, Run(context.Background(), Options{Yes: true, SkipIDE: true, SkipDownload: true, Out: &out, srcDir: src(t)}), out.String())
 	log, _ := os.ReadFile(dockerLog)
-	assert.Contains(t, string(log), "-v "+models+":/root/.ollama ollama/ollama")
-	assert.NotContains(t, string(log), "ragcode-qdrant")
-	assert.DirExists(t, models)
-	assert.Len(t, *pulled, 1)
+	lines := strings.Split(strings.TrimSpace(string(log)), "\n")
+	assert.Contains(t, lines, "ps -a --filter name=^ragcode-ollama$ --format {{.Names}}")
+	assert.Contains(t, lines, "rm -f ragcode-ollama")
+	assert.Contains(t, lines, "volume rm ragcode-ollama")
+	for _, l := range lines {
+		assert.NotContains(t, l, "run", "no container is started")
+		assert.NotContains(t, l, "pull")
+	}
+	assert.Contains(t, out.String(), "Removed the ragcode-ollama container")
 }
 
-// A relative -models-dir is mounted as the host directory it creates, made
-// absolute, not passed to docker -v where a bare name means a named volume.
-func TestRunRelativeModelsDirMountsHostDir(t *testing.T) {
-	_, dockerLog, _ := env(t)
-
-	work := t.TempDir()
-	wd, err := os.Getwd()
-	require.NoError(t, err)
-	require.NoError(t, os.Chdir(work))
-	t.Cleanup(func() { _ = os.Chdir(wd) })
-
+// Without docker on PATH the leftover check is skipped silently.
+func TestRunWithoutDocker(t *testing.T) {
+	env(t)
+	t.Setenv("PATH", t.TempDir())
 	var out bytes.Buffer
-	opts := Options{
-		Ollama:    "docker",
-		ModelsDir: "ollama-models",
-		SkipIDE:   true,
-		Yes:       true,
-		Out:       &out,
-		srcDir:    src(t),
-	}
-	require.NoError(t, Run(context.Background(), opts), out.String())
-
-	hostDir := filepath.Join(work, "ollama-models")
-	require.DirExists(t, hostDir)
-
-	rawLog, err := os.ReadFile(dockerLog)
-	require.NoError(t, err)
-	assert.Contains(t, string(rawLog), "-v "+hostDir+":/root/.ollama")
+	require.NoError(t, Run(context.Background(), Options{Yes: true, SkipIDE: true, SkipDownload: true, Out: &out, srcDir: src(t)}), out.String())
 }
 
 func TestRunErrors(t *testing.T) {
@@ -192,8 +197,7 @@ func TestRunErrors(t *testing.T) {
 		opts Options
 		want string
 	}{
-		{"bad ollama", Options{Ollama: "remote", srcDir: good}, "-ollama"},
-		{"no binary", Options{Ollama: "skip", srcDir: t.TempDir()}, "next to the installer"},
+		{"no binary", Options{SkipDownload: true, srcDir: t.TempDir()}, "next to the installer"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -205,72 +209,21 @@ func TestRunErrors(t *testing.T) {
 	}
 
 	// Existing install, user answers no.
-	require.NoError(t, Run(context.Background(), Options{Ollama: "skip", Yes: true, SkipIDE: true, Out: &bytes.Buffer{}, srcDir: good}))
-	err := Run(context.Background(), Options{Ollama: "skip", SkipIDE: true, In: strings.NewReader("n\n"), Out: &bytes.Buffer{}, srcDir: good})
+	require.NoError(t, Run(context.Background(), Options{SkipDownload: true, Yes: true, SkipIDE: true, Out: &bytes.Buffer{}, srcDir: good}))
+	err := Run(context.Background(), Options{SkipDownload: true, SkipIDE: true, In: strings.NewReader("n\n"), Out: &bytes.Buffer{}, srcDir: good})
 	assert.ErrorContains(t, err, "cancelled")
 }
 
-func TestPullModelErrors(t *testing.T) {
-	cases := []struct{ name, body, want string }{
-		{"error event", `{"status":"pulling"}` + "\n" + `{"error":"model not found"}` + "\n", "model not found"},
-		{"no success", `{"status":"pulling"}` + "\n", "without success"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(tc.body)) }))
-			defer srv.Close()
-			err := pullModel(context.Background(), &bytes.Buffer{}, srv.URL, "m")
-			assert.ErrorContains(t, err, tc.want)
-		})
-	}
-}
-
-// An Ollama older than the model answers 412 with no message; say what to do.
-func TestPullModelOllamaTooOld(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusPreconditionFailed) }))
-	defer srv.Close()
-	err := pullModel(context.Background(), &bytes.Buffer{}, srv.URL, "m")
-	assert.ErrorContains(t, err, "newer Ollama")
-}
-
-// A failed Ollama container (port held by a native Ollama) must still pull the model.
-func TestOllamaContainerFailStillPulls(t *testing.T) {
-	_, dockerLog, pulled := env(t)
-	fail := "#!/bin/sh\necho \"$*\" >> " + dockerLog + "\ncase \"$*\" in run*) exit 125;; esac\n"
-	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(dockerLog), "docker"), []byte(fail), 0o755))
+// v2 keeps its index in SQLite files: the installer starts no Qdrant and no container.
+func TestInstallStartsNoContainer(t *testing.T) {
+	_, dockerLog := env(t)
 	var out bytes.Buffer
-	require.NoError(t, Run(context.Background(), Options{Ollama: "docker", Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}), out.String())
-	assert.Equal(t, []string{"embeddinggemma-2:270m"}, *pulled)
-}
-
-// docker run reuses a cached image however old (seen: Ollama 0.13 from a
-// 10-month-old ollama/ollama:latest could not pull the model); a failed pull
-// (offline) falls back to the local image.
-func TestOllamaImagePulledFirst(t *testing.T) {
-	_, dockerLog, pulled := env(t)
-	fail := "#!/bin/sh\necho \"$*\" >> " + dockerLog + "\ncase \"$*\" in pull*) exit 1;; esac\n"
-	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(dockerLog), "docker"), []byte(fail), 0o755))
-	var out bytes.Buffer
-	require.NoError(t, Run(context.Background(), Options{Ollama: "docker", Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}), out.String())
-	log, _ := os.ReadFile(dockerLog)
-	assert.True(t, strings.HasPrefix(string(log), "pull -q ollama/ollama\n"), string(log))
-	assert.Contains(t, string(log), "run -d --name ragcode-ollama")
-	assert.Contains(t, out.String(), "using the local image")
-	assert.Equal(t, []string{"embeddinggemma-2:270m"}, *pulled)
-}
-
-// v2 keeps its index in SQLite files: the installer starts no Qdrant.
-func TestInstallStartsNoQdrant(t *testing.T) {
-	_, dockerLog, _ := env(t)
-	var out bytes.Buffer
-	require.NoError(t, Run(context.Background(), Options{Ollama: "docker", Yes: true, SkipIDE: true, Out: &out, srcDir: src(t)}), out.String())
+	require.NoError(t, Run(context.Background(), Options{Yes: true, SkipIDE: true, SkipDownload: true, Out: &out, srcDir: src(t)}), out.String())
 	log, _ := os.ReadFile(dockerLog)
 	for _, line := range strings.Split(string(log), "\n") {
-		if strings.HasPrefix(line, "run ") {
-			assert.NotContains(t, line, "qdrant")
-		}
+		assert.False(t, strings.HasPrefix(line, "run "), line)
+		assert.NotContains(t, line, "qdrant")
 	}
-	assert.Contains(t, string(log), "ragcode-ollama")
 }
 
 // RAGCODE_HOME set to the v1 directory: the v1 cleanup must not delete the new install.
@@ -283,54 +236,18 @@ func TestInstallIntoV1DirKeepsItself(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("RAGCODE_HOME", legacy)
 	t.Setenv("SHELL", "/bin/bash")
-	t.Setenv("OLLAMA_BASE_URL", "http://localhost:11434")
 	t.Setenv("MCP_LOG_LEVEL", "info")
 	bin := t.TempDir()
 	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin)
-	if err := Run(context.Background(), Options{Ollama: "skip", Yes: true, SkipIDE: true, Out: io.Discard, srcDir: src(t)}); err != nil {
+	if err := Run(context.Background(), Options{SkipDownload: true, Yes: true, SkipIDE: true, Out: io.Discard, srcDir: src(t)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(legacy, "bin", "rag-code-mcp")); err != nil {
 		t.Fatal("installer returned success but v1 cleanup deleted the newly installed binary")
 	}
-}
-
-// A password in OLLAMA_BASE_URL is not printed.
-func TestInstallHidesOllamaPassword(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("RAGCODE_HOME", filepath.Join(home, ".ragcode"))
-	t.Setenv("SHELL", "/bin/bash")
-	t.Setenv("MCP_LOG_LEVEL", "info")
-	t.Setenv("OLLAMA_BASE_URL", "https://alice:private-ollama-password@ollama.example.test")
-	var output bytes.Buffer
-	if err := Run(context.Background(), Options{Ollama: "skip", Yes: true, SkipIDE: true, Out: &output, srcDir: src(t)}); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(output.String(), "private-ollama-password") {
-		t.Fatal("installer printed the Ollama URL password in its summary")
-	}
-}
-
-// The wait for Ollama times out without printing the password of a
-// basic-auth ollama_base_url.
-func TestWaitHTTPHidesPassword(t *testing.T) {
-	t.Setenv("RAGCODE_HOME", t.TempDir())
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-	}))
-	t.Cleanup(srv.Close)
-
-	u, err := url.Parse(srv.URL)
-	require.NoError(t, err)
-	u.User = url.UserPassword("raguser", "superSecretPass99")
-
-	err = waitHTTP(context.Background(), u.String()+"/api/tags", 1*time.Millisecond)
-	require.Error(t, err)
-	assert.NotContains(t, err.Error(), "superSecretPass99")
 }
 
 // The Windows PATH hint appends to the user Path only and works pasted in cmd

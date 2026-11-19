@@ -20,9 +20,12 @@ const (
 	batchBytes = 8 << 10 // the server embeds inputs one by one: a big request only delays a queued query
 	retryDelay = time.Second
 	probeText  = "dimension probe"
-	// ctxTokens is the longest input, in tokens, the server takes. A token
-	// covers at least one byte, so the 2000-byte texts of the index always fit.
-	ctxTokens = 4096
+	// DefaultTokens is the longest input, in tokens, the built-in model
+	// (EmbeddingGemma 2) takes: its context window.
+	DefaultTokens = 8192
+	// cutMargin is how many tokens short of the limit a refused input is cut
+	// to: the count of the cut text is an estimate.
+	cutMargin = 64
 	// defaultIdle is how long the server stays up after the last call.
 	defaultIdle = 5 * time.Minute
 )
@@ -63,6 +66,10 @@ type Llama struct {
 	MinFreeMB int
 	// IdleStop is how long the server outlives the last call; 0 means 5 minutes.
 	IdleStop time.Duration
+	// MaxTokens is the context the server is started with: the longest input
+	// it embeds whole. 0 means DefaultTokens. A model trained for less gets
+	// its own limit from the server. Set before use.
+	MaxTokens int
 
 	model  string
 	rt     Runtime
@@ -97,6 +104,14 @@ func NewLlama(model string, rt Runtime, runDir string) *Llama {
 // Model returns the embedding model name.
 func (l *Llama) Model() string { return l.model }
 
+// maxTokens is the context the server is started with.
+func (l *Llama) maxTokens() int {
+	if l.MaxTokens > 0 {
+		return l.MaxTokens
+	}
+	return DefaultTokens
+}
+
 // Embed embeds texts in batches of at most 16 texts and 8 KiB (a longer
 // text goes alone), one request per batch. A text longer than the model
 // context is cut to fit.
@@ -110,7 +125,7 @@ func (l *Llama) Embed(ctx context.Context, texts []string) ([][]float32, error) 
 		vecs, err := l.embedBatch(ctx, texts[start:end])
 		var big *tooLargeError
 		if errors.As(err, &big) {
-			vecs, err = l.embedCut(ctx, texts[start:end])
+			vecs, err = l.embedCut(ctx, texts[start:end], big)
 		}
 		if err != nil {
 			return nil, err
@@ -160,16 +175,29 @@ func (l *Llama) Close() error {
 	return nil
 }
 
-// embedCut embeds texts one by one, cutting each until the server takes it.
-func (l *Llama) embedCut(ctx context.Context, texts []string) ([][]float32, error) {
+// embedCut embeds texts, which the server refused together with refused, one
+// by one, cutting each until the server takes it.
+func (l *Llama) embedCut(ctx context.Context, texts []string, refused *tooLargeError) ([][]float32, error) {
+	shorter := func(t string, big *tooLargeError) string {
+		limit := big.limit
+		if limit <= 0 {
+			limit = l.maxTokens()
+		}
+		return cut(t, big.tokens, limit)
+	}
 	out := make([][]float32, 0, len(texts))
 	for _, t := range texts {
+		if len(texts) == 1 {
+			t = shorter(t, refused) // the refusal was about this very text
+		}
 		for {
 			vecs, err := l.embedBatch(ctx, []string{t})
 			var big *tooLargeError
-			if errors.As(err, &big) && len(t) > 1 {
-				t = cut(t, big.tokens)
-				continue
+			if errors.As(err, &big) {
+				if s := shorter(t, big); len(s) < len(t) {
+					t = s
+					continue
+				}
 			}
 			if err != nil {
 				return nil, err
@@ -181,17 +209,23 @@ func (l *Llama) embedCut(ctx context.Context, texts []string) ([][]float32, erro
 	return out, nil
 }
 
-// cut shortens t, which the server counted as tokens tokens, so that it
-// should fit: in proportion when the count is known, to half otherwise.
-func cut(t string, tokens int) string {
+// cut shortens t, which the server counted as tokens tokens against a limit
+// of limit, so that it should fit: to the share that fits, a little under the
+// limit, when the count is known, to half otherwise. It never cuts inside a
+// character, and returns t itself when t is a single character.
+func cut(t string, tokens, limit int) string {
 	n := len(t) / 2
-	if tokens > ctxTokens {
-		n = min(n, len(t)*(ctxTokens-64)/tokens)
+	if tokens > limit && limit > 0 {
+		keep := limit - min(cutMargin, limit/8)
+		n = int(int64(len(t)) * int64(keep) / int64(tokens))
 	}
 	for n > 0 && !utf8.RuneStart(t[n]) {
 		n--
 	}
-	return t[:max(n, 1)]
+	if n == 0 {
+		_, n = utf8.DecodeRuneInString(t) // at least the first character
+	}
+	return t[:n]
 }
 
 // embedBatch sends one request, retrying once after a connection-level
@@ -250,11 +284,7 @@ func (l *Llama) call(ctx context.Context, body []byte, n int) ([][]float32, erro
 		if json.Unmarshal(raw, &e) == nil && e.Error.Message != "" {
 			msg = e.Error.Message
 		}
-		if strings.Contains(msg, "too large") {
-			big := &tooLargeError{msg: msg}
-			if i := strings.Index(msg, "input ("); i >= 0 {
-				_, _ = fmt.Sscanf(msg[i:], "input (%d tokens)", &big.tokens)
-			}
+		if big := parseTooLarge(msg); big != nil {
 			return nil, big
 		}
 		return nil, fmt.Errorf("%w: llama-server %s: %s", ErrUnavailable, res.Status, msg)
@@ -285,6 +315,37 @@ func (l *Llama) call(ctx context.Context, body []byte, n int) ([][]float32, erro
 type tooLargeError struct {
 	msg    string
 	tokens int // what the server counted; 0 when it did not say
+	limit  int // what the server takes; 0 when it did not say
+}
+
+// The two refusals of llama-server for an input it cannot embed whole: over
+// the batch (which Llama sets to the context) and over the context of the
+// slot, which is the model's own when that is smaller than the one asked for.
+const (
+	overBatch   = "too large to process"
+	overContext = "larger than the max context size"
+)
+
+// parseTooLarge returns the refusal msg is, with the counts it names, or nil
+// for any other error.
+func parseTooLarge(msg string) *tooLargeError {
+	var limitAt string
+	switch {
+	case strings.Contains(msg, overBatch):
+		limitAt = "current batch size: "
+	case strings.Contains(msg, overContext):
+		limitAt = "max context size ("
+	default:
+		return nil
+	}
+	big := &tooLargeError{msg: msg}
+	if i := strings.Index(msg, "input ("); i >= 0 {
+		_, _ = fmt.Sscanf(msg[i:], "input (%d tokens)", &big.tokens)
+	}
+	if i := strings.Index(msg, limitAt); i >= 0 {
+		_, _ = fmt.Sscanf(msg[i+len(limitAt):], "%d", &big.limit)
+	}
+	return big
 }
 
 func (e *tooLargeError) Error() string { return "embed: embedder unavailable: llama-server: " + e.msg }

@@ -481,6 +481,7 @@ Keys from [internal/config](../internal/config/README.md):
 | `watch_debounce` | `1s` | Debounce period of the watcher. |
 | `exclude_patterns` | `node_modules`, `vendor`, `target`, `build`, `dist`, `__pycache__` | Directory names not watched, passed to `index.Run` as `Exclude`. |
 | `max_files` | `20000` | Passed to `index.Run` as `MaxFiles`: a full run over more indexable files fails and is not retried. `0` = no limit. |
+| `embed_max_tokens` | `8192` | Passed to `index.Run` as `EmbedTokens`: how much of a symbol is embedded. The next run after a change re-embeds the whole workspace. |
 | `allowed_workspace_paths` (env `RAGCODE_ALLOWED_PATHS`) | empty | When set, roots must be under one of these. |
 | `auto_create_ide_rules` | `true` | Read by the index tool before it calls `WriteIDERules`. |
 

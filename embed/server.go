@@ -232,7 +232,7 @@ func (l *Llama) start(ctx context.Context) error {
 		return fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	s := &server{base: "http://127.0.0.1:" + strconv.Itoa(port), key: hex.EncodeToString(raw), done: make(chan struct{}), tail: &tailBuf{}}
-	n := strconv.Itoa(ctxTokens)
+	n := strconv.Itoa(l.maxTokens())
 	args := []string{"-m", model, "--embedding", "--host", "127.0.0.1", "--port", strconv.Itoa(port),
 		"-c", n, "-b", n, "-ub", n, "-np", "1", "--no-ui", "--no-slots", "--offline",
 		"--sleep-idle-seconds", strconv.Itoa(int(orphanSleep / time.Second))}

@@ -48,7 +48,7 @@ Tests:
 
 | File | Covers |
 |:---|:---|
-| `config_test.go` | `default.yaml` equals `Default()`; loading a file; a missing file is written from the default; invalid YAML; environment overrides; every `Validate` rule; `HomeDir`/`DefaultPath` with and without `RAGCODE_HOME`; logger levels; log rotation on open, every 1000 writes, failed rotation keeps writing, following a rotation done by another process; old Qdrant keys from v1 are ignored; `embed_threads` default and `0`; `Redacted` hides only a URL's password. |
+| `config_test.go` | `default.yaml` equals `Default()`; loading a file; a missing file is written from the default; invalid YAML; environment overrides; every `Validate` rule; `HomeDir`/`DefaultPath` with and without `RAGCODE_HOME`; logger levels; log rotation on open, every 1000 writes, failed rotation keeps writing, following a rotation done by another process; old Qdrant keys from v1 are ignored; `embed_threads` default and `0`; the `embed_max_tokens` bounds (256..32768, at most 8192 without `embed_model`); `Redacted` hides only a URL's password. |
 | `zz_verify_test.go` | Verification tests: odd inputs (empty file, wrong types, ...) error or load but never panic; path is a directory; missing file with an unwritable parent; environment values on a fresh file are validated; empty environment values do not override; YAML tags are snake_case; exact defaults; logger levels; `OpenLogFile` errors; concurrent writes across rotations; the logger through the log file. |
 
 ## Configuration keys
@@ -63,7 +63,8 @@ ignored (so a v1 `config.yaml` with Qdrant settings, or a v2.0 one with
 | `embed_model` | `EmbedModel` | empty | Absolute path of a `.gguf` embedding model to use instead of the downloaded one. The index names the model after the file name without `.gguf`, then `@` and a 12-character fingerprint of the file (its size and its first and last MiB), e.g. `my-embed@3fa9c01b77d2`, so another file, even under the same name, re-embeds every workspace. |
 | `llama_server` | `LlamaServer` | empty | Absolute path of a `llama-server` binary to use instead of the downloaded one. |
 | `embed_threads` | `EmbedThreads` | `max(2, NumCPU/3)` | CPU threads llama.cpp may use for embeddings (`-t`, `-tb`). `0` lets llama.cpp choose (every performance core). Must not be negative. |
-| `min_free_memory_mb` | `MinFreeMemoryMB` | `750` | Free memory needed to start the embedding server (measured: the model holds 0.3 GB of RAM on a GPU and up to 0.9 GB on CPU; a load with under 600 MB free failed). With less, a call that has to start the server answers `low_memory`; a server already running is not checked. `0` turns the check off. Must not be negative. |
+| `embed_max_tokens` | `EmbedMaxTokens` | `8192` | How much of a function, class or section the model reads, in tokens (about 3 bytes of code each, so 8192 tokens are roughly 24 KB). A longer symbol is embedded by its first part only; its stored content is whole. `8192` is the context window of the built-in model. A lower value makes long symbols faster to index and bounds the memory of the embedding server (on one laptop's CPU a 24 KB symbol took 61 s and 1.5 GB; a 12 KB one 23 s and 0.9 GB). Between `256` and `32768`, and at most `8192` without `embed_model`. With your own `embed_model`, set it to that model's context length: a model trained for less is cut to its own limit anyway, but every long symbol then costs one refused request first. Changing it makes the next index run of each workspace re-embed every file. |
+| `min_free_memory_mb` | `MinFreeMemoryMB` | `750` | Free memory needed to start the embedding server (measured: the model holds 0.3 GB of RAM on a GPU and up to 0.9 GB on CPU for inputs up to 12 KB, 1.5 GB on CPU for a symbol at the 8192-token limit; a load with under 600 MB free failed). The check covers loading only: on a CPU machine short of memory, lower `embed_max_tokens`, since a long symbol raises the peak. With less, a call that has to start the server answers `low_memory`; a server already running is not checked. `0` turns the check off. Must not be negative. |
 | `log_level` | `LogLevel` | `info` | `debug`, `info`, `warn` or `error`. |
 | `log_max_size_mb` | `LogMaxSizeMB` | `10` | Size at which `ragcode.log` is rotated. Must be positive. |
 | `exclude_patterns` | `ExcludePatterns` | `node_modules`, `vendor`, `target`, `build`, `dist`, `__pycache__` | Directory names skipped while indexing and watching. Hidden directories are always skipped. Setting the key replaces the whole list. |
@@ -132,6 +133,7 @@ Errors are prefixed `config:`: `create dir`, `write default`, `read <path>`,
 Returns the first invalid field: `embed_model` not an absolute path ending in
 `.gguf`, `embed_runtime` other than `auto`, `cpu` or `vulkan`, `llama_server`
 not an absolute path, unknown `log_level`, negative `embed_threads`,
+`embed_max_tokens` outside 256..32768 or over 8192 with the built-in model,
 negative `max_files`, negative `min_free_memory_mb`,
 non-positive `log_max_size_mb`, negative `watch_debounce`, or a relative
 `allowed_workspace_paths` entry.
@@ -178,5 +180,5 @@ the real `~/.ragcode`.
 - [internal](../README.md)
 - [cmd/rag-code-mcp](../../cmd/rag-code-mcp/README.md): loads the config and opens the log
 - [engine](../../engine/README.md): `auto_index`, `watch_*`, `allowed_workspace_paths`, `exclude_patterns`
-- [embed](../../embed/README.md): `embed_runtime`, `embed_model`, `llama_server`, `embed_threads`, `min_free_memory_mb`
+- [embed](../../embed/README.md): `embed_runtime`, `embed_model`, `llama_server`, `embed_threads`, `embed_max_tokens`, `min_free_memory_mb`
 - [install](../install/README.md): writes the config on install

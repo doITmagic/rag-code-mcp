@@ -638,7 +638,8 @@ Indexes the workspace.
   confirmation step. It does not wait for the embedder, which on first use
   downloads its runtime and loads the model: an embedder that cannot start
   (also `low_memory`) is the failure of the queued run, seen in the `index`
-  block and in `rag_server_info`, not a `dependency_down` answer here. When the existing index has another `Format`, an
+  block and in `rag_server_info`, not a `dependency_down` answer here. When the existing index has another `Format`, or was
+  embedded up to another `embed_max_tokens`, an
   `incremental` request also carries `data.full_reindex`: every file is
   re-indexed anyway. Progress is visible in `rag_server_info`, which answers
   at once, and in the `index` block of any later call; the other tools wait

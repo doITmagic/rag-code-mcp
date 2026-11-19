@@ -18,6 +18,14 @@ embed_runtime: auto
 # least 2, so a machine without a GPU stays usable while indexing.
 # 0 lets llama.cpp use every performance core (fastest, loudest).
 # embed_threads: 4
+# How much of a function, class or section the model reads, in tokens (about
+# 3 to 4 bytes of code each). Longer symbols are found by their first part
+# only. 8192 is all the built-in model takes; a lower value indexes faster on
+# a machine without a GPU, and with less memory (a symbol at the limit takes
+# about 1.5 GB there). With your own embed_model, set it to that model's
+# context length. Changing it makes the next index run re-embed every
+# workspace.
+embed_max_tokens: 8192
 
 # Free memory (MB) needed to load the embedding model. With less, indexing and
 # searches stop with status low_memory instead of loading a model that cannot

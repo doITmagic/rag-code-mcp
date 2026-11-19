@@ -22,10 +22,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const (
-	fakeDim      = 6
-	fakeMaxBytes = 5000 // the fake server refuses a longer input as "too large"
-)
+// The fake server counts one token per byte and refuses an input over its
+// context (-c) with llama-server's own messages.
+const fakeDim = 6
 
 // TestMain lets the test binary act as the llama-server: the tests start it
 // again with RAGCODE_FAKE_LLAMA=1 and the arguments Llama passes.
@@ -64,6 +63,7 @@ func fakeLog(line string) {
 
 func fakeLlamaServer() {
 	port, model := "", ""
+	ctxSize, batch := 0, 0
 	args := os.Args[1:]
 	for i := 0; i+1 < len(args); i++ {
 		switch args[i] {
@@ -71,7 +71,15 @@ func fakeLlamaServer() {
 			port = args[i+1]
 		case "-m":
 			model = args[i+1]
+		case "-c":
+			ctxSize, _ = strconv.Atoi(args[i+1])
+		case "-ub":
+			batch, _ = strconv.Atoi(args[i+1])
 		}
+	}
+	// A model trained for less than -c: the server caps the slot at it.
+	if n, _ := strconv.Atoi(os.Getenv("RAGCODE_FAKE_TRAIN_CTX")); n > 0 && n < ctxSize {
+		ctxSize = n
 	}
 	if os.Getenv("RAGCODE_FAKE_MODE") == "exit" {
 		fmt.Fprintln(os.Stderr, "error: failed to load model "+model)
@@ -79,6 +87,7 @@ func fakeLlamaServer() {
 	}
 	key := os.Getenv("LLAMA_API_KEY")
 	fakeLog("start " + strconv.Itoa(os.Getpid()))
+	fakeLog(fmt.Sprintf("ctx c=%d ub=%d", ctxSize, batch))
 	auth := func(w http.ResponseWriter, r *http.Request) bool {
 		if r.Header.Get("Authorization") != "Bearer "+key {
 			http.Error(w, `{"error":{"message":"Invalid API Key"}}`, http.StatusUnauthorized)
@@ -116,9 +125,14 @@ func fakeLlamaServer() {
 		}
 		fakeLog(fmt.Sprintf("emb n=%d bytes=%d", len(req.Input), total))
 		for _, t := range req.Input {
-			if len(t) > fakeMaxBytes {
+			if len(t) > batch {
 				w.WriteHeader(http.StatusInternalServerError)
-				fmt.Fprintf(w, `{"error":{"message":"input (%d tokens) is too large to process"}}`, len(t))
+				fmt.Fprintf(w, `{"error":{"code":500,"message":"input (%d tokens) is too large to process. increase the physical batch size (current batch size: %d)","type":"server_error"}}`, len(t), batch)
+				return
+			}
+			if len(t) > ctxSize {
+				w.WriteHeader(http.StatusBadRequest)
+				fmt.Fprintf(w, `{"error":{"code":400,"message":"input (%d tokens) is larger than the max context size (%d tokens). skipping","type":"exceed_context_size_error"}}`, len(t), ctxSize)
 				return
 			}
 		}
@@ -357,15 +371,76 @@ func TestLlamaRestartAfterKill(t *testing.T) {
 }
 
 func TestLlamaOversizedInputCut(t *testing.T) {
-	l, _, _ := newTestLlama(t)
+	l, _, log := newTestLlama(t)
 	long := strings.Repeat("x", 9000)
 	vecs, err := l.Embed(context.Background(), []string{"short", long, "tail"})
 	require.NoError(t, err)
 	require.Len(t, vecs, 3)
 	assert.Equal(t, fakeVec("short"), vecs[0])
 	assert.Equal(t, fakeVec("tail"), vecs[2])
-	// 9000 tokens counted: cut in proportion to fit the 4096-token context.
-	assert.Equal(t, fakeVec(long[:len(long)*(ctxTokens-64)/9000]), vecs[1])
+	// 9000 tokens counted against the default 8192: cut to the share that fits.
+	assert.Equal(t, fakeVec(long[:DefaultTokens-cutMargin]), vecs[1])
+	assert.Equal(t, []string{"ctx c=8192 ub=8192"}, logLines(t, log, "ctx"))
+	// A text over 8 KiB travels alone: refused once, then taken cut.
+	assert.Equal(t, []string{"emb n=1 bytes=5", "emb n=1 bytes=9000", "emb n=1 bytes=8128", "emb n=1 bytes=4"}, logLines(t, log, "emb"))
+}
+
+// MaxTokens is the context the server is started with, and an input a few
+// tokens over it keeps nearly all of its text.
+func TestLlamaMaxTokens(t *testing.T) {
+	l, _, log := newTestLlama(t)
+	l.MaxTokens = 1024
+	long := strings.Repeat("é", 520) // 1040 bytes
+	vecs, err := l.Embed(context.Background(), []string{long})
+	require.NoError(t, err)
+	assert.Equal(t, fakeVec(long[:960]), vecs[0]) // 1040*(1024-64)/1040
+	assert.Equal(t, []string{"ctx c=1024 ub=1024"}, logLines(t, log, "ctx"))
+}
+
+// A model trained for a shorter context than the one asked for: the server
+// refuses with its other message, which names the model's limit.
+func TestLlamaModelWithSmallerContext(t *testing.T) {
+	l, _, log := newTestLlama(t)
+	t.Setenv("RAGCODE_FAKE_TRAIN_CTX", "512")
+	long := strings.Repeat("x", 3000)
+	vecs, err := l.Embed(context.Background(), []string{"short", long})
+	require.NoError(t, err)
+	assert.Equal(t, fakeVec("short"), vecs[0])
+	assert.Equal(t, fakeVec(long[:448]), vecs[1]) // 512-64
+	// Refused together, then one by one.
+	assert.Equal(t, []string{"emb n=2 bytes=3005", "emb n=1 bytes=5", "emb n=1 bytes=3000", "emb n=1 bytes=448"}, logLines(t, log, "emb"))
+}
+
+func TestParseTooLarge(t *testing.T) {
+	big := parseTooLarge("input (9000 tokens) is too large to process. increase the physical batch size (current batch size: 8192)")
+	require.NotNil(t, big)
+	assert.Equal(t, 9000, big.tokens)
+	assert.Equal(t, 8192, big.limit)
+	big = parseTooLarge("input (600 tokens) is larger than the max context size (512 tokens). skipping")
+	require.NotNil(t, big)
+	assert.Equal(t, 600, big.tokens)
+	assert.Equal(t, 512, big.limit)
+	big = parseTooLarge("request is too large to process")
+	require.NotNil(t, big)
+	assert.Zero(t, big.tokens)
+	assert.Zero(t, big.limit)
+	assert.Nil(t, parseTooLarge("Request Entity Too Large"))
+	assert.Nil(t, parseTooLarge("model not loaded"))
+}
+
+func TestCut(t *testing.T) {
+	text := strings.Repeat("x", 10000)
+	assert.Len(t, cut(text, 0, 8192), 5000, "no count: half")
+	assert.Len(t, cut(text, 8200, 8192), 10000*8128/8200, "a little over keeps nearly all")
+	assert.Len(t, cut(text, 40000, 8192), 10000*8128/40000)
+	assert.Len(t, cut(text, 100, 64), 10000*56/100, "a small limit keeps a margin of an eighth")
+	assert.Len(t, cut(text, 5000, 8192), 5000, "a count within the limit is not trusted: half")
+	assert.Equal(t, "é", cut("éé", 0, 8192))
+	assert.Equal(t, "é", cut("éé", 90000, 8192), "never inside the first character")
+	assert.Equal(t, "é", cut("é", 0, 8192), "one character is not cut")
+	assert.Equal(t, "x", cut("x", 0, 8192))
+	assert.Empty(t, cut("", 0, 8192))
+	assert.Equal(t, "x", cut("xx", 9000, 8192))
 }
 
 func TestLlamaServerExitsAtStart(t *testing.T) {

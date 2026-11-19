@@ -37,7 +37,7 @@ graph LR
 
 | Direction | Package | What for |
 |-----------|---------|----------|
-| Created by | [internal/app](../internal/app/README.md) | `embed.NewLlama(model, runtime, ~/.ragcode/run)` with the runtime from `llama.FromConfig`, then `Threads` and `MinFreeMB` from the config; `Close` when the app closes. Tests pass `&embed.Fake{}` instead. |
+| Created by | [internal/app](../internal/app/README.md) | `embed.NewLlama(model, runtime, ~/.ragcode/run)` with the runtime from `llama.FromConfig`, then `Threads`, `MinFreeMB` and `MaxTokens` from the config; `Close` when the app closes. Tests pass `&embed.Fake{}` instead. |
 | Called by | [index](../index/README.md) | Embeds symbol texts during a run (with `DocText`), reads `Dimension` to create the collection and `Model` to detect a model change. |
 | Called by | [engine](../engine/README.md) | Embeds search queries (with `QueryText`); `Dimension` for `Ready` and to detect a vector size change. |
 | Calls | [internal/llama](../internal/llama/README.md) (through the small `Runtime` interface) | `Ensure` returns the paths of `llama-server` and the model, downloading what is missing; `Installed` and `RuntimeName` feed the status. |
@@ -62,7 +62,7 @@ graph LR
 
 | File | Covers |
 |------|--------|
-| `llama_test.go` | `Llama` against a stand-in `llama-server` (the test binary re-run as the server): order and batching by count and size, cached dimension, `Status`, one start for concurrent callers, idle stop and its single reused timer, `Close` stops the server and removes the record, restart after the server was killed, an input over the context is cut, a server that exits at start (with the `embed_runtime: cpu` hint for Vulkan), low memory checked only on start, `Status` answers `starting` while `Ensure` blocks, `starting` ends when a download finishes or fails after its caller gave up, `Close` returns while a call waits for a model that never loads, and `sweep` (dead owner is removed, live owner or wrong key is left alone). |
+| `llama_test.go` | `Llama` against a stand-in `llama-server` (the test binary re-run as the server): order and batching by count and size, cached dimension, `Status`, one start for concurrent callers, idle stop and its single reused timer, `Close` stops the server and removes the record, restart after the server was killed, an input over the context is cut to the share that fits and a lone refused text is not sent twice, `MaxTokens` sets the server's context, a model trained for a shorter context is cut to its own limit, both refusal messages parsed (`TestParseTooLarge`) and `cut` (`TestCut`), a server that exits at start (with the `embed_runtime: cpu` hint for Vulkan), low memory checked only on start, `Status` answers `starting` while `Ensure` blocks, `starting` ends when a download finishes or fails after its caller gave up, `Close` returns while a call waits for a model that never loads, and `sweep` (dead owner is removed, live owner or wrong key is left alone). |
 | `prefix_test.go` | Prefixes per model family. |
 | `fake_test.go` | `Fake` vectors are deterministic and unit-length; `Fail` makes the first N calls fail. |
 | `mem_test.go` | `checkMemory`: off when `MinFreeMB` is 0, and the low-memory error. |
@@ -96,6 +96,7 @@ type Llama struct {
     Threads   int           // CPU threads (-t, -tb); 0 lets llama.cpp pick. Set before use.
     MinFreeMB int           // free memory needed to start the server; 0 turns the check off
     IdleStop  time.Duration // how long the server outlives the last call; 0 means 5 minutes
+    MaxTokens int           // the context the server is started with; 0 means DefaultTokens (8192)
     // ...
 }
 
@@ -167,7 +168,8 @@ flowchart TD
 
 The first call starts `llama-server` from the files `Runtime.Ensure` returns
 (downloading them if missing), on a free `127.0.0.1` port, with the model
-loaded in embedding mode, a context of 4096 tokens (`-c`, `-b`, `-ub`), one
+loaded in embedding mode, a context of `MaxTokens` tokens (`-c`, `-b`, `-ub`;
+8192 by default, the context window of the built-in model), one
 slot, no web UI, `--offline`, and `-t`/`-tb` when `Threads > 0`. It also gets
 `--sleep-idle-seconds 600`, so a server whose RagCode process was killed drops
 the model from memory by itself. A random 32-byte API key is passed in the
@@ -220,14 +222,30 @@ partial result is returned. An empty input returns an empty result without a
 request.
 
 (The [index](../index/README.md) package calls `Embed` with 16 texts at a
-time, each cut to 2000 bytes before the prefix.)
+time, each cut to four bytes per token of the limit before the prefix: 32 KiB
+for 8192 tokens. Such a text is over 8 KiB far more often than before, and
+then travels alone.)
 
 ### Inputs longer than the context
 
-The server refuses an input over its 4096-token context. `Embed` then embeds the
-batch's texts one by one and cuts each refused text (to half its length, or to
-less when the token count the server reports asks for it: the share that should
-fit, aiming at 4032 tokens; never inside a UTF-8 character) until it is taken. The 2000-byte texts of the index always fit.
+The server refuses an input with more tokens than its context, and says how
+many it counted and how many it takes. `Embed` then embeds the batch's texts
+one by one and cuts each refused text to the share that fits, 64 tokens under
+the limit (to half its length when the server gave no count; never inside a
+UTF-8 character), until it is taken. A text refused alone is cut before it is
+sent again, so a long symbol costs one refused request, answered at once.
+
+Two refusals are recognised, by their wording in llama.cpp `b12359`: `input (N
+tokens) is too large to process ... (current batch size: M)`, HTTP 500, for an
+input over the context asked for, and `input (N tokens) is larger than the max
+context size (M tokens)`, HTTP 400, for a model of your own trained for a
+shorter context than `MaxTokens`: the server caps the slot at the model's own
+limit, and the text is cut to that.
+
+Measured with the built-in model: code and Markdown run at 2.7 to 3.8 bytes a
+token, about 3 on average, so 8192 tokens are roughly 24 KB of source. The
+index sends up to 4 bytes a token (32 KiB), which leaves the cut to the token
+count instead of guessing it from bytes.
 
 ### Retry and timeouts
 
@@ -279,6 +297,7 @@ Keys from [internal/config](../internal/config/README.md), applied in
 | `embed_model` | `RAGCODE_EMBED_MODEL` | empty | Absolute path of a `.gguf` model instead of the built-in one. The model name the index stores is the file name without `.gguf`, then `@` and a 12-character fingerprint of the file (its size and its first and last MiB), e.g. `my-embed@3fa9c01b77d2`; another file, even under the same name, makes the next index run recreate the collection. |
 | `llama_server` | `RAGCODE_LLAMA_SERVER` | empty | Absolute path of a `llama-server` instead of the downloaded one. |
 | `embed_threads` | none | `max(2, NumCPU/3)` | `Llama.Threads` -> `-t` and `-tb`. `0` lets llama.cpp use every performance core; negative values are rejected by config validation. |
+| `embed_max_tokens` | none | `8192` | `Llama.MaxTokens` -> `-c`, `-b` and `-ub`: the longest input embedded whole. The index embeds a symbol up to it. |
 | `min_free_memory_mb` | none | `750` | `Llama.MinFreeMB`. See "Low memory" below. |
 
 ### Speed on one machine
@@ -289,6 +308,19 @@ bytes: the CPU build with 4-6 threads took 44-49 s; the Vulkan build took
 input lengths were seen (the GPU driver caches them afterwards). Loading the
 model took 2.5 s on CPU and 4.5-10 s with Vulkan; the server used about
 435-520 MB of memory on CPU. Other machines will differ.
+
+One long input, on the same laptop (6 threads on CPU), by its length:
+
+| Input | CPU | Vulkan |
+|-------|-----|--------|
+| 2000 bytes (about 660 tokens) | 3.1 s | 0.1 s |
+| 12000 bytes (about 3700 tokens) | 22.9 s | 0.7 s |
+| 24000 bytes (about 8000 tokens) | 61 s | 2.3 s |
+
+Memory grows with the longest input seen, not with the context asked for: the
+server's resident memory peaked at 0.9 GB on CPU after a 12000-byte input and
+at 1.5 GB after a 24000-byte one (0.6 GB and 0.85 GB with Vulkan, plus video
+memory). A lower `embed_max_tokens` bounds both the time and the memory.
 
 ### Low memory
 
@@ -322,4 +354,4 @@ No build tags. The tests use `Fake`, httptest servers or a stand-in for
 - [engine](../engine/README.md): embeds search queries.
 - [internal/app](../internal/app/README.md): builds the embedder from config.
 - [internal/llama](../internal/llama/README.md): the runtime and model files.
-- [internal/config](../internal/config/README.md): `embed_runtime`, `embed_model`, `llama_server`, `embed_threads`, `min_free_memory_mb`.
+- [internal/config](../internal/config/README.md): `embed_runtime`, `embed_model`, `llama_server`, `embed_threads`, `embed_max_tokens`, `min_free_memory_mb`.

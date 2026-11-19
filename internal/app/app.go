@@ -59,6 +59,7 @@ func New(o Options) (*App, error) {
 		em := embed.NewLlama(rt.ModelLabel(), rt, filepath.Join(config.HomeDir(), "run"))
 		em.Threads = o.Config.EmbedThreads
 		em.MinFreeMB = o.Config.MinFreeMemoryMB
+		em.MaxTokens = o.Config.EmbedMaxTokens
 		o.Embedder = em
 	}
 	if o.Store == nil {

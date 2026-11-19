@@ -65,8 +65,9 @@ type Options struct {
 When `Embedder` is nil, `New` creates the embedder: `llama.FromConfig` gives
 the runtime (`embed_runtime`, `llama_server`, `embed_model`; its progress lines
 go to the log), `embed.NewLlama` wraps it with the runtime's model name and
-`~/.ragcode/run` for the server records, and `Threads` and `MinFreeMB` come from
-`embed_threads` and `min_free_memory_mb`. When `Store` is nil it uses one SQLite index per workspace
+`~/.ragcode/run` for the server records, and `Threads`, `MinFreeMB` and
+`MaxTokens` come from `embed_threads`, `min_free_memory_mb` and
+`embed_max_tokens`. When `Store` is nil it uses one SQLite index per workspace
 under `$RAGCODE_HOME/index` (default `~/.ragcode/index`).
 
 ### `App`

@@ -299,7 +299,7 @@ files the project already has (see [Where data lives](#where-data-lives)).
 | Component | Requirement | Notes |
 |-----------|-------------|-------|
 | **Embedding runtime** | llama.cpp `llama-server` and the model, about 310 MB for the model | Downloaded once into `~/.ragcode`; no Docker, Ollama or other service |
-| **Free memory** | about 750 MB to start the model | With less, a call that has to start the embedding server answers `low_memory` and says how much to free (`min_free_memory_mb`) |
+| **Free memory** | about 750 MB to start the model; up to 1.5 GB on CPU while a very long function (about 24 KB) is embedded | With less, a call that has to start the embedding server answers `low_memory` and says how much to free (`min_free_memory_mb`). `embed_max_tokens` lowers how much of a long symbol is embedded, and the memory with it |
 | **CPU / RAM** | 4 cores, 8 GB RAM minimum; 8 cores, 16 GB recommended | |
 | **Disk** | SSD | |
 | **GPU** | optional | The Vulkan build is picked on its own with an NVIDIA driver and a Vulkan loader (`embed_runtime`); it speeds up indexing a lot |

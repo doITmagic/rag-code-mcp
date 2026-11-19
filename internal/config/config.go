@@ -26,6 +26,7 @@ type Config struct {
 	LlamaServer           string        `yaml:"llama_server"`
 	EmbedRuntime          string        `yaml:"embed_runtime"`
 	EmbedThreads          int           `yaml:"embed_threads"`
+	EmbedMaxTokens        int           `yaml:"embed_max_tokens"`
 	MinFreeMemoryMB       int           `yaml:"min_free_memory_mb"`
 	LogLevel              string        `yaml:"log_level"`
 	LogMaxSizeMB          int           `yaml:"log_max_size_mb"`
@@ -40,12 +41,21 @@ type Config struct {
 	UpdateSource          string        `yaml:"update_source"`
 }
 
+// The bounds of embed_max_tokens. BuiltinModelTokens is the context window of
+// the built-in model, EmbeddingGemma 2 (embed.DefaultTokens).
+const (
+	BuiltinModelTokens = 8192
+	minEmbedTokens     = 256 // llama.cpp rounds a context up to a multiple of it
+	maxEmbedTokens     = 32768
+)
+
 // Default returns the built-in configuration; default.yaml mirrors it.
 func Default() Config {
 	return Config{
 		EmbedRuntime: "auto",
 		// llama.cpp otherwise takes every performance core.
 		EmbedThreads:       max(2, runtime.NumCPU()/3),
+		EmbedMaxTokens:     BuiltinModelTokens,
 		MinFreeMemoryMB:    750,
 		LogLevel:           "info",
 		LogMaxSizeMB:       10,
@@ -142,6 +152,12 @@ func (c Config) Validate() error {
 	}
 	if c.EmbedThreads < 0 {
 		return fmt.Errorf("config: embed_threads must not be negative, got %d", c.EmbedThreads)
+	}
+	if c.EmbedMaxTokens < minEmbedTokens || c.EmbedMaxTokens > maxEmbedTokens {
+		return fmt.Errorf("config: embed_max_tokens must be between %d and %d, got %d", minEmbedTokens, maxEmbedTokens, c.EmbedMaxTokens)
+	}
+	if c.EmbedModel == "" && c.EmbedMaxTokens > BuiltinModelTokens {
+		return fmt.Errorf("config: embed_max_tokens %d is over the %d tokens the built-in model takes (a higher value needs your own embed_model)", c.EmbedMaxTokens, BuiltinModelTokens)
 	}
 	if c.MaxFiles < 0 {
 		return fmt.Errorf("config: max_files must not be negative, got %d", c.MaxFiles)

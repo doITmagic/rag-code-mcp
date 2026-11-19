@@ -578,7 +578,14 @@ func TestIndexWorkspace(t *testing.T) {
 	require.NoError(t, st.Save())
 	r, _ = v.call(t, "rag_index_workspace", map[string]any{"workspace_root": v.root})
 	data(t, r, &plan)
+	assert.Contains(t, plan.Full, "index format")
 	assert.Contains(t, plan.Full, "every file is re-indexed")
+	// The same for an index embedded up to another token limit.
+	st.Format, st.EmbedTokens = index.Format, 500
+	require.NoError(t, st.Save())
+	r, _ = v.call(t, "rag_index_workspace", map[string]any{"workspace_root": v.root})
+	data(t, r, &plan)
+	assert.Contains(t, plan.Full, "embed_max_tokens 500 -> 8192: every file is re-indexed")
 
 	_, res := v.call(t, "rag_index_workspace", map[string]any{"workspace_root": v.root, "mode": "full"})
 	assert.True(t, res.IsError)

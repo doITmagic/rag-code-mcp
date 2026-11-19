@@ -46,8 +46,12 @@ func (t *tools) indexWorkspace(ctx context.Context, req *mcp.CallToolRequest, in
 		return fail(err.Error())
 	}
 	data := map[string]any{"root": w.Root, "collection": w.Collection, "mode": in.Mode}
-	if st, err := index.LoadState(w.Root); in.Mode == "incremental" && err == nil && len(st.Files) > 0 && st.Format != index.Format {
-		data["full_reindex"] = fmt.Sprintf("index format %d -> %d: every file is re-indexed", st.Format, index.Format)
+	if st, err := index.LoadState(w.Root); in.Mode == "incremental" && err == nil && len(st.Files) > 0 {
+		if tokens := index.EmbedTokens(t.cfg.EmbedMaxTokens); st.Format != index.Format {
+			data["full_reindex"] = fmt.Sprintf("index format %d -> %d: every file is re-indexed", st.Format, index.Format)
+		} else if st.EmbedTokens != tokens {
+			data["full_reindex"] = fmt.Sprintf("embed_max_tokens %d -> %d: every file is re-indexed", st.EmbedTokens, tokens)
+		}
 	}
 	var notes []string
 	if t.cfg.AutoCreateIDERules {

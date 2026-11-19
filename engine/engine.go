@@ -773,7 +773,7 @@ func (e *Engine) runJobs(w *Workspace) {
 
 func (e *Engine) runOne(w *Workspace, kind queueKind, files, deleted []string) (index.Status, error) {
 	o := index.Options{Root: w.Root, Collection: w.Collection, Store: e.store, Embedder: e.embed,
-		Recreate: kind == kindRecreate, Exclude: e.cfg.ExcludePatterns, MaxFiles: e.cfg.MaxFiles, Log: e.log, Progress: func(s index.Status) {
+		Recreate: kind == kindRecreate, Exclude: e.cfg.ExcludePatterns, MaxFiles: e.cfg.MaxFiles, EmbedTokens: e.cfg.EmbedMaxTokens, Log: e.log, Progress: func(s index.Status) {
 			e.mu.Lock()
 			w.status = s
 			e.mu.Unlock()

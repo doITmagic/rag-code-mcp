@@ -152,8 +152,8 @@ func TestStateWithoutHashesLoads(t *testing.T) {
 	st, err := LoadState(e.root)
 	require.NoError(t, err)
 	ids := st.Files[p].IDs
-	data := fmt.Sprintf(`{"model":%q,"format":%d,"files":{%q:{"mtime":%d,"size":%d,"ids":[%q]}}}`,
-		st.Model, Format, p, info.ModTime().UnixNano(), info.Size(), ids[0])
+	data := fmt.Sprintf(`{"model":%q,"format":%d,"embed_tokens":%d,"files":{%q:{"mtime":%d,"size":%d,"ids":[%q]}}}`,
+		st.Model, Format, st.EmbedTokens, p, info.ModTime().UnixNano(), info.Size(), ids[0])
 	require.NoError(t, os.WriteFile(filepath.Join(Dir(e.root), "state.json"), []byte(data), 0o644))
 	got, err := LoadState(e.root)
 	require.NoError(t, err)

@@ -70,7 +70,10 @@ func TestNewDefaultsStartNothing(t *testing.T) {
 	if assert.True(t, ok, "the default embedder is llama.cpp") {
 		assert.Equal(t, "m", em.Model())
 		assert.Contains(t, []string{"not_installed"}, em.Status().State)
+		assert.Equal(t, embed.DefaultTokens, em.MaxTokens, "embed_max_tokens reaches the embedder")
 	}
+	// The default of the config is the context window the embedder knows the built-in model by.
+	assert.Equal(t, embed.DefaultTokens, config.BuiltinModelTokens)
 	assert.NoDirExists(t, filepath.Join(home, "llama"), "nothing downloaded")
 	assert.NoDirExists(t, filepath.Join(home, "models"), "nothing downloaded")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

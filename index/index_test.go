@@ -617,21 +617,24 @@ func TestWalk(t *testing.T) {
 }
 
 func TestEmbedText(t *testing.T) {
+	const limit = 2000
 	s := &parser.Symbol{Kind: parser.KindFunction, QualifiedName: "m.F", Signature: "func F()", Doc: "doc", Content: "body"}
-	assert.Equal(t, "function m.F\nfunc F()\ndoc\nbody", embedText(s))
+	assert.Equal(t, "function m.F\nfunc F()\ndoc\nbody", embedText(s, limit))
 
 	s.Content = strings.Repeat("é", 2000)
-	got := embedText(s)
-	assert.LessOrEqual(t, len(got), maxEmbedText)
+	got := embedText(s, limit)
+	assert.LessOrEqual(t, len(got), limit)
 	assert.True(t, utf8.ValidString(got))
 
-	// Long Content is cut exactly as the full text used to be: the 26-byte
+	// Long Content is cut exactly as the full text would be: the 26-byte
 	// header leaves 1974 bytes, 987 two-byte runes.
 	assert.Equal(t, "function m.F\nfunc F()\ndoc\n"+strings.Repeat("é", 987), got)
 	s.Content = strings.Repeat("x", 1<<20)
-	assert.Equal(t, "function m.F\nfunc F()\ndoc\n"+strings.Repeat("x", 1974), embedText(s))
+	assert.Equal(t, "function m.F\nfunc F()\ndoc\n"+strings.Repeat("x", 1974), embedText(s, limit))
 	s.Content = strings.Repeat("é", 986) + "x" + strings.Repeat("é", 1000) // byte 1974 of Content is a continuation byte
-	assert.Equal(t, "function m.F\nfunc F()\ndoc\n"+strings.Repeat("é", 986)+"x", embedText(s))
+	assert.Equal(t, "function m.F\nfunc F()\ndoc\n"+strings.Repeat("é", 986)+"x", embedText(s, limit))
+	// A header alone over the limit is cut too.
+	assert.Equal(t, "function m.F", embedText(s, 12))
 }
 
 // A path named in Options.Deleted is purged from the store even when
@@ -1076,6 +1079,59 @@ func TestRunFormatChangeRecreates(t *testing.T) {
 	last, err := e.run(t, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 0, last.Total, "same format: nothing to do")
+}
+
+// A symbol is embedded up to the token limit of the run, four bytes a token,
+// and a run with another limit re-embeds every file: one collection holds
+// vectors of one limit.
+func TestRunEmbedTokens(t *testing.T) {
+	e := newEnv(t)
+	em := &recEmbedder{}
+	e.opts.Embedder = em
+	long := "func A " + strings.Repeat("x", 40000) + "\n"
+	e.write(t, "a.go", long)
+	e.write(t, "b.go", "func B\n")
+	longest := func() int {
+		n := 0
+		for _, s := range em.texts {
+			n = max(n, len(s))
+		}
+		em.texts = nil
+		return n
+	}
+
+	first, err := e.run(t, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, first.Total)
+	assert.Equal(t, embed.DefaultTokens*embedBytesPerToken, longest(), "the default limit")
+	st, err := LoadState(e.root)
+	require.NoError(t, err)
+	assert.Equal(t, embed.DefaultTokens, st.EmbedTokens)
+
+	same, err := e.run(t, func(o *Options) { o.EmbedTokens = embed.DefaultTokens })
+	require.NoError(t, err)
+	assert.Equal(t, 0, same.Total, "the default spelled out: nothing to do")
+
+	// Asked for by a files run: still everything, or the collection would mix limits.
+	lower, err := e.run(t, func(o *Options) { o.EmbedTokens = 500; o.Files = []string{filepath.Join(e.root, "b.go")} })
+	require.NoError(t, err)
+	assert.True(t, lower.Recreated)
+	assert.Equal(t, 2, lower.Total, "re-embedded with the new limit")
+	assert.Equal(t, 2000, longest())
+	st, err = LoadState(e.root)
+	require.NoError(t, err)
+	assert.Equal(t, 500, st.EmbedTokens)
+
+	last, err := e.run(t, func(o *Options) { o.EmbedTokens = 500 })
+	require.NoError(t, err)
+	assert.Equal(t, 0, last.Total, "same limit: nothing to do")
+
+	// A state written before the limit was recorded (2000-byte texts).
+	st.EmbedTokens = 0
+	require.NoError(t, st.Save())
+	old, err := e.run(t, func(o *Options) { o.EmbedTokens = 500 })
+	require.NoError(t, err)
+	assert.Equal(t, 2, old.Total)
 }
 
 // The index files live under the global home, so a project gets nothing in

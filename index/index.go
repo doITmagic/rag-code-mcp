@@ -400,7 +400,7 @@ func (r *run) finish(ctx context.Context, err error) (Status, error) {
 	// session's end), or finished with nothing to do (a run queued behind a
 	// full one): the index is still the one the last run finished, so are
 	// its counters on disk. The caller still gets this run's own status.
-	// A failed run that changed nothing (Ollama down) also keeps them, under
+	// A failed run that changed nothing (embedder unavailable) also keeps them, under
 	// its own error. A run stopped by a HEAD move changed the index like a
 	// finished one, so its counters are the last real ones.
 	last := r.prev.Phase == "done" || r.prev.Phase == "failed"

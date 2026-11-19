@@ -46,7 +46,7 @@ graph TD
 
 | Direction | Package | What for |
 |-----------|---------|----------|
-| Created by | [internal/app](../internal/app/README.md) | `engine.New(cfg, store, embedder, log)` with the SQLite store and the Ollama embedder. |
+| Created by | [internal/app](../internal/app/README.md) | `engine.New(cfg, store, embedder, log)` with the SQLite store and the llama.cpp embedder. |
 | Called by | [cmd/rag-code-mcp](../cmd/rag-code-mcp/README.md) | `go a.Engine.Resume(ctx)` at start-up. |
 | Called by | [tools](../tools/README.md) | Every MCP tool opens a workspace with `Workspace(root)`; `rag_index_workspace` calls `WriteIDERules` and `Index`. |
 | Called by | [internal/uninstall](../internal/uninstall/README.md) | `PointerFiles` and `IDEPointer` to strip the pointer line. |
@@ -434,7 +434,7 @@ rebuilt the index). `Scroll` needs no vector and is not affected.
 
 `Ready` checks, in order, that the embedder answers (`Dimension`), that the
 store answers and that the collection exists; when not, the text says what
-to do (start Ollama and pull the model, or index the workspace).
+to do (see the embedder state in `rag_server_info`, or index the workspace).
 
 ---
 
@@ -483,7 +483,6 @@ Keys from [internal/config](../internal/config/README.md):
 | `max_files` | `20000` | Passed to `index.Run` as `MaxFiles`: a full run over more indexable files fails and is not retried. `0` = no limit. |
 | `allowed_workspace_paths` (env `RAGCODE_ALLOWED_PATHS`) | empty | When set, roots must be under one of these. |
 | `auto_create_ide_rules` | `true` | Read by the index tool before it calls `WriteIDERules`. |
-| `ollama_base_url` | `http://localhost:11434` | Only named in the `Ready` message, with the password of a `user:password@` URL shown as `xxxxx` (`config.Redacted`). |
 
 ### Files written
 

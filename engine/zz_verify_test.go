@@ -348,8 +348,9 @@ func TestVerifyReadyRemediation(t *testing.T) {
 	require.NoError(t, err)
 	ok, msg := w.Ready(context.Background())
 	assert.False(t, ok)
-	assert.Contains(t, msg, "Ollama")
-	assert.Contains(t, msg, cfg.OllamaBaseURL)
+	assert.Contains(t, msg, "embedder fake unavailable")
+	assert.Contains(t, msg, "see rag_server_info")
+	assert.NotContains(t, msg, "Ollama")
 
 	e2 := New(cfg, downStore{store.NewMemory()}, &embed.Fake{}, nil)
 	defer e2.Close()

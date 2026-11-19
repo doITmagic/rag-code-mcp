@@ -295,13 +295,16 @@ re-does the files that were not recorded.
 ### 2. Model, Format and recreate
 
 First the embedder is probed for its dimension (`Embedder.Dimension`). A model
-it cannot serve (a typo in `ollama_embed`, a model not pulled) fails the run
+it cannot serve (a missing or broken model file, an embedder that cannot start) fails the run
 here, before the state or the collection change, so the index of the previous
 model survives.
 
 The state's `Model` is compared with `Embedder.Model()`. Vectors of two
 models must never share a collection, so a different model forces a
-recreate, whatever the vector dimension. A non-empty state with another
+recreate, whatever the vector dimension. An index made with Ollama's
+`embeddinggemma-2:270m` carries that name, while the built-in model is named
+`embeddinggemma-2-Q8_0`, so the first run after upgrading re-embeds the
+workspace. A non-empty state with another
 `Format` forces one too.
 
 On recreate the empty state is saved **before** the collection is dropped:
@@ -361,7 +364,7 @@ symbol IDs are remembered for `staleReferrers`.
 
 Parsing runs on 2 workers with at most 256 KiB of source being parsed at once
 (a weighted semaphore), whatever the CPU count: tree-sitter needs hundreds of
-times a file's size while it parses, and a laptop needs its CPU for Ollama.
+times a file's size while it parses, and a laptop needs its CPU for the embedding model.
 A panic in an analyzer is recovered and counted as a parse failure. The file
 is `stat`ed before it is read, so a write in between leaves a newer mtime on
 disk than in the state and the next run picks it up again. A file that grew
@@ -592,7 +595,7 @@ writes the previous counters back too, as `done` and with its own branch (a
 `git checkout -b` that changes no file). A previous run stopped by
 `ErrHeadChanged` counts as a previous `done` here: it changed the index, so
 its counters are the last real ones. A run that fails before it changes the
-index (Ollama down at catch-up, an unknown model) writes the previous counters
+index (embedder unavailable at catch-up, an unknown model) writes the previous counters
 back under its own `failed` phase and error, and the next run with nothing to
 do turns them into `done` again instead of showing 0/0. A failed run that did
 change the index writes its own status.
@@ -707,7 +710,7 @@ these keys from [internal/config](../internal/config/README.md) into `Options`:
 |-----|-------------|
 | `exclude_patterns` | `Options.Exclude`: directory names pruned at any depth. |
 | `max_files` | `Options.MaxFiles`: the limit of indexable files of a full walk (default `20000`, `0` = none). |
-| `ollama_embed` | The embedder's `Model()`; a change recreates the collection. |
+| `embed_model` | Through the embedder's `Model()` (the file name without `.gguf` plus a fingerprint of the file, or the built-in name); a change recreates the collection. |
 | `RAGCODE_HOME` (env) | Moves `Dir(root)` with the rest of the home. |
 
 ---

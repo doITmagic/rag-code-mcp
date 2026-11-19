@@ -23,7 +23,7 @@ const (
 	maxFileSize = 256 << 10
 	parseBudget = maxFileSize // source bytes parsed at once, whatever the CPU count
 	// Two workers: slower on many cores, but a parser keeps the buffers of
-	// the largest file it parsed, and a laptop needs its CPU for Ollama.
+	// the largest file it parsed, and a laptop needs its CPU for the embedding model.
 	parseWorkers = 2
 	headSize     = 8 << 10 // bytes inspected for the binary (NUL) check
 )

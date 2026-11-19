@@ -20,7 +20,8 @@ graph TD
     MAIN[cmd/rag-code-mcp] -->|New, Close| APP[app]
     TESTS[tests] -->|New with Store/Embedder| APP
     APP --> CFG[internal/config]
-    APP -->|NewOllama| EMBED[embed]
+    APP -->|NewLlama, Close| EMBED[embed]
+    APP -->|FromConfig| LLAMA[internal/llama]
     APP -->|NewSQLite| STORE[store]
     APP -->|engine.New| ENG[engine]
     APP -->|tools.Register| TOOLS[tools]
@@ -44,7 +45,7 @@ Tests:
 
 | File | Covers |
 |:---|:---|
-| `app_test.go` | Smoke test over in-memory transports (server name `ragcode`, version, the seven tool names); `New` with defaults does not dial Ollama; a stop by signal logs no `level=ERROR`; the default store is SQLite and writes `RAGCODE_HOME/index/<collection>/index.db`; one `client connected` line per client, both on the `initialize` handshake and on per-request client metadata (protocol 2026-07-28), and once over stateless HTTP where every request is a new session. |
+| `app_test.go` | Smoke test over in-memory transports (server name `ragcode`, version, the seven tool names); `New` with defaults starts no embedder; a stop by signal logs no `level=ERROR`; the default store is SQLite and writes `RAGCODE_HOME/index/<collection>/index.db`; one `client connected` line per client, both on the `initialize` handshake and on per-request client metadata (protocol 2026-07-28), and once over stateless HTTP where every request is a new session. |
 | `zz_verify_test.go` | Verification tests: `Close` with an already-expired context returns promptly; `Engine.Resume` with a cancelled context returns at once; a nil `Log` is tolerated. |
 
 ## Key types and functions
@@ -57,13 +58,15 @@ type Options struct {
     Version  string        // reported in initialize and rag_server_info
     Log      *slog.Logger  // nil: logs are discarded
     Store    store.Store   // nil: store.NewSQLite(HomeDir()/index)
-    Embedder embed.Embedder // nil: embed.NewOllama(cfg.OllamaBaseURL, cfg.OllamaEmbed)
+    Embedder embed.Embedder // nil: embed.NewLlama(...) from llama.FromConfig
 }
 ```
 
-When `Embedder` is nil, `New` creates the Ollama embedder from
-`ollama_base_url` and `ollama_embed` and sets its `Threads` from
-`embed_threads`. When `Store` is nil it uses one SQLite index per workspace
+When `Embedder` is nil, `New` creates the embedder: `llama.FromConfig` gives
+the runtime (`embed_runtime`, `llama_server`, `embed_model`; its progress lines
+go to the log), `embed.NewLlama` wraps it with the runtime's model name and
+`~/.ragcode/run` for the server records, and `Threads` and `MinFreeMB` come from
+`embed_threads` and `min_free_memory_mb`. When `Store` is nil it uses one SQLite index per workspace
 under `$RAGCODE_HOME/index` (default `~/.ragcode/index`).
 
 ### `App`
@@ -72,13 +75,13 @@ under `$RAGCODE_HOME/index` (default `~/.ragcode/index`).
 type App struct {
     Server *mcp.Server    // serve it with Run(ctx, transport) or an HTTP handler
     Engine *engine.Engine // main calls Engine.Resume after start
-    // unexported: store, log
+    // unexported: store, embed, log
 }
 ```
 
 ### `New(o Options) (*App, error)`
 
-Builds everything but **does no I/O**: it does not dial Ollama and opens no
+Builds everything but **does no I/O**: it starts no embedder server and opens no
 index file. Those happen lazily when a tool first needs a workspace. It also:
 
 - calls `slog.SetDefault(o.Log)`, making that logger the one process-wide
@@ -91,7 +94,8 @@ index file. Those happen lazily when a tool first needs a workspace. It also:
 
 Stops the engine (`Engine.Close`) in a goroutine and waits for it until `ctx`
 is done; if it does not stop in time it logs
-`app: engine did not stop in time` and closes the store anyway. A store close
+`app: engine did not stop in time` and goes on. Then it closes the embedder
+(stopping its `llama-server`, when the embedder has a `Close`) and the store. A store close
 error is logged, not returned.
 
 ## Usage

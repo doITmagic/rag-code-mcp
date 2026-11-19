@@ -54,16 +54,31 @@ func TestSmoke(t *testing.T) {
 	assert.ElementsMatch(t, want, names)
 }
 
-func TestNewDefaultsDoNotDial(t *testing.T) {
-	t.Setenv("RAGCODE_HOME", t.TempDir())
+// The default embedder is only built: no server is started and nothing is
+// downloaded until the first call.
+func TestNewDefaultsStartNothing(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("RAGCODE_HOME", home)
 	cfg := config.Default()
-	cfg.OllamaBaseURL = "http://127.0.0.1:1"
+	// Files that are not there: a call fails at once, with no download.
+	cfg.EmbedModel = filepath.Join(home, "none", "m.gguf")
+	cfg.LlamaServer = filepath.Join(home, "none", "llama-server")
 	a, err := New(Options{Config: cfg})
 	require.NoError(t, err)
 	require.NotNil(t, a.Server)
+	em, ok := a.Engine.Embedder().(*embed.Llama)
+	if assert.True(t, ok, "the default embedder is llama.cpp") {
+		assert.Equal(t, "m", em.Model())
+		assert.Contains(t, []string{"not_installed"}, em.Status().State)
+	}
+	assert.NoDirExists(t, filepath.Join(home, "llama"), "nothing downloaded")
+	assert.NoDirExists(t, filepath.Join(home, "models"), "nothing downloaded")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	a.Close(ctx)
+	_, err = em.Embed(context.Background(), []string{"x"})
+	require.ErrorIs(t, err, embed.ErrUnavailable)
+	assert.Contains(t, err.Error(), "closed", "Close closes the embedder")
 }
 
 // A stop by signal cancels Run's context; the SDK logs that as an ERROR,

@@ -163,6 +163,9 @@ type Engine struct {
 	rootsMu sync.Mutex        // with roots.json.lock across processes: held across the roots.json rewrite
 }
 
+// Embedder is the embedder the engine was built with, for status output.
+func (e *Engine) Embedder() embed.Embedder { return e.embed }
+
 // New returns an engine. log may be nil.
 func New(cfg config.Config, st store.Store, em embed.Embedder, log *slog.Logger) *Engine {
 	if log == nil {
